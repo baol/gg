@@ -3,7 +3,6 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 pub const HISTORY_COMMAND: &str = "repository.history";
-pub const HISTORY_LIMIT: usize = 500;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HistoryRequest {
@@ -39,6 +38,14 @@ pub struct History {
     pub head: String,
     pub commits: Vec<Commit>,
     pub truncated: bool,
+    #[serde(default)]
+    pub shallow: bool,
+}
+
+/// Incremental traversal owned by a background session or a terminal consumer.
+pub trait HistoryReader {
+    fn identity(&self) -> &History;
+    fn next_commit(&mut self) -> Result<Option<Commit>, String>;
 }
 
 pub trait HistorySource {

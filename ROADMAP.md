@@ -6,8 +6,8 @@ CLI-first usage: [README](README.md). Each milestone delivers terminal commands 
 
 | Milestone | Workflow | Acceptance |
 | --- | --- | --- |
-| M0 · Delivered | Browse history | Current-repository launch, refresh, filter, inspect, copy, JSON |
-| M1 · Next | Review commits | File list, parent selection, text diffs, binary summaries, bounded loading |
+| M0 · Current | Browse history | CLI-first commit browser; acceptance in [plan](docs/plan.md) |
+| M1 | Review commits | File list, parent selection, text diffs, binary summaries, bounded loading |
 | M2 | Commit work | Status, file/hunk staging, unstage, commit, mutation preconditions |
 | M3 | Navigate branches | Graph, refs, tags, switch/create, pagination, cancellation |
 | M4 | Synchronize | Clone, fetch, push, tracking, credentials, progress |

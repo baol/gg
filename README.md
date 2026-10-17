@@ -13,7 +13,7 @@ git good
 git good history
 ```
 
-The first feature: browse, filter, and inspect recent commits; copy their IDs. `git good history` prints JSON for scripts.
+The first feature: stream, filter, and inspect repository history; copy their IDs. `git good history` prints JSON for scripts.
 
 [Plan](docs/plan.md) · [Roadmap](ROADMAP.md) · [Architecture](docs/architecture.md) · [Development](docs/development.md) · [Contributing](CONTRIBUTING.md) · [Verification](docs/verification.md)
 
