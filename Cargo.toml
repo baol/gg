@@ -1,0 +1,24 @@
+[workspace]
+members = ["crates/engine", "crates/git", "apps/git-good"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+rust-version = "1.94"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+
+[workspace.dependencies]
+gg-engine = { path = "crates/engine" }
+gg-git = { path = "crates/git" }
+serde = { version = "1", features = ["derive"] }
