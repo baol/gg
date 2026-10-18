@@ -56,6 +56,35 @@ Platform release gates: [roadmap](../ROADMAP.md).
 
 - All 37 default workspace tests and the opt-in real-fixture timing check pass; formatting and Clippy pass.
 
-## M0 acceptance pending
+## Streaming interaction increment
 
-Cold/warm release measurements, peak-memory accounting, native thumb-drag/clipboard/high-DPI checks, and remaining platform evidence. Checklist: [plan](plan.md).
+- Nine controlled-worker egui input tests cover scrollbar gestures, loading-row press/re-entry, late details and copy-ID, repeated filter text, refresh-time edits, commit/pixel anchors, repository replacement, and failure/retry.
+- Filter revisions reject superseded results even when text repeats; pending refreshes retain later edits. Pointer-release events precede subsequent motion in separate frames, preserving the scrollbar release position.
+- Native X11 mouse/keyboard review on 100,000 commits confirms stable rows across [drag](screenshots/m0-interaction-dragging.png) and [release](screenshots/m0-interaction-released.png), [whole-message filtering](screenshots/m0-interaction-oldest-filter.png), and [keyboard navigation at the oldest commits](screenshots/m0-interaction-keyboard-previous.png).
+- All 46 default workspace tests, formatting, and Clippy pass. The opt-in timing check remains recorded in the streaming increment.
+
+## Keyboard stability fix
+
+- Reproduced a 242-pixel last-page jump with deterministic egui frames. Keyboard reveal now uses one bounded offset and preserves the viewport for visible selections.
+- Three regressions cover mid-list navigation, repeated last-page navigation on 100,000 rows, and cached selected metadata while full details load.
+- Native X11 review confirms last-page selection and compact details on the packed 100,000-commit fixture.
+- Page Up/Down, Vim j/k, and Emacs Ctrl+N/P and Alt+V share bounded reveal. Tests cover page overlap, uncached destinations, both boundaries, empty results, and editor focus. [Native navigation capture](screenshots/m0-navigation-bindings.png).
+- All 51 default workspace tests, formatting, Clippy, and debug build pass.
+
+## Milestone transition · 2026-10-18
+
+The user accepted the browser workflow and advanced development to M1. M0 is the working baseline; M1 implementation begins with the [commit-review plan](plan.md).
+
+## Regression audit · 2026-10-18
+
+- Added the [contract-to-test inventory](regression.md), including coverage boundaries and remaining cases. Every M1 increment retains the full M0 suite.
+- A failing input test exposed hidden history selection changes while narrow details were open. Navigation now stays in its visible context; Back preserves selection, filter, and exact pixel offset.
+- New tests compare every repository/worktree file before and after CLI browsing and verify retained rows/identity after partial history failure.
+- Corrected the streaming test's first-batch wait: time slicing can publish fewer than 32 rows before the reader gate. The test now accepts that valid early batch, avoiding its timing-dependent deadlock.
+- All 54 default workspace tests pass on Linux. CI is configured for offline fixtures on Linux, macOS, and Windows; remote run evidence remains separate.
+
+## Preview acceptance pending
+
+- Measure cold/warm release startup and peak memory on the packed 100,000-commit fixture. Targets: first rows within 500 ms, input-to-frame below 50 ms during indexing, cached frame p95 within 16 ms.
+- Verify native clipboard, high-DPI rendering, and live Gravatar delivery.
+- Record native build/runtime evidence for the remaining preview platforms in the [roadmap](../ROADMAP.md).

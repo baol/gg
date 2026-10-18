@@ -1,5 +1,7 @@
 name: Rust
 on: [push, pull_request]
+env:
+  GG_OFFLINE: "1"
 jobs:
   native:
     strategy:

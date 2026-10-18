@@ -3,7 +3,7 @@ use crate::avatars::Avatars;
 use eframe::egui;
 use gg_engine::Commit;
 
-pub fn show(ui: &mut egui::Ui, commit: Option<&Commit>, avatars: &mut Avatars) {
+pub fn show(ui: &mut egui::Ui, commit: Option<&Commit>, loading: bool, avatars: &mut Avatars) {
     let Some(commit) = commit else {
         ui.label("Select a commit to inspect it.");
         return;
@@ -74,14 +74,17 @@ pub fn show(ui: &mut egui::Ui, commit: Option<&Commit>, avatars: &mut Avatars) {
                     crate::bounded_text::field(ui, &parents, egui::FontId::monospace(11.0), 20.0);
                     ui.end_row();
                 });
-            if let Some((_, body)) = commit.message.split_once('\n') {
-                let body = body.trim();
-                if !body.is_empty() {
-                    ui.add_space(10.0);
-                    ui.separator();
-                    ui.add_space(6.0);
-                    crate::bounded_text::field(ui, body, egui::FontId::proportional(13.0), 20.0);
-                }
-            }
+            ui.add_space(10.0);
+            ui.separator();
+            ui.add_space(6.0);
+            let body = if loading {
+                "Loading message..."
+            } else {
+                commit
+                    .message
+                    .split_once('\n')
+                    .map_or("", |(_, body)| body.trim())
+            };
+            crate::bounded_text::field(ui, body, egui::FontId::proportional(13.0), 20.0);
         });
 }

@@ -8,7 +8,7 @@ Read the [architecture](docs/architecture.md), [plan](docs/plan.md), and [roadma
 - Write original Rust from public specifications and observed behavior; attribute reused material.
 - Add dependency boundaries when concrete responsibilities require them.
 - Write terse, positive requirements once; link to their authoritative document.
-- Test behavior with synthetic repositories and Git CLI oracles, including failure cases.
+- Test behavior with synthetic repositories and Git CLI oracles, including failure cases. Preserve the [browser regression baseline](docs/regression.md) through every increment.
 - Apply the [design guidelines](docs/design.md) and verify layout with in-memory geometry assertions.
 - Inspect UI changes visually and run the [development checks](docs/development.md).
 - Record [verification evidence](docs/verification.md) and update milestone status.

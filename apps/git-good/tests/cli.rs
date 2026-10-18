@@ -5,6 +5,11 @@ fn git(path: &Path, args: &[&str]) -> Result {
         .arg("-C")
         .arg(path)
         .args(args)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env(
+            "GIT_CONFIG_GLOBAL",
+            if cfg!(windows) { "NUL" } else { "/dev/null" },
+        )
         .output()?;
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).into_owned().into());
@@ -122,5 +127,75 @@ fn json_includes_every_commit_beyond_the_former_cap() -> Result {
         Some("Commit 0")
     );
     assert_eq!(history["truncated"], false);
+    Ok(())
+}
+
+#[test]
+fn browsing_preserves_repository_index_and_dirty_worktree() -> Result {
+    fn snapshot(root: &Path) -> Result<std::collections::BTreeMap<std::path::PathBuf, Vec<u8>>> {
+        fn visit(
+            root: &Path,
+            dir: &Path,
+            files: &mut std::collections::BTreeMap<std::path::PathBuf, Vec<u8>>,
+        ) -> Result {
+            for entry in std::fs::read_dir(dir)? {
+                let path = entry?.path();
+                if path.is_dir() {
+                    visit(root, &path, files)?;
+                } else {
+                    files.insert(path.strip_prefix(root)?.to_path_buf(), std::fs::read(path)?);
+                }
+            }
+            Ok(())
+        }
+        let mut files = std::collections::BTreeMap::new();
+        visit(root, root, &mut files)?;
+        Ok(files)
+    }
+    let repo = tempfile::tempdir()?;
+    git(repo.path(), &["init", "-b", "main"])?;
+    std::fs::write(repo.path().join("tracked"), b"committed\n")?;
+    git(repo.path(), &["add", "tracked"])?;
+    git(
+        repo.path(),
+        &[
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.org",
+            "commit",
+            "-m",
+            "baseline",
+        ],
+    )?;
+    std::fs::write(repo.path().join("tracked"), b"staged\n")?;
+    git(repo.path(), &["add", "tracked"])?;
+    std::fs::write(repo.path().join("tracked"), b"unstaged\n")?;
+    std::fs::write(repo.path().join("untracked"), [0, 255, 1])?;
+    let before = snapshot(repo.path())?;
+    for _ in 0..2 {
+        let output = Command::new(env!("CARGO_BIN_EXE_git-good"))
+            .arg("history")
+            .current_dir(repo.path())
+            .output()?;
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let history: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+        assert_eq!(
+            history["commits"]
+                .as_array()
+                .ok_or("missing commits")?
+                .len(),
+            1
+        );
+        assert_eq!(
+            snapshot(repo.path())?,
+            before,
+            "browsing changed repository files"
+        );
+    }
     Ok(())
 }

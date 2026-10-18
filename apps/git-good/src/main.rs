@@ -2,6 +2,8 @@ mod avatars;
 mod bounded_text;
 mod details_view;
 mod history_view;
+#[cfg(test)]
+mod interaction_tests;
 mod state;
 mod stream;
 use eframe::egui;
@@ -93,12 +95,15 @@ struct Browser {
     path: String,
     state: state::State,
     pending: Option<stream::Worker>,
+    pending_filter_edit: bool,
     worker: Option<stream::Worker>,
     staged: Option<stream::Update>,
     viewport: Range<usize>,
     scroll_offset: f32,
+    page_rows: usize,
     restore_offset: Option<f32>,
     row_rects: Vec<(usize, egui::Rect)>,
+    deferred_input: Vec<egui::Event>,
     scroll_to_selection: bool,
     avatars: avatars::Avatars,
     history_rect: egui::Rect,
@@ -115,12 +120,15 @@ impl Browser {
             path: path.to_string_lossy().into_owned(),
             state: state::State::default(),
             pending: None,
+            pending_filter_edit: false,
             worker: None,
             staged: None,
             viewport: 0..64,
             scroll_offset: 0.0,
+            page_rows: 1,
             restore_offset: None,
             row_rects: Vec::new(),
+            deferred_input: Vec::new(),
             scroll_to_selection: false,
             avatars: avatars::Avatars::default(),
             history_rect: egui::Rect::NOTHING,
@@ -136,6 +144,7 @@ impl Browser {
         let path = PathBuf::from(&self.path);
         self.state.begin(path.clone());
         let request = stream::Request {
+            revision: self.state.filter_revision,
             query: self.state.query.clone(),
             selected_id: self.state.selected.clone(),
             anchor_id: self
@@ -146,6 +155,7 @@ impl Browser {
             ..Default::default()
         };
         self.staged = None;
+        self.pending_filter_edit = false;
         match stream::Worker::start(
             path,
             request,
@@ -155,6 +165,26 @@ impl Browser {
             Ok(worker) => self.pending = Some(worker),
             Err(error) => self.state.error = Some(error),
         }
+    }
+
+    fn prepare_input(&mut self, input: &mut egui::RawInput) {
+        // egui uses the frame's final pointer position for scrollbar release.
+        // Keep later motion in the following frame, preserving event order.
+        let mut events = std::mem::take(&mut self.deferred_input);
+        events.append(&mut input.events);
+        if let Some(index) = events.iter().enumerate().find_map(|(i, event)| {
+            (matches!(event, egui::Event::PointerButton { pressed: false, .. })
+                && events[i + 1..].iter().any(|event| {
+                    matches!(
+                        event,
+                        egui::Event::PointerMoved(_) | egui::Event::PointerGone
+                    )
+                }))
+            .then_some(i)
+        }) {
+            self.deferred_input = events.split_off(index + 1);
+        }
+        input.events = events;
     }
 
     fn draw(&mut self, ctx: &egui::Context) {
@@ -189,6 +219,7 @@ impl Browser {
         });
         if let Some(result) = self.pending.as_ref().and_then(stream::Worker::poll) {
             match result {
+                Ok(update) if self.pending_filter_edit && !self.state.is_current(&update) => {}
                 Ok(update) => self.staged = Some(update),
                 Err(error) => {
                     self.state.error = Some(error);
@@ -218,12 +249,14 @@ impl Browser {
             );
             self.state.accept(update, true, true, pinned);
             self.worker = self.pending.take();
+            self.pending_filter_edit = false;
             self.viewport = 0..64;
             self.scroll_to_selection = false;
         }
         if self.pending.is_none() {
             if let Some(result) = self.worker.as_ref().and_then(stream::Worker::poll) {
                 match result {
+                    Ok(update) if !self.state.is_current(&update) => {}
                     Ok(update) => {
                         if safe {
                             self.staged = None;
@@ -231,7 +264,7 @@ impl Browser {
                                 self.scroll_to_selection = true;
                             }
                             self.state.accept(update, false, true, pinned);
-                        } else if update.query == self.state.query {
+                        } else if self.state.is_current(&update) {
                             // Rows can fill off-pointer; counts and selection wait for a safe boundary.
                             self.staged = Some(update);
                         }
@@ -244,7 +277,7 @@ impl Browser {
             }
             if extent_safe
                 && let Some(update) = &self.staged
-                && update.query == self.state.query
+                && self.state.is_current(update)
             {
                 self.state.count = update.count;
                 self.state.scanned = update.scanned;
@@ -287,19 +320,30 @@ impl Browser {
                     self.details_visible = true;
                 }
             }
-            for (key, direction) in [(egui::Key::ArrowUp, -1), (egui::Key::ArrowDown, 1)] {
-                if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, key)) {
+            let page = self.page_rows.saturating_sub(1).max(1) as i32;
+            for (modifiers, key, distance) in [
+                (egui::Modifiers::NONE, egui::Key::ArrowUp, -1),
+                (egui::Modifiers::NONE, egui::Key::ArrowDown, 1),
+                (egui::Modifiers::NONE, egui::Key::K, -1),
+                (egui::Modifiers::NONE, egui::Key::J, 1),
+                (egui::Modifiers::CTRL, egui::Key::P, -1),
+                (egui::Modifiers::CTRL, egui::Key::N, 1),
+                (egui::Modifiers::NONE, egui::Key::PageUp, -page),
+                (egui::Modifiers::NONE, egui::Key::PageDown, page),
+                (egui::Modifiers::ALT, egui::Key::V, -page),
+            ] {
+                if !(narrow && self.narrow_details)
+                    && ctx.input_mut(|i| i.consume_key(modifiers, key))
+                    && self.state.count > 0
+                {
                     if self.worker.is_some() {
                         let row = self.state.selected_row.unwrap_or(0);
-                        let next = if direction < 0 {
-                            row.saturating_sub(1)
-                        } else {
-                            row.saturating_add(1)
-                                .min(self.state.count.saturating_sub(1))
-                        };
+                        let next = row
+                            .saturating_add_signed(distance as isize)
+                            .min(self.state.count - 1);
                         self.state.select_row(next);
                     } else {
-                        self.state.move_selection(direction);
+                        self.state.move_selection(distance);
                     }
                     self.scroll_to_selection = true;
                 }
@@ -415,7 +459,7 @@ impl Browser {
             } else if !self.state.finished && self.worker.is_some() {
                 (format!("{} · {} commits examined", if self.state.query.is_empty() { "Counting history" } else { "Searching history" }, self.state.scanned), ui.visuals().text_color())
             } else {
-                ("Up/Down: select   ·   Enter: details   ·   Esc: history   ·   Ctrl/Cmd+F: filter   ·   Ctrl/Cmd+C: copy ID".into(), ui.visuals().weak_text_color())
+                ("↑↓ / j k: select   ·   PgUp/PgDn: page   ·   Enter: details   ·   Esc: history   ·   Ctrl/Cmd+F: filter   ·   Ctrl/Cmd+C: copy ID".into(), ui.visuals().weak_text_color())
             };
             let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 18.0), egui::Sense::hover());
             bounded_text::paint(ui, rect, &message, egui::FontId::proportional(11.0), color);
@@ -456,8 +500,9 @@ impl Browser {
                                 .desired_width(ui.available_width()),
                         );
                         if response.changed() {
-                            if self.worker.is_some() {
+                            if self.worker.is_some() || self.pending.is_some() {
                                 self.state.start_filter();
+                                self.pending_filter_edit = self.pending.is_some();
                                 self.staged = None;
                                 self.viewport = 0..64;
                             } else {
@@ -480,8 +525,8 @@ impl Browser {
                 .show(ctx, |ui| {
                     ui.weak("DETAILS");
                     ui.add_space(8.0);
-                    let commit = self.state.details.as_ref();
-                    details_view::show(ui, commit, &mut self.avatars);
+                    let commit = self.state.displayed_details();
+                    details_view::show(ui, commit, self.state.details.is_none(), &mut self.avatars);
                 });
             self.details_rect = details.response.rect;
         }
@@ -493,8 +538,8 @@ impl Browser {
                     self.narrow_details = false;
                 }
                 ui.add_space(8.0);
-                let commit = self.state.details.as_ref();
-                details_view::show(ui, commit, &mut self.avatars);
+                let commit = self.state.displayed_details();
+                details_view::show(ui, commit, self.state.details.is_none(), &mut self.avatars);
                 return;
             }
             if self.state.history.is_some() {
@@ -517,11 +562,21 @@ impl Browser {
                         if self.scroll_to_selection
                             && let Some(index) = self.state.selected_row
                         {
-                            scroll = scroll.vertical_scroll_offset(
-                                (index as f32 * history_view::ROW_HEIGHT
-                                    - ui.available_height() / 2.0)
-                                    .max(0.0),
-                            );
+                            let height = ui.available_height();
+                            let top = index as f32 * history_view::ROW_HEIGHT;
+                            let bottom = top + history_view::ROW_HEIGHT;
+                            let offset = self.scroll_offset;
+                            let reveal = if top < offset {
+                                top
+                            } else if bottom > offset + height {
+                                bottom - height
+                            } else {
+                                offset
+                            };
+                            let maximum = (self.state.count as f32 * history_view::ROW_HEIGHT
+                                - height)
+                                .max(0.0);
+                            scroll = scroll.vertical_scroll_offset(reveal.clamp(0.0, maximum));
                         }
                         if let Some(offset) = self.restore_offset.take() {
                             scroll = scroll.vertical_scroll_offset(offset);
@@ -549,11 +604,6 @@ impl Browser {
                                                 )
                                             })
                                             .inner;
-                                        if self.scroll_to_selection
-                                            && Some(&commit.id) == self.state.selected.as_ref()
-                                        {
-                                            response.scroll_to_me(Some(egui::Align::Center));
-                                        }
                                         self.row_rects.push((row, response.rect));
                                         if response.clicked() {
                                             self.state.select_row(row);
@@ -586,6 +636,10 @@ impl Browser {
                             },
                         );
                         self.scroll_offset = scroll_output.state.offset.y;
+                        self.page_rows = (scroll_output.inner_rect.height()
+                            / history_view::ROW_HEIGHT)
+                            .floor()
+                            .max(1.0) as usize;
                         ui.spacing_mut().item_spacing.y = previous_spacing;
                     });
             } else if self.pending.is_some() {
@@ -594,8 +648,20 @@ impl Browser {
                 ui.label("Choose Open… to enter a repository path.");
             }
         });
-        if let Some(worker) = &self.worker
+        if self.pending_filter_edit
+            && let Some(pending) = &self.pending
+            && !pending.request(stream::Request {
+                revision: self.state.filter_revision,
+                query: self.state.query.clone(),
+                ..Default::default()
+            })
+        {
+            ctx.request_repaint();
+        }
+        if self.pending.is_none()
+            && let Some(worker) = &self.worker
             && !worker.request(stream::Request {
+                revision: self.state.filter_revision,
                 query: self.state.query.clone(),
                 range: self.viewport.clone(),
                 selected_id: self.state.selected.clone(),
@@ -606,11 +672,18 @@ impl Browser {
             ctx.request_repaint();
         }
         bounded_text::show_disclosure(ctx);
+        if !self.deferred_input.is_empty() {
+            ctx.request_repaint();
+        }
         self.scroll_to_selection = false;
     }
 }
 
 impl eframe::App for Browser {
+    fn raw_input_hook(&mut self, _: &egui::Context, input: &mut egui::RawInput) {
+        self.prepare_input(input);
+    }
+
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
         self.draw(ctx);
         #[cfg(debug_assertions)]

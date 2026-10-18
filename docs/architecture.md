@@ -46,13 +46,22 @@ Reserve fixed row heights and stable slots. Fill off-pointer loading slots in pl
 
 Scrolling may reveal and fill requested slots while preserving the anchor and geometry. Queue reordering, session replacement, and filter-result replacement during hover, pointer-down, scrolling, momentum, or scrollbar dragging. Extend the discovered range after scrolling settles while preserving hovered row content and viewport offset; defer extent changes while the scrollbar control is hovered. Commit queued changes after the relevant interaction ends; use a short configurable quiet interval for scroll settling, never a timer alone to release a hovered target.
 
-Explicit filter edits start a new result generation. Search the full pinned history progressively, label partial results, and finish with an exact match count. Publish matches in traversal order. Apply the same slot and interaction rules to arriving matches. Preserve selection when it matches the new filter; otherwise select the first published match. Clear selection and details while there are no matches, distinguishing searching from completed zero results. Apply selection changes with the corresponding result batch at an interaction-safe boundary. External repository changes produce a refresh indication; adopt them on explicit refresh.
+Each explicit filter edit increments a revision carried by requests and results, including edits that return to earlier text. Apply only the current revision. Preserve edits made while repository opening or refresh is pending. Search the full pinned history progressively, label partial results, and finish with an exact match count. Publish matches in traversal order. Apply the same slot and interaction rules to arriving matches. Preserve selection when it matches the new filter; otherwise select the first published match. Clear selection and details while there are no matches, distinguishing searching from completed zero results. Apply selection changes with the corresponding result batch at an interaction-safe boundary. External repository changes produce a refresh indication; adopt them on explicit refresh.
 
 ### Browser state and keyboard
 
 Track requested path separately from the displayed repository. Label retained results during loading and after errors. A successful repository switch clears the old filter and selection; a refresh within the same repository preserves matching selection by ID, otherwise selects the first visible result.
 
-Ctrl on Linux/Windows and Command on macOS: F focuses filtering, R refreshes, C copies the selected full commit ID when a text editor has no focus. Escape leaves the filter; Up/Down moves through matching rows and reveals the selection. Text editors retain their normal navigation and copy behavior.
+Ctrl on Linux/Windows and Command on macOS: F focuses filtering, R refreshes, C copies the selected full commit ID when a text editor has no focus. Escape leaves the filter; Up/Down moves through matching rows, preserving the viewport while selection is visible and scrolling only enough to reveal it within the history bounds. Show cached metadata immediately for the selected commit; reserve the message slot while full details load. Text editors retain their normal navigation, paste, and copy behavior.
+
+| Action | Native | Vim | Emacs |
+| --- | --- | --- | --- |
+| Previous / next commit | Up / Down | k / j | Ctrl+P / Ctrl+N |
+| Previous / next page | Page Up / Page Down | | Alt+V / Page Down |
+
+Emacs bindings use physical Control on every platform. Ctrl+V retains native paste. Page movement selects one viewport of rows with one row of overlap, clamped to the available history. Derive page size from the rendered viewport; request uncached destination rows through the existing stream. Empty results keep selection empty. History navigation bindings apply while history is visible and text editors are unfocused. Narrow details preserve the hidden history selection and viewport until Back.
+
+Rationale: minimal scrolling preserves spatial context and keeps nearby targets stable. One bounded reveal operation prevents competing scroll requests and end-of-list overshoot. Cached selected metadata and a reserved message slot prevent loading from collapsing the details pane. Shared navigation behavior makes native, Vim, and Emacs bindings predictable; overlapping pages retain reading context.
 
 ### Presentation
 
@@ -61,6 +70,36 @@ Apply the shared [design guidelines](design.md) to every text field and overflow
 Use one repository/action header, one history/filter row, and a fixed-height status line. Show the full repository path on hover and open its editor explicitly. Keep counts in reserved space and use high-contrast selected rows. Group the details portrait with author/date, show the subject once, and place copyable IDs in compact metadata rows. History uses fixed-height, single-line tabular rows: dot, subject, author image/name, short hash, and date. Share column geometry between headers and rows; truncate within clipped cells. Preserve a minimum table width with horizontal scrolling to keep columns disjoint. Assert geometry and one-line text at supported sizes/scales. Loading slots match final row geometry. Keep progress and errors in reserved space. At widths below 1040 logical pixels, show details as a reversible view while retaining list position; wider windows use a resizable side pane that preserves table width. Enter opens details; Escape or Back returns to narrow-screen history. Maintain full IDs in data and offer copy independently of displayed abbreviation.
 
 Fetch [Gravatar](https://docs.gravatar.com/sdk/images/) images on a bounded background worker using normalized email SHA-256 keys. Cache a shared 128-pixel image per author; display it at 18 pixels in history and 64 pixels in details for sharp high-DPI rendering. Reserve both slots and show local initials while unavailable. Cache validated images and 404 results persistently by normalized author key in the OS cache directory. Read disk before querying; deduplicate requests per author even after texture eviction. Attempt transient failures once per worker session and retry on the next launch. Replace corrupt entries atomically. Bound response bytes, decoded dimensions, request duration, queues, and GPU cache size. Defer image publication and cache eviction while history or details is hovered, or scrolling is active.
+
+## Commit review · M1 specification
+
+### Comparison identity
+
+Pin each review to repository, commit ID, and parent ID. Default to the first parent; compare root commits with the empty tree. Enumerate merge parents in stored order and select one explicitly. A missing parent object produces an actionable incomplete-comparison state. Keep commit metadata visible during review loading and errors.
+
+Represent changed paths as exact Git path bytes with a separate display string. Each change carries old/new object IDs and modes; derive added, deleted, modified, and type-changed status from these sides. Present paths in deterministic Git tree traversal order, with the same ordering in CLI and UI. Represent moves as deletion/addition in M1; preserve both sides of each change for future rename detection.
+
+### Loading and selection
+
+Stream changed-file summaries before reading blob contents. Virtualize file rows and retain bounded pages using the existing history interaction rules. File counts progress to exact completion. Preserve selection by exact path when available; otherwise select the first result and clear selection for an empty comparison.
+
+Fetch content only for the selected file. Key requests and results by review generation, comparison identity, and file identity. Coalesce superseded requests, cancel obsolete work between batches, and reject stale results. Keep file-list work independent of history indexing. Load selected text on a worker; page rendered diff rows and spill intermediate records when necessary. Every file remains reachable through bounded caches.
+
+### Diff presentation
+
+Show a unified text diff with old/new line-number columns, fixed-height rows, three context lines per hunk, and explicit missing-final-newline markers. Preserve line endings and whitespace in comparison data. Use horizontal scrolling for long source lines; source is an explicit reading view under the [design guidelines](design.md). Render context, additions, and deletions with both symbols and color.
+
+Classify NUL-containing blobs as binary; display object IDs and byte sizes. Display symlink targets as text and gitlinks as referenced commit IDs. Show mode-only changes explicitly. Escape undecodable bytes in the reading view while retaining exact source bytes for comparison. Surface size and computation limits as explicit summaries with a streaming export action; results identify whether text comparison is complete.
+
+On wide windows, an explicit Review action opens a resizable file-list/diff workspace with compact commit identity and parent selection. Back restores history selection, filter, and pixel anchor. On narrow windows, review files and selected-file content in successive views with the same Back behavior. Each navigation context owns its keyboard bindings; text editors retain their shortcuts.
+
+### Terminal interface
+
+Implement `git good show <commit> [--repo PATH] [--parent N]` for streamed JSON file summaries; `--file PATH` selects a file's diff. Resolve the repository from the current directory by default. Parent numbers are one-based; validate them against the selected commit. A root comparison uses the empty tree automatically. Resolve revisions once, then use immutable IDs throughout. Include repository/comparison identity and exact path bytes in JSON. Errors use stderr and nonzero status. Add commands to the README when implemented.
+
+### Rationale
+
+File summaries give useful feedback before expensive blob reads. Pinned identities and cancellable requests keep rapid selection accurate. A dedicated review workspace provides readable code width while preserving the compact history layout. The existing three crates own commands, Git access, and presentation respectively.
 
 ## Runtime requirements
 

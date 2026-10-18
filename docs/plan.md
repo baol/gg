@@ -1,62 +1,48 @@
 # Plan
 
-Purpose: sequence the implementation steps for the current and next milestone.
+Purpose: sequence M1 implementation and define its acceptance checks.
 
-Product entry and usage: [README](../README.md). Command contracts: [architecture](architecture.md). Milestones and release gates: [roadmap](../ROADMAP.md).
+Contracts: [architecture](architecture.md#commit-review--m1-specification). Future outcomes: [roadmap](../ROADMAP.md). Baseline and release checks: [verification](verification.md).
 
-## Delivery sequence
+## M1 · Current · Review commits
 
-1. Define typed engine requests and results.
-2. Implement Git access with synthetic fixtures and independent Git oracles.
-3. Connect terminal commands and native views to the same behavior.
-4. Verify errors, responsiveness, and rendering; record evidence.
-5. Update milestone status.
+Goal: select a commit, understand its changed files, and read a file's diff against the chosen parent.
 
-## M0 · Current · Commit browser
+Preserve the [M0 regression baseline](regression.md) in every increment. Add review-context isolation tests before wiring M1 controls.
 
-Goal: run `git good` inside a repository and immediately understand its recent history.
-
-### Delivery rule
-
-Finish M0 before starting another milestone. Deliver small working increments; refine behavior and visual design together. [Architecture](architecture.md) owns the streaming and interaction contracts. [Roadmap](../ROADMAP.md) holds future outcomes.
+Deliver one working increment at a time. Refine interaction, appearance, and tests together. M0 remains the browser baseline; preview acceptance remains tracked separately.
 
 ### Increments
 
-1. **Stable browser state.** Separate requested and displayed repository, selection, viewport anchor, and request generation. Define keyboard navigation and error/retry states.
-2. **First screen.** Stream visible summaries and overscan from a pinned HEAD. Load selected details independently. Remove the 500-commit ceiling from desktop and headless history.
-3. **Whole history.** Add progressive indexing, count estimates, exact completion, paged storage, cache eviction, and deep-scroll progress. Keep foreground requests ahead of counting.
-4. **Stable interaction.** Preserve anchors, hover targets, click identity, focus, and scrollbar geometry as batches arrive. Stream whole-history filter results with explicit partial/completed states.
-5. **Visual refinement.** Tune typography, density, spacing, selection, loading slots, and narrow-layout details. Review real rendered states at each increment; retain screenshots for final acceptance.
-6. **Acceptance.** Verify installed CLI launch, interactive behavior, performance, and native preview targets; record results in [verification](verification.md).
+1. **Changed files · next.** Add typed comparison requests and incremental file summaries. Resolve first-parent/root comparisons through gitoxide. Expose the same results through `git good show` and a native Review view. Show fixed-height status/path rows, progressive counts, loading, empty, and retry states. Preserve history on Back. Verify the full CLI-to-native workflow before proceeding.
+2. **Selected-file text.** Read selected blobs on a cancellable worker. Add unified hunks, line numbers, context, horizontal scrolling, and missing-newline markers. Virtualize diff rows. Keep selected-file identity explicit during loading and failure.
+3. **Comparison completeness.** Add merge-parent selection, binary summaries, symlinks, gitlinks, mode/type changes, byte-safe paths, and explicit large-file summaries/export. Resolve resource budgets and test cancellation at each expensive boundary.
+4. **Polish and acceptance.** Exercise rapid selection, paging, keyboard focus, narrow navigation, scaling, errors, and read-only guarantees. Measure first-file and first-diff latency, frame times, and peak memory; retain native captures.
 
-### Progress
+### First increment boundary
 
-History now streams without a commit cap in the UI and CLI. Disk-backed indexing, whole-history filtering, bounded row caches, progressive counts, hover-safe publication, and refresh anchors are implemented. Remaining acceptance covers platform integration, broader interaction sequences, and performance/memory measurements. Current evidence: [verification](verification.md).
+A selected commit opens its changed files without reading blob contents. Roots compare against the empty tree; other commits compare against their first parent. The UI and JSON expose matching identities, modes, statuses, and paths. Closing review restores the exact history position. File contents arrive in increment 2.
 
 ### Test plan
 
 | Scenario | Expected result | Method |
 | --- | --- | --- |
-| Root, nested directory, explicit path, invalid path | Correct repository; useful error and exit status | Installed CLI/process tests |
-| Linear, merge, skewed dates, packed, shallow, empty history | Stable unique order; exact merge-parent IDs; exact reachable count or explicit incomplete/error state | Git fixture oracles |
-| 499, 500, 501, and 100,000 commits; first batch before traversal ends | Every commit accessible; first screen arrives progressively | Adapter integration tests |
-| Slow count and rapid viewport changes | Visible requests win; queues and caches stay bounded | Controlled worker tests |
-| Scroll forward/back after eviction; deep thumb jump | Same identities and ordering; loading progress; preserved anchor | State tests and native walkthrough |
-| Count estimate grows or shrinks during wheel/momentum/thumb drag | Fixed gesture geometry; same anchored commit and pixel offset afterward | Input-sequence tests |
-| Batch arrives during hover or pointer-down | Same hovered target; click activates the original commit; placeholder remains inert until re-entry | Input-sequence tests |
-| Late results after filter, refresh, or repository switch | Only matching generation affects the view | State tests |
-| Partial search, zero matches, hidden selection | Preserve matching selection; otherwise first match; clear details at zero matches; search reaches completion | State and integration tests |
-| External HEAD update; refresh failure and retry | Explicit adoption; old session stays identified; selection retained where possible | Integration tests |
-| Read-only browsing | Refs, index, objects, and working-file contents unchanged | Before/after fixture comparison |
-| Long text, Unicode, 720×480 window, 100%/200% scale | Readable rows, accessible actions, stable details navigation | Render inspection and native walkthrough |
-| Filter focus, row arrows, refresh, copy, return from details | Predictable focus and selection; exact copied ID | Input tests plus native clipboard checks |
+| Root, linear, empty commit, nested paths | Exact changed paths, statuses, IDs, modes; explicit empty result | Git `diff-tree --raw -z --no-renames` oracle |
+| Merge with distinct parents; missing parent | Correct chosen comparison or identified read error | Synthetic Git fixtures |
+| CLI from nested cwd, explicit repo, invalid revision/parent | Correct discovery/identity; JSON success; stderr and nonzero failure | Process tests |
+| Many files; slow enumeration; deep navigation | First page before completion; complete reachability; bounded caches | Controlled reader and input tests |
+| Rapid commit/file/parent changes and retry | Matching-generation results only; coherent identity throughout | Controlled worker tests |
+| Review/Back, hover, pointer-down, keyboard paging | Stable targets and restored history anchor; context-local shortcuts | In-memory egui input |
+| Text edits, CRLF, whitespace, final newline, Unicode | Correct hunks and line numbers; exact changed bytes | Git diff oracle and reconstruction |
+| Binary, symlink, gitlink, mode/type changes | Explicit appropriate summaries | Git fixtures |
+| Large blobs, long lines, cancellation | Responsive UI, bounded memory, explicit completion state | Resource/latency measurements |
+| Long paths, 720×480 and 1120×740, 100%/200% scale | Disjoint controls, readable source, stable loading geometry | Geometry tests and native review |
+| Browse and export | Repository objects, refs, index, and working files preserved | Before/after fixture comparison |
 
-Use egui `Context::run` with synthetic `RawInput` for in-memory interaction tests; inspect focus, rendered rows, geometry, and output commands. Use a controllable worker and clock for arrival timing. Reserve native runs for platform integration and visual review.
+### Measurement targets
 
-### Performance acceptance
-
-On a recorded reference machine and a packed fixture of at least 100,000 commits, target first rows within 500 ms of session opening, input-to-frame latency below 50 ms during indexing, and cached scrolling within a 16 ms frame budget at the 95th percentile. Measure cold and warm runs separately. Record application cache/queue limits and peak memory; demonstrate eviction without losing history access. Treat these as acceptance targets to validate, not current measurements.
+Record machine, fixture, cache state, and build profile. On a local packed fixture with 10,000 changed files, target first summaries within 500 ms. For a selected UTF-8 file of at most 1 MiB per side, target first diff within 500 ms. Keep input-to-frame below 50 ms during worker activity and cached frame p95 within 16 ms. Set and test memory/queue budgets before adding blob loading; measure cold and warm release runs separately.
 
 ### Completion
 
-All increments pass their behavioral checks and visual review. Installed `git good` opens its current repository immediately; history streams through completion without an application commit cap or interaction discontinuities. Each preview platform has native build and runtime evidence. M0 remains current until results are recorded.
+CLI and native views review the same immutable comparisons. Every changed file is reachable; text and non-text cases have explicit results. Interaction tests, visual review, and measured resource budgets pass. Record evidence before advancing to M2.

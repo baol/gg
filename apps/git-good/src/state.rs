@@ -14,6 +14,7 @@ pub struct State {
     pub selected_row: Option<usize>,
     pub details: Option<Commit>,
     pub query: String,
+    pub filter_revision: u64,
     pub selected: Option<String>,
     pub error: Option<String>,
     pub requested: Option<PathBuf>,
@@ -56,6 +57,10 @@ impl State {
         }
     }
 
+    pub fn is_current(&self, update: &crate::stream::Update) -> bool {
+        update.query == self.query && update.request.revision == self.filter_revision
+    }
+
     pub fn accept(
         &mut self,
         update: crate::stream::Update,
@@ -63,7 +68,7 @@ impl State {
         safe: bool,
         pinned: Option<usize>,
     ) {
-        if !replace && update.query != self.query {
+        if !replace && !self.is_current(&update) {
             return;
         }
         let selection_current = replace
@@ -78,6 +83,7 @@ impl State {
             self.rows.clear();
             self.history = Some(update.identity);
             self.query = update.query;
+            self.filter_revision = update.request.revision;
             self.count = 0;
             self.selected_row = None;
             self.details = None;
@@ -123,6 +129,7 @@ impl State {
     }
 
     pub fn start_filter(&mut self) {
+        self.filter_revision = self.filter_revision.saturating_add(1);
         self.rows.clear();
         self.count = 0;
         self.scanned = 0;
@@ -136,6 +143,14 @@ impl State {
             self.selected = None;
             self.details = None;
         }
+    }
+
+    pub fn displayed_details(&self) -> Option<&Commit> {
+        self.details.as_ref().or_else(|| {
+            self.selected_row
+                .and_then(|row| self.rows.get(&row))
+                .filter(|commit| Some(&commit.id) == self.selected.as_ref())
+        })
     }
 
     pub fn select_row(&mut self, row: usize) {
@@ -188,11 +203,9 @@ impl State {
             .iter()
             .position(|id| Some(*id) == self.selected.as_ref())
             .unwrap_or(0);
-        let next = if direction < 0 {
-            current.saturating_sub(1)
-        } else {
-            current.saturating_add(1).min(ids.len().saturating_sub(1))
-        };
+        let next = current
+            .saturating_add_signed(direction as isize)
+            .min(ids.len().saturating_sub(1));
         self.selected = ids.get(next).map(|id| (*id).clone());
         self.selected_row = self
             .rows

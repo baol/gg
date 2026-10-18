@@ -2,6 +2,7 @@
 
 Purpose: define shared visual and interaction rules.
 
+- Keep keyboard selection visible with minimal, bounded scrolling; preserve visible row positions between input and idle frames.
 - Reserve field widths and heights for readable, compact content and stable controls.
 - Keep text fields on one line within their allocated bounds. Replace overflow with a clickable `...`; show the complete text on hover.
 - Open overflow in a separate, scrollable, selectable view with a copy action. Preserve the underlying layout, selection, and scroll position.
