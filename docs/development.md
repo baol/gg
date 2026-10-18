@@ -12,7 +12,13 @@ cargo test --workspace --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
 ```
 
-CI runs checks and release builds on Linux, macOS, and Windows with `GG_OFFLINE=1`. wgpu enables Vulkan, Metal, DX12, and GLES; Linux supports Wayland and X11.
+CI runs offline checks, release builds, and release CLI smoke tests natively on Linux, macOS, and Windows for x86_64 and arm64. Each job uploads a binary archive with README, license, and a SHA-256 sidecar. Linux binaries target glibc on Ubuntu 24.04; macOS and Windows archives are unsigned. Native graphics and platform runtime acceptance remain release gates.
+
+Run CI on pull requests, pushes to `main`, version tags (`v*`), and manual dispatch. Cache Cargo dependencies and build outputs per target; cancel superseded branch runs and keep platform failures independent.
+
+Push a version tag to build all six targets and create a draft GitHub release only after every target passes. Review the archives and complete the [release gates](../ROADMAP.md) before publishing the draft. CI artifacts are also downloadable from successful platform jobs.
+
+wgpu enables Vulkan, Metal, DX12, and GLES; Linux supports Wayland and X11.
 
 | Variable | Effect |
 | --- | --- |

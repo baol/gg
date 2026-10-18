@@ -4,6 +4,10 @@ Purpose: introduce gg and explain installation and use.
 
 A CLI-first Git browser with a native Rust interface.
 
+Download binary archives from [GitHub Releases](https://github.com/baol/gg/releases) when available, or from the Rust workflow artifacts. Builds cover Linux, macOS, and Windows on x86_64 and arm64. Verify the SHA-256 sidecar, extract the archive, and place `git-good` (`git-good.exe` on Windows) on your PATH. See [platform requirements and release gates](docs/development.md).
+
+Build from source:
+
 ```sh
 cargo install --path apps/git-good --locked
 cd /path/to/repository
