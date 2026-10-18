@@ -36,6 +36,15 @@ Linux x86_64 · Intel i5-6600K · debug build · warm OS cache · packed 100,000
 
 The opt-in timing check passed. Frame timings exclude GPU presentation.
 
+## M1 changed files · 2026-10-18
+
+- All 61 default workspace tests, formatting, Clippy, and debug build pass on Linux.
+- Git-oracle tests verify root/first-parent comparisons, nested paths, statuses, object IDs/modes, file-to-directory replacement, empty commits, merge-parent selection, and pinned comparisons with unavailable blobs.
+- CLI tests verify discovery, explicit repository, exact path bytes, JSON, and error exits.
+- A controlled 10,000-file reader verifies first-page delivery, complete enumeration, deep/back page reload, retained errors, and shutdown. UI tests verify placeholder stability and review/history isolation with exact Back anchors.
+- Native X11 review confirms status/path rows, metadata, paging, and Back at [1120×740](screenshots/m1-files-wide.png) and [720×480](screenshots/m1-files-narrow.png).
+- Large-tree latency/peak-memory measurements and selected-file diffs remain in the [M1 plan](plan.md).
+
 ## Preview acceptance pending
 
 - Measure cold/warm release startup and peak memory on the packed 100,000-commit fixture. Targets: first rows within 500 ms, input-to-frame below 50 ms, cached frame p95 within 16 ms.

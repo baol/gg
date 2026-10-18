@@ -102,6 +102,14 @@ Stream file summaries before blob reads. Virtualize rows using history's paging 
 
 Read selected-file content on a worker independent of history indexing. Key results by review generation, comparison, and file. Coalesce requests, cancel obsolete work between batches, and apply current results. Page diff rows, spill intermediate records as needed, and keep every file reachable through bounded caches.
 
+### Changed-file implementation
+
+Walk trees depth-first in Git tree order, skip identical subtrees, and open blob contents in the selected-file increment. The frontier scales with active tree entries. Yield between tree visits; individual tree decoding remains one operation.
+
+Use an independent comparison worker with 32-step/4-ms slices, one request/result slot, temporary record/offset files, 256-row pages, and at most 768 UI rows. Retry replaces the worker and its mailbox for the same pinned comparison. Closing review cancels it; obsolete mailboxes remain isolated.
+
+The first view presents status/path rows and selected before/after IDs and modes. Wide layouts use a metadata side pane; narrow layouts use a fixed bottom pane. History state and incoming history results wait while review is open; Back restores its pixel offset before applying current results.
+
 ### Diff and layout
 
 Use unified diffs with old/new line numbers, fixed-height rows, three context lines, and missing-final-newline markers. Preserve whitespace/line endings. Scroll long source lines horizontally in an explicit reading view. Distinguish context/additions/deletions with symbols and color.
@@ -119,6 +127,6 @@ Review opens a resizable file-list/diff workspace with commit identity and paren
 
 ### CLI
 
-`git good show <commit> [--repo PATH] [--parent N]` streams JSON summaries; `--file PATH` selects a diff. Use cwd discovery by default. Validate one-based parent numbers; roots use the empty tree automatically. Include repository/comparison identity and exact path bytes. Apply runtime error conventions; document usage when implemented.
+`git good show <commit> [--repo PATH] [--parent N]` streams JSON summaries; `--file PATH` is planned for the selected-file diff increment. Use cwd discovery by default. Validate one-based parent numbers; roots use the empty tree automatically. Include repository/comparison identity and exact path bytes. Apply runtime error conventions; document usage when implemented.
 
 Rationale: summaries provide early feedback; pinned, cancellable work keeps rapid selection accurate; a dedicated review view gives source readable width.

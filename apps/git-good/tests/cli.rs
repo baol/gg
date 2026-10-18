@@ -215,3 +215,64 @@ fn version_matches_package_without_a_repository() -> Result {
     );
     Ok(())
 }
+
+#[test]
+fn show_discovers_repo_streams_exact_files_and_rejects_invalid_parent() -> Result {
+    let repo = tempfile::tempdir()?;
+    git(repo.path(), &["init", "-b", "main"])?;
+    std::fs::create_dir(repo.path().join("nested"))?;
+    std::fs::write(repo.path().join("nested/café.txt"), "hello")?;
+    git(repo.path(), &["add", "."])?;
+    git(
+        repo.path(),
+        &[
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.org",
+            "commit",
+            "-m",
+            "root",
+        ],
+    )?;
+    let binary = env!("CARGO_BIN_EXE_git-good");
+    let output = Command::new(binary)
+        .args(["show", "HEAD"])
+        .current_dir(repo.path().join("nested"))
+        .output()?;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(json["complete"], true);
+    assert!(json["comparison"]["parent"].is_null());
+    assert_eq!(json["files"][0]["path"], "nested/café.txt");
+    assert_eq!(
+        json["files"][0]["path_bytes"],
+        serde_json::json!("nested/café.txt".as_bytes())
+    );
+    let other = tempfile::tempdir()?;
+    let explicit = Command::new(binary)
+        .args(["show", "HEAD", "--repo"])
+        .arg(repo.path())
+        .current_dir(other.path())
+        .output()?;
+    assert!(explicit.status.success());
+    for args in [
+        vec!["show", "HEAD", "--parent", "1"],
+        vec!["show", "missing"],
+        vec!["show"],
+    ] {
+        let error = Command::new(binary)
+            .args(args)
+            .current_dir(repo.path())
+            .output()?;
+        assert!(!error.status.success());
+        assert!(error.stdout.is_empty());
+        assert!(!error.stderr.is_empty());
+    }
+    Ok(())
+}
