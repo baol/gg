@@ -45,7 +45,8 @@ The opt-in timing check passed. Frame timings exclude GPU presentation.
 ## CI and binary delivery · 2026-10-18
 
 - Fixed the floating-point literal warning that failed PR #1's Clippy checks on newer Rust.
-- Linux x86_64: formatting, Clippy on Rust 1.94, and 54 workspace tests pass; the packed-history performance test remains opt-in. Test execution takes about 7 seconds after compilation (fresh test compilation: 3m 59s).
+- Linux x86_64: formatting, Clippy on Rust 1.94 and 1.97, and 54 workspace tests pass; the packed-history performance test remains opt-in. Test execution takes about 7 seconds after compilation (fresh test compilation: 3m 59s).
+- Linux release build and CLI JSON smoke test pass; the tarball contains the binary, README, and license, and its SHA-256 sidecar verifies.
 - actionlint 1.7.12 validates the six-target workflow, packaging steps, and gated draft release job.
 - Native CI covers Linux, macOS, and Windows on x86_64 and arm64, caches builds, retains independent platform results, and uploads archives with checksums. Version tags create a draft release after all six jobs pass.
 - Cross-platform CI results and native runtime acceptance remain pending. Unsigned binary archives do not establish installer, signing, or hardware acceptance.
