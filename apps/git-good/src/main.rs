@@ -1,6 +1,8 @@
 mod avatars;
 mod bounded_text;
 mod details_view;
+mod diff_view;
+mod diff_worker;
 mod history_view;
 #[cfg(test)]
 mod interaction_tests;
@@ -24,7 +26,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("--help")) {
         println!(
-            "gg · good git\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good show <commit> [--repo PATH] [--parent N]   Print changed files as JSON\n\nBrowse all commits reachable from HEAD."
+            "gg · good git\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good show <commit> [--repo PATH] [--parent N] [--file PATH]   Print comparison JSON\n\nBrowse all commits reachable from HEAD."
         );
         return Ok(());
     }

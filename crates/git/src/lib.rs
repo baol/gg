@@ -117,4 +117,5 @@ impl gg_engine::HistoryReader for Session {
     }
 }
 
+pub mod diff;
 pub mod review;

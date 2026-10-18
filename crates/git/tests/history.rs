@@ -402,3 +402,89 @@ fn review_merge_defaults_to_first_parent_and_can_select_second() -> Result {
     );
     Ok(())
 }
+
+#[test]
+fn selected_file_diff_matches_git_and_preserves_original_bytes() -> Result {
+    use gg_engine::diff::RowKind;
+    let dir = init()?;
+    let old = b"one\r\nold\nkeep\nlast";
+    let new = b"one\r\nnew\nkeep\nlast\n";
+    std::fs::write(dir.path().join("file"), old)?;
+    git(dir.path(), &["add", "."])?;
+    commit(dir.path(), "before")?;
+    std::fs::write(dir.path().join("file"), new)?;
+    git(dir.path(), &["add", "."])?;
+    commit(dir.path(), "after")?;
+    let changes = review(dir.path(), "HEAD", None)?;
+    let diff = gg_git::diff::read(dir.path(), &changes[0], || false)?;
+    assert!(diff.complete);
+    let oracle = Command::new("git")
+        .arg("-C")
+        .arg(dir.path())
+        .args([
+            "diff",
+            "--no-ext-diff",
+            "--no-color",
+            "--no-indent-heuristic",
+            "--unified=3",
+            "HEAD^",
+            "HEAD",
+            "--",
+            "file",
+        ])
+        .output()?;
+    assert!(oracle.status.success());
+    let mut actual = Vec::new();
+    for row in &diff.rows {
+        match row.kind {
+            RowKind::Hunk => {
+                actual.extend(row.text.as_bytes());
+                actual.push(b'\n');
+            }
+            RowKind::NoNewline => {
+                actual.extend(row.text.as_bytes());
+                actual.push(b'\n');
+            }
+            _ => {
+                actual.push(match row.kind {
+                    RowKind::Added => b'+',
+                    RowKind::Deleted => b'-',
+                    _ => b' ',
+                });
+                actual.extend(&row.bytes);
+                if !row.bytes.ends_with(b"\n") {
+                    actual.push(b'\n');
+                }
+            }
+        }
+    }
+    let start = oracle
+        .stdout
+        .windows(3)
+        .position(|w| w == b"@@ ")
+        .ok_or("missing Git hunk")?;
+    assert_eq!(actual, &oracle.stdout[start..]);
+    assert!(gg_git::diff::read(dir.path(), &changes[0], || true).is_err());
+    Ok(())
+}
+
+#[test]
+fn selected_file_binary_and_large_object_return_explicit_summaries() -> Result {
+    use gg_engine::diff::{DiffKind, MAX_BLOB_BYTES};
+    let dir = init()?;
+    std::fs::write(dir.path().join("binary"), [0, 255, 1])?;
+    std::fs::write(dir.path().join("large"), vec![b'a'; MAX_BLOB_BYTES + 1])?;
+    git(dir.path(), &["add", "."])?;
+    commit(dir.path(), "files")?;
+    let changes = review(dir.path(), "HEAD", None)?;
+    let binary = gg_git::diff::read(dir.path(), &changes[0], || false)?;
+    assert_eq!(binary.kind, DiffKind::Binary);
+    assert!(binary.complete);
+    assert_eq!(binary.new_size, 3);
+    let large = gg_git::diff::read(dir.path(), &changes[1], || false)?;
+    assert_eq!(large.kind, DiffKind::Limited);
+    assert!(!large.complete);
+    assert!(large.rows.is_empty());
+    assert_eq!(large.new_size, (MAX_BLOB_BYTES + 1) as u64);
+    Ok(())
+}

@@ -24,6 +24,9 @@ pub struct Review {
     rect: egui::Rect,
     row_rects: Vec<(usize, egui::Rect)>,
     last_scroll: f64,
+    diff: crate::diff_view::DiffView,
+    show_diff: bool,
+    restore_files: bool,
 }
 impl Review {
     pub fn new(request: ReviewRequest, subject: String, ctx: &egui::Context) -> Self {
@@ -44,6 +47,9 @@ impl Review {
             rect: egui::Rect::NOTHING,
             row_rects: vec![],
             last_scroll: f64::NEG_INFINITY,
+            diff: crate::diff_view::DiffView::default(),
+            show_diff: false,
+            restore_files: false,
         };
         view.retry(ctx);
         view
@@ -61,11 +67,14 @@ impl Review {
             Err(error) => self.error = Some(error),
         }
     }
-    fn metadata(&self, ui: &mut egui::Ui) {
+    fn metadata(&mut self, ui: &mut egui::Ui) {
         let Some(change) = self.selected.and_then(|row| self.rows.get(&row)) else {
             ui.weak("Select a file");
             return;
         };
+        if ui.button("View diff").clicked() {
+            self.show_diff = true;
+        }
         ui.weak("SELECTED FILE");
         ui.add_space(8.0);
         bounded_text::field(ui, &change.path, egui::FontId::proportional(14.0), 24.0);
@@ -149,10 +158,21 @@ impl Review {
                 break;
             }
         }
+        let narrow = ctx.content_rect().width() < 1040.0;
         let mut back = false;
         let mut reveal = false;
         if !ctx.wants_keyboard_input() {
             back = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+            if back && narrow && self.show_diff {
+                self.show_diff = false;
+                self.restore_files = true;
+                back = false;
+            }
+            if self.selected.is_some()
+                && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter))
+            {
+                self.show_diff = true;
+            }
             let page = self.page.saturating_sub(1).max(1) as isize;
             for (modifiers, key, step) in [
                 (egui::Modifiers::NONE, egui::Key::ArrowUp, -1),
@@ -165,7 +185,10 @@ impl Review {
                 (egui::Modifiers::ALT, egui::Key::V, -page),
                 (egui::Modifiers::NONE, egui::Key::PageDown, page),
             ] {
-                if ctx.input_mut(|i| i.consume_key(modifiers, key)) && self.count > 0 {
+                if !(narrow && self.show_diff)
+                    && ctx.input_mut(|i| i.consume_key(modifiers, key))
+                    && self.count > 0
+                {
                     self.selected = Some(
                         self.selected
                             .unwrap_or(0)
@@ -176,11 +199,32 @@ impl Review {
                 }
             }
         }
+        if !narrow || self.show_diff {
+            self.diff.select(
+                self.request.path.clone(),
+                self.selected.and_then(|row| self.rows.get(&row)).cloned(),
+                ctx,
+            );
+        }
         egui::TopBottomPanel::top("review-header")
             .exact_height(42.0)
             .show(ctx, |ui| {
                 ui.horizontal_centered(|ui| {
-                    back |= ui.button("Back to history").clicked();
+                    if ui
+                        .button(if narrow && self.show_diff {
+                            "Back to files"
+                        } else {
+                            "Back to history"
+                        })
+                        .clicked()
+                    {
+                        if narrow && self.show_diff {
+                            self.show_diff = false;
+                            self.restore_files = true;
+                        } else {
+                            back = true;
+                        }
+                    }
                     ui.separator();
                     ui.strong("Changed files");
                     if self.error.is_some() && ui.button("Retry").clicked() {
@@ -225,14 +269,19 @@ impl Review {
                 });
                 bounded_text::field(ui, text, egui::FontId::proportional(12.0), 18.0);
             });
-        if ctx.content_rect().width() >= 1040.0 {
-            egui::SidePanel::right("review-file-info")
-                .default_width(310.0)
-                .width_range(280.0..=400.0)
-                .show(ctx, |ui| self.metadata(ui));
+        if narrow && self.show_diff {
+            egui::CentralPanel::default().show(ctx, |ui| self.diff.draw(ui));
+            bounded_text::show_disclosure(ctx);
+            return back;
+        }
+        if !narrow {
+            egui::SidePanel::right("review-file-diff")
+                .default_width(640.0)
+                .width_range(400.0..=(ctx.content_rect().width() - 320.0).max(400.0))
+                .show(ctx, |ui| self.diff.draw(ui));
         } else {
             egui::TopBottomPanel::bottom("review-file-info-narrow")
-                .exact_height(145.0)
+                .exact_height(170.0)
                 .show(ctx, |ui| self.metadata(ui));
         }
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -250,6 +299,10 @@ impl Review {
                 return;
             }
             let mut scroll = egui::ScrollArea::vertical().id_salt("review-files");
+            if self.restore_files {
+                scroll = scroll.vertical_scroll_offset(self.offset);
+                self.restore_files = false;
+            }
             if reveal && let Some(row) = self.selected {
                 let height = ui.available_height();
                 let top = row as f32 * ROW;
@@ -343,6 +396,13 @@ impl Review {
             self.offset = result.state.offset.y;
             self.page = (result.inner_rect.height() / ROW).floor().max(1.0) as usize;
         });
+        if !narrow || self.show_diff {
+            self.diff.select(
+                self.request.path.clone(),
+                self.selected.and_then(|row| self.rows.get(&row)).cloned(),
+                ctx,
+            );
+        }
         if let Some(worker) = &self.worker {
             worker.request(self.viewport.clone());
         }

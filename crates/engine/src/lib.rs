@@ -77,4 +77,5 @@ mod tests {
     }
 }
 
+pub mod diff;
 pub mod review;

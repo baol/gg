@@ -6,5 +6,6 @@ license.workspace = true
 rust-version.workspace = true
 [dependencies]
 serde.workspace = true
+similar = "2.7"
 [lints]
 workspace = true

@@ -276,3 +276,49 @@ fn show_discovers_repo_streams_exact_files_and_rejects_invalid_parent() -> Resul
     }
     Ok(())
 }
+
+#[test]
+fn show_file_returns_diff_and_missing_path_uses_stderr() -> Result {
+    let repo = tempfile::tempdir()?;
+    git(repo.path(), &["init", "-b", "main"])?;
+    std::fs::write(repo.path().join("file"), "hello\nworld")?;
+    git(repo.path(), &["add", "."])?;
+    git(
+        repo.path(),
+        &[
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.org",
+            "commit",
+            "-m",
+            "root",
+        ],
+    )?;
+    let output = Command::new(env!("CARGO_BIN_EXE_git-good"))
+        .args(["show", "HEAD", "--file", "file"])
+        .current_dir(repo.path())
+        .output()?;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(json["diff"]["kind"], "text");
+    assert_eq!(json["diff"]["complete"], true);
+    let rows = json["diff"]["rows"].as_array().ok_or("missing rows")?;
+    assert!(rows.iter().any(|r| r["kind"] == "no_newline"));
+    assert!(
+        rows.iter()
+            .any(|r| r["new_line"] == 2 && r["text"] == "world")
+    );
+    let error = Command::new(env!("CARGO_BIN_EXE_git-good"))
+        .args(["show", "HEAD", "--file", "missing"])
+        .current_dir(repo.path())
+        .output()?;
+    assert!(!error.status.success());
+    assert!(error.stdout.is_empty());
+    assert!(!error.stderr.is_empty());
+    Ok(())
+}
