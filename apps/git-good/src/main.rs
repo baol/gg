@@ -1,0 +1,1051 @@
+mod avatars;
+mod bounded_text;
+mod details_view;
+mod history_view;
+#[cfg(test)]
+mod interaction_tests;
+mod state;
+mod stream;
+use eframe::egui;
+#[cfg(test)]
+use gg_engine::History;
+use gg_engine::HistoryRequest;
+use std::{ops::Range, path::PathBuf};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut args = std::env::args_os().skip(1);
+    let first = args.next();
+    if first.as_deref() == Some(std::ffi::OsStr::new("--help")) {
+        println!(
+            "gg · good git\n\ngit-good [PATH]\ngit-good history [PATH]   Print history as JSON\n\nBrowse all commits reachable from HEAD."
+        );
+        return Ok(());
+    }
+    let headless = first.as_deref() == Some(std::ffi::OsStr::new("history"));
+    let path = if headless { args.next() } else { first }
+        .map(PathBuf::from)
+        .unwrap_or(std::env::current_dir()?);
+    if args.next().is_some() {
+        return Err("Use git-good --help for usage".into());
+    }
+    if headless {
+        write_history_json(
+            &path,
+            &mut std::io::BufWriter::new(std::io::stdout().lock()),
+        )?;
+        return Ok(());
+    }
+    let mut window_size = egui::vec2(1120.0, 740.0);
+    if cfg!(debug_assertions)
+        && let Ok(size) = std::env::var("GG_WINDOW_SIZE")
+        && let Some((width, height)) = size.split_once('x')
+        && let (Ok(width), Ok(height)) = (width.parse::<f32>(), height.parse::<f32>())
+        && width.is_finite()
+        && height.is_finite()
+    {
+        window_size = egui::vec2(width.clamp(720.0, 3840.0), height.clamp(480.0, 2160.0));
+    }
+    eframe::run_native(
+        "gg · good git",
+        eframe::NativeOptions {
+            viewport: egui::ViewportBuilder::default()
+                .with_inner_size(window_size)
+                .with_min_inner_size([720.0, 480.0]),
+            ..Default::default()
+        },
+        Box::new(move |cc| {
+            cc.egui_ctx.set_visuals(egui::Visuals::dark());
+            let mut app = Browser::new(path);
+            app.load(&cc.egui_ctx);
+            Ok(Box::new(app))
+        }),
+    )?;
+    Ok(())
+}
+
+fn write_history_json(
+    path: &std::path::Path,
+    writer: &mut impl std::io::Write,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut session = gg_git::Session::open(&HistoryRequest { path: path.into() })?;
+    write!(
+        writer,
+        "{{\"path\":{},\"head\":{},\"commits\":[",
+        serde_json::to_string(&session.identity.path)?,
+        serde_json::to_string(&session.identity.head)?
+    )?;
+    let mut first = true;
+    while let Some(commit) = session.next_commit()? {
+        if !first {
+            write!(writer, ",")?;
+        }
+        serde_json::to_writer(&mut *writer, &commit)?;
+        first = false;
+    }
+    writeln!(
+        writer,
+        "],\"truncated\":false,\"shallow\":{}}}",
+        session.identity.shallow
+    )?;
+    writer.flush()?;
+    Ok(())
+}
+
+struct Browser {
+    path: String,
+    state: state::State,
+    pending: Option<stream::Worker>,
+    pending_filter_edit: bool,
+    worker: Option<stream::Worker>,
+    staged: Option<stream::Update>,
+    viewport: Range<usize>,
+    scroll_offset: f32,
+    page_rows: usize,
+    restore_offset: Option<f32>,
+    row_rects: Vec<(usize, egui::Rect)>,
+    deferred_input: Vec<egui::Event>,
+    scroll_to_selection: bool,
+    avatars: avatars::Avatars,
+    history_rect: egui::Rect,
+    details_rect: egui::Rect,
+    last_scroll: f64,
+    edit_path: bool,
+    details_visible: bool,
+    narrow_details: bool,
+}
+
+impl Browser {
+    fn new(path: PathBuf) -> Self {
+        Self {
+            path: path.to_string_lossy().into_owned(),
+            state: state::State::default(),
+            pending: None,
+            pending_filter_edit: false,
+            worker: None,
+            staged: None,
+            viewport: 0..64,
+            scroll_offset: 0.0,
+            page_rows: 1,
+            restore_offset: None,
+            row_rects: Vec::new(),
+            deferred_input: Vec::new(),
+            scroll_to_selection: false,
+            avatars: avatars::Avatars::default(),
+            history_rect: egui::Rect::NOTHING,
+            details_rect: egui::Rect::NOTHING,
+            last_scroll: f64::NEG_INFINITY,
+            edit_path: false,
+            details_visible: true,
+            narrow_details: cfg!(debug_assertions) && std::env::var_os("GG_DETAILS").is_some(),
+        }
+    }
+
+    fn load(&mut self, ctx: &egui::Context) {
+        let path = PathBuf::from(&self.path);
+        self.state.begin(path.clone());
+        let request = stream::Request {
+            revision: self.state.filter_revision,
+            query: self.state.query.clone(),
+            selected_id: self.state.selected.clone(),
+            anchor_id: self
+                .state
+                .rows
+                .get(&((self.scroll_offset / history_view::ROW_HEIGHT) as usize))
+                .map(|c| c.id.clone()),
+            ..Default::default()
+        };
+        self.staged = None;
+        self.pending_filter_edit = false;
+        match stream::Worker::start(
+            path,
+            request,
+            self.state.history.as_ref().map(|h| h.path.clone()),
+            ctx.clone(),
+        ) {
+            Ok(worker) => self.pending = Some(worker),
+            Err(error) => self.state.error = Some(error),
+        }
+    }
+
+    fn prepare_input(&mut self, input: &mut egui::RawInput) {
+        // egui uses the frame's final pointer position for scrollbar release.
+        // Keep later motion in the following frame, preserving event order.
+        let mut events = std::mem::take(&mut self.deferred_input);
+        events.append(&mut input.events);
+        if let Some(index) = events.iter().enumerate().find_map(|(i, event)| {
+            (matches!(event, egui::Event::PointerButton { pressed: false, .. })
+                && events[i + 1..].iter().any(|event| {
+                    matches!(
+                        event,
+                        egui::Event::PointerMoved(_) | egui::Event::PointerGone
+                    )
+                }))
+            .then_some(i)
+        }) {
+            self.deferred_input = events.split_off(index + 1);
+        }
+        input.events = events;
+    }
+
+    fn draw(&mut self, ctx: &egui::Context) {
+        self.state.viewport = self.viewport.clone();
+        let (hovering_history, interacting, now) = ctx.input(|i| {
+            (
+                i.pointer.hover_pos().is_some_and(|p| {
+                    self.history_rect.contains(p) || self.details_rect.contains(p)
+                }),
+                i.pointer.any_down()
+                    || i.raw_scroll_delta != egui::Vec2::ZERO
+                    || i.smooth_scroll_delta != egui::Vec2::ZERO,
+                i.time,
+            )
+        });
+        if interacting {
+            self.last_scroll = now;
+        }
+        if now - self.last_scroll <= 0.2 {
+            ctx.request_repaint_after(std::time::Duration::from_millis(200));
+        }
+        let safe = !hovering_history && !interacting && now - self.last_scroll > 0.2;
+        let hovering_scrollbar = ctx.input(|i| i.pointer.hover_pos()).is_some_and(|p| {
+            self.history_rect.contains(p) && p.x >= self.history_rect.right() - 18.0
+        });
+        let extent_safe = !interacting && !hovering_scrollbar && now - self.last_scroll > 0.2;
+        let pinned = ctx.input(|i| i.pointer.hover_pos()).and_then(|p| {
+            self.row_rects
+                .iter()
+                .find(|(_, rect)| rect.contains(p))
+                .map(|(row, _)| *row)
+        });
+        if let Some(result) = self.pending.as_ref().and_then(stream::Worker::poll) {
+            match result {
+                Ok(update) if self.pending_filter_edit && !self.state.is_current(&update) => {}
+                Ok(update) => self.staged = Some(update),
+                Err(error) => {
+                    self.state.error = Some(error);
+                    self.pending = None;
+                    self.staged = None;
+                }
+            }
+        }
+        if self.pending.is_some()
+            && (safe || self.state.history.is_none())
+            && self.staged.as_ref().is_some_and(|u| {
+                u.request.anchor_id.is_none()
+                    || u.anchor_row.is_some()
+                    || u.complete
+                    || u.error.is_some()
+            })
+            && let Some(update) = self.staged.take()
+        {
+            self.restore_offset = Some(
+                update
+                    .anchor_row
+                    .map(|row| {
+                        row as f32 * history_view::ROW_HEIGHT
+                            + self.scroll_offset % history_view::ROW_HEIGHT
+                    })
+                    .unwrap_or(0.0),
+            );
+            self.state.accept(update, true, true, pinned);
+            self.worker = self.pending.take();
+            self.pending_filter_edit = false;
+            self.viewport = 0..64;
+            self.scroll_to_selection = false;
+        }
+        if self.pending.is_none() {
+            if let Some(result) = self.worker.as_ref().and_then(stream::Worker::poll) {
+                match result {
+                    Ok(update) if !self.state.is_current(&update) => {}
+                    Ok(update) => {
+                        if safe {
+                            self.staged = None;
+                            if self.state.selected_row.is_none() && update.selection.is_some() {
+                                self.scroll_to_selection = true;
+                            }
+                            self.state.accept(update, false, true, pinned);
+                        } else if self.state.is_current(&update) {
+                            // Rows can fill off-pointer; counts and selection wait for a safe boundary.
+                            self.staged = Some(update);
+                        }
+                    }
+                    Err(error) => self.state.error = Some(error),
+                }
+            }
+            if !safe && let Some(update) = &self.staged {
+                self.state.accept(update.clone(), false, false, pinned);
+            }
+            if extent_safe
+                && let Some(update) = &self.staged
+                && self.state.is_current(update)
+            {
+                self.state.count = update.count;
+                self.state.scanned = update.scanned;
+                self.state.finished = update.complete;
+                if self.state.requested.is_none() {
+                    self.state.error = update.error.clone();
+                }
+            }
+            if safe && let Some(update) = self.staged.take() {
+                if self.state.selected_row.is_none() && update.selection.is_some() {
+                    self.scroll_to_selection = true;
+                }
+                self.state.accept(update, false, true, pinned);
+            }
+        }
+        self.avatars.poll(
+            ctx,
+            !hovering_history && !interacting && now - self.last_scroll > 0.2,
+        );
+        let filter_id = egui::Id::new("history-filter");
+        let focus_filter = ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::F));
+        if focus_filter {
+            self.narrow_details = false;
+            ctx.memory_mut(|m| m.request_focus(filter_id));
+        }
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::R)) {
+            self.load(ctx);
+        }
+        let narrow = ctx.content_rect().width() < 1040.0;
+        if !ctx.wants_keyboard_input() {
+            if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+                self.narrow_details = false;
+            }
+            if self.state.selected.is_some()
+                && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter))
+            {
+                if narrow {
+                    self.narrow_details = true;
+                } else {
+                    self.details_visible = true;
+                }
+            }
+            let page = self.page_rows.saturating_sub(1).max(1) as i32;
+            for (modifiers, key, distance) in [
+                (egui::Modifiers::NONE, egui::Key::ArrowUp, -1),
+                (egui::Modifiers::NONE, egui::Key::ArrowDown, 1),
+                (egui::Modifiers::NONE, egui::Key::K, -1),
+                (egui::Modifiers::NONE, egui::Key::J, 1),
+                (egui::Modifiers::CTRL, egui::Key::P, -1),
+                (egui::Modifiers::CTRL, egui::Key::N, 1),
+                (egui::Modifiers::NONE, egui::Key::PageUp, -page),
+                (egui::Modifiers::NONE, egui::Key::PageDown, page),
+                (egui::Modifiers::ALT, egui::Key::V, -page),
+            ] {
+                if !(narrow && self.narrow_details)
+                    && ctx.input_mut(|i| i.consume_key(modifiers, key))
+                    && self.state.count > 0
+                {
+                    if self.worker.is_some() {
+                        let row = self.state.selected_row.unwrap_or(0);
+                        let next = row
+                            .saturating_add_signed(distance as isize)
+                            .min(self.state.count - 1);
+                        self.state.select_row(next);
+                    } else {
+                        self.state.move_selection(distance);
+                    }
+                    self.scroll_to_selection = true;
+                }
+            }
+            if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::C))
+                && let Some(id) = &self.state.selected
+            {
+                ctx.copy_text(id.clone());
+            }
+        }
+        egui::TopBottomPanel::top("toolbar")
+            .exact_height(42.0)
+            .show(ctx, |ui| {
+                ui.add_space(5.0);
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("gg").size(20.0).strong());
+                    ui.separator();
+                    let identity_width = (ui.available_width() - 244.0).max(80.0);
+                    let (identity, path) = if let Some(history) = &self.state.history {
+                        (
+                            format!(
+                                "{}  ·  {}",
+                                history
+                                    .path
+                                    .file_name()
+                                    .unwrap_or_default()
+                                    .to_string_lossy(),
+                                if history.shallow {
+                                    format!("{} · shallow", history.head)
+                                } else {
+                                    history.head.clone()
+                                }
+                            ),
+                            history.path.display().to_string(),
+                        )
+                    } else {
+                        ("Open a repository".into(), self.path.clone())
+                    };
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(identity_width, 26.0),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            ui.set_min_width(identity_width);
+                            bounded_text::field(
+                                ui,
+                                &format!("{identity}  ·  {path}"),
+                                egui::FontId::proportional(13.0),
+                                26.0,
+                            );
+                        },
+                    );
+                    if ui
+                        .add_sized(
+                            [62.0, 26.0],
+                            egui::Button::new("Open…").selected(self.edit_path),
+                        )
+                        .clicked()
+                    {
+                        self.edit_path = !self.edit_path;
+                    }
+                    if ui
+                        .add_enabled(
+                            self.pending.is_none(),
+                            egui::Button::new("Refresh").min_size(egui::vec2(66.0, 26.0)),
+                        )
+                        .clicked()
+                    {
+                        self.load(ctx);
+                    }
+                    let shown = if narrow {
+                        self.narrow_details
+                    } else {
+                        self.details_visible
+                    };
+                    if ui
+                        .add_sized([64.0, 26.0], egui::Button::new("Details").selected(shown))
+                        .clicked()
+                    {
+                        if narrow {
+                            self.narrow_details = !self.narrow_details;
+                        } else {
+                            self.details_visible = !self.details_visible;
+                        }
+                    }
+                });
+            });
+        if self.edit_path {
+            egui::TopBottomPanel::top("open-repository").show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    let response = ui.add(
+                        egui::TextEdit::singleline(&mut self.path)
+                            .desired_width((ui.available_width() - 80.0).max(100.0))
+                            .hint_text("Repository path"),
+                    );
+                    let enter =
+                        response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    if ui
+                        .add_enabled(self.pending.is_none(), egui::Button::new("Open"))
+                        .clicked()
+                        || enter
+                    {
+                        self.load(ctx);
+                        self.edit_path = false;
+                    }
+                });
+            });
+        }
+        egui::TopBottomPanel::bottom("status").exact_height(25.0).show(ctx, |ui| {
+            let (message, color) = if let Some(error) = &self.state.error {
+                (format!("{}{}", if self.state.history.is_some() { "Previous results · " } else { "" }, error), ui.visuals().error_fg_color)
+            } else if self.pending.is_some() {
+                (format!("Reading {}{}", self.state.requested.as_deref().unwrap_or(std::path::Path::new(".")).display(), if self.state.history.is_some() { " · showing previous results" } else { "" }), ui.visuals().text_color())
+            } else if !self.state.finished && self.worker.is_some() {
+                (format!("{} · {} commits examined", if self.state.query.is_empty() { "Counting history" } else { "Searching history" }, self.state.scanned), ui.visuals().text_color())
+            } else {
+                ("↑↓ / j k: select   ·   PgUp/PgDn: page   ·   Enter: details   ·   Esc: history   ·   Ctrl/Cmd+F: filter   ·   Ctrl/Cmd+C: copy ID".into(), ui.visuals().weak_text_color())
+            };
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 18.0), egui::Sense::hover());
+            bounded_text::paint(ui, rect, &message, egui::FontId::proportional(11.0), color);
+        });
+        if !narrow || !self.narrow_details {
+            egui::TopBottomPanel::top("filter")
+                .exact_height(40.0)
+                .show(ctx, |ui| {
+                    ui.add_space(5.0);
+                    ui.horizontal(|ui| {
+                        ui.strong("History");
+                        let count = format!(
+                            "{}{}",
+                            self.state.count,
+                            if self.state.finished { "" } else { "+" }
+                        );
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(90.0, 20.0),
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| {
+                                ui.set_min_width(90.0);
+                                bounded_text::field(
+                                    ui,
+                                    &count,
+                                    egui::FontId::proportional(12.0),
+                                    20.0,
+                                );
+                            },
+                        )
+                        .response
+                        .on_hover_text(
+                            "Discovered matches; + means counting or searching is in progress.",
+                        );
+                        let response = ui.add(
+                            egui::TextEdit::singleline(&mut self.state.query)
+                                .id(filter_id)
+                                .hint_text("Filter by message, author, or ID")
+                                .desired_width(ui.available_width()),
+                        );
+                        if response.changed() {
+                            if self.worker.is_some() || self.pending.is_some() {
+                                self.state.start_filter();
+                                self.pending_filter_edit = self.pending.is_some();
+                                self.staged = None;
+                                self.viewport = 0..64;
+                            } else {
+                                self.state.reconcile_selection();
+                            }
+                            self.scroll_to_selection = true;
+                        }
+                        if response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                            response.surrender_focus();
+                        }
+                    });
+                });
+        }
+        self.details_rect = egui::Rect::NOTHING;
+        if !narrow && self.details_visible {
+            let details = egui::SidePanel::right("details")
+                .default_width(330.0)
+                .width_range(300.0..=(ctx.content_rect().width() - 700.0).max(300.0))
+                .frame(egui::Frame::side_top_panel(&ctx.style()).inner_margin(12.0))
+                .show(ctx, |ui| {
+                    ui.weak("DETAILS");
+                    ui.add_space(8.0);
+                    let commit = self.state.displayed_details();
+                    details_view::show(ui, commit, self.state.details.is_none(), &mut self.avatars);
+                });
+            self.details_rect = details.response.rect;
+        }
+        egui::CentralPanel::default().show(ctx, |ui| {
+            if narrow && self.narrow_details {
+                self.history_rect = egui::Rect::NOTHING;
+                self.details_rect = ui.available_rect_before_wrap();
+                if ui.button("Back to history").clicked() {
+                    self.narrow_details = false;
+                }
+                ui.add_space(8.0);
+                let commit = self.state.displayed_details();
+                details_view::show(ui, commit, self.state.details.is_none(), &mut self.avatars);
+                return;
+            }
+            if self.state.history.is_some() {
+                if self.state.count == 0 {
+                    ui.label(if !self.state.finished {
+                        "Searching history..."
+                    } else if self.state.query.is_empty() {
+                        "Ready for the first commit"
+                    } else {
+                        "No commits match this filter."
+                    });
+                }
+                self.history_rect = ui.available_rect_before_wrap();
+                egui::ScrollArea::horizontal()
+                    .id_salt("history-columns")
+                    .show(ui, |ui| {
+                        ui.set_min_width(history_view::MIN_WIDTH);
+                        history_view::header(ui);
+                        let mut scroll = egui::ScrollArea::vertical().id_salt("history-rows");
+                        if self.scroll_to_selection
+                            && let Some(index) = self.state.selected_row
+                        {
+                            let height = ui.available_height();
+                            let top = index as f32 * history_view::ROW_HEIGHT;
+                            let bottom = top + history_view::ROW_HEIGHT;
+                            let offset = self.scroll_offset;
+                            let reveal = if top < offset {
+                                top
+                            } else if bottom > offset + height {
+                                bottom - height
+                            } else {
+                                offset
+                            };
+                            let maximum = (self.state.count as f32 * history_view::ROW_HEIGHT
+                                - height)
+                                .max(0.0);
+                            scroll = scroll.vertical_scroll_offset(reveal.clamp(0.0, maximum));
+                        }
+                        if let Some(offset) = self.restore_offset.take() {
+                            scroll = scroll.vertical_scroll_offset(offset);
+                        }
+                        let previous_spacing = ui.spacing().item_spacing.y;
+                        ui.spacing_mut().item_spacing.y = 0.0;
+                        let scroll_output = scroll.show_rows(
+                            ui,
+                            history_view::ROW_HEIGHT,
+                            self.state.count,
+                            |ui, rows| {
+                                self.viewport =
+                                    rows.start.saturating_sub(24)..rows.end.saturating_add(24);
+                                self.row_rects.clear();
+                                for row in rows {
+                                    if let Some(commit) = self.state.rows.get(&row) {
+                                        let response = ui
+                                            .push_id(&commit.id, |ui| {
+                                                history_view::row(
+                                                    ui,
+                                                    commit,
+                                                    Some(&commit.id)
+                                                        == self.state.selected.as_ref(),
+                                                    &mut self.avatars,
+                                                )
+                                            })
+                                            .inner;
+                                        self.row_rects.push((row, response.rect));
+                                        if response.clicked() {
+                                            self.state.select_row(row);
+                                            if self.worker.is_none() {
+                                                self.state.details =
+                                                    self.state.rows.get(&row).cloned();
+                                            }
+                                        }
+                                        if response.double_clicked() && narrow {
+                                            self.narrow_details = true;
+                                        }
+                                    } else {
+                                        let (rect, _) = ui.allocate_exact_size(
+                                            egui::vec2(
+                                                ui.available_width(),
+                                                history_view::ROW_HEIGHT,
+                                            ),
+                                            egui::Sense::hover(),
+                                        );
+                                        self.row_rects.push((row, rect));
+                                        ui.painter().text(
+                                            rect.left_center() + egui::vec2(30.0, 0.0),
+                                            egui::Align2::LEFT_CENTER,
+                                            "Loading...",
+                                            egui::FontId::proportional(12.0),
+                                            ui.visuals().weak_text_color(),
+                                        );
+                                    }
+                                }
+                            },
+                        );
+                        self.scroll_offset = scroll_output.state.offset.y;
+                        self.page_rows = (scroll_output.inner_rect.height()
+                            / history_view::ROW_HEIGHT)
+                            .floor()
+                            .max(1.0) as usize;
+                        ui.spacing_mut().item_spacing.y = previous_spacing;
+                    });
+            } else if self.pending.is_some() {
+                ui.label("Reading repository history…");
+            } else {
+                ui.label("Choose Open… to enter a repository path.");
+            }
+        });
+        if self.pending_filter_edit
+            && let Some(pending) = &self.pending
+            && !pending.request(stream::Request {
+                revision: self.state.filter_revision,
+                query: self.state.query.clone(),
+                ..Default::default()
+            })
+        {
+            ctx.request_repaint();
+        }
+        if self.pending.is_none()
+            && let Some(worker) = &self.worker
+            && !worker.request(stream::Request {
+                revision: self.state.filter_revision,
+                query: self.state.query.clone(),
+                range: self.viewport.clone(),
+                selected_id: self.state.selected.clone(),
+                selected_row: self.state.selected_row,
+                anchor_id: None,
+            })
+        {
+            ctx.request_repaint();
+        }
+        bounded_text::show_disclosure(ctx);
+        if !self.deferred_input.is_empty() {
+            ctx.request_repaint();
+        }
+        self.scroll_to_selection = false;
+    }
+}
+
+impl eframe::App for Browser {
+    fn raw_input_hook(&mut self, _: &egui::Context, input: &mut egui::RawInput) {
+        self.prepare_input(input);
+    }
+
+    fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
+        self.draw(ctx);
+        #[cfg(debug_assertions)]
+        if let Some(path) = std::env::var_os("GG_SCREENSHOT") {
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+            if self.pending.is_none() {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));
+                ctx.request_repaint();
+            }
+            let events = ctx.input(|input| input.events.clone());
+            {
+                for event in &events {
+                    if let egui::Event::Screenshot { image, .. } = event {
+                        use std::io::Write;
+                        let save = || -> std::io::Result<()> {
+                            let mut file = std::fs::File::create(&path)?;
+                            writeln!(file, "P6\n{} {}\n255", image.width(), image.height())?;
+                            for pixel in &image.pixels {
+                                file.write_all(&pixel.to_array()[..3])?;
+                            }
+                            Ok(())
+                        };
+                        if let Err(error) = save() {
+                            eprintln!("Screenshot: {error}");
+                        }
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn native_graphics_backends_are_enabled() {
+        assert!(!wgpu::Instance::enabled_backend_features().is_empty());
+    }
+    fn key(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
+        egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        }
+    }
+
+    #[test]
+    fn keyboard_selects_offscreen_commit_and_copies_exact_id() {
+        let ctx = egui::Context::default();
+        let mut app = Browser::new(".".into());
+        app.state.history = Some(History {
+            path: ".".into(),
+            head: "main".into(),
+            truncated: false,
+            shallow: false,
+            commits: (0..100)
+                .map(|i| gg_engine::Commit {
+                    id: format!("commit-{i}"),
+                    parents: vec![],
+                    author: "Ada".into(),
+                    email: String::new(),
+                    time: String::new(),
+                    message: format!("Commit {i}"),
+                })
+                .collect(),
+        });
+        if let Some(history) = app.state.history.take() {
+            app.state.complete(0, Ok(history));
+        }
+        app.state.selected = Some("commit-98".into());
+        app.state.reconcile_selection();
+        let _ = ctx.run(egui::RawInput::default(), |ctx| app.draw(ctx));
+        let output = ctx.run(
+            egui::RawInput {
+                events: vec![
+                    key(egui::Key::ArrowDown, egui::Modifiers::NONE),
+                    key(egui::Key::C, egui::Modifiers::COMMAND),
+                ],
+                ..Default::default()
+            },
+            |ctx| app.draw(ctx),
+        );
+        assert_eq!(app.state.selected.as_deref(), Some("commit-99"));
+        assert!(output.shapes.iter().any(|shape| matches!(&shape.shape,
+            egui::epaint::Shape::Text(text) if text.galley.job.text == "Commit 99")));
+
+        assert!(
+            output.platform_output.commands.iter().any(
+                |cmd| matches!(cmd, egui::OutputCommand::CopyText(text) if text == "commit-99")
+            )
+        );
+        assert!(!output.shapes.is_empty());
+    }
+
+    #[test]
+    fn filter_focus_keeps_arrow_keys_in_the_editor() {
+        let ctx = egui::Context::default();
+        let mut app = Browser::new(".".into());
+        let _ = ctx.run(egui::RawInput::default(), |ctx| app.draw(ctx));
+        let _ = ctx.run(
+            egui::RawInput {
+                events: vec![key(egui::Key::F, egui::Modifiers::COMMAND)],
+                ..Default::default()
+            },
+            |ctx| app.draw(ctx),
+        );
+        assert!(ctx.memory(|m| m.has_focus(egui::Id::new("history-filter"))));
+        let _ = ctx.run(
+            egui::RawInput {
+                events: vec![key(egui::Key::Escape, egui::Modifiers::NONE)],
+                ..Default::default()
+            },
+            |ctx| app.draw(ctx),
+        );
+        assert!(!ctx.memory(|m| m.has_focus(egui::Id::new("history-filter"))));
+    }
+
+    #[test]
+    fn renders_empty_error_and_filtered_snapshots() {
+        let ctx = egui::Context::default();
+        let mut app = Browser::new(PathBuf::from("."));
+        for state in 0..3 {
+            app.state.history = Some(History {
+                path: ".".into(),
+                head: "main".into(),
+                commits: if state == 2 {
+                    vec![gg_engine::Commit {
+                        id: "abc123".into(),
+                        parents: vec![],
+                        author: "Ada".into(),
+                        email: "ada@example.org".into(),
+                        time: "2026-01-01".into(),
+                        message: "First commit".into(),
+                    }]
+                } else {
+                    vec![]
+                },
+                truncated: false,
+                shallow: false,
+            });
+            app.state.error =
+                (state == 1).then(|| "Could not read repository. Open again to retry.".into());
+            app.state.selected = Some("abc123".into());
+            app.state.query = "missing".into();
+            let output = ctx.run(egui::RawInput::default(), |ctx| app.draw(ctx));
+            assert!(!output.shapes.is_empty());
+        }
+    }
+    fn layout_fixture() -> Browser {
+        let mut app = Browser::new("/projects/a-very-long-repository-name".into());
+        app.state.history = Some(History { path: "/projects/a-very-long-repository-name".into(), head: "feature/a-long-branch-name".into(), truncated: false, shallow: false,
+            commits: (0..100).map(|i| gg_engine::Commit { id: format!("{i:040x}"), parents: vec!["b".repeat(40)],
+                author: "An author with a very long display name".into(), email: "a-long-address@example.org".into(),
+                time: "2026-10-17 12:30:00 +0200".into(), message: format!("Subject {i}\n\nA detailed commit message that wraps within the details pane.") }).collect() });
+        if let Some(history) = app.state.history.take() {
+            app.state.complete(0, Ok(history));
+        }
+        app.state.selected = Some(format!("{:040x}", 50));
+        app.state.reconcile_selection();
+        app
+    }
+
+    pub(super) fn frame_input(width: f32, height: f32, events: Vec<egui::Event>) -> egui::RawInput {
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(width, height),
+            )),
+            events,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn compact_layout_preserves_table_width_and_disjoint_panes() {
+        for (width, height) in [(720.0, 480.0), (1120.0, 740.0), (1600.0, 900.0)] {
+            for scale in [1.0, 2.0] {
+                let ctx = egui::Context::default();
+                ctx.set_pixels_per_point(scale);
+                let mut app = layout_fixture();
+                // Settle panel geometry and font layout before checking the complete frame.
+                let _ = ctx.run(frame_input(width, height, vec![]), |ctx| app.draw(ctx));
+                let output = ctx.run(frame_input(width, height, vec![]), |ctx| app.draw(ctx));
+                assert!(app.history_rect.width() >= history_view::MIN_WIDTH);
+                assert!(app.history_rect.top() <= 100.0);
+                assert!(app.history_rect.bottom() <= height - 20.0);
+                if width >= 1040.0 {
+                    assert!(!app.history_rect.intersects(app.details_rect));
+                    assert!(app.details_rect.right() <= width);
+                } else {
+                    assert_eq!(app.details_rect, egui::Rect::NOTHING);
+                }
+                for label in ["Open…", "Refresh", "Details"] {
+                    let shape = output.shapes.iter().find_map(|shape| match &shape.shape {
+                        egui::epaint::Shape::Text(text) if text.galley.job.text == label => {
+                            Some(text)
+                        }
+                        _ => None,
+                    });
+                    assert!(shape.is_some_and(
+                        |text| text.pos.x >= 0.0 && text.pos.x + text.galley.size().x <= width
+                    ));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn incoming_count_waits_for_wheel_settling_and_preserves_hovered_content_and_offset() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        let _ = ctx.run(frame_input(1120.0, 740.0, vec![]), |ctx| app.draw(ctx));
+        let pointer = app.row_rects[5].1.center();
+        app.staged = Some(stream::Update {
+            request: stream::Request {
+                selected_id: app.state.selected.clone(),
+                selected_row: app.state.selected_row,
+                ..Default::default()
+            },
+            anchor_row: None,
+            identity: History {
+                path: "repo".into(),
+                head: "main".into(),
+                commits: vec![],
+                truncated: false,
+                shallow: false,
+            },
+            query: String::new(),
+            count: 100_000,
+            scanned: 100_000,
+            complete: true,
+            rows: vec![],
+            selection: None,
+            error: None,
+        });
+        let mut input = frame_input(
+            1120.0,
+            740.0,
+            vec![
+                egui::Event::PointerMoved(pointer),
+                egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    delta: egui::vec2(0.0, -52.0),
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+        input.time = Some(1.0);
+        let _ = ctx.run(input, |ctx| app.draw(ctx));
+        assert_eq!(app.state.count, 100);
+        for i in 1..20 {
+            let mut input = frame_input(1120.0, 740.0, vec![]);
+            input.time = Some(1.0 + i as f64 * 0.1);
+            let _ = ctx.run(input, |ctx| app.draw(ctx));
+        }
+        assert_eq!(app.state.count, 100_000);
+        let offset = app.scroll_offset;
+        let mut input = frame_input(1120.0, 740.0, vec![egui::Event::PointerGone]);
+        input.time = Some(4.0);
+        let _ = ctx.run(input, |ctx| app.draw(ctx));
+        assert_eq!(app.state.count, 100_000);
+        assert!((app.scroll_offset - offset).abs() < 0.1);
+    }
+
+    #[test]
+    fn narrow_details_returns_to_the_same_selected_history_row() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        app.scroll_to_selection = true;
+        let _ = ctx.run(frame_input(720.0, 480.0, vec![]), |ctx| app.draw(ctx));
+        let selected = app.state.selected.clone();
+        let details = ctx.run(
+            frame_input(
+                720.0,
+                480.0,
+                vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
+            ),
+            |ctx| app.draw(ctx),
+        );
+        assert!(app.narrow_details);
+        assert_eq!(app.history_rect, egui::Rect::NOTHING);
+        // Subject appears once in details; the message body does not repeat it.
+        assert_eq!(details.shapes.iter().filter(|shape| matches!(&shape.shape, egui::epaint::Shape::Text(text) if text.galley.job.text == "Subject 50")).count(), 1);
+        let history = ctx.run(
+            frame_input(
+                720.0,
+                480.0,
+                vec![key(egui::Key::Escape, egui::Modifiers::NONE)],
+            ),
+            |ctx| app.draw(ctx),
+        );
+        assert!(!app.narrow_details);
+        assert_eq!(app.state.selected, selected);
+        assert!(history.shapes.iter().any(|shape| matches!(&shape.shape, egui::epaint::Shape::Text(text) if text.galley.job.text == "Subject 50")));
+    }
+}
+
+#[cfg(test)]
+mod performance {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    #[ignore = "set GG_TEST_REPOSITORY to a packed 100,000-commit fixture and GG_OFFLINE=1"]
+    fn packed_history_first_frame_and_deep_navigation() -> Result<(), Box<dyn std::error::Error>> {
+        let path =
+            std::env::var_os("GG_TEST_REPOSITORY").ok_or("GG_TEST_REPOSITORY is required")?;
+        let ctx = egui::Context::default();
+        let mut app = Browser::new(path.into());
+        let started = Instant::now();
+        app.load(&ctx);
+        let mut first = None;
+        let mut frames = Vec::new();
+        while !app.state.finished {
+            let before = Instant::now();
+            let _ = ctx.run(super::tests::frame_input(1120.0, 740.0, vec![]), |ctx| {
+                app.draw(ctx)
+            });
+            frames.push(before.elapsed());
+            if app.state.count > 0 && first.is_none() {
+                first = Some(started.elapsed());
+            }
+            assert!(app.state.error.is_none(), "{:?}", app.state.error);
+            assert!(started.elapsed() < Duration::from_secs(60));
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(app.state.count, 100_000);
+        let complete = started.elapsed();
+        for row in [99_999, 0] {
+            app.state.select_row(row);
+            app.scroll_to_selection = true;
+            let requested = Instant::now();
+            loop {
+                let _ = ctx.run(super::tests::frame_input(1120.0, 740.0, vec![]), |ctx| {
+                    app.draw(ctx)
+                });
+                if app.state.rows.contains_key(&row)
+                    && app
+                        .state
+                        .details
+                        .as_ref()
+                        .is_some_and(|c| Some(&c.id) == app.state.selected.as_ref())
+                {
+                    break;
+                }
+                assert!(requested.elapsed() < Duration::from_secs(10));
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            assert!(app.state.rows.len() <= stream::CACHE_ROWS);
+        }
+        frames.sort();
+        eprintln!(
+            "First rows: {:?}; complete: {:?}; in-memory frame p95: {:?}; retained rows: {}",
+            first,
+            complete,
+            frames[frames.len() * 95 / 100],
+            app.state.rows.len()
+        );
+        Ok(())
+    }
+}

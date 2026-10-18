@@ -1,0 +1,13 @@
+[package]
+name = "gg-git"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+[dependencies]
+gg-engine.workspace = true
+gix = { version = "0.89", default-features = false, features = ["sha1", "sha256"] }
+[dev-dependencies]
+tempfile = "3"
+[lints]
+workspace = true
