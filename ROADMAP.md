@@ -1,22 +1,20 @@
 # Roadmap
 
-Purpose: define milestone outcomes, priorities, and release gates.
+Purpose: define milestone outcomes and release gates.
 
-CLI-first usage: [README](README.md). Each milestone delivers terminal commands and a native view of the same engine behavior.
+Each milestone delivers CLI and native views of shared engine behavior. Current work: [plan](docs/plan.md).
 
-| Milestone | Workflow | Acceptance |
-| --- | --- | --- |
-| M0 · Baseline | Browse history | Accepted browser workflow; [evidence](docs/verification.md) |
-| M1 · Current | Review commits | File list, parent selection, text diffs, binary summaries, bounded loading |
-| M2 | Commit work | Status, file/hunk staging, unstage, commit, mutation preconditions |
-| M3 | Navigate branches | Graph, refs, tags, switch/create, pagination, cancellation |
-| M4 | Synchronize | Clone, fetch, push, tracking, credentials, progress |
-| M5 | Integrate | Merge, resolve conflicts, cherry-pick, revert, stash, recovery |
-| M6 | Refine history | Rebase, reorder, squash, amend, reflog recovery |
-| M7 | Expand workflows | Worktrees, submodules, LFS, signing, file history, blame, image diffs |
+| Milestone | Outcome |
+| --- | --- |
+| M0 · Baseline | Browse and search history; [evidence](docs/verification.md) |
+| M1 · Current | Review files and diffs against a chosen parent |
+| M2 | Status, file/hunk staging, commits, mutation preconditions |
+| M3 | Graph, refs, tags, branch navigation and creation |
+| M4 | Clone, fetch, push, tracking, credentials, progress |
+| M5 | Merge, conflicts, cherry-pick, revert, stash, recovery |
+| M6 | Rebase, reorder, squash, amend, reflog recovery |
+| M7 | Worktrees, submodules, LFS, signing, file history, blame, image diffs |
 
-## Release gates
+Target Linux (Wayland/X11), macOS, and Windows on x86_64 and arm64, supported by native builds and hardware checks.
 
-Target Linux (Wayland/X11), macOS, and Windows, with x86_64 and arm64 coverage added through native builds and hardware checks. Hosted CI starts with its available architectures.
-
-Publish previews after browser performance and platform runtime acceptance. Publish a daily-use release after M2, native packaging, and recovery documentation for mutations. Check keyboard access, accessibility, scaling, clipboard, and performance at each milestone. Evidence: [verification](docs/verification.md).
+Preview releases require browser performance and platform runtime acceptance. Daily-use releases also require M2, native packaging, and mutation recovery documentation. Check keyboard access, accessibility, scaling, clipboard, and performance at each milestone. Outstanding gates: [verification](docs/verification.md#preview-acceptance-pending).

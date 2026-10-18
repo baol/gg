@@ -2,7 +2,7 @@
 
 Purpose: map M0 behavior to executable protection and identify remaining coverage.
 
-Contracts live in [architecture](architecture.md); results live in [verification](verification.md). Test names below identify behavior, not implementation structure. Extend this baseline with every accepted interaction and reproduced defect.
+Contracts: [architecture](architecture.md). Results: [verification](verification.md). Extend coverage for each accepted interaction and defect.
 
 ## Automated protection
 
@@ -29,10 +29,8 @@ Contracts live in [architecture](architecture.md); results live in [verification
 - Implement and test the specified external-change refresh indication; explicit refresh and pinned history are already covered.
 - Complete the [preview acceptance checks](verification.md#preview-acceptance-pending). Native integration and performance evidence complement in-memory tests.
 
-## Gate for each increment
+## Increment gate
 
-Run the full workspace tests, formatting, and Clippy checks in [development](development.md). CI runs these on Linux, macOS, and Windows. Keep fixtures offline and independent of user Git configuration.
+Run the full [development checks](development.md) for every increment. Use offline fixtures independent of user Git configuration. Exercise production worker/input paths; retain scenarios through refactoring and update expectations with explicit contract decisions.
 
-Exercise production worker/input paths for changed behavior. Preserve the old scenario when refactoring; change its expectation only with an explicit contract decision. Every bug fix starts with a failing regression. Inspect native rendering when layout or input handling changes.
-
-M1 adds review-context tests before connecting new controls: history selection/filter/pixel anchor survive Review/Back; review shortcuts affect the active view; late review results preserve history identity. Keep history and review workers independently cancellable. Run the entire M0 suite alongside each M1 increment.
+Before connecting M1 controls, test Review/Back anchor restoration, active-view shortcuts, independent worker cancellation, and late-result isolation. Run these alongside the M0 suite.

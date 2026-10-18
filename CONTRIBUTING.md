@@ -1,14 +1,11 @@
 # Contributing
 
-Purpose: define how contributors prepare, verify, and deliver changes.
+Purpose: define how to develop and deliver changes.
 
-Read the [architecture](docs/architecture.md), [plan](docs/plan.md), and [roadmap](ROADMAP.md).
-
-- Preserve the [CLI-first workflow](README.md).
+- Finish one milestone at a time through small working increments in the [plan](docs/plan.md). Refine behavior and appearance together.
+- Follow the [architecture](docs/architecture.md) and [design guidelines](docs/design.md). Add abstractions for concrete responsibilities.
 - Write original Rust from public specifications and observed behavior; attribute reused material.
-- Add dependency boundaries when concrete responsibilities require them.
-- Write terse, positive requirements once; link to their authoritative document.
-- Test behavior with synthetic repositories and Git CLI oracles, including failure cases. Preserve the [browser regression baseline](docs/regression.md) through every increment.
-- Apply the [design guidelines](docs/design.md) and verify layout with in-memory geometry assertions.
-- Inspect UI changes visually and run the [development checks](docs/development.md).
-- Record [verification evidence](docs/verification.md) and update milestone status.
+- Write terse, positive requirements in one owning document; link from others. Start each Markdown document with its purpose.
+- Preserve the [regression baseline](docs/regression.md). Use Git fixture oracles, production worker/input paths, and in-memory geometry assertions. Start bug fixes with a failing test.
+- Run the [development checks](docs/development.md), inspect UI changes natively, and record [evidence](docs/verification.md).
+- Use descriptive branch names without prefixes. Keep branch names, commit messages, and PR text free of agent attribution.

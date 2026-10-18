@@ -1,5 +1,5 @@
 # Agent instructions
 
-Purpose: give coding agents repository-specific working instructions.
+Purpose: direct coding agents to repository rules.
 
-Follow [CONTRIBUTING.md](CONTRIBUTING.md). Read applicable specifications before editing, finish one milestone at a time through small working increments, refine interaction and visual quality together, and update the owning document when behavior changes.
+Follow [CONTRIBUTING.md](CONTRIBUTING.md). Read the owning specification before editing and update it when behavior changes.
