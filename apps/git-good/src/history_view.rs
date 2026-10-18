@@ -102,7 +102,7 @@ pub fn row(
         ui.painter().circle_stroke(
             dot.center(),
             6.0,
-            egui::Stroke::new(1.0, ui.visuals().selection.stroke.color),
+            egui::Stroke::new(1.0_f32, ui.visuals().selection.stroke.color),
         );
     }
     text(ui, subject, commit.subject(), color, false);
