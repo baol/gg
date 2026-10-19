@@ -113,8 +113,17 @@ impl Review {
                 .unwrap_or_else(|| format!("{label}  absent"));
             bounded_text::field(ui, &text, egui::FontId::monospace(11.0), 22.0);
         }
-        if ui.button("Copy path").clicked() {
-            ui.ctx().copy_text(change.path.clone());
+        let native_text = std::str::from_utf8(&change.path_bytes);
+        if ui
+            .button(if native_text.is_ok() {
+                "Copy path"
+            } else {
+                "Copy escaped path"
+            })
+            .clicked()
+        {
+            ui.ctx()
+                .copy_text(native_text.unwrap_or(&change.path).to_owned());
         }
     }
     /// Return true when Back is explicitly requested.

@@ -15,6 +15,9 @@ pub fn read(
             return Err("Comparison cancelled".into());
         }
         let size = |side: &Option<FileSide>| -> Result<u64, Box<dyn std::error::Error>> {
+            if cancelled() {
+                return Err("Comparison cancelled".into());
+            }
             match side {
                 Some(s) if s.mode != 0o160000 => Ok(repo
                     .find_header(gix::ObjectId::from_hex(s.id.as_bytes())?)?
@@ -32,6 +35,34 @@ pub fn read(
                 old_size,
                 new_size,
                 "Gitlink: compare the referenced commit IDs",
+            ));
+        }
+        let mode_note = match (&change.old, &change.new) {
+            (Some(old), Some(new)) if old.mode != new.mode => {
+                if old.mode & 0o170000 != new.mode & 0o170000 {
+                    let kind = |mode| if mode == 0o120000 { "symlink" } else { "file" };
+                    format!("Type changed: {} to {}", kind(old.mode), kind(new.mode))
+                } else {
+                    format!("Mode changed: {:06o} to {:06o}", old.mode, new.mode)
+                }
+            }
+            _ if [&change.old, &change.new]
+                .iter()
+                .any(|side| side.as_ref().is_some_and(|side| side.mode == 0o120000)) =>
+            {
+                "Symlink target".into()
+            }
+            _ => String::new(),
+        };
+        if let (Some(old), Some(new)) = (&change.old, &change.new)
+            && old.id == new.id
+            && old.mode != new.mode
+        {
+            return Ok(FileDiff::summary(
+                DiffKind::Metadata,
+                old_size,
+                new_size,
+                format!("{mode_note} · content unchanged"),
             ));
         }
         if old_size > MAX_BLOB_BYTES as u64 || new_size > MAX_BLOB_BYTES as u64 {
@@ -54,11 +85,15 @@ pub fn read(
                 None => Ok(vec![]),
             }
         };
-        Ok(diff::compare(
-            &bytes(&change.old)?,
-            &bytes(&change.new)?,
-            &cancelled,
-        )?)
+        let mut result = diff::compare(&bytes(&change.old)?, &bytes(&change.new)?, &cancelled)?;
+        if !mode_note.is_empty() {
+            result.note = if result.note.is_empty() {
+                mode_note
+            } else {
+                format!("{mode_note} · {}", result.note)
+            };
+        }
+        Ok(result)
     };
     run().map_err(|e| {
         format!(

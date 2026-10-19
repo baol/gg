@@ -53,3 +53,9 @@ Before connecting M1 controls, test Review/Back anchor restoration, active-view 
 
 - Git fixtures verify stored parent order, default selection, second-parent files, and unavailable parent objects.
 - In-memory wide/narrow tests verify pinned revision requests, retained identity on hover/failure, atomic replacement, first-file selection, and retry mailboxes.
+
+## M1 special objects and paths
+
+- Portable object fixtures cover executable-bit changes, symlinks, type changes, missing gitlink targets, and byte-distinct path labels.
+- Mode-only tests stop at header reads; cancellation tests interrupt before an unavailable second object header.
+- Unix process tests select non-UTF-8 paths through `--file` and verify exact content bytes. Engine tests preserve Unicode and escape controls/backslashes.

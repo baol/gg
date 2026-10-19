@@ -88,3 +88,10 @@ The opt-in timing check passed. Frame timings exclude GPU presentation.
 - Version tests cover the floor, numeric patch increments, series changes, retries, explicit-tag validation, and consistent manifest/lockfile updates.
 - Cargo accepts a generated `0.3.7` workspace with the locked Linux dependency graph. Workflow YAML and shell syntax validate locally; CI verifies binary versions on all six platforms.
 - The updated workflow publishes regular releases when merged into `main`.
+
+## M1 special objects and paths · 2026-10-19
+
+- 77 default workspace tests, formatting, Clippy, and debug build pass on Linux.
+- Three failing fixtures established the missing mode/symlink summaries and ambiguous invalid-byte path labels; all pass after correction. Additional tests verify cancellation before the next header and exact CLI path/content bytes.
+- Native X11 review confirms [wide mode summaries](screenshots/m1-special-wide-mode.png), [narrow mode summaries](screenshots/m1-special-narrow-mode.png), and [symlink targets](screenshots/m1-special-wide-symlink.png). Escaped paths stay on one line.
+- Large-file export and release resource measurements remain in the [M1 plan](plan.md).

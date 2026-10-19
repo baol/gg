@@ -322,3 +322,48 @@ fn show_file_returns_diff_and_missing_path_uses_stderr() -> Result {
     assert!(!error.stderr.is_empty());
     Ok(())
 }
+
+#[cfg(unix)]
+#[test]
+fn show_file_uses_exact_non_utf8_path_bytes() -> Result {
+    use std::{ffi::OsString, os::unix::ffi::OsStringExt};
+    let repo = tempfile::tempdir()?;
+    git(repo.path(), &["init", "-b", "main"])?;
+    let name = OsString::from_vec(b"raw\xff\nname".to_vec());
+    std::fs::write(repo.path().join(&name), b"exact content\n")?;
+    git(repo.path(), &["add", "."])?;
+    git(
+        repo.path(),
+        &[
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.org",
+            "commit",
+            "-m",
+            "raw path",
+        ],
+    )?;
+    let output = Command::new(env!("CARGO_BIN_EXE_git-good"))
+        .args(["show", "HEAD", "--file"])
+        .arg(name)
+        .current_dir(repo.path())
+        .output()?;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(
+        json["file"]["path_bytes"],
+        serde_json::json!(b"raw\xff\nname")
+    );
+    assert_eq!(json["file"]["path"], "raw\\xff\\nname");
+    assert_eq!(json["diff"]["kind"], "text");
+    assert_eq!(
+        json["diff"]["rows"][1]["bytes"],
+        serde_json::json!(b"exact content\n")
+    );
+    Ok(())
+}

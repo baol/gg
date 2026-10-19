@@ -27,6 +27,7 @@ pub struct DiffRow {
 #[serde(rename_all = "snake_case")]
 pub enum DiffKind {
     Text,
+    Metadata,
     Binary,
     Gitlink,
     Limited,

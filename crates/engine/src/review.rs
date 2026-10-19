@@ -47,3 +47,38 @@ pub trait ReviewReader {
     /// One traversal step; callers can cancel between directory visits.
     fn step(&mut self) -> Result<ReviewStep, String>;
 }
+
+/// One-line, unambiguous display; path_bytes remains the native lookup identity.
+pub fn display_path(bytes: &[u8]) -> String {
+    let mut result = String::new();
+    for chunk in bytes.utf8_chunks() {
+        for ch in chunk.valid().chars() {
+            match ch {
+                '\\' => result.push_str("\\\\"),
+                '\n' => result.push_str("\\n"),
+                '\r' => result.push_str("\\r"),
+                '\t' => result.push_str("\\t"),
+                ch if ch.is_control() => result.extend(ch.escape_unicode()),
+                ch => result.push(ch),
+            }
+        }
+        for byte in chunk.invalid() {
+            result.push_str(&format!("\\x{byte:02x}"));
+        }
+    }
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn path_display_preserves_unicode_and_escapes_ambiguous_bytes() {
+        assert_eq!(display_path("café/界.rs".as_bytes()), "café/界.rs");
+        assert_eq!(
+            display_path(b"a\n\r\t\x1b\\\xff"),
+            "a\\n\\r\\t\\u{1b}\\\\\\xff"
+        );
+        assert_ne!(display_path(b"\xff"), display_path(b"\\xff"));
+    }
+}

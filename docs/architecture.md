@@ -94,7 +94,7 @@ Persist images and 404 results in the OS cache. Read disk first; deduplicate aut
 
 Pin repository, commit, and parent IDs. Resolve revisions once. Default to first parent; roots compare with the empty tree. List merge parents in stored order with one-based numbers, short IDs, and full-ID tooltips. Parent changes reuse the pinned commit ID. Missing parent objects produce an identified incomplete-comparison state; retain metadata during loading/errors.
 
-Keep exact Git path bytes and a display string. Changes carry old/new object IDs and modes, with added/deleted/modified/type-changed status. CLI and UI share deterministic Git tree traversal order. Represent moves as deletion/addition in M1, retaining both sides for future rename detection.
+Keep exact Git path bytes and a one-line display string. Preserve Unicode; escape backslashes, controls, and invalid bytes (`\xNN`) so distinct paths have distinct labels. Copy Unicode paths verbatim; label the fallback **Copy escaped path**. CLI `--file` matches native path bytes. Changes carry old/new object IDs and modes, with added/deleted/modified/type-changed status. CLI and UI share deterministic Git tree traversal order. Represent moves as deletion/addition in M1, retaining both sides for future rename detection.
 
 Parent switches retain the displayed comparison through loading/failure, label its identity, and offer retry. Adopt replacement files and diff together after pointer leave and scroll settling. Start the new comparison at its first file; empty comparisons clear selection. Independent worker mailboxes isolate superseded requests.
 
@@ -114,16 +114,16 @@ Present status/path rows and selected before/after IDs and modes. Wide layouts u
 
 ### Diff and layout
 
-Use one selected-file worker with one coalesced request/result slot. Retain one bounded document on the worker; publish at most 256 rows per page and cache at most 768 UI rows. Check blob headers before allocating content. Compare up to 2 MiB per side and 100,000 combined source lines with a 250-ms algorithm deadline. Return an explicit incomplete summary when a budget is exceeded. Cancel between object reads and during row projection; object decoding and the deadline-bound algorithm finish their current operation. Reuse the document for viewport requests.
+Use one selected-file worker with one coalesced request/result slot. Retain one bounded document on the worker; publish at most 256 rows per page and cache at most 768 UI rows. Check blob headers before allocating content. Compare up to 2 MiB per side and 100,000 combined source lines with a 250-ms algorithm deadline. Return an explicit incomplete summary when a budget is exceeded. Cancel before each object header/content read and during row projection; object decoding and the deadline-bound algorithm finish their current operation. Reuse the document for viewport requests.
 
 Use unified diffs with old/new line numbers, fixed-height rows, three context lines, and missing-final-newline markers. Preserve whitespace/line endings. Scroll long source lines horizontally in an explicit reading view. Distinguish context/additions/deletions with symbols and color.
 
 | Content | Presentation |
 | --- | --- |
 | NUL-containing blob | Binary summary with IDs and byte sizes |
-| Symlink | Target text |
-| Gitlink | Referenced commit IDs |
-| Mode-only change | Explicit mode summary |
+| Symlink | Labeled target text, read directly from the blob |
+| Gitlink | Referenced commit IDs, including unavailable submodule objects |
+| Mode-only change | Metadata summary with before/after modes and unchanged content; read object headers only |
 | Undecodable bytes | Escaped display; exact comparison bytes |
 | Size/computation limit | Explicit summary, completion state, streaming export |
 

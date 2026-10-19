@@ -168,7 +168,7 @@ impl ReviewSession {
             _ => ChangeKind::Modified,
         };
         Ok(ReviewStep::Change(FileChange {
-            path: String::from_utf8_lossy(&node.path).into_owned(),
+            path: display_path(&node.path),
             path_bytes: node.path,
             kind,
             old,
