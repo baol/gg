@@ -57,3 +57,10 @@ The opt-in timing check passed. Frame timings exclude GPU presentation.
 - Main runs remain independent across commits. Pull-request runs cancel superseded work. Reruns update the same release.
 - actionlint 1.7.12 passes. Local execution of the workflow steps verifies main/tag creation, reruns, checksum validation, and rejection of missing, corrupt, or unexpected assets using a recording GitHub CLI stub.
 - Rust code is unchanged. The merged PR #2 run passed tests, release builds, and CLI smoke tests on all six targets. Native graphics acceptance remains separate.
+
+## Automatic versioned releases · 2026-10-19
+
+- 55 Rust tests and seven release-version tests pass; formatting and Clippy pass.
+- Version tests cover the floor, numeric patch increments, series changes, retries, explicit-tag validation, and consistent manifest/lockfile updates.
+- Cargo accepts a generated `0.3.7` workspace with the locked Linux dependency graph. Workflow YAML and shell syntax validate locally; CI verifies binary versions on all six platforms.
+- The updated workflow publishes regular releases when merged into `main`.

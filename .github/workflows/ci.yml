@@ -10,14 +10,28 @@ permissions:
   contents: read
 
 concurrency:
-  group: rust-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: rust-${{ github.event_name == 'pull_request' && github.run_id || 'release' }}
+  queue: max
+  cancel-in-progress: false
 
 env:
   GG_OFFLINE: "1"
 
 jobs:
+  version:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - run: python3 -m unittest discover -s scripts -p 'test_*.py'
+      - id: version
+        run: python3 scripts/release_version.py
+
   native:
+    needs: version
     strategy:
       fail-fast: false
       matrix:
@@ -38,6 +52,16 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
+      - name: Apply release version
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: python scripts/release_version.py apply "$env:VERSION"
+        if: runner.os == 'Windows'
+      - name: Apply release version
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: python3 scripts/release_version.py apply "$VERSION"
+        if: runner.os != 'Windows'
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -53,9 +77,11 @@ jobs:
         shell: bash
         env:
           TARGET: ${{ matrix.target }}
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
           binary="target/$TARGET/release/git-good"
           if [[ "$RUNNER_OS" == Windows ]]; then binary="$binary.exe"; fi
+          test "$("$binary" --version)" = "git-good $VERSION"
           "$binary" history > history.json
           python -c 'import json; data=json.load(open("history.json")); assert data["commits"]'
       - name: Package binary
@@ -87,11 +113,14 @@ jobs:
 
   release:
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
-    needs: native
+    needs: [version, native]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
       - uses: actions/download-artifact@v4
         with:
           pattern: git-good-*
@@ -122,21 +151,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           COMMIT: ${{ github.sha }}
-          REF: ${{ github.ref }}
-          REF_NAME: ${{ github.ref_name }}
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
-          if [[ "$REF" == refs/heads/main ]]; then
-            tag="commit-$COMMIT"
-            title="Development build ${COMMIT:0:12}"
-            options=(--prerelease --latest=false)
-          else
-            tag="$REF_NAME"
-            title="$tag"
-            options=(--verify-tag)
+          tag="v$VERSION"
+          title="$tag"
+          options=()
+          if git rev-parse --verify "refs/tags/$tag" >/dev/null 2>&1; then
+            test "$(git rev-parse "$tag^{commit}")" = "$(git rev-parse "$COMMIT^{commit}")"
+            options+=(--verify-tag)
           fi
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release upload "$tag" dist/* --clobber
-            gh release edit "$tag" --draft=false
+            gh release edit "$tag" --draft=false --prerelease=false
           else
             gh release create "$tag" dist/* --target "$COMMIT" \
               --title "$title" --generate-notes "${options[@]}"
