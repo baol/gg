@@ -50,3 +50,10 @@ The opt-in timing check passed. Frame timings exclude GPU presentation.
 - actionlint 1.7.12 validates the six-target workflow, packaging steps, and gated draft release job.
 - Native CI covers Linux, macOS, and Windows on x86_64 and arm64, caches builds, retains independent platform results, and uploads archives with checksums. Version tags create a draft release after all six jobs pass.
 - Cross-platform CI results and native runtime acceptance remain pending. Unsigned binary archives do not establish installer, signing, or hardware acceptance.
+
+## Automatic commit releases · 2026-10-19
+
+- Every passing `main` push publishes a development prerelease for its exact commit with all six native archives and SHA-256 sidecars. Version tags publish directly; pull requests and manual runs keep artifacts without publishing.
+- Main runs remain independent across commits. Pull-request runs cancel superseded work. Reruns update the same release.
+- actionlint 1.7.12 passes. Local execution of the workflow steps verifies main/tag creation, reruns, checksum validation, and rejection of missing, corrupt, or unexpected assets using a recording GitHub CLI stub.
+- Rust code is unchanged. The merged PR #2 run passed tests, release builds, and CLI smoke tests on all six targets. Native graphics acceptance remains separate.

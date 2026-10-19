@@ -17,4 +17,4 @@ Each milestone delivers CLI and native views of shared engine behavior. Current 
 
 Target Linux (Wayland/X11), macOS, and Windows on x86_64 and arm64, supported by native builds and hardware checks.
 
-Preview releases require browser performance and platform runtime acceptance. Daily-use releases also require M2, native packaging, and mutation recovery documentation. Check keyboard access, accessibility, scaling, clipboard, and performance at each milestone. Outstanding gates: [verification](docs/verification.md#preview-acceptance-pending).
+Automatic development prereleases deliver binaries for each passing main commit; [delivery policy](docs/development.md). Supported preview releases require browser performance and platform runtime acceptance. Daily-use releases also require M2, native packaging, and mutation recovery documentation. Check keyboard access, accessibility, scaling, clipboard, and performance at each milestone. Outstanding gates: [verification](docs/verification.md#preview-acceptance-pending).

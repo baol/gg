@@ -10,8 +10,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: rust-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+  group: rust-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   GG_OFFLINE: "1"
@@ -86,7 +86,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     needs: native
     runs-on: ubuntu-24.04
     permissions:
@@ -97,9 +97,47 @@ jobs:
           pattern: git-good-*
           path: dist
           merge-multiple: true
-      - name: Create draft release
+      - name: Verify release assets
+        run: |
+          python3 - <<'PYTHON'
+          import hashlib
+          from pathlib import Path
+          targets = {
+              "x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu",
+              "x86_64-apple-darwin", "aarch64-apple-darwin",
+              "x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc",
+          }
+          expected = set()
+          for target in targets:
+              extension = "zip" if "windows" in target else "tar.gz"
+              name = f"git-good-{target}.{extension}"
+              expected.update((name, name + ".sha256"))
+              archive = Path("dist") / name
+              checksum = Path(str(archive) + ".sha256").read_text().split()
+              assert checksum == [hashlib.sha256(archive.read_bytes()).hexdigest(), name], name
+          assert {p.name for p in Path("dist").iterdir()} == expected
+          PYTHON
+      - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          TAG: ${{ github.ref_name }}
-        run: gh release create "$TAG" dist/* --verify-tag --draft --title "$TAG" --generate-notes
+          COMMIT: ${{ github.sha }}
+          REF: ${{ github.ref }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [[ "$REF" == refs/heads/main ]]; then
+            tag="commit-$COMMIT"
+            title="Development build ${COMMIT:0:12}"
+            options=(--prerelease --latest=false)
+          else
+            tag="$REF_NAME"
+            title="$tag"
+            options=(--verify-tag)
+          fi
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" dist/* --clobber
+            gh release edit "$tag" --draft=false
+          else
+            gh release create "$tag" dist/* --target "$COMMIT" \
+              --title "$title" --generate-notes "${options[@]}"
+          fi
