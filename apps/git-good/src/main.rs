@@ -15,9 +15,13 @@ use std::{ops::Range, path::PathBuf};
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args_os().skip(1);
     let first = args.next();
+    if first.as_deref() == Some(std::ffi::OsStr::new("--version")) {
+        println!("git-good {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
     if first.as_deref() == Some(std::ffi::OsStr::new("--help")) {
         println!(
-            "gg · good git\n\ngit-good [PATH]\ngit-good history [PATH]   Print history as JSON\n\nBrowse all commits reachable from HEAD."
+            "gg · good git\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\n\nBrowse all commits reachable from HEAD."
         );
         return Ok(());
     }

@@ -199,3 +199,19 @@ fn browsing_preserves_repository_index_and_dirty_worktree() -> Result {
     }
     Ok(())
 }
+
+#[test]
+fn version_matches_package_without_a_repository() -> Result {
+    let directory = tempfile::tempdir()?;
+    let output = Command::new(env!("CARGO_BIN_EXE_git-good"))
+        .arg("--version")
+        .current_dir(directory.path())
+        .output()?;
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    assert_eq!(
+        String::from_utf8(output.stdout)?,
+        format!("git-good {}\n", env!("CARGO_PKG_VERSION"))
+    );
+    Ok(())
+}
