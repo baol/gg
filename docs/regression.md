@@ -41,3 +41,15 @@ Before connecting M1 controls, test Review/Back anchor restoration, active-view 
 - Process tests cover nested discovery, explicit repository, exact path bytes, JSON, and error exits.
 - Controlled reader tests cover early delivery, 10,000-file completion, deep/back page reload, retained partial errors, and worker shutdown.
 - Input tests cover review/history isolation, late history results, Back anchors, fixed rows, and hovered placeholders at wide/narrow sizes.
+
+## M1 selected-file text
+
+- Git-oracle hunks and byte reconstruction cover CRLF and final-newline changes; engine tests cover invalid UTF-8, empty sides, cancellation, and budgets.
+- Process tests cover selected-file JSON and missing-path stderr/exit status.
+- Controlled worker tests verify superseded work, 256-row pages, and document reuse. UI state tests reject stale pages and preserve hovered placeholders.
+- Native layout and resource measurements remain part of M1 acceptance.
+
+## M1 parent selection
+
+- Git fixtures verify stored parent order, default selection, second-parent files, and unavailable parent objects.
+- In-memory wide/narrow tests verify pinned revision requests, retained identity on hover/failure, atomic replacement, first-file selection, and retry mailboxes.

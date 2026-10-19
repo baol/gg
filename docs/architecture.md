@@ -92,25 +92,29 @@ Persist images and 404 results in the OS cache. Read disk first; deduplicate aut
 
 ### Comparison
 
-Pin repository, commit, and parent IDs. Resolve revisions once. Default to first parent; roots compare with the empty tree. List merge parents in stored order. Missing parent objects produce an identified incomplete-comparison state; retain metadata during loading/errors.
+Pin repository, commit, and parent IDs. Resolve revisions once. Default to first parent; roots compare with the empty tree. List merge parents in stored order with one-based numbers, short IDs, and full-ID tooltips. Parent changes reuse the pinned commit ID. Missing parent objects produce an identified incomplete-comparison state; retain metadata during loading/errors.
 
 Keep exact Git path bytes and a display string. Changes carry old/new object IDs and modes, with added/deleted/modified/type-changed status. CLI and UI share deterministic Git tree traversal order. Represent moves as deletion/addition in M1, retaining both sides for future rename detection.
 
+Parent switches retain the displayed comparison through loading/failure, label its identity, and offer retry. Adopt replacement files and diff together after pointer leave and scroll settling. Start the new comparison at its first file; empty comparisons clear selection. Independent worker mailboxes isolate superseded requests.
+
 ### Loading
 
-Stream file summaries before blob reads. Virtualize rows using history's paging and interaction rules; counts progress to exact completion. Preserve selection by exact path, otherwise first result; clear it for empty comparisons.
+Stream file summaries before blob reads. Virtualize rows using history's paging and interaction rules; counts progress to exact completion. Within a comparison, preserve selection by exact path, otherwise first result; clear it for empty comparisons.
 
-Read selected-file content on a worker independent of history indexing. Key results by review generation, comparison, and file. Coalesce requests, cancel obsolete work between batches, and apply current results. Page diff rows, spill intermediate records as needed, and keep every file reachable through bounded caches.
+Read selected-file content on a worker independent of history indexing. Key results by review generation, comparison, and file. Coalesce requests, cancel obsolete work between batches, and apply current results. Page diff rows and keep every file reachable through bounded caches.
 
 ### Changed-file implementation
 
-Walk trees depth-first in Git tree order, skip identical subtrees, and open blob contents in the selected-file increment. The frontier scales with active tree entries. Yield between tree visits; individual tree decoding remains one operation.
+Walk trees depth-first in Git tree order, skip identical subtrees, and defer blob contents to selected-file requests. The frontier scales with active tree entries. Yield between tree visits; individual tree decoding remains one operation.
 
 Use an independent comparison worker with 32-step/4-ms slices, one request/result slot, temporary record/offset files, 256-row pages, and at most 768 UI rows. Retry replaces the worker and its mailbox for the same pinned comparison. Closing review cancels it; obsolete mailboxes remain isolated.
 
-The first view presents status/path rows and selected before/after IDs and modes. Wide layouts use a metadata side pane; narrow layouts use a fixed bottom pane. History state and incoming history results wait while review is open; Back restores its pixel offset before applying current results.
+Present status/path rows and selected before/after IDs and modes. Wide layouts use a resizable diff side pane; narrow layouts open a separate reading view with Back to files. History state and incoming history results wait while review is open; Back restores its pixel offset before applying current results.
 
 ### Diff and layout
+
+Use one selected-file worker with one coalesced request/result slot. Retain one bounded document on the worker; publish at most 256 rows per page and cache at most 768 UI rows. Check blob headers before allocating content. Compare up to 2 MiB per side and 100,000 combined source lines with a 250-ms algorithm deadline. Return an explicit incomplete summary when a budget is exceeded. Cancel between object reads and during row projection; object decoding and the deadline-bound algorithm finish their current operation. Reuse the document for viewport requests.
 
 Use unified diffs with old/new line numbers, fixed-height rows, three context lines, and missing-final-newline markers. Preserve whitespace/line endings. Scroll long source lines horizontally in an explicit reading view. Distinguish context/additions/deletions with symbols and color.
 
@@ -127,6 +131,6 @@ Review opens a resizable file-list/diff workspace with commit identity and paren
 
 ### CLI
 
-`git good show <commit> [--repo PATH] [--parent N]` streams JSON summaries; `--file PATH` is planned for the selected-file diff increment. Use cwd discovery by default. Validate one-based parent numbers; roots use the empty tree automatically. Include repository/comparison identity and exact path bytes. Apply runtime error conventions; document usage when implemented.
+`git good show <commit> [--repo PATH] [--parent N]` streams JSON summaries. Add `--file PATH` for a repository-relative selected-file diff, including exact source-line bytes. Use cwd discovery by default. Validate one-based parent numbers; roots use the empty tree automatically. Include repository/comparison identity and exact path bytes. Apply runtime error conventions; document usage when implemented.
 
 Rationale: summaries provide early feedback; pinned, cancellable work keeps rapid selection accurate; a dedicated review view gives source readable width.

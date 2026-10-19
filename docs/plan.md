@@ -10,9 +10,9 @@ Contracts: [architecture](architecture.md#commit-review--m1-specification). Pres
 
 ### Increments
 
-1. **Changed files · implemented.** Typed comparison requests, incremental gitoxide summaries, JSON command, and native Review view. Deliver first-parent/root comparisons, loading/empty/retry states, and history restoration on Back. Read blob contents in increment 2.
-2. **Selected-file text · next.** Cancellable blob reads, virtualized unified diffs, line numbers, context, horizontal scrolling, and final-newline markers. Set memory/queue budgets before implementation.
-3. **Comparison completeness.** Parent selection, binary/symlink/gitlink summaries, mode/type changes, byte-safe paths, and large-file summaries/export. Test cancellation at expensive boundaries.
+1. **Changed files · implemented.** Typed comparison requests, incremental gitoxide summaries, JSON command, and native Review view. Deliver first-parent/root comparisons, loading/empty/retry states, and history restoration on Back.
+2. **Selected-file text · implemented.** Cancellable blob reads, virtualized unified diffs, line numbers, context, horizontal scrolling, and final-newline markers. Bounded worker, paged rows, and CLI `--file`.
+3. **Comparison completeness · current.** Parent selection implemented. Next: special-object fixtures, mode/type changes, byte-safe paths, large-file export, and cancellation at expensive boundaries.
 4. **Acceptance.** Verify interaction, appearance, errors, repository preservation, and resource budgets; retain native captures.
 
 ### Tests

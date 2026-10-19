@@ -45,6 +45,21 @@ The opt-in timing check passed. Frame timings exclude GPU presentation.
 - Native X11 review confirms status/path rows, metadata, paging, and Back at [1120×740](screenshots/m1-files-wide.png) and [720×480](screenshots/m1-files-narrow.png).
 - Large-tree latency/peak-memory measurements and selected-file diffs remain in the [M1 plan](plan.md).
 
+## M1 selected-file text · 2026-10-18
+
+- All 70 default workspace tests, formatting, Clippy, and debug build pass on Linux.
+- Git-oracle hunks and byte reconstruction verify CRLF, final newlines, and exact content. Tests cover invalid UTF-8, binary/size/line budgets, CLI errors, worker cancellation, paging/reuse, stale results, and hovered placeholders.
+- In-memory input verifies narrow diff/Back selection and pixel anchors. A 100,000-character Unicode line verifies bounded horizontal shaping.
+- Native X11 review confirms the [wide workspace](screenshots/m1-diff-wide.png), [narrow reading view](screenshots/m1-diff-narrow.png), paging, and Back.
+- Complete export, special-object fixtures, and release resource measurements in the remaining [M1 increments](plan.md).
+
+## M1 parent selection · 2026-10-18
+
+- All 71 default workspace tests, formatting, Clippy, and debug build pass on Linux.
+- Git fixtures verify ordered parent IDs, exact first/second-parent files, and missing-parent errors.
+- Wide/narrow input tests verify pinned commits, hover-safe replacement, retained results on failure, retry, and empty-comparison clearing.
+- Native X11 review verifies selecting parent 2 in the [wide workspace](screenshots/m1-parent-wide.png) and [narrow reading view](screenshots/m1-parent-narrow.png).
+
 ## Preview acceptance pending
 
 - Measure cold/warm release startup and peak memory on the packed 100,000-commit fixture. Targets: first rows within 500 ms, input-to-frame below 50 ms, cached frame p95 within 16 ms.

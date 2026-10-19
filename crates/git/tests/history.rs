@@ -390,6 +390,19 @@ fn review_merge_defaults_to_first_parent_and_can_select_second() -> Result {
     git(dir.path(), &["add", "."])?;
     commit(dir.path(), "main")?;
     git(dir.path(), &["merge", "--no-ff", "side", "-m", "merge"])?;
+    use gg_engine::review::{ReviewReader, ReviewRequest};
+    let request = ReviewRequest {
+        path: dir.path().into(),
+        revision: "HEAD".into(),
+        parent: None,
+    };
+    let session = gg_git::review::ReviewSession::open(&request)?;
+    let expected: Vec<String> = git(dir.path(), &["show", "-s", "--format=%P", "HEAD"])?
+        .split_whitespace()
+        .map(str::to_owned)
+        .collect();
+    assert_eq!(session.comparison().parents, expected);
+    assert_eq!(session.comparison().parent.as_ref(), expected.first());
     let first = review(dir.path(), "HEAD", None)?;
     let second = review(dir.path(), "HEAD", Some(2))?;
     assert_eq!(
@@ -399,6 +412,23 @@ fn review_merge_defaults_to_first_parent_and_can_select_second() -> Result {
     assert_eq!(
         second.iter().map(|c| c.path.as_str()).collect::<Vec<_>>(),
         vec!["main.txt"]
+    );
+    let missing = &expected[1];
+    std::fs::remove_file(
+        dir.path()
+            .join(".git/objects")
+            .join(&missing[..2])
+            .join(&missing[2..]),
+    )?;
+    let mut request = request;
+    request.parent = Some(2);
+    assert!(gg_git::review::ReviewSession::open(&request).is_err());
+    request.parent = Some(1);
+    assert_eq!(
+        gg_git::review::ReviewSession::open(&request)?
+            .comparison()
+            .parents,
+        expected
     );
     Ok(())
 }

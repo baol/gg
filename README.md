@@ -14,11 +14,12 @@ cd /path/to/repository
 git good
 git good history
 git good show HEAD
+git good show HEAD --file src/main.rs
 ```
 
 `git good` (or `git-good`) opens the containing repository, including from nested directories. Supply a path to open another repository.
 
-Stream, filter, and inspect history; copy commit IDs. `git good history` streams JSON for scripts. Select a commit and choose **Review** to browse its changed files; **Back to history** restores your position. `git good show HEAD [--repo PATH] [--parent N]` streams the same file summaries as JSON. Parents are one-based; the default is the first parent, or the empty tree for a root commit.
+Stream, filter, and inspect history; copy commit IDs. `git good history` streams JSON for scripts. Select a commit and choose **Review** to browse its changed files; **Back to history** restores your position. `git good show HEAD [--repo PATH] [--parent N]` streams the same file summaries as JSON. For merges, choose a parent in Review. Select a file to read its diff; narrow windows use **View diff** and **Back to files**. Add `--file PATH` to output that diff as JSON. Parents are one-based; the default is the first parent, or the empty tree for a root commit.
 
 [Contributing](CONTRIBUTING.md) · [Development](docs/development.md) · [Architecture](docs/architecture.md) · [Design](docs/design.md) · [Plan](docs/plan.md) · [Roadmap](ROADMAP.md) · [Regression coverage](docs/regression.md) · [Verification](docs/verification.md)
 

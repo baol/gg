@@ -33,6 +33,14 @@ pub struct Worker {
 }
 impl Worker {
     pub fn start(ctx: eframe::egui::Context) -> Result<Self, String> {
+        Self::with_reader(ctx, |request, cancelled| {
+            gg_git::diff::read(&request.path, &request.change, cancelled)
+        })
+    }
+    fn with_reader(
+        ctx: eframe::egui::Context,
+        read: impl Fn(&Request, &dyn Fn() -> bool) -> Result<FileDiff, String> + Send + 'static,
+    ) -> Result<Self, String> {
         let input = Arc::new(Mutex::new(None::<Request>));
         let output = Arc::new(Mutex::new(None));
         let generation = Arc::new(AtomicU64::new(0));
@@ -56,12 +64,12 @@ impl Worker {
                         continue;
                     };
                     if request.generation != loaded {
-                        document = None;
+                        drop(document.take());
                         let cancelled = || {
                             s.load(Ordering::Relaxed)
                                 || g.load(Ordering::Relaxed) != request.generation
                         };
-                        let result = gg_git::diff::read(&request.path, &request.change, cancelled);
+                        let result = read(&request, &cancelled);
                         if cancelled() {
                             continue;
                         }
@@ -145,5 +153,77 @@ impl Drop for Worker {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
         self.thread.unpark();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gg_engine::{
+        diff::{DiffKind, DiffRow, RowKind},
+        review::ChangeKind,
+    };
+    #[test]
+    fn selection_cancels_old_work_and_pages_reuse_the_document() -> Result<(), String> {
+        let (started, wait) = std::sync::mpsc::channel();
+        let reads = Arc::new(AtomicU64::new(0));
+        let count = reads.clone();
+        let worker = Worker::with_reader(
+            eframe::egui::Context::default(),
+            move |request, cancelled| {
+                count.fetch_add(1, Ordering::Relaxed);
+                if request.generation == 1 {
+                    started.send(()).map_err(|e| e.to_string())?;
+                    while !cancelled() {
+                        thread::yield_now();
+                    }
+                    return Err("obsolete".into());
+                }
+                let mut doc = FileDiff::summary(DiffKind::Text, 0, 2000, "");
+                doc.rows = (0..1000)
+                    .map(|n| DiffRow {
+                        kind: RowKind::Added,
+                        old_line: None,
+                        new_line: Some(n + 1),
+                        text: n.to_string(),
+                        bytes: vec![],
+                    })
+                    .collect();
+                Ok(doc)
+            },
+        )?;
+        let change = FileChange {
+            path: "file".into(),
+            path_bytes: b"file".to_vec(),
+            kind: ChangeKind::Added,
+            old: None,
+            new: None,
+        };
+        worker.request(1, "repo".into(), change.clone(), 0..1000);
+        wait.recv_timeout(std::time::Duration::from_secs(5))
+            .map_err(|e| e.to_string())?;
+        worker.request(2, "repo".into(), change.clone(), 0..1000);
+        let poll = || -> Result<Update, String> {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            loop {
+                if let Some(update) = worker.poll() {
+                    return Ok(update);
+                }
+                if std::time::Instant::now() > deadline {
+                    return Err("worker timed out".into());
+                }
+                thread::sleep(std::time::Duration::from_millis(1));
+            }
+        };
+        let update = poll()?;
+        assert_eq!(update.generation, 2);
+        assert_eq!(update.count, 1000);
+        assert_eq!(update.result?.rows.len(), 256);
+        worker.request(2, "repo".into(), change, 900..1000);
+        let update = poll()?;
+        assert_eq!(update.page_start, 900);
+        assert_eq!(update.result?.rows[0].new_line, Some(901));
+        assert_eq!(reads.load(Ordering::Relaxed), 2);
+        Ok(())
     }
 }

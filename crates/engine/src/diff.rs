@@ -86,14 +86,18 @@ pub fn compare(old: &[u8], new: &[u8], cancelled: impl Fn() -> bool) -> Result<F
     if old.contains(&0) || new.contains(&0) {
         return Ok(summary(DiffKind::Binary, "Binary content"));
     }
-    let old_lines: Vec<_> = old.split_inclusive(|b| *b == b'\n').collect();
-    let new_lines: Vec<_> = new.split_inclusive(|b| *b == b'\n').collect();
-    if old_lines.len() + new_lines.len() > MAX_LINES {
+    let line_count = |bytes: &[u8]| {
+        bytes.iter().filter(|b| **b == b'\n').count()
+            + usize::from(!bytes.is_empty() && !bytes.ends_with(b"\n"))
+    };
+    if line_count(old) + line_count(new) > MAX_LINES {
         return Ok(summary(
             DiffKind::Limited,
             "Text budget: 100,000 source lines",
         ));
     }
+    let old_lines: Vec<_> = old.split_inclusive(|b| *b == b'\n').collect();
+    let new_lines: Vec<_> = new.split_inclusive(|b| *b == b'\n').collect();
     let deadline = Instant::now() + COMPUTE_BUDGET;
     let ops = similar::capture_diff_slices_deadline(
         Algorithm::Myers,
@@ -216,6 +220,11 @@ mod tests {
         assert_eq!(compare(b"\0", b"", || false)?.kind, DiffKind::Binary);
         assert!(!compare(&vec![b'a'; MAX_BLOB_BYTES + 1], b"", || false)?.complete);
         assert!(compare(b"a", b"b", || true).is_err());
+        assert_eq!(
+            compare(&vec![b'\n'; MAX_LINES + 1], b"", || false)?.kind,
+            DiffKind::Limited
+        );
+        assert!(compare(b"same\n", b"same\n", || false)?.rows.is_empty());
         Ok(())
     }
 }

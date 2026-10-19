@@ -76,6 +76,7 @@ impl ReviewSession {
             path: repo.workdir().unwrap_or(repo.path()).to_path_buf(),
             commit: commit.id.to_string(),
             parent: parent.map(|id| id.to_string()),
+            parents: parents.iter().map(ToString::to_string).collect(),
             subject: commit
                 .decode()?
                 .message

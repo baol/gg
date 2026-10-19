@@ -23,6 +23,7 @@ pub struct DiffView {
     range: Range<usize>,
     sent: Option<(u64, Range<usize>)>,
     rect: egui::Rect,
+    bounds: egui::Rect,
     last_scroll: f64,
     staged: Option<Update>,
     offset: f32,
@@ -43,6 +44,7 @@ impl Default for DiffView {
             range: 0..64,
             sent: None,
             rect: egui::Rect::NOTHING,
+            bounds: egui::Rect::NOTHING,
             last_scroll: f64::NEG_INFINITY,
             staged: None,
             offset: 0.0,
@@ -51,6 +53,9 @@ impl Default for DiffView {
     }
 }
 impl DiffView {
+    pub fn hovered(&self, point: Option<egui::Pos2>) -> bool {
+        point.is_some_and(|p| self.bounds.contains(p))
+    }
     pub fn select(&mut self, path: PathBuf, change: Option<FileChange>, ctx: &egui::Context) {
         let same = self.path == path
             && self
@@ -136,6 +141,7 @@ impl DiffView {
         }
     }
     pub fn draw(&mut self, ui: &mut egui::Ui) {
+        self.bounds = ui.max_rect();
         let ctx = ui.ctx().clone();
         let (point, active, now) = ctx.input(|i| {
             (
@@ -163,12 +169,12 @@ impl DiffView {
             self.staged = Some(update);
         }
         // Initial rows wait until the reading area's hit targets are clear.
-        if (quiet && !hovering) || self.info.is_some() {
-            if let Some(update) = self.staged.clone() {
-                self.accept(update, pinned);
-                if pinned.is_none() {
-                    self.staged = None;
-                }
+        if ((quiet && !hovering) || self.info.is_some())
+            && let Some(update) = self.staged.clone()
+        {
+            self.accept(update, pinned);
+            if pinned.is_none() {
+                self.staged = None;
             }
         }
         let Some(change) = &self.change else {
@@ -236,7 +242,7 @@ impl DiffView {
         let result = scroll.show_rows(ui, HEIGHT, self.count, |ui, rows| {
             self.range = rows.start.saturating_sub(24)..rows.end.saturating_add(24);
             // A conservative monospace width keeps every source column reachable.
-            let width = (120.0 + self.columns as f32 * 8.0).max(ui.available_width());
+            let width = (120.0 + self.columns as f32 * 16.0).max(ui.available_width());
             for index in rows {
                 let (rect, response) =
                     ui.allocate_exact_size(egui::vec2(width, HEIGHT), egui::Sense::click());
@@ -298,18 +304,25 @@ impl DiffView {
                             ui.visuals().weak_text_color(),
                         );
                 }
-                ui.painter()
-                    .with_clip_rect(
-                        egui::Rect::from_min_max(rect.min + egui::vec2(116.0, 0.0), rect.max)
-                            .intersect(ui.clip_rect()),
-                    )
-                    .text(
-                        rect.min + egui::vec2(116.0, HEIGHT / 2.0),
-                        egui::Align2::LEFT_CENTER,
+                let origin = rect.min + egui::vec2(116.0, HEIGHT / 2.0);
+                let clip = egui::Rect::from_min_max(rect.min + egui::vec2(116.0, 0.0), rect.max)
+                    .intersect(ui.clip_rect());
+                // Shape only visible source characters, including at deep horizontal offsets.
+                let (start, end, advance) = ui.fonts_mut(|fonts| {
+                    visible_text(
                         &row.text,
-                        font,
-                        color,
-                    );
+                        clip.left() - origin.x,
+                        clip.right() - origin.x,
+                        |ch| fonts.glyph_width(&font, ch),
+                    )
+                });
+                ui.painter().with_clip_rect(clip).text(
+                    origin + egui::vec2(advance, 0.0),
+                    egui::Align2::LEFT_CENTER,
+                    &row.text[start..end],
+                    font,
+                    color,
+                );
                 if response
                     .on_hover_text("Click to copy this displayed line")
                     .clicked()
@@ -320,5 +333,74 @@ impl DiffView {
         });
         self.offset = result.state.offset.y;
         self.send(&ctx);
+    }
+}
+
+fn visible_text(
+    text: &str,
+    left: f32,
+    right: f32,
+    mut width: impl FnMut(char) -> f32,
+) -> (usize, usize, f32) {
+    let mut x = 0.0;
+    let mut start = text.len();
+    let mut end = text.len();
+    let mut advance = 0.0;
+    for (index, ch) in text.char_indices() {
+        if x > right {
+            end = index;
+            break;
+        }
+        let next = x + width(ch);
+        if start == text.len() && next >= left {
+            start = index;
+            advance = x;
+        }
+        x = next;
+    }
+    (start.min(end), end, advance)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gg_engine::diff::DiffKind;
+    #[test]
+    fn horizontal_window_shapes_only_visible_unicode() {
+        let text = "界".repeat(100_000);
+        let (start, end, advance) = visible_text(&text, 600_000.0, 600_120.0, |_| 12.0);
+        assert!(text.is_char_boundary(start) && text.is_char_boundary(end));
+        assert!(text[start..end].chars().count() <= 12);
+        assert!((599_988.0..=600_000.0).contains(&advance));
+    }
+    #[test]
+    fn stale_pages_and_hovered_placeholders_preserve_displayed_rows() {
+        let mut view = DiffView {
+            generation: 2,
+            ..Default::default()
+        };
+        let mut doc = FileDiff::summary(DiffKind::Text, 0, 1, "");
+        doc.rows.push(DiffRow {
+            kind: RowKind::Added,
+            old_line: None,
+            new_line: Some(1),
+            text: "new".into(),
+            bytes: b"new".to_vec(),
+        });
+        let mut update = Update {
+            generation: 1,
+            count: 1,
+            columns: 3,
+            page_start: 0,
+            result: Ok(doc),
+        };
+        view.accept(update.clone(), None);
+        assert_eq!(view.count, 0);
+        update.generation = 2;
+        view.accept(update.clone(), Some(0));
+        assert_eq!(view.count, 1);
+        assert!(view.rows.is_empty());
+        view.accept(update, None);
+        assert_eq!(view.rows[&0].text, "new");
     }
 }

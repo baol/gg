@@ -255,6 +255,7 @@ mod tests {
                     path: "repo".into(),
                     commit: "commit".into(),
                     parent: None,
+                    parents: vec![],
                     subject: "root".into(),
                 },
                 next: 0,

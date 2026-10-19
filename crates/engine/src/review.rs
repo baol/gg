@@ -13,6 +13,7 @@ pub struct Comparison {
     pub path: PathBuf,
     pub commit: String,
     pub parent: Option<String>,
+    pub parents: Vec<String>,
     pub subject: String,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
