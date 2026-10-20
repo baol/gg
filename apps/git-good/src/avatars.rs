@@ -12,9 +12,23 @@ use std::{
 const CACHE_SIZE: usize = 128;
 type Reply = (String, Option<egui::ColorImage>);
 
+struct Portrait {
+    source: egui::ColorImage,
+    textures: HashMap<usize, egui::TextureHandle>,
+}
+
+impl Portrait {
+    fn new(source: egui::ColorImage) -> Self {
+        Self {
+            source,
+            textures: HashMap::new(),
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct Avatars {
-    entries: HashMap<String, (Option<egui::TextureHandle>, u64)>,
+    entries: HashMap<String, (Option<Portrait>, u64)>,
     clock: u64,
     allow_updates: bool,
     worker: Option<(mpsc::SyncSender<String>, mpsc::Receiver<Reply>)>,
@@ -140,7 +154,7 @@ fn cached_image(
 
 impl Avatars {
     pub fn paint(&mut self, ui: &egui::Ui, email: &str, author: &str, rect: egui::Rect) {
-        if let Some(texture) = self.texture(ui.ctx(), email) {
+        if let Some(texture) = self.texture(ui.ctx(), email, rect.height()) {
             ui.painter().image(
                 texture,
                 rect,
@@ -178,7 +192,7 @@ impl Avatars {
         response
     }
 
-    pub fn poll(&mut self, ctx: &egui::Context, allow_updates: bool) {
+    pub fn poll(&mut self, _ctx: &egui::Context, allow_updates: bool) {
         self.allow_updates = allow_updates;
         if !allow_updates {
             return;
@@ -186,24 +200,40 @@ impl Avatars {
         if let Some((_, rx)) = &self.worker {
             while let Ok((key, image)) = rx.try_recv() {
                 if let Some(entry) = self.entries.get_mut(&key) {
-                    entry.0 = image.map(|image| {
-                        ctx.load_texture(
-                            format!("avatar-{key}"),
-                            image,
-                            egui::TextureOptions::LINEAR,
-                        )
-                    });
+                    entry.0 = image.map(Portrait::new);
                 }
             }
         }
     }
 
-    pub fn texture(&mut self, ctx: &egui::Context, email: &str) -> Option<egui::TextureId> {
+    pub fn texture(
+        &mut self,
+        ctx: &egui::Context,
+        email: &str,
+        points: f32,
+    ) -> Option<egui::TextureId> {
         let key = key(email);
         self.clock = self.clock.saturating_add(1);
         if let Some((entry, used)) = self.entries.get_mut(&key) {
             *used = self.clock;
-            return entry.as_ref().map(|texture| texture.id());
+            let portrait = entry.as_mut()?;
+            let size = crate::thumbnails::physical_size(points, ctx.pixels_per_point());
+            if !portrait.textures.contains_key(&size) && portrait.textures.len() >= 2 {
+                portrait.textures.clear();
+            }
+            return Some(
+                portrait
+                    .textures
+                    .entry(size)
+                    .or_insert_with(|| {
+                        ctx.load_texture(
+                            format!("avatar-{key}-{size}"),
+                            crate::thumbnails::resize(&portrait.source, size),
+                            egui::TextureOptions::LINEAR,
+                        )
+                    })
+                    .id(),
+            );
         }
         if cfg!(test) || email.trim().is_empty() || self.failed {
             return None;
@@ -420,17 +450,20 @@ mod tests {
         assert_eq!(calls, 1);
     }
     #[test]
-    fn list_and_details_share_one_texture_with_reserved_sizes() {
+    fn list_and_details_use_display_sized_textures_with_reserved_slots() {
         let ctx = egui::Context::default();
         let mut avatars = Avatars::default();
         let email = "author@example.org";
-        let texture = ctx.load_texture(
-            "author",
-            egui::ColorImage::filled([128, 128], egui::Color32::WHITE),
-            egui::TextureOptions::LINEAR,
+        avatars.entries.insert(
+            key(email),
+            (
+                Some(Portrait::new(egui::ColorImage::filled(
+                    [128, 128],
+                    egui::Color32::WHITE,
+                ))),
+                0,
+            ),
         );
-        let id = texture.id();
-        avatars.entries.insert(key(email), (Some(texture), 0));
         let output = ctx.run(egui::RawInput::default(), |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| {
                 for size in [18.0, 64.0] {
@@ -440,6 +473,23 @@ mod tests {
             });
         });
         assert_eq!(avatars.entries.len(), 1);
-        assert_eq!(output.shapes.iter().filter(|shape| matches!(&shape.shape, egui::epaint::Shape::Mesh(mesh) if mesh.texture_id == id)).count(), 2);
+        let sizes: Vec<_> = output
+            .textures_delta
+            .set
+            .iter()
+            .map(|(_, delta)| delta.image.size())
+            .collect();
+        assert!(
+            sizes.contains(&[18, 18]) && sizes.contains(&[64, 64]),
+            "thumbnail sizes: {sizes:?}"
+        );
+        let portrait = avatars.entries[&key(email)]
+            .0
+            .as_ref()
+            .ok_or("missing portrait");
+        assert!(portrait.is_ok());
+        if let Ok(portrait) = portrait {
+            assert_eq!(portrait.textures.len(), 2);
+        }
     }
 }

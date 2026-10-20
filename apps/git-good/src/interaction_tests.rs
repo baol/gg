@@ -595,3 +595,34 @@ fn partial_history_error_retains_identity_rows_and_navigation() -> Result {
     assert!(!h.app.state.finished);
     Ok(())
 }
+
+#[test]
+fn review_navigation_and_late_history_preserve_history_until_back() -> Result {
+    let mut h = Harness::new(1000);
+    h.app.restore_offset = Some(4007.0);
+    h.frame(vec![]);
+    h.publish(1000)?;
+    h.frame(vec![]);
+    h.app.state.select_row(160);
+    h.publish(1000)?;
+    h.frame(vec![]);
+    let selected = h.app.state.selected.clone();
+    let offset = h.app.scroll_offset;
+    let query = h.app.state.query.clone();
+    h.app.review = Some(crate::review_view::Review::fixture(&h.ctx));
+    h.frame(vec![]);
+    h.publish(2000)?;
+    h.frame(vec![key(egui::Key::J)]);
+    assert_eq!(h.app.review.as_ref().and_then(|r| r.selected), Some(1));
+    assert_eq!(h.app.state.selected, selected);
+    assert_eq!(h.app.scroll_offset, offset);
+    assert_eq!(h.app.state.count, 1000);
+    h.frame(vec![key(egui::Key::Escape)]);
+    assert!(h.app.review.is_none());
+    h.frame(vec![]);
+    assert_eq!(h.app.state.selected, selected);
+    assert_eq!(h.app.scroll_offset, offset);
+    assert_eq!(h.app.state.query, query);
+    assert_eq!(h.app.state.count, 2000);
+    Ok(())
+}

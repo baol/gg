@@ -28,6 +28,7 @@ wgpu enables Vulkan, Metal, DX12, and GLES; Linux supports Wayland and X11.
 | `GG_SCREENSHOT=/absolute/path.ppm` | Debug build: capture after loading, then exit |
 | `GG_WINDOW_SIZE=720x480` | Debug window size |
 | `GG_DETAILS=1` | Debug narrow-screen details view |
+| `GG_THEME=light` | Debug light-theme layout and contrast inspection |
 
 Use an isolated display for captures. Avatar cache: `git-good/avatars-v2-128` under the OS cache directory (XDG cache, macOS Library/Caches, or Windows LocalAppData).
 
@@ -38,3 +39,28 @@ GG_OFFLINE=1 GG_TEST_REPOSITORY=/path/to/fixture cargo test -p git-good packed_h
 ```
 
 This opt-in check records first rows, indexing, in-memory frame latency, and deep/back navigation after eviction. Record results in [verification](verification.md).
+
+Measure M1 with a packed 10,000-file change and a 1-MiB text comparison:
+
+```sh
+python3 scripts/review-fixture.py /tmp/gg-review-benchmark
+GG_OFFLINE=1 GG_REVIEW_REPOSITORY=/tmp/gg-review-benchmark cargo test --release -p git-good packed_review_latency_and_navigation -- --ignored --nocapture
+```
+
+Use a new fixture directory. The check exercises production workers and egui frames, asserts latency/cache targets, and visits the last page and back. Record process peak RSS separately; distinguish filesystem-cache conditions from fresh application state.
+
+Stress fully changed text, maximum-pixel PNGs, and rapid selection:
+
+```sh
+python3 scripts/review-stress-fixture.py /tmp/gg-review-stress
+GG_OFFLINE=1 GG_STRESS_REPOSITORY=/tmp/gg-review-stress cargo test --release -p git-good packed_diff_stress_and_rapid_selection -- --ignored --nocapture
+```
+
+On Linux, measure native selection response on an isolated X11 display with Xvfb, libX11, and libXtst installed:
+
+```sh
+cargo build --release -p git-good --locked
+env -u WAYLAND_DISPLAY xvfb-run -a -s '-screen 0 1280x900x24' python3 scripts/native-review-latency.py target/release/git-good /tmp/gg-review-stress
+```
+
+The probe alternates 80 selections while text/image work runs. It polls one pixel for the first visible selection fill, reports p50/p95/max, and checks p95 below 50 ms. Desktop hardware and monitor scanout remain platform checks.

@@ -1,6 +1,6 @@
 # Browser regression baseline
 
-Purpose: map M0 behavior to executable protection and identify remaining coverage.
+Purpose: map browser and review behavior to executable protection and remaining coverage.
 
 Contracts: [architecture](architecture.md). Results: [verification](verification.md). Extend coverage for each accepted interaction and defect.
 
@@ -34,3 +34,41 @@ Contracts: [architecture](architecture.md). Results: [verification](verification
 Run the full [development checks](development.md) for every increment. Use offline fixtures independent of user Git configuration. Exercise production worker/input paths; retain scenarios through refactoring and update expectations with explicit contract decisions.
 
 Before connecting M1 controls, test Review/Back anchor restoration, active-view shortcuts, independent worker cancellation, and late-result isolation. Run these alongside the M0 suite.
+
+## M1 changed files
+
+- Git-oracle fixtures cover root/first-parent changes, merge-parent selection, nested paths, additions/deletions, IDs/modes, file-to-directory replacement, empty comparisons, invalid parents/revisions, and pinned comparisons with unavailable blobs.
+- Process tests cover nested discovery, explicit repository, exact path bytes, JSON, and error exits.
+- Controlled reader tests cover early delivery, 10,000-file completion, deep/back page reload, retained partial errors, and worker shutdown.
+- Input tests cover review/history isolation, late history results, Back anchors, fixed rows, and hovered placeholders at wide/narrow sizes.
+
+## M1 selected-file text
+
+- Git-oracle hunks and byte reconstruction cover CRLF and final-newline changes; engine tests cover invalid UTF-8, empty sides, cancellation, and budgets.
+- Process tests cover selected-file JSON and missing-path stderr/exit status.
+- Controlled worker tests verify superseded work, 256-row pages, and document reuse. UI state tests reject stale pages and preserve hovered placeholders.
+- Native layout and resource measurements remain part of M1 acceptance.
+
+## M1 parent selection
+
+- Git fixtures verify stored parent order, default selection, second-parent files, and unavailable parent objects.
+- In-memory wide/narrow tests verify pinned revision requests, retained identity on hover/failure, atomic replacement, first-file selection, and retry mailboxes.
+
+## M1 special objects and paths
+
+- Portable object fixtures cover executable-bit changes, symlinks, type changes, missing gitlink targets, and byte-distinct path labels.
+- Mode-only tests stop at header reads; cancellation tests interrupt before an unavailable second object header.
+- Unix process tests select non-UTF-8 paths through `--file` and verify exact content bytes. Engine tests preserve Unicode and escape controls/backslashes.
+
+## M1 export and binary preview
+
+- CLI tests export packed blobs beyond the diff budget, preserve existing destinations, and reject absent sides and Git metadata destinations. The repository snapshot test covers history, review, diff, and export with staged/unstaged/untracked content.
+- Cancellation tests remove partial output. PNG/JPEG tests verify dimensions, pixel budgets, malformed input, and bounded hexadecimal fallback.
+- Preview requests share the selected-file worker's generation and mailbox tests; export retains its explicitly selected object identity.
+
+## M1 resource acceptance
+
+- `packed_review_latency_and_navigation` uses production workers and egui input on the packed [review fixture](development.md). It asserts first-summary/diff latency, cached-frame latency, deep/back reachability, and both UI cache limits.
+- `retry_same_comparison_keeps_selection_anchor_and_diff` preserves selection, diff generation, offset, and count through partial retry delivery.
+- `packed_diff_stress_and_rapid_selection` covers fully changed text, maximum-pixel PNGs, and superseded real worker requests. The X11 probe measures native selection response while these workloads run.
+- Record release timings and peak process RSS in [verification](verification.md). Hardware and supported-platform runtime checks remain release gates.

@@ -84,7 +84,7 @@ Below 1040 logical pixels, details replace history reversibly; wider windows use
 
 ### Avatars
 
-Use a bounded Gravatar worker keyed by normalized email SHA-256. Cache one validated 128-pixel image per author; display at 18 pixels in history and 64 in details, with reserved initials fallbacks.
+Use a bounded Gravatar worker keyed by normalized email SHA-256. Cache one validated 128-pixel image per author; display at 18 pixels in history and 64 in details, with reserved initials fallbacks. Retain one decoded source and at most two display-sized textures per cached author; filter thumbnails for the current display scale.
 
 Persist images and 404 results in the OS cache. Read disk first; deduplicate author requests across texture eviction. Attempt transient failures once per session; retry next launch. Replace corrupt entries atomically. Bound bytes, decoded dimensions, timeouts, queues, and GPU cache. Publish/evict images after history/details hover and scrolling end. Cache location: [development](development.md).
 
@@ -92,33 +92,51 @@ Persist images and 404 results in the OS cache. Read disk first; deduplicate aut
 
 ### Comparison
 
-Pin repository, commit, and parent IDs. Resolve revisions once. Default to first parent; roots compare with the empty tree. List merge parents in stored order. Missing parent objects produce an identified incomplete-comparison state; retain metadata during loading/errors.
+Pin repository, commit, and parent IDs. Resolve revisions once. Default to first parent; roots compare with the empty tree. List merge parents in stored order with one-based numbers, short IDs, and full-ID tooltips. Parent changes reuse the pinned commit ID. Missing parent objects produce an identified incomplete-comparison state; retain metadata during loading/errors.
 
-Keep exact Git path bytes and a display string. Changes carry old/new object IDs and modes, with added/deleted/modified/type-changed status. CLI and UI share deterministic Git tree traversal order. Represent moves as deletion/addition in M1, retaining both sides for future rename detection.
+Keep exact Git path bytes and a one-line display string. Preserve Unicode; escape backslashes, controls, and invalid bytes (`\xNN`) so distinct paths have distinct labels. Copy Unicode paths verbatim; label the fallback **Copy escaped path**. CLI `--file` matches native path bytes. Changes carry old/new object IDs and modes, with added/deleted/modified/type-changed status. CLI and UI share deterministic Git tree traversal order. Represent moves as deletion/addition in M1, retaining both sides for future rename detection.
+
+Parent switches retain the displayed comparison through loading/failure, label its identity, and offer retry. Adopt replacement files and diff together after pointer leave and scroll settling. Start the new comparison at its first file; empty comparisons clear selection. Independent worker mailboxes isolate superseded requests.
 
 ### Loading
 
-Stream file summaries before blob reads. Virtualize rows using history's paging and interaction rules; counts progress to exact completion. Preserve selection by exact path, otherwise first result; clear it for empty comparisons.
+Stream file summaries before blob reads. Virtualize rows using history's paging and interaction rules; counts progress to exact completion. Within a comparison, preserve selection by exact path, otherwise first result; clear it for empty comparisons.
 
-Read selected-file content on a worker independent of history indexing. Key results by review generation, comparison, and file. Coalesce requests, cancel obsolete work between batches, and apply current results. Page diff rows, spill intermediate records as needed, and keep every file reachable through bounded caches.
+Read selected-file content on a worker independent of history indexing. Key results by review generation, comparison, and file. Coalesce requests, cancel obsolete work between batches, and apply current results. Page diff rows and keep every file reachable through bounded caches.
+
+### Changed-file implementation
+
+Walk trees depth-first in Git tree order, skip identical subtrees, and defer blob contents to selected-file requests. The frontier scales with active tree entries. Yield between tree visits; individual tree decoding remains one operation.
+
+Use an independent comparison worker with 32-step/4-ms slices, one request/result slot, temporary record/offset files, 256-row pages, and at most 768 UI rows. Retry replaces the worker and its mailbox for the same pinned comparison, retaining selected path, displayed diff, pixel anchor, and known count while enumeration catches up. Immutable comparison IDs preserve path order. Closing review cancels it; obsolete mailboxes remain isolated.
+
+Present status/path rows and selected before/after IDs and modes. Wide layouts use a resizable diff side pane; narrow layouts open a separate reading view with Back to files. History state and incoming history results wait while review is open; Back restores its pixel offset before applying current results.
 
 ### Diff and layout
 
-Use unified diffs with old/new line numbers, fixed-height rows, three context lines, and missing-final-newline markers. Preserve whitespace/line endings. Scroll long source lines horizontally in an explicit reading view. Distinguish context/additions/deletions with symbols and color.
+Use one selected-file worker with one coalesced request/result slot. Retain one bounded document on the worker; publish at most 256 rows per page and cache at most 768 UI rows. Check blob headers before allocating content. Compare up to 2 MiB per side and 100,000 combined source lines with a 250-ms algorithm deadline. Return an explicit incomplete summary when a budget is exceeded. Cancel before each object header/content read and during row projection; object decoding and the deadline-bound algorithm finish their current operation. Reuse the document for viewport requests.
+
+Use unified diffs with old/new line numbers, fixed-height rows, three context lines, and missing-final-newline markers. Label byte sizes Before and After. Preserve whitespace/line endings. Scroll long source lines horizontally in an explicit reading view. Distinguish context/additions/deletions with symbols and color.
 
 | Content | Presentation |
 | --- | --- |
-| NUL-containing blob | Binary summary with IDs and byte sizes |
-| Symlink | Target text |
-| Gitlink | Referenced commit IDs |
-| Mode-only change | Explicit mode summary |
+| Binary blob | Before/after PNG/JPEG image previews; hexadecimal fallback; IDs and byte sizes |
+| Symlink | Labeled target text, read directly from the blob |
+| Gitlink | Referenced commit IDs, including unavailable submodule objects |
+| Mode-only change | Metadata summary with before/after modes and unchanged content; read object headers only |
 | Undecodable bytes | Escaped display; exact comparison bytes |
-| Size/computation limit | Explicit summary, completion state, streaming export |
+| Size/computation limit | Explicit summary, completion state, exact-side export |
 
 Review opens a resizable file-list/diff workspace with commit identity and parent selection. Narrow windows show files and content successively. Back restores history selection, filter, and pixel anchor. Shortcuts belong to the active context; editors retain theirs.
 
+### Binary previews and export
+
+Decode PNG/JPEG on the selected-file worker. Bound each side to 16 MiB encoded, 8 megapixels, 4096 pixels per dimension, and 64 MiB decoder allocation. Fit previews to 1024 pixels; show original dimensions. Unknown, corrupt, and oversized images retain a labeled hexadecimal preview of the first 256 bytes when inside the encoded budget. Larger blobs retain summaries and export. Publish current-generation previews at the diff's interaction-safe boundary; retain one preview pair and two textures.
+
+Export either present blob side to a new user-chosen path, preserving exact bytes. Write a temporary file beside the destination, then publish without overwriting. Keep Git metadata outside export destinations. Export symlink target bytes; gitlinks retain referenced commit IDs. Cancel before object decoding and between 64-KiB writes; remove temporary output on cancellation/failure. Run one export per review view, pin its path/object identity, and cancel on closing the export or review. Escape closes the export window before review navigation resumes. Gitoxide decoding uses memory proportional to the selected object and delta chain; output writes use fixed-size chunks.
+
 ### CLI
 
-`git good show <commit> [--repo PATH] [--parent N]` streams JSON summaries; `--file PATH` selects a diff. Use cwd discovery by default. Validate one-based parent numbers; roots use the empty tree automatically. Include repository/comparison identity and exact path bytes. Apply runtime error conventions; document usage when implemented.
+`git good show <commit> [--repo PATH] [--parent N]` streams JSON summaries. Add `--file PATH` for a repository-relative selected-file diff, including exact source-line bytes. Add `--export before|after --output PATH` to save that side and emit a JSON receipt. Use cwd discovery by default. Validate one-based parent numbers; roots use the empty tree automatically. Include repository/comparison identity and exact path bytes. Apply runtime error conventions; document usage when implemented.
 
 Rationale: summaries provide early feedback; pinned, cancellable work keeps rapid selection accurate; a dedicated review view gives source readable width.

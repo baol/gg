@@ -36,6 +36,30 @@ Linux x86_64 · Intel i5-6600K · debug build · warm OS cache · packed 100,000
 
 The opt-in timing check passed. Frame timings exclude GPU presentation.
 
+## M1 changed files · 2026-10-18
+
+- All 61 default workspace tests, formatting, Clippy, and debug build pass on Linux.
+- Git-oracle tests verify root/first-parent comparisons, nested paths, statuses, object IDs/modes, file-to-directory replacement, empty commits, merge-parent selection, and pinned comparisons with unavailable blobs.
+- CLI tests verify discovery, explicit repository, exact path bytes, JSON, and error exits.
+- A controlled 10,000-file reader verifies first-page delivery, complete enumeration, deep/back page reload, retained errors, and shutdown. UI tests verify placeholder stability and review/history isolation with exact Back anchors.
+- Native X11 review confirms status/path rows, metadata, paging, and Back at [1120×740](screenshots/m1-files-wide.png) and [720×480](screenshots/m1-files-narrow.png).
+- Large-tree latency/peak-memory measurements and selected-file diffs remain in the [M1 plan](plan.md).
+
+## M1 selected-file text · 2026-10-18
+
+- All 70 default workspace tests, formatting, Clippy, and debug build pass on Linux.
+- Git-oracle hunks and byte reconstruction verify CRLF, final newlines, and exact content. Tests cover invalid UTF-8, binary/size/line budgets, CLI errors, worker cancellation, paging/reuse, stale results, and hovered placeholders.
+- In-memory input verifies narrow diff/Back selection and pixel anchors. A 100,000-character Unicode line verifies bounded horizontal shaping.
+- Native X11 review confirms the [wide workspace](screenshots/m1-diff-wide.png), [narrow reading view](screenshots/m1-diff-narrow.png), paging, and Back.
+- Complete export, special-object fixtures, and release resource measurements in the remaining [M1 increments](plan.md).
+
+## M1 parent selection · 2026-10-18
+
+- All 71 default workspace tests, formatting, Clippy, and debug build pass on Linux.
+- Git fixtures verify ordered parent IDs, exact first/second-parent files, and missing-parent errors.
+- Wide/narrow input tests verify pinned commits, hover-safe replacement, retained results on failure, retry, and empty-comparison clearing.
+- Native X11 review verifies selecting parent 2 in the [wide workspace](screenshots/m1-parent-wide.png) and [narrow reading view](screenshots/m1-parent-narrow.png).
+
 ## Preview acceptance pending
 
 - Measure cold/warm release startup and peak memory on the packed 100,000-commit fixture. Targets: first rows within 500 ms, input-to-frame below 50 ms, cached frame p95 within 16 ms.
@@ -64,3 +88,67 @@ The opt-in timing check passed. Frame timings exclude GPU presentation.
 - Version tests cover the floor, numeric patch increments, series changes, retries, explicit-tag validation, and consistent manifest/lockfile updates.
 - Cargo accepts a generated `0.3.7` workspace with the locked Linux dependency graph. Workflow YAML and shell syntax validate locally; CI verifies binary versions on all six platforms.
 - The updated workflow publishes regular releases when merged into `main`.
+
+## M1 special objects and paths · 2026-10-19
+
+- 77 default workspace tests, formatting, Clippy, and debug build pass on Linux.
+- Three failing fixtures established the missing mode/symlink summaries and ambiguous invalid-byte path labels; all pass after correction. Additional tests verify cancellation before the next header and exact CLI path/content bytes.
+- Native X11 review confirms [wide mode summaries](screenshots/m1-special-wide-mode.png), [narrow mode summaries](screenshots/m1-special-narrow-mode.png), and [symlink targets](screenshots/m1-special-wide-symlink.png). Escaped paths stay on one line.
+- Large-file export and release resource measurements remain in the [M1 plan](plan.md).
+
+## M1 export and binary previews · 2026-10-19
+
+- 83 default workspace tests, formatting, Clippy, and debug build pass on Linux.
+- Process tests export a packed 3-MiB blob byte-for-byte, preserve existing destinations and source content, and reject absent sides and Git metadata destinations. Cancellation removes partial output; Escape closes the export context.
+- PNG/JPEG tests cover dimensions, small-image scale, malformed input, and preview budgets. An egui geometry test preserves 16 hexadecimal rows at narrow widths.
+- Native X11 review confirms [before/after images](screenshots/m1-binary-wide.png), [narrow previews](screenshots/m1-binary-narrow.png), [fixed-width hex](screenshots/m1-binary-hex.png), and the [export window](screenshots/m1-export.png).
+- Cold/warm release latency and peak-memory measurements remain in M1 acceptance.
+
+## M1 resource acceptance · 2026-10-20
+
+Linux x86_64 · Intel i5-6600K · 16 GiB RAM · Rust 1.94 · release profile. Packed 10,000-file change, first file 1 MiB per side with two edited lines. Fresh process per run; cold-advised requests fixture-cache eviction with `POSIX_FADV_DONTNEED`, followed by three warm runs. Timings use production workers and in-memory egui at 1120×740; GPU presentation is a native gate.
+
+| Measurement | Cold-advised | Warm range |
+| --- | --- | --- |
+| First summaries | 13.8 ms | 12.0–13.2 ms |
+| First diff | 23.4 ms | 19.9–21.1 ms |
+| Complete enumeration | 207.7 ms | 198.2–204.9 ms |
+| Input frame during enumeration | 0.25 ms | 0.20–0.22 ms |
+| Cached frame p95 | 0.17 ms | 0.11–0.14 ms |
+| Peak process RSS | 17.4 MiB | 17.4–17.6 MiB |
+
+- All timing/cache assertions pass. Last-page delivery takes 2.5–2.7 ms; returning takes under 0.3 ms. Retained file rows: 95–111; both UI caches stay within 768 rows. Workers retain single-slot mailboxes and bounded pages.
+- Packed 64-MiB export: 0.12 s cold-advised / 0.09 s warm, peak 135.6 MiB RSS. The delta-encoded side takes 0.23 / 0.15 s, peak 199.5 MiB. Both exports match source SHA-256. These costs include object decoding and mapped pack pages; output writes remain 64-KiB chunks.
+- Repository snapshots remain unchanged after review/export. The process regression also checks staged, unstaged, untracked, index, object, and ref bytes.
+- 84 default tests, formatting, Clippy, and debug build pass. The opt-in release review check passes four runs; the history benchmark remains separate.
+- Native 200% X11 captures verify [wide previews](screenshots/m1-binary-wide-2x.png) and [narrow hexadecimal rows](screenshots/m1-binary-hex-2x.png). A failing rendered-header regression led to explicit Before/After byte labels, replacing an unsupported arrow glyph.
+- Complete native input/GPU measurements and the remaining [platform gates](#preview-acceptance-pending) before closing acceptance.
+
+## M1 retry and portability · 2026-10-20
+
+- A failing input regression reproduced retry resetting selection. Same-comparison retries now retain the selected path, diff generation, pixel anchor, and known count through partial delivery. Parent-switch tests retain their first-file reset.
+- CI exposed a newer Clippy chunk-iteration lint and an APFS filename restriction in a fixture. Use typed chunks and import raw paths directly into Git objects; the Unix process test still selects the exact invalid-byte path.
+- 86 default Rust tests, formatting, Clippy, and debug/release builds pass locally. The release stress check covers fully changed 1-MiB text, two 8-megapixel PNGs, and rapid selection; platform reruns follow.
+
+## M1 acceptance · 2026-10-20
+
+M1 is complete: commit review, selected-parent diffs, binary previews, exact export, and interaction preservation. [Six native CI jobs](https://github.com/baol/gg/actions/runs/39384178444) pass tests, Clippy, release builds, version/history smoke checks, and packaging on Linux, macOS, and Windows, each on x86_64 and arm64. Local verification passes 86 Rust tests, seven release-version tests, formatting, Clippy, and debug/release builds.
+
+- Same-comparison retry preserves selection, diff, scroll anchor, and known count. Parent changes retain their separate reset behavior.
+- Release stress fixture: fully changed 1-MiB text reaches the explicit computation-budget summary in 262–269 ms; an 8-megapixel PNG pair previews in 117–122 ms. Rapid image/text switching settles on the final selection in 257–260 ms. Three fresh-process runs, one cold-advised and two warm, peak at 43.5–43.9 MiB RSS; in-memory frame p95 stays below 0.05 ms.
+- The packed 10,000-file check still passes after the retry fix: first rows 13.0 ms, first diff 21.0 ms, cached frame p95 0.11 ms, 95 retained file rows.
+- Native release app on Xvfb/X11: 80 keyboard selections with preview publication enabled, measured through single-pixel readback. First visible response: p50 15.8 ms, p95 23.5 ms, maximum 33.0 ms. The [repeatable probe](development.md) excludes full-screen capture overhead and keeps the pointer clear of deferred-publication regions.
+- Native review confirms the [explicit text-budget fallback](screenshots/m1-stress-budget.png), readable hex, and available exact export. Earlier wide/narrow and 200% captures remain valid.
+- Supported-preview hardware, monitor presentation, accessibility, clipboard, and platform graphics acceptance remain in the [release gates](#preview-acceptance-pending).
+
+## Light-theme contrast · 2026-10-20
+
+- A failing contrast test reproduced pastel status text on light backgrounds. Theme-aware semantic colors now give light diff/status text at least 4.5:1 contrast, including selected rows. Secondary text, links, warning/error colors, and history selection accents use deeper light-theme colors.
+- 88 default tests, formatting, Clippy, and debug build pass. Tests check semantic text/fill pairs, shared accents, and unchanged dark visuals through theme switches.
+- Native X11 review confirms [light history](screenshots/light-history.png), [wide diffs](screenshots/light-diff-wide.png), [narrow diffs](screenshots/light-diff-narrow.png), and the preserved [dark palette](screenshots/dark-diff-contrast.png).
+
+## M1 visual polish · 2026-10-20
+
+- Embed the supplied `gg.png` for the native window and fixed-size toolbar brand.
+- Reproduced oversized avatar textures in an in-memory regression. List/detail textures now match physical display sizes and share one cached source; filtered-detail tests cover 100%, 125%, and 200% scale.
+- 89 workspace tests, seven release-script tests, formatting, Clippy, and debug build pass. Native light 1120×740 and dark 720×480 layouts preserve header geometry.

@@ -6,7 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 [dependencies]
 gg-engine.workspace = true
-gix = { version = "0.89", default-features = false, features = ["sha1", "sha256"] }
+gix = { version = "0.89", default-features = false, features = ["sha1", "sha256", "revision"] }
 [dev-dependencies]
 tempfile = "3"
 [lints]

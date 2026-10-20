@@ -1,11 +1,21 @@
 mod avatars;
+mod binary_preview;
 mod bounded_text;
+mod branding;
+mod colors;
 mod details_view;
+mod diff_view;
+mod diff_worker;
+mod export;
 mod history_view;
 #[cfg(test)]
 mod interaction_tests;
+mod review_cli;
+mod review_view;
+mod review_worker;
 mod state;
 mod stream;
+mod thumbnails;
 use eframe::egui;
 #[cfg(test)]
 use gg_engine::History;
@@ -21,9 +31,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("--help")) {
         println!(
-            "gg · good git\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\n\nBrowse all commits reachable from HEAD."
+            "gg · good git\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]   Review or export\n\nBrowse all commits reachable from HEAD."
         );
         return Ok(());
+    }
+    if first.as_deref() == Some(std::ffi::OsStr::new("show")) {
+        return review_cli::run(args);
     }
     let headless = first.as_deref() == Some(std::ffi::OsStr::new("history"));
     let path = if headless { args.next() } else { first }
@@ -53,12 +66,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "gg · good git",
         eframe::NativeOptions {
             viewport: egui::ViewportBuilder::default()
+                .with_icon(branding::icon()?.clone())
                 .with_inner_size(window_size)
                 .with_min_inner_size([720.0, 480.0]),
             ..Default::default()
         },
         Box::new(move |cc| {
-            cc.egui_ctx.set_visuals(egui::Visuals::dark());
+            cc.egui_ctx.set_visuals(
+                if cfg!(debug_assertions)
+                    && std::env::var("GG_THEME").is_ok_and(|theme| theme == "light")
+                {
+                    egui::Visuals::light()
+                } else {
+                    egui::Visuals::dark()
+                },
+            );
             let mut app = Browser::new(path);
             app.load(&cc.egui_ctx);
             Ok(Box::new(app))
@@ -96,7 +118,9 @@ fn write_history_json(
 }
 
 struct Browser {
+    logo: Option<egui::TextureHandle>,
     path: String,
+    review: Option<review_view::Review>,
     state: state::State,
     pending: Option<stream::Worker>,
     pending_filter_edit: bool,
@@ -121,7 +145,9 @@ struct Browser {
 impl Browser {
     fn new(path: PathBuf) -> Self {
         Self {
+            logo: None,
             path: path.to_string_lossy().into_owned(),
+            review: None,
             state: state::State::default(),
             pending: None,
             pending_filter_edit: false,
@@ -171,6 +197,25 @@ impl Browser {
         }
     }
 
+    fn open_review(&mut self, ctx: &egui::Context) {
+        if let (Some(history), Some(id)) = (&self.state.history, &self.state.selected) {
+            let subject = self
+                .state
+                .displayed_details()
+                .map(|c| c.subject().to_owned())
+                .unwrap_or_default();
+            self.review = Some(review_view::Review::new(
+                gg_engine::review::ReviewRequest {
+                    path: history.path.clone(),
+                    revision: id.clone(),
+                    parent: None,
+                },
+                subject,
+                ctx,
+            ));
+        }
+    }
+
     fn prepare_input(&mut self, input: &mut egui::RawInput) {
         // egui uses the frame's final pointer position for scrollbar release.
         // Keep later motion in the following frame, preserving event order.
@@ -192,6 +237,15 @@ impl Browser {
     }
 
     fn draw(&mut self, ctx: &egui::Context) {
+        colors::apply(ctx);
+        if let Some(review) = &mut self.review {
+            if review.draw(ctx) {
+                self.review = None;
+                self.restore_offset = Some(self.scroll_offset);
+                ctx.request_repaint();
+            }
+            return;
+        }
         self.state.viewport = self.viewport.clone();
         let (hovering_history, interacting, now) = ctx.input(|i| {
             (
@@ -363,9 +417,9 @@ impl Browser {
             .show(ctx, |ui| {
                 ui.add_space(5.0);
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("gg").size(20.0).strong());
+                    branding::toolbar(ui, &mut self.logo);
                     ui.separator();
-                    let identity_width = (ui.available_width() - 244.0).max(80.0);
+                    let identity_width = (ui.available_width() - 318.0).max(80.0);
                     let (identity, path) = if let Some(history) = &self.state.history {
                         (
                             format!(
@@ -417,6 +471,15 @@ impl Browser {
                     {
                         self.load(ctx);
                     }
+                    if ui
+                        .add_enabled(
+                            self.state.selected.is_some(),
+                            egui::Button::new("Review").min_size(egui::vec2(66.0, 26.0)),
+                        )
+                        .clicked()
+                    {
+                        self.open_review(ctx);
+                    }
                     let shown = if narrow {
                         self.narrow_details
                     } else {
@@ -463,7 +526,7 @@ impl Browser {
             } else if !self.state.finished && self.worker.is_some() {
                 (format!("{} · {} commits examined", if self.state.query.is_empty() { "Counting history" } else { "Searching history" }, self.state.scanned), ui.visuals().text_color())
             } else {
-                ("↑↓ / j k: select   ·   PgUp/PgDn: page   ·   Enter: details   ·   Esc: history   ·   Ctrl/Cmd+F: filter   ·   Ctrl/Cmd+C: copy ID".into(), ui.visuals().weak_text_color())
+                ("Up/Down / j k: select   ·   PgUp/PgDn: page   ·   Enter: details   ·   Esc: history   ·   Ctrl/Cmd+F: filter   ·   Ctrl/Cmd+C: copy ID".into(), ui.visuals().weak_text_color())
             };
             let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 18.0), egui::Sense::hover());
             bounded_text::paint(ui, rect, &message, egui::FontId::proportional(11.0), color);
