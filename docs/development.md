@@ -28,6 +28,7 @@ wgpu enables Vulkan, Metal, DX12, and GLES; Linux supports Wayland and X11.
 | `GG_SCREENSHOT=/absolute/path.ppm` | Debug build: capture after loading, then exit |
 | `GG_WINDOW_SIZE=720x480` | Debug window size |
 | `GG_DETAILS=1` | Debug narrow-screen details view |
+| `GG_THEME=light` | Debug light-theme layout and contrast inspection |
 
 Use an isolated display for captures. Avatar cache: `git-good/avatars-v2-128` under the OS cache directory (XDG cache, macOS Library/Caches, or Windows LocalAppData).
 

@@ -140,3 +140,15 @@ M1 is complete: commit review, selected-parent diffs, binary previews, exact exp
 - Native release app on Xvfb/X11: 80 keyboard selections with preview publication enabled, measured through single-pixel readback. First visible response: p50 15.8 ms, p95 23.5 ms, maximum 33.0 ms. The [repeatable probe](development.md) excludes full-screen capture overhead and keeps the pointer clear of deferred-publication regions.
 - Native review confirms the [explicit text-budget fallback](screenshots/m1-stress-budget.png), readable hex, and available exact export. Earlier wide/narrow and 200% captures remain valid.
 - Supported-preview hardware, monitor presentation, accessibility, clipboard, and platform graphics acceptance remain in the [release gates](#preview-acceptance-pending).
+
+## Light-theme contrast · 2026-10-20
+
+- A failing contrast test reproduced pastel status text on light backgrounds. Theme-aware semantic colors now give light diff/status text at least 4.5:1 contrast, including selected rows. Secondary text, links, warning/error colors, and history selection accents use deeper light-theme colors.
+- 88 default tests, formatting, Clippy, and debug build pass. Tests check semantic text/fill pairs, shared accents, and unchanged dark visuals through theme switches.
+- Native X11 review confirms [light history](screenshots/light-history.png), [wide diffs](screenshots/light-diff-wide.png), [narrow diffs](screenshots/light-diff-narrow.png), and the preserved [dark palette](screenshots/dark-diff-contrast.png).
+
+## M1 visual polish · 2026-10-20
+
+- Embed the supplied `gg.png` for the native window and fixed-size toolbar brand.
+- Reproduced oversized avatar textures in an in-memory regression. List/detail textures now match physical display sizes and share one cached source; filtered-detail tests cover 100%, 125%, and 200% scale.
+- 89 workspace tests, seven release-script tests, formatting, Clippy, and debug build pass. Native light 1120×740 and dark 720×480 layouts preserve header geometry.

@@ -1,6 +1,8 @@
 mod avatars;
 mod binary_preview;
 mod bounded_text;
+mod branding;
+mod colors;
 mod details_view;
 mod diff_view;
 mod diff_worker;
@@ -13,6 +15,7 @@ mod review_view;
 mod review_worker;
 mod state;
 mod stream;
+mod thumbnails;
 use eframe::egui;
 #[cfg(test)]
 use gg_engine::History;
@@ -63,12 +66,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "gg · good git",
         eframe::NativeOptions {
             viewport: egui::ViewportBuilder::default()
+                .with_icon(branding::icon()?.clone())
                 .with_inner_size(window_size)
                 .with_min_inner_size([720.0, 480.0]),
             ..Default::default()
         },
         Box::new(move |cc| {
-            cc.egui_ctx.set_visuals(egui::Visuals::dark());
+            cc.egui_ctx.set_visuals(
+                if cfg!(debug_assertions)
+                    && std::env::var("GG_THEME").is_ok_and(|theme| theme == "light")
+                {
+                    egui::Visuals::light()
+                } else {
+                    egui::Visuals::dark()
+                },
+            );
             let mut app = Browser::new(path);
             app.load(&cc.egui_ctx);
             Ok(Box::new(app))
@@ -106,6 +118,7 @@ fn write_history_json(
 }
 
 struct Browser {
+    logo: Option<egui::TextureHandle>,
     path: String,
     review: Option<review_view::Review>,
     state: state::State,
@@ -132,6 +145,7 @@ struct Browser {
 impl Browser {
     fn new(path: PathBuf) -> Self {
         Self {
+            logo: None,
             path: path.to_string_lossy().into_owned(),
             review: None,
             state: state::State::default(),
@@ -223,6 +237,7 @@ impl Browser {
     }
 
     fn draw(&mut self, ctx: &egui::Context) {
+        colors::apply(ctx);
         if let Some(review) = &mut self.review {
             if review.draw(ctx) {
                 self.review = None;
@@ -402,7 +417,7 @@ impl Browser {
             .show(ctx, |ui| {
                 ui.add_space(5.0);
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("gg").size(20.0).strong());
+                    branding::toolbar(ui, &mut self.logo);
                     ui.separator();
                     let identity_width = (ui.available_width() - 318.0).max(80.0);
                     let (identity, path) = if let Some(history) = &self.state.history {

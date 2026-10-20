@@ -445,7 +445,7 @@ impl Review {
                         [ui.available_width(), ROW],
                         egui::Button::new("")
                             .fill(if self.selected == Some(row) {
-                                ui.visuals().selection.bg_fill.gamma_multiply(0.55)
+                                crate::colors::selection(ui.visuals())
                             } else {
                                 egui::Color32::TRANSPARENT
                             })
@@ -469,20 +469,7 @@ impl Review {
                         rect.max,
                     );
                     if let Some(change) = change {
-                        let (label, color) = match change.kind {
-                            ChangeKind::Added => {
-                                ("+ Added", egui::Color32::from_rgb(120, 200, 150))
-                            }
-                            ChangeKind::Deleted => {
-                                ("− Deleted", egui::Color32::from_rgb(240, 140, 140))
-                            }
-                            ChangeKind::Modified => {
-                                ("~ Modified", egui::Color32::from_rgb(220, 195, 125))
-                            }
-                            ChangeKind::TypeChanged => {
-                                ("↔ Type", egui::Color32::from_rgb(170, 160, 230))
-                            }
-                        };
+                        let (label, color) = crate::colors::change(ui.visuals(), &change.kind);
                         bounded_text::paint(
                             ui,
                             status,

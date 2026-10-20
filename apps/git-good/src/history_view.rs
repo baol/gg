@@ -69,7 +69,7 @@ pub fn row(
         [ui.available_width(), ROW_HEIGHT],
         egui::Button::new("")
             .fill(if selected {
-                ui.visuals().selection.bg_fill.gamma_multiply(0.55)
+                crate::colors::selection(ui.visuals())
             } else {
                 egui::Color32::TRANSPARENT
             })

@@ -5,7 +5,7 @@ use crate::{
 };
 use eframe::egui;
 use gg_engine::{
-    diff::{DiffRow, FileDiff, RowKind},
+    diff::{DiffRow, FileDiff},
     review::FileChange,
 };
 use std::{collections::BTreeMap, ops::Range, path::PathBuf};
@@ -297,28 +297,7 @@ impl DiffView {
                     );
                     continue;
                 };
-                let (sign, color, fill) = match row.kind {
-                    RowKind::Added => (
-                        "+",
-                        egui::Color32::from_rgb(150, 220, 170),
-                        egui::Color32::from_rgba_unmultiplied(35, 95, 55, 65),
-                    ),
-                    RowKind::Deleted => (
-                        "-",
-                        egui::Color32::from_rgb(245, 160, 160),
-                        egui::Color32::from_rgba_unmultiplied(115, 40, 40, 65),
-                    ),
-                    RowKind::Hunk => (
-                        "",
-                        egui::Color32::from_rgb(135, 185, 230),
-                        egui::Color32::from_gray(35),
-                    ),
-                    _ => (
-                        "",
-                        ui.visuals().strong_text_color(),
-                        egui::Color32::TRANSPARENT,
-                    ),
-                };
+                let (sign, color, fill) = crate::colors::diff(ui.visuals(), row.kind);
                 ui.painter().rect_filled(rect, 0.0, fill);
                 let font = egui::FontId::monospace(12.0);
                 for (x, text) in [
@@ -405,7 +384,7 @@ fn visible_text(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gg_engine::diff::DiffKind;
+    use gg_engine::diff::{DiffKind, RowKind};
     #[test]
     fn byte_sizes_identify_each_side_in_the_rendered_header() {
         let ctx = egui::Context::default();
