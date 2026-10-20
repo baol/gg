@@ -69,4 +69,6 @@ Before connecting M1 controls, test Review/Back anchor restoration, active-view 
 ## M1 resource acceptance
 
 - `packed_review_latency_and_navigation` uses production workers and egui input on the packed [review fixture](development.md). It asserts first-summary/diff latency, cached-frame latency, deep/back reachability, and both UI cache limits.
-- Record release timings and peak process RSS in [verification](verification.md). GPU presentation and platform input remain native checks.
+- `retry_same_comparison_keeps_selection_anchor_and_diff` preserves selection, diff generation, offset, and count through partial retry delivery.
+- `packed_diff_stress_and_rapid_selection` covers fully changed text, maximum-pixel PNGs, and superseded real worker requests. The X11 probe measures native selection response while these workloads run.
+- Record release timings and peak process RSS in [verification](verification.md). Hardware and supported-platform runtime checks remain release gates.

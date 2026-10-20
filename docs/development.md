@@ -54,3 +54,12 @@ Stress fully changed text, maximum-pixel PNGs, and rapid selection:
 python3 scripts/review-stress-fixture.py /tmp/gg-review-stress
 GG_OFFLINE=1 GG_STRESS_REPOSITORY=/tmp/gg-review-stress cargo test --release -p git-good packed_diff_stress_and_rapid_selection -- --ignored --nocapture
 ```
+
+On Linux, measure native selection response on an isolated X11 display with Xvfb, libX11, and libXtst installed:
+
+```sh
+cargo build --release -p git-good --locked
+env -u WAYLAND_DISPLAY xvfb-run -a -s '-screen 0 1280x900x24' python3 scripts/native-review-latency.py target/release/git-good /tmp/gg-review-stress
+```
+
+The probe alternates 80 selections while text/image work runs. It polls one pixel for the first visible selection fill, reports p50/p95/max, and checks p95 below 50 ms. Desktop hardware and monitor scanout remain platform checks.

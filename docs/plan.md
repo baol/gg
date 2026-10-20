@@ -2,7 +2,7 @@
 
 Purpose: sequence M1 delivery and acceptance.
 
-## M1 · Current · Review commits
+## M1 · Complete · Review commits
 
 Goal: understand a selected commit's files and diff against a chosen parent.
 
@@ -13,7 +13,7 @@ Contracts: [architecture](architecture.md#commit-review--m1-specification). Pres
 1. **Changed files · implemented.** Typed comparison requests, incremental gitoxide summaries, JSON command, and native Review view. Deliver first-parent/root comparisons, loading/empty/retry states, and history restoration on Back.
 2. **Selected-file text · implemented.** Cancellable blob reads, virtualized unified diffs, line numbers, context, horizontal scrolling, and final-newline markers. Bounded worker, paged rows, and CLI `--file`.
 3. **Comparison completeness · implemented.** Parent selection, special-object fixtures, mode/type summaries, byte-safe paths, and cancellation between object reads implemented. Exact-side export and PNG/JPEG previews with hexadecimal fallback implemented.
-4. **Acceptance · current.** Linux release latency, cache limits, export memory, and repository preservation measured. Complete native input/GPU and platform checks; retain captures and [evidence](verification.md).
+4. **Acceptance · passed.** Retry preservation, resource stress, native X11 input-to-visible-frame timing, repository preservation, and all six native CI targets verified. Results and captures: [evidence](verification.md#m1-acceptance--2026-10-20).
 
 ### Tests
 
@@ -40,4 +40,4 @@ Record machine, fixture, cache state, and build profile; measure cold and warm r
 - Input-to-frame: below 50 ms during work; cached frame p95 within 16 ms.
 - Record peak memory and verify review cache/queue budgets. Measure export separately: object decoding scales with the selected blob and delta chain; writes use 64-KiB chunks.
 
-Advance to M2 after CLI/native comparisons, behavioral tests, visual review, and measurements pass. Record [evidence](verification.md); retain separate [preview gates](../ROADMAP.md).
+M2 is next. Supported-preview hardware, clipboard, accessibility, and platform graphics checks remain separate [release gates](../ROADMAP.md).

@@ -129,3 +129,14 @@ Linux x86_64 · Intel i5-6600K · 16 GiB RAM · Rust 1.94 · release profile. Pa
 - A failing input regression reproduced retry resetting selection. Same-comparison retries now retain the selected path, diff generation, pixel anchor, and known count through partial delivery. Parent-switch tests retain their first-file reset.
 - CI exposed a newer Clippy chunk-iteration lint and an APFS filename restriction in a fixture. Use typed chunks and import raw paths directly into Git objects; the Unix process test still selects the exact invalid-byte path.
 - 86 default Rust tests, formatting, Clippy, and debug/release builds pass locally. The release stress check covers fully changed 1-MiB text, two 8-megapixel PNGs, and rapid selection; platform reruns follow.
+
+## M1 acceptance · 2026-10-20
+
+M1 is complete: commit review, selected-parent diffs, binary previews, exact export, and interaction preservation. [Six native CI jobs](https://github.com/baol/gg/actions/runs/39384178444) pass tests, Clippy, release builds, version/history smoke checks, and packaging on Linux, macOS, and Windows, each on x86_64 and arm64. Local verification passes 86 Rust tests, seven release-version tests, formatting, Clippy, and debug/release builds.
+
+- Same-comparison retry preserves selection, diff, scroll anchor, and known count. Parent changes retain their separate reset behavior.
+- Release stress fixture: fully changed 1-MiB text reaches the explicit computation-budget summary in 262–269 ms; an 8-megapixel PNG pair previews in 117–122 ms. Rapid image/text switching settles on the final selection in 257–260 ms. Three fresh-process runs, one cold-advised and two warm, peak at 43.5–43.9 MiB RSS; in-memory frame p95 stays below 0.05 ms.
+- The packed 10,000-file check still passes after the retry fix: first rows 13.0 ms, first diff 21.0 ms, cached frame p95 0.11 ms, 95 retained file rows.
+- Native release app on Xvfb/X11: 80 keyboard selections with preview publication enabled, measured through single-pixel readback. First visible response: p50 15.8 ms, p95 23.5 ms, maximum 33.0 ms. The [repeatable probe](development.md) excludes full-screen capture overhead and keeps the pointer clear of deferred-publication regions.
+- Native review confirms the [explicit text-budget fallback](screenshots/m1-stress-budget.png), readable hex, and available exact export. Earlier wide/narrow and 200% captures remain valid.
+- Supported-preview hardware, monitor presentation, accessibility, clipboard, and platform graphics acceptance remain in the [release gates](#preview-acceptance-pending).
