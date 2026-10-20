@@ -362,20 +362,24 @@ fn show_file_uses_exact_non_utf8_path_bytes() -> Result {
     let repo = tempfile::tempdir()?;
     git(repo.path(), &["init", "-b", "main"])?;
     let name = OsString::from_vec(b"raw\xff\nname".to_vec());
-    std::fs::write(repo.path().join(&name), b"exact content\n")?;
-    git(repo.path(), &["add", "."])?;
-    git(
-        repo.path(),
-        &[
-            "-c",
-            "user.name=Test",
-            "-c",
-            "user.email=test@example.org",
-            "commit",
-            "-m",
-            "raw path",
-        ],
+    // Store raw Git paths directly: host filesystems need not support these bytes.
+    use std::{io::Write, process::Stdio};
+    let mut import = Command::new("git")
+        .arg("-C")
+        .arg(repo.path())
+        .args(["fast-import", "--quiet"])
+        .stdin(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    import.stdin.take().ok_or("missing import input")?.write_all(
+        b"blob\nmark :1\ndata 14\nexact content\n\ncommit refs/heads/main\ncommitter Test <test@example.org> 1700000000 +0000\ndata 8\nraw path\nM 100644 :1 \"raw\\377\\nname\"\n\n",
     )?;
+    let imported = import.wait_with_output()?;
+    assert!(
+        imported.status.success(),
+        "{}",
+        String::from_utf8_lossy(&imported.stderr)
+    );
     let output = Command::new(env!("CARGO_BIN_EXE_git-good"))
         .args(["show", "HEAD", "--file"])
         .arg(name)

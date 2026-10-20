@@ -123,3 +123,9 @@ Linux x86_64 · Intel i5-6600K · 16 GiB RAM · Rust 1.94 · release profile. Pa
 - 84 default tests, formatting, Clippy, and debug build pass. The opt-in release review check passes four runs; the history benchmark remains separate.
 - Native 200% X11 captures verify [wide previews](screenshots/m1-binary-wide-2x.png) and [narrow hexadecimal rows](screenshots/m1-binary-hex-2x.png). A failing rendered-header regression led to explicit Before/After byte labels, replacing an unsupported arrow glyph.
 - Complete native input/GPU measurements and the remaining [platform gates](#preview-acceptance-pending) before closing acceptance.
+
+## M1 retry and portability · 2026-10-20
+
+- A failing input regression reproduced retry resetting selection. Same-comparison retries now retain the selected path, diff generation, pixel anchor, and known count through partial delivery. Parent-switch tests retain their first-file reset.
+- CI exposed a newer Clippy chunk-iteration lint and an APFS filename restriction in a fixture. Use typed chunks and import raw paths directly into Git objects; the Unix process test still selects the exact invalid-byte path.
+- 86 default Rust tests, formatting, Clippy, and debug/release builds pass locally. The release stress check covers fully changed 1-MiB text, two 8-megapixel PNGs, and rapid selection; platform reruns follow.

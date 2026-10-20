@@ -108,7 +108,7 @@ Read selected-file content on a worker independent of history indexing. Key resu
 
 Walk trees depth-first in Git tree order, skip identical subtrees, and defer blob contents to selected-file requests. The frontier scales with active tree entries. Yield between tree visits; individual tree decoding remains one operation.
 
-Use an independent comparison worker with 32-step/4-ms slices, one request/result slot, temporary record/offset files, 256-row pages, and at most 768 UI rows. Retry replaces the worker and its mailbox for the same pinned comparison. Closing review cancels it; obsolete mailboxes remain isolated.
+Use an independent comparison worker with 32-step/4-ms slices, one request/result slot, temporary record/offset files, 256-row pages, and at most 768 UI rows. Retry replaces the worker and its mailbox for the same pinned comparison, retaining selected path, displayed diff, pixel anchor, and known count while enumeration catches up. Immutable comparison IDs preserve path order. Closing review cancels it; obsolete mailboxes remain isolated.
 
 Present status/path rows and selected before/after IDs and modes. Wide layouts use a resizable diff side pane; narrow layouts open a separate reading view with Back to files. History state and incoming history results wait while review is open; Back restores its pixel offset before applying current results.
 
@@ -125,7 +125,7 @@ Use unified diffs with old/new line numbers, fixed-height rows, three context li
 | Gitlink | Referenced commit IDs, including unavailable submodule objects |
 | Mode-only change | Metadata summary with before/after modes and unchanged content; read object headers only |
 | Undecodable bytes | Escaped display; exact comparison bytes |
-| Size/computation limit | Explicit summary, completion state, streaming export |
+| Size/computation limit | Explicit summary, completion state, exact-side export |
 
 Review opens a resizable file-list/diff workspace with commit identity and parent selection. Narrow windows show files and content successively. Back restores history selection, filter, and pixel anchor. Shortcuts belong to the active context; editors retain theirs.
 

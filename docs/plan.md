@@ -27,7 +27,7 @@ Contracts: [architecture](architecture.md#commit-review--m1-specification). Pres
 | Review/Back, hover, press, paging | Stable targets, restored anchor, context-local shortcuts | egui input |
 | CRLF, whitespace, final newline, Unicode | Correct hunks/line numbers and exact bytes | Git diff oracle and reconstruction |
 | Binary, symlink, gitlink, mode/type changes | Appropriate summaries | Git fixtures |
-| Large blobs, long lines, cancellation | Responsive UI, bounded memory, explicit completion | Resource measurements |
+| Large blobs, long lines, cancellation | Responsive UI, bounded review caches, explicit completion | Resource measurements |
 | Long paths, 720×480/1120×740, 100%/200% | Disjoint controls and stable geometry | Geometry and native review |
 | Browse and export | Objects, refs, index, working files preserved | Filesystem comparison |
 
@@ -38,6 +38,6 @@ Record machine, fixture, cache state, and build profile; measure cold and warm r
 - First summaries: within 500 ms on a packed 10,000-file change.
 - First diff: within 500 ms for UTF-8 files up to 1 MiB per side.
 - Input-to-frame: below 50 ms during work; cached frame p95 within 16 ms.
-- Record peak memory and verify cache/queue budgets.
+- Record peak memory and verify review cache/queue budgets. Measure export separately: object decoding scales with the selected blob and delta chain; writes use 64-KiB chunks.
 
 Advance to M2 after CLI/native comparisons, behavioral tests, visual review, and measurements pass. Record [evidence](verification.md); retain separate [preview gates](../ROADMAP.md).

@@ -2,6 +2,7 @@
 
 Purpose: define shared layout and interaction rules.
 
+- Revisit [Fork's screenshots](https://fork.dev/) during layout and interaction refinements. Use them as references for density, hierarchy, alignment, and readable diffs while following gg's CLI-first workflow and milestone scope. Link to external references; commit original gg visuals and assets with compatible licenses and required attribution.
 - Reserve compact, stable slots for text, controls, images, and loading states.
 - Keep fields on one line. Expose overflow through clickable `...` and full-text tooltips.
 - Open complete text in a separate scrollable, selectable view with Copy. Preserve underlying selection and position.

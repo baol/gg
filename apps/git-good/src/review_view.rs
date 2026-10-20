@@ -86,13 +86,28 @@ impl Review {
         self.retry(ctx);
     }
     fn adopt_replacement(&mut self) {
+        let same_comparison = self
+            .comparison
+            .as_ref()
+            .zip(self.staged.as_ref())
+            .is_some_and(|(current, update)| {
+                current.path == update.comparison.path
+                    && current.commit == update.comparison.commit
+                    && current.parent == update.comparison.parent
+            });
+        self.replacing = false;
+        // Immutable comparisons have the same paths and order on retry. Keep
+        // their displayed rows and anchors while the new spool catches up.
+        if same_comparison {
+            return;
+        }
         self.rows.clear();
         self.selected = None;
+        self.count = 0;
         self.offset = 0.0;
         self.viewport = 0..64;
         self.restore_files = true;
         self.diff = crate::diff_view::DiffView::default();
-        self.replacing = false;
     }
     fn metadata(&mut self, ui: &mut egui::Ui) {
         let Some(change) = self.selected.and_then(|row| self.rows.get(&row)) else {
@@ -172,7 +187,11 @@ impl Review {
                 }
             }
             if quiet && !scrollbar {
-                self.count = update.count;
+                self.count = if update.complete {
+                    update.count
+                } else {
+                    self.count.max(update.count)
+                };
                 self.complete = update.complete;
                 self.error = update.error.clone();
                 self.subject = update.comparison.subject.clone();
@@ -563,6 +582,48 @@ impl Review {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn retry_same_comparison_keeps_selection_anchor_and_diff() -> Result<(), String> {
+        for width in [720.0, 1120.0] {
+            let ctx = egui::Context::default();
+            let mut view = Review::fixture(&ctx);
+            let frame = |view: &mut Review| {
+                let _ = ctx.run(crate::tests::frame_input(width, 740.0, vec![]), |ctx| {
+                    view.draw(ctx);
+                });
+            };
+            frame(&mut view);
+            view.selected = Some(20);
+            view.offset = 300.0;
+            view.restore_files = true;
+            frame(&mut view);
+            let anchor = view.offset;
+            let selected = view.rows[&20].clone();
+            let generation = view.diff.generation;
+            let comparison = view.comparison.clone().ok_or("missing comparison")?;
+            view.error = Some("Temporary read failure".into());
+            view.retry(&ctx);
+            view.worker = None;
+            for (count, complete) in [(1, false), (1000, true)] {
+                view.staged = Some(Update {
+                    comparison: comparison.clone(),
+                    count,
+                    complete,
+                    error: None,
+                    rows: vec![(0, view.rows[&0].clone())],
+                });
+                frame(&mut view);
+                assert_eq!(view.selected, Some(20));
+                assert_eq!(view.rows[&20].path_bytes, selected.path_bytes);
+                assert_eq!(view.offset, anchor);
+                assert_eq!(view.count, 1000);
+                assert_eq!(view.diff.generation, generation);
+            }
+            assert!(view.complete);
+            assert!(view.error.is_none());
+        }
+        Ok(())
+    }
     #[test]
     fn parent_replacement_retains_identity_until_pointer_leaves_and_resets_selection()
     -> Result<(), String> {

@@ -305,7 +305,7 @@ fn changed_files_match_git_for_root_nested_and_type_changes() -> Result {
         .filter(|s| !s.is_empty())
         .collect();
     assert_eq!(fields.len(), changes.len() * 2);
-    for (change, pair) in changes.iter().zip(fields.chunks_exact(2)) {
+    for (change, pair) in changes.iter().zip(fields.as_chunks::<2>().0) {
         assert_eq!(change.path_bytes, pair[1]);
         let raw = std::str::from_utf8(pair[0])?;
         let values: Vec<_> = raw.trim_start_matches(':').split_whitespace().collect();

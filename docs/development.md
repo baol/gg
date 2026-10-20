@@ -47,3 +47,10 @@ GG_OFFLINE=1 GG_REVIEW_REPOSITORY=/tmp/gg-review-benchmark cargo test --release 
 ```
 
 Use a new fixture directory. The check exercises production workers and egui frames, asserts latency/cache targets, and visits the last page and back. Record process peak RSS separately; distinguish filesystem-cache conditions from fresh application state.
+
+Stress fully changed text, maximum-pixel PNGs, and rapid selection:
+
+```sh
+python3 scripts/review-stress-fixture.py /tmp/gg-review-stress
+GG_OFFLINE=1 GG_STRESS_REPOSITORY=/tmp/gg-review-stress cargo test --release -p git-good packed_diff_stress_and_rapid_selection -- --ignored --nocapture
+```

@@ -468,3 +468,112 @@ mod tests {
         assert_eq!(view.rows[&0].text, "new");
     }
 }
+
+#[cfg(test)]
+mod performance {
+    use super::*;
+    use gg_engine::review::{ReviewReader, ReviewRequest, ReviewStep};
+    use std::time::{Duration, Instant};
+
+    #[test]
+    #[ignore = "set GG_STRESS_REPOSITORY to scripts/review-stress-fixture.py output; use release mode"]
+    fn packed_diff_stress_and_rapid_selection() -> Result<(), Box<dyn std::error::Error>> {
+        let path: PathBuf = std::env::var_os("GG_STRESS_REPOSITORY")
+            .ok_or("GG_STRESS_REPOSITORY is required")?
+            .into();
+        let mut reader = gg_git::review::ReviewSession::open(&ReviewRequest {
+            path: path.clone(),
+            revision: "HEAD".into(),
+            parent: None,
+        })?;
+        let mut files = Vec::new();
+        loop {
+            match reader.step()? {
+                ReviewStep::Change(file) => files.push(file),
+                ReviewStep::Complete => break,
+                ReviewStep::Pending => {}
+            }
+        }
+        assert_eq!(files.len(), 2);
+        assert_eq!(files[0].path, "changed.txt");
+        assert_eq!(files[1].path, "image.png");
+        let ctx = egui::Context::default();
+        let mut view = DiffView::default();
+        let mut frames = Vec::new();
+        let frame = |view: &mut DiffView| {
+            let start = Instant::now();
+            let _ = ctx.run(crate::tests::frame_input(1120.0, 740.0, vec![]), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| view.draw(ui));
+            });
+            assert!(view.rows.len() <= 768);
+            start.elapsed()
+        };
+        let mut durations = Vec::new();
+        for file in &files {
+            let start = Instant::now();
+            view.select(path.clone(), Some(file.clone()), &ctx);
+            while view.info.is_none() {
+                frames.push(frame(&mut view));
+                assert!(view.error.is_none(), "{:?}", view.error);
+                assert!(start.elapsed() < Duration::from_secs(10));
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            durations.push(start.elapsed());
+            if file.path == "changed.txt" {
+                assert!(start.elapsed() < Duration::from_millis(500));
+                let info = view.info.as_ref().ok_or("missing text result")?;
+                assert!(info.complete || info.note.contains("budget"));
+            } else {
+                let preview = view.preview.as_ref().ok_or("missing preview")?;
+                for side in [&preview.before, &preview.after] {
+                    assert_eq!(
+                        side.image.as_ref().ok_or("missing image")?.size,
+                        [1024, 512]
+                    );
+                    assert!(side.note.contains("4096 × 2048"));
+                }
+            }
+        }
+        // Supersede real image reads/decodes and then let the final text request settle.
+        for _ in 0..8 {
+            view.select(path.clone(), Some(files[0].clone()), &ctx);
+            frame(&mut view);
+            view.select(path.clone(), Some(files[1].clone()), &ctx);
+            frame(&mut view);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        view.select(path.clone(), Some(files[0].clone()), &ctx);
+        let final_generation = view.generation;
+        let start = Instant::now();
+        while view.info.is_none() {
+            frames.push(frame(&mut view));
+            assert!(view.error.is_none(), "{:?}", view.error);
+            assert!(start.elapsed() < Duration::from_secs(10));
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(view.generation, final_generation);
+        assert_eq!(
+            view.change.as_ref().ok_or("missing selection")?.path,
+            "changed.txt"
+        );
+        assert!(
+            view.preview
+                .as_ref()
+                .is_none_or(|pair| pair.before.image.is_none() && pair.after.image.is_none())
+        );
+        assert_eq!(
+            view.info.as_ref().ok_or("missing result")?.new_size,
+            1024 * 1024
+        );
+        frames.sort();
+        eprintln!(
+            "fully changed text={:?}; 8MP image pair={:?}; working frame p95={:?}; final selection={:?}",
+            durations[0],
+            durations[1],
+            frames[frames.len() * 95 / 100],
+            start.elapsed()
+        );
+        assert!(frames[frames.len() * 95 / 100] < Duration::from_millis(16));
+        Ok(())
+    }
+}
