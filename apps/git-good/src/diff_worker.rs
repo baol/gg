@@ -19,6 +19,7 @@ struct Request {
 #[derive(Clone)]
 pub struct Update {
     pub generation: u64,
+    pub preview: Option<Arc<crate::binary_preview::Pair>>,
     pub count: usize,
     pub columns: usize,
     pub page_start: usize,
@@ -57,6 +58,7 @@ impl Worker {
                 let mut document = None;
                 let mut loaded = 0;
                 let mut max_columns = 0;
+                let mut preview = None;
                 while !s.load(Ordering::Relaxed) {
                     let request = i.lock().ok().and_then(|mut r| r.take());
                     let Some(request) = request else {
@@ -70,6 +72,21 @@ impl Worker {
                                 || g.load(Ordering::Relaxed) != request.generation
                         };
                         let result = read(&request, &cancelled);
+                        preview = None;
+                        if result.as_ref().is_ok_and(|diff| {
+                            matches!(
+                                diff.kind,
+                                gg_engine::diff::DiffKind::Binary
+                                    | gg_engine::diff::DiffKind::Limited
+                            )
+                        }) && !cancelled()
+                        {
+                            preview = Some(Arc::new(crate::binary_preview::read(
+                                &request.path,
+                                &request.change,
+                                &cancelled,
+                            )));
+                        }
                         if cancelled() {
                             continue;
                         }
@@ -114,6 +131,7 @@ impl Worker {
                         if let Ok(mut slot) = o.lock() {
                             *slot = Some(Update {
                                 generation: loaded,
+                                preview: preview.clone(),
                                 count,
                                 columns,
                                 page_start: request.range.start,

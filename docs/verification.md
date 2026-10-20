@@ -95,3 +95,31 @@ The opt-in timing check passed. Frame timings exclude GPU presentation.
 - Three failing fixtures established the missing mode/symlink summaries and ambiguous invalid-byte path labels; all pass after correction. Additional tests verify cancellation before the next header and exact CLI path/content bytes.
 - Native X11 review confirms [wide mode summaries](screenshots/m1-special-wide-mode.png), [narrow mode summaries](screenshots/m1-special-narrow-mode.png), and [symlink targets](screenshots/m1-special-wide-symlink.png). Escaped paths stay on one line.
 - Large-file export and release resource measurements remain in the [M1 plan](plan.md).
+
+## M1 export and binary previews · 2026-10-19
+
+- 83 default workspace tests, formatting, Clippy, and debug build pass on Linux.
+- Process tests export a packed 3-MiB blob byte-for-byte, preserve existing destinations and source content, and reject absent sides and Git metadata destinations. Cancellation removes partial output; Escape closes the export context.
+- PNG/JPEG tests cover dimensions, small-image scale, malformed input, and preview budgets. An egui geometry test preserves 16 hexadecimal rows at narrow widths.
+- Native X11 review confirms [before/after images](screenshots/m1-binary-wide.png), [narrow previews](screenshots/m1-binary-narrow.png), [fixed-width hex](screenshots/m1-binary-hex.png), and the [export window](screenshots/m1-export.png).
+- Cold/warm release latency and peak-memory measurements remain in M1 acceptance.
+
+## M1 resource acceptance · 2026-10-20
+
+Linux x86_64 · Intel i5-6600K · 16 GiB RAM · Rust 1.94 · release profile. Packed 10,000-file change, first file 1 MiB per side with two edited lines. Fresh process per run; cold-advised requests fixture-cache eviction with `POSIX_FADV_DONTNEED`, followed by three warm runs. Timings use production workers and in-memory egui at 1120×740; GPU presentation is a native gate.
+
+| Measurement | Cold-advised | Warm range |
+| --- | --- | --- |
+| First summaries | 13.8 ms | 12.0–13.2 ms |
+| First diff | 23.4 ms | 19.9–21.1 ms |
+| Complete enumeration | 207.7 ms | 198.2–204.9 ms |
+| Input frame during enumeration | 0.25 ms | 0.20–0.22 ms |
+| Cached frame p95 | 0.17 ms | 0.11–0.14 ms |
+| Peak process RSS | 17.4 MiB | 17.4–17.6 MiB |
+
+- All timing/cache assertions pass. Last-page delivery takes 2.5–2.7 ms; returning takes under 0.3 ms. Retained file rows: 95–111; both UI caches stay within 768 rows. Workers retain single-slot mailboxes and bounded pages.
+- Packed 64-MiB export: 0.12 s cold-advised / 0.09 s warm, peak 135.6 MiB RSS. The delta-encoded side takes 0.23 / 0.15 s, peak 199.5 MiB. Both exports match source SHA-256. These costs include object decoding and mapped pack pages; output writes remain 64-KiB chunks.
+- Repository snapshots remain unchanged after review/export. The process regression also checks staged, unstaged, untracked, index, object, and ref bytes.
+- 84 default tests, formatting, Clippy, and debug build pass. The opt-in release review check passes four runs; the history benchmark remains separate.
+- Native 200% X11 captures verify [wide previews](screenshots/m1-binary-wide-2x.png) and [narrow hexadecimal rows](screenshots/m1-binary-hex-2x.png). A failing rendered-header regression led to explicit Before/After byte labels, replacing an unsupported arrow glyph.
+- Complete native input/GPU measurements and the remaining [platform gates](#preview-acceptance-pending) before closing acceptance.

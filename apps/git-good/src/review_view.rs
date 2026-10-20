@@ -207,7 +207,7 @@ impl Review {
         let narrow = ctx.content_rect().width() < 1040.0;
         let mut back = false;
         let mut reveal = false;
-        if !ctx.wants_keyboard_input() {
+        if !ctx.wants_keyboard_input() && !self.diff.export_open() {
             back = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
             if back && narrow && self.show_diff {
                 self.show_diff = false;
@@ -357,6 +357,8 @@ impl Review {
                 });
                 let text = failure.as_deref().unwrap_or(if self.replacing {
                     &pending
+                } else if narrow && self.show_diff && self.diff.binary() {
+                    "Scroll to inspect · Export either side · Esc: files"
                 } else if narrow && self.show_diff {
                     "Scroll to read · Click line: copy · Esc: files"
                 } else if self.complete {
@@ -720,6 +722,118 @@ mod tests {
             frame(&mut view, vec![egui::Event::PointerGone], 1.4);
             assert!(view.rows.contains_key(&2));
         }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod performance {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    #[ignore = "set GG_REVIEW_REPOSITORY to scripts/review-fixture.py output; run in release mode"]
+    fn packed_review_latency_and_navigation() -> Result<(), Box<dyn std::error::Error>> {
+        let path =
+            std::env::var_os("GG_REVIEW_REPOSITORY").ok_or("GG_REVIEW_REPOSITORY is required")?;
+        let ctx = egui::Context::default();
+        let start = Instant::now();
+        let mut view = Review::new(
+            ReviewRequest {
+                path: path.into(),
+                revision: "HEAD".into(),
+                parent: None,
+            },
+            String::new(),
+            &ctx,
+        );
+        let mut first = None;
+        let mut diff = None;
+        let mut working_input = None;
+        let mut frames = Vec::new();
+        let frame = |view: &mut Review, events| {
+            let began = Instant::now();
+            let mut input = crate::tests::frame_input(1120.0, 740.0, events);
+            input.time = Some(start.elapsed().as_secs_f64());
+            let _ = ctx.run(input, |ctx| {
+                view.draw(ctx);
+            });
+            assert!(view.rows.len() <= 768);
+            assert!(view.diff.rows.len() <= 768);
+            began.elapsed()
+        };
+        while !view.complete || diff.is_none() {
+            frames.push(frame(&mut view, vec![]));
+            if !view.rows.is_empty() {
+                first.get_or_insert(start.elapsed());
+            }
+            if !view.diff.rows.is_empty() {
+                diff.get_or_insert(start.elapsed());
+            }
+            if diff.is_some() && !view.complete && view.count > 1 && working_input.is_none() {
+                let selected = view.selected;
+                let elapsed = frame(
+                    &mut view,
+                    vec![egui::Event::Key {
+                        key: egui::Key::ArrowDown,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: egui::Modifiers::NONE,
+                    }],
+                );
+                assert_eq!(view.selected, selected.map(|row| row + 1));
+                assert!(elapsed < Duration::from_millis(50));
+                working_input = Some(elapsed);
+            }
+            assert!(view.error.is_none(), "{:?}", view.error);
+            assert!(
+                start.elapsed() < Duration::from_secs(30),
+                "review timed out"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(view.count, 10000);
+        let complete = start.elapsed();
+        let mut navigation = Vec::new();
+        for row in [9998, 0] {
+            // Position near the boundary, then use the production keyboard/reveal path.
+            view.selected = Some(row);
+            let began = Instant::now();
+            let input_frame = frame(
+                &mut view,
+                vec![egui::Event::Key {
+                    key: egui::Key::ArrowDown,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+            );
+            assert_eq!(view.selected, Some(row + 1));
+            assert!(input_frame < Duration::from_millis(50));
+            while !view.rows.contains_key(&(row + 1)) {
+                frame(&mut view, vec![]);
+                assert!(began.elapsed() < Duration::from_secs(5));
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            navigation.push(began.elapsed());
+        }
+        let mut cached = (0..200)
+            .map(|_| frame(&mut view, vec![]))
+            .collect::<Vec<_>>();
+        cached.sort();
+        frames.sort();
+        eprintln!(
+            "first summaries={first:?}; first diff={diff:?}; complete={complete:?}; working input={working_input:?}; working frame p95={:?}; cached frame p95={:?}; navigation={navigation:?}; retained files={}; retained diff rows={}",
+            frames[frames.len() * 95 / 100],
+            cached[190],
+            view.rows.len(),
+            view.diff.rows.len()
+        );
+        assert!(first.ok_or("missing summaries")? < Duration::from_millis(500));
+        assert!(diff.ok_or("missing diff")? < Duration::from_millis(500));
+        assert!(cached[190] < Duration::from_millis(16));
         Ok(())
     }
 }

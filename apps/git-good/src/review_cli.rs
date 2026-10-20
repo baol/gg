@@ -4,7 +4,7 @@ use std::{ffi::OsString, io::Write, path::PathBuf};
 pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::error::Error>> {
     let revision = args
         .next()
-        .ok_or("Usage: git good show <commit> [--repo PATH] [--parent N] [--file PATH]")?
+        .ok_or("Usage: git good show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]")?
         .into_string()
         .map_err(|_| "Commit revision must be UTF-8")?;
     let mut request = ReviewRequest {
@@ -13,8 +13,18 @@ pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::
         parent: None,
     };
     let mut file = None;
+    let mut export_side = None;
+    let mut output = None;
     while let Some(option) = args.next() {
         match option.to_str() {
+            Some("--export") => {
+                export_side = Some(args.next().ok_or("--export needs before or after")?);
+            }
+            Some("--output") => {
+                output = Some(PathBuf::from(
+                    args.next().ok_or("--output needs a destination path")?,
+                ));
+            }
             Some("--repo") => {
                 request.path = PathBuf::from(args.next().ok_or("--repo needs a path")?)
             }
@@ -35,10 +45,19 @@ pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::
             }
             _ => {
                 return Err(
-                    "Usage: git good show <commit> [--repo PATH] [--parent N] [--file PATH]".into(),
+                    "Usage: git good show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]".into(),
                 );
             }
         }
+    }
+    if export_side.is_some() != output.is_some() || (export_side.is_some() && file.is_none()) {
+        return Err("Export requires --file PATH --export before|after --output PATH".into());
+    }
+    if export_side
+        .as_ref()
+        .is_some_and(|s| s != "before" && s != "after")
+    {
+        return Err("--export needs before or after".into());
     }
     let mut reader = gg_git::review::ReviewSession::open(&request)?;
     if let Some(file) = file {
@@ -63,6 +82,25 @@ pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::
                 _ => {}
             }
         };
+        if let (Some(which), Some(destination)) = (export_side, output) {
+            let side = if which == "before" {
+                &change.old
+            } else {
+                &change.new
+            };
+            let side = side.as_ref().ok_or("Selected side is absent")?;
+            let size =
+                crate::export::save(&reader.comparison().path, side, &destination, || false)?;
+            serde_json::to_writer(
+                std::io::stdout().lock(),
+                &serde_json::json!({
+                    "comparison": reader.comparison(), "file": change, "side": which.to_string_lossy(),
+                    "output": destination.to_string_lossy(), "bytes": size
+                }),
+            )?;
+            println!();
+            return Ok(());
+        }
         let diff = gg_git::diff::read(&reader.comparison().path, &change, || false)?;
         let mut out = std::io::BufWriter::new(std::io::stdout().lock());
         write!(out, "{{\"comparison\":")?;

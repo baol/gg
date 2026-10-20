@@ -173,7 +173,8 @@ fn browsing_preserves_repository_index_and_dirty_worktree() -> Result {
     std::fs::write(repo.path().join("tracked"), b"unstaged\n")?;
     std::fs::write(repo.path().join("untracked"), [0, 255, 1])?;
     let before = snapshot(repo.path())?;
-    for _ in 0..2 {
+    let exports = tempfile::tempdir()?;
+    for pass in 0..2 {
         let output = Command::new(env!("CARGO_BIN_EXE_git-good"))
             .arg("history")
             .current_dir(repo.path())
@@ -196,6 +197,37 @@ fn browsing_preserves_repository_index_and_dirty_worktree() -> Result {
             before,
             "browsing changed repository files"
         );
+        for args in [
+            vec!["show", "HEAD"],
+            vec!["show", "HEAD", "--file", "tracked"],
+            vec![
+                "show", "HEAD", "--file", "tracked", "--export", "after", "--output",
+            ],
+        ] {
+            let exporting = args.last() == Some(&"--output");
+            let destination = exports.path().join(format!("saved-{pass}"));
+            let mut command = Command::new(env!("CARGO_BIN_EXE_git-good"));
+            command.args(args).current_dir(repo.path());
+            if exporting {
+                command.arg(&destination);
+            }
+            let output = command.output()?;
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(output.stderr.is_empty());
+            let _: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+            if exporting {
+                assert_eq!(std::fs::read(destination)?, b"committed\n");
+            }
+            assert_eq!(
+                snapshot(repo.path())?,
+                before,
+                "review/export changed repository files"
+            );
+        }
     }
     Ok(())
 }
@@ -365,5 +397,71 @@ fn show_file_uses_exact_non_utf8_path_bytes() -> Result {
         json["diff"]["rows"][1]["bytes"],
         serde_json::json!(b"exact content\n")
     );
+    Ok(())
+}
+
+#[test]
+fn export_is_exact_beyond_diff_budget_and_preserves_existing_destinations() -> Result {
+    let repo = tempfile::tempdir()?;
+    let destination = tempfile::tempdir()?;
+    git(repo.path(), &["init", "-b", "main"])?;
+    let bytes: Vec<_> = (0..(3 * 1024 * 1024)).map(|n| (n % 251) as u8).collect();
+    std::fs::write(repo.path().join("large.bin"), &bytes)?;
+    git(repo.path(), &["add", "."])?;
+    git(
+        repo.path(),
+        &[
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.org",
+            "commit",
+            "-m",
+            "large",
+        ],
+    )?;
+    git(repo.path(), &["gc", "--prune=now"])?;
+    let output = destination.path().join("export.bin");
+    let run = |side: &str, path: &Path| {
+        Command::new(env!("CARGO_BIN_EXE_git-good"))
+            .args([
+                "show",
+                "HEAD",
+                "--file",
+                "large.bin",
+                "--export",
+                side,
+                "--output",
+            ])
+            .arg(path)
+            .current_dir(repo.path())
+            .output()
+    };
+    let result = run("after", &output)?;
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert_eq!(std::fs::read(&output)?, bytes);
+    let json: serde_json::Value = serde_json::from_slice(&result.stdout)?;
+    assert_eq!(json["bytes"], bytes.len());
+    std::fs::write(&output, b"keep")?;
+    assert!(!run("after", &output)?.status.success());
+    assert_eq!(std::fs::read(&output)?, b"keep");
+    assert_eq!(std::fs::read_dir(destination.path())?.count(), 1);
+    assert!(
+        !run("before", &destination.path().join("absent"))?
+            .status
+            .success()
+    );
+    assert!(!destination.path().join("absent").exists());
+    assert!(
+        !run("after", &repo.path().join(".git/export"))?
+            .status
+            .success()
+    );
+    assert!(!repo.path().join(".git/export").exists());
+    assert_eq!(std::fs::read(repo.path().join("large.bin"))?, bytes);
     Ok(())
 }

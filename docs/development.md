@@ -38,3 +38,12 @@ GG_OFFLINE=1 GG_TEST_REPOSITORY=/path/to/fixture cargo test -p git-good packed_h
 ```
 
 This opt-in check records first rows, indexing, in-memory frame latency, and deep/back navigation after eviction. Record results in [verification](verification.md).
+
+Measure M1 with a packed 10,000-file change and a 1-MiB text comparison:
+
+```sh
+python3 scripts/review-fixture.py /tmp/gg-review-benchmark
+GG_OFFLINE=1 GG_REVIEW_REPOSITORY=/tmp/gg-review-benchmark cargo test --release -p git-good packed_review_latency_and_navigation -- --ignored --nocapture
+```
+
+Use a new fixture directory. The check exercises production workers and egui frames, asserts latency/cache targets, and visits the last page and back. Record process peak RSS separately; distinguish filesystem-cache conditions from fresh application state.

@@ -1,6 +1,6 @@
 # Browser regression baseline
 
-Purpose: map M0 behavior to executable protection and identify remaining coverage.
+Purpose: map browser and review behavior to executable protection and remaining coverage.
 
 Contracts: [architecture](architecture.md). Results: [verification](verification.md). Extend coverage for each accepted interaction and defect.
 
@@ -59,3 +59,14 @@ Before connecting M1 controls, test Review/Back anchor restoration, active-view 
 - Portable object fixtures cover executable-bit changes, symlinks, type changes, missing gitlink targets, and byte-distinct path labels.
 - Mode-only tests stop at header reads; cancellation tests interrupt before an unavailable second object header.
 - Unix process tests select non-UTF-8 paths through `--file` and verify exact content bytes. Engine tests preserve Unicode and escape controls/backslashes.
+
+## M1 export and binary preview
+
+- CLI tests export packed blobs beyond the diff budget, preserve existing destinations, and reject absent sides and Git metadata destinations. The repository snapshot test covers history, review, diff, and export with staged/unstaged/untracked content.
+- Cancellation tests remove partial output. PNG/JPEG tests verify dimensions, pixel budgets, malformed input, and bounded hexadecimal fallback.
+- Preview requests share the selected-file worker's generation and mailbox tests; export retains its explicitly selected object identity.
+
+## M1 resource acceptance
+
+- `packed_review_latency_and_navigation` uses production workers and egui input on the packed [review fixture](development.md). It asserts first-summary/diff latency, cached-frame latency, deep/back reachability, and both UI cache limits.
+- Record release timings and peak process RSS in [verification](verification.md). GPU presentation and platform input remain native checks.

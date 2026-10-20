@@ -116,11 +116,11 @@ Present status/path rows and selected before/after IDs and modes. Wide layouts u
 
 Use one selected-file worker with one coalesced request/result slot. Retain one bounded document on the worker; publish at most 256 rows per page and cache at most 768 UI rows. Check blob headers before allocating content. Compare up to 2 MiB per side and 100,000 combined source lines with a 250-ms algorithm deadline. Return an explicit incomplete summary when a budget is exceeded. Cancel before each object header/content read and during row projection; object decoding and the deadline-bound algorithm finish their current operation. Reuse the document for viewport requests.
 
-Use unified diffs with old/new line numbers, fixed-height rows, three context lines, and missing-final-newline markers. Preserve whitespace/line endings. Scroll long source lines horizontally in an explicit reading view. Distinguish context/additions/deletions with symbols and color.
+Use unified diffs with old/new line numbers, fixed-height rows, three context lines, and missing-final-newline markers. Label byte sizes Before and After. Preserve whitespace/line endings. Scroll long source lines horizontally in an explicit reading view. Distinguish context/additions/deletions with symbols and color.
 
 | Content | Presentation |
 | --- | --- |
-| NUL-containing blob | Binary summary with IDs and byte sizes |
+| Binary blob | Before/after PNG/JPEG image previews; hexadecimal fallback; IDs and byte sizes |
 | Symlink | Labeled target text, read directly from the blob |
 | Gitlink | Referenced commit IDs, including unavailable submodule objects |
 | Mode-only change | Metadata summary with before/after modes and unchanged content; read object headers only |
@@ -129,8 +129,14 @@ Use unified diffs with old/new line numbers, fixed-height rows, three context li
 
 Review opens a resizable file-list/diff workspace with commit identity and parent selection. Narrow windows show files and content successively. Back restores history selection, filter, and pixel anchor. Shortcuts belong to the active context; editors retain theirs.
 
+### Binary previews and export
+
+Decode PNG/JPEG on the selected-file worker. Bound each side to 16 MiB encoded, 8 megapixels, 4096 pixels per dimension, and 64 MiB decoder allocation. Fit previews to 1024 pixels; show original dimensions. Unknown, corrupt, and oversized images retain a labeled hexadecimal preview of the first 256 bytes when inside the encoded budget. Larger blobs retain summaries and export. Publish current-generation previews at the diff's interaction-safe boundary; retain one preview pair and two textures.
+
+Export either present blob side to a new user-chosen path, preserving exact bytes. Write a temporary file beside the destination, then publish without overwriting. Keep Git metadata outside export destinations. Export symlink target bytes; gitlinks retain referenced commit IDs. Cancel before object decoding and between 64-KiB writes; remove temporary output on cancellation/failure. Run one export per review view, pin its path/object identity, and cancel on closing the export or review. Escape closes the export window before review navigation resumes. Gitoxide decoding uses memory proportional to the selected object and delta chain; output writes use fixed-size chunks.
+
 ### CLI
 
-`git good show <commit> [--repo PATH] [--parent N]` streams JSON summaries. Add `--file PATH` for a repository-relative selected-file diff, including exact source-line bytes. Use cwd discovery by default. Validate one-based parent numbers; roots use the empty tree automatically. Include repository/comparison identity and exact path bytes. Apply runtime error conventions; document usage when implemented.
+`git good show <commit> [--repo PATH] [--parent N]` streams JSON summaries. Add `--file PATH` for a repository-relative selected-file diff, including exact source-line bytes. Add `--export before|after --output PATH` to save that side and emit a JSON receipt. Use cwd discovery by default. Validate one-based parent numbers; roots use the empty tree automatically. Include repository/comparison identity and exact path bytes. Apply runtime error conventions; document usage when implemented.
 
 Rationale: summaries provide early feedback; pinned, cancellable work keeps rapid selection accurate; a dedicated review view gives source readable width.

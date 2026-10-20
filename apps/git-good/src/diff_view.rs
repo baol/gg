@@ -12,6 +12,9 @@ use std::{collections::BTreeMap, ops::Range, path::PathBuf};
 const HEIGHT: f32 = 20.0;
 pub struct DiffView {
     worker: Option<Worker>,
+    export: crate::export::Export,
+    preview: Option<std::sync::Arc<crate::binary_preview::Pair>>,
+    binary_view: crate::binary_preview::View,
     pub change: Option<FileChange>,
     path: PathBuf,
     pub generation: u64,
@@ -33,6 +36,9 @@ impl Default for DiffView {
     fn default() -> Self {
         Self {
             worker: None,
+            export: crate::export::Export::default(),
+            preview: None,
+            binary_view: crate::binary_preview::View::default(),
             change: None,
             path: PathBuf::new(),
             generation: 0,
@@ -53,6 +59,12 @@ impl Default for DiffView {
     }
 }
 impl DiffView {
+    pub fn export_open(&self) -> bool {
+        self.export.is_open()
+    }
+    pub fn binary(&self) -> bool {
+        self.preview.is_some()
+    }
     pub fn hovered(&self, point: Option<egui::Pos2>) -> bool {
         point.is_some_and(|p| self.bounds.contains(p))
     }
@@ -70,6 +82,8 @@ impl DiffView {
         self.change = change;
         self.generation += 1;
         self.rows.clear();
+        self.preview = None;
+        self.binary_view = crate::binary_preview::View::default();
         self.count = 0;
         self.columns = 0;
         self.info = None;
@@ -111,6 +125,7 @@ impl DiffView {
         if update.generation != self.generation {
             return;
         }
+        self.preview = update.preview;
         match update.result {
             Ok(mut info) => {
                 self.count = update.count;
@@ -143,6 +158,7 @@ impl DiffView {
     pub fn draw(&mut self, ui: &mut egui::Ui) {
         self.bounds = ui.max_rect();
         let ctx = ui.ctx().clone();
+        self.export.draw(&ctx);
         let (point, active, now) = ctx.input(|i| {
             (
                 i.pointer.hover_pos(),
@@ -193,6 +209,27 @@ impl DiffView {
             egui::FontId::monospace(10.0),
             20.0,
         );
+        ui.horizontal(|ui| {
+            for (label, side) in [
+                ("Export before", &change.old),
+                ("Export after", &change.new),
+            ] {
+                if ui
+                    .add_enabled(
+                        side.as_ref().is_some_and(|s| s.mode != 0o160000) && !self.export.busy(),
+                        egui::Button::new(label),
+                    )
+                    .clicked()
+                    && let Some(side) = side
+                {
+                    self.export.choose(
+                        self.path.clone(),
+                        side.clone(),
+                        format!("{label} · {}", change.path),
+                    );
+                }
+            }
+        });
         if let Some(error) = &self.error {
             bounded_text::field(ui, error, egui::FontId::proportional(12.0), 22.0);
             if ui.button("Retry diff").clicked() {
@@ -207,7 +244,7 @@ impl DiffView {
             bounded_text::field(
                 ui,
                 &format!(
-                    "{} → {} bytes{}",
+                    "Before: {} bytes · After: {} bytes{}",
                     info.old_size,
                     info.new_size,
                     if info.complete {
@@ -227,6 +264,10 @@ impl DiffView {
         }
         ui.separator();
         self.rect = ui.available_rect_before_wrap();
+        if let Some(preview) = &self.preview {
+            self.binary_view.draw(ui, preview);
+            return;
+        }
         if self.count == 0 {
             self.send(&ctx);
             return;
@@ -366,6 +407,28 @@ mod tests {
     use super::*;
     use gg_engine::diff::DiffKind;
     #[test]
+    fn byte_sizes_identify_each_side_in_the_rendered_header() {
+        let ctx = egui::Context::default();
+        let mut view = DiffView {
+            change: Some(FileChange {
+                path_bytes: b"image.png".to_vec(),
+                path: "image.png".into(),
+                kind: gg_engine::review::ChangeKind::Modified,
+                old: None,
+                new: None,
+            }),
+            info: Some(FileDiff::summary(DiffKind::Binary, 256, 268, "")),
+            ..Default::default()
+        };
+        let output = ctx.run(crate::tests::frame_input(720.0, 480.0, vec![]), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| view.draw(ui));
+        });
+        assert!(output.shapes.iter().any(|shape| {
+            matches!(&shape.shape, egui::Shape::Text(text)
+                if text.galley.job.text == "Before: 256 bytes · After: 268 bytes")
+        }));
+    }
+    #[test]
     fn horizontal_window_shapes_only_visible_unicode() {
         let text = "界".repeat(100_000);
         let (start, end, advance) = visible_text(&text, 600_000.0, 600_120.0, |_| 12.0);
@@ -389,6 +452,7 @@ mod tests {
         });
         let mut update = Update {
             generation: 1,
+            preview: None,
             count: 1,
             columns: 3,
             page_start: 0,
