@@ -124,3 +124,5 @@ pub mod status;
 pub mod working_diff;
 
 pub mod unstage;
+
+pub mod stage;

@@ -162,6 +162,14 @@ Pin HEAD and the index fingerprint from the status scan. Compare HEAD → index 
 
 Reuse the bounded diff engine, paged worker, keyboard scrolling, and fixed source rows. Preserve symlink targets and mode changes. Show explicit binary, gitlink, conflict, and budget summaries. Conflict resolution belongs to M5. Working comparisons expose reading controls; exact immutable-object export remains in commit review.
 
+### File staging
+
+Stage file adds one observed working path to the index. Capture the bytes on disk at action time, like `git add`, rather than publishing a previously reviewed snapshot. Support unstaged modifications, untracked additions, deletions, type changes, intent-to-add, executables, and symlinks. Preserve working files, unrelated index entries, symlink targets, and executable modes. CLI `git good stage --file PATH [--repo PATH]` uses repository-relative paths and returns a JSON receipt after success.
+
+Require an unstaged or untracked observation whose working path still matches its scanned kind: deletions stay absent and every other kind stays present. Normalize regular-file content through Git's attributes and conversion pipeline, then write the blob and its real stat data. Without symlink or executable-bit support, retain the indexed mode for emulated links and files. Reject already-staged paths, conflicts, sparse indexes, submodules, and file/directory collisions.
+
+Acquire the index lock before checking the observed HEAD and index fingerprint. Re-capture the working path before publication and invalidate the tree cache; revalidate HEAD and publish the index atomically. Stale observations, absent or reappearing paths, lock ownership, and working changes during the action return actionable errors. Run UI mutations on a worker; disable duplicate actions and navigation while pending, then refresh status at an interaction-safe boundary.
+
 ### Whole-file unstaging
 
 Unstage file restores exactly one staged path from the observed HEAD, or removes its index entry on an unborn branch. Preserve working files and unrelated index entries. CLI `git good unstage --file PATH [--repo PATH]` uses repository-relative paths and returns a JSON receipt after success.

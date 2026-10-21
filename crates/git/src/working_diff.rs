@@ -84,19 +84,15 @@ fn read_inner(request: &WorkingRequest, cancelled: &dyn Fn() -> bool) -> Result<
         ));
     }
     let full = request.repository.path.join(&relative);
-    let captured = capture(&request.repository.path, &relative)?;
+    let captured = capture(
+        &request.repository.path,
+        &relative,
+        Some(MAX_BLOB_BYTES as u64),
+    )?;
     let fs = repo.filesystem_options()?;
-    let effective_mode = captured.as_ref().map(|new| match &index_side {
-        Some(old)
-            if (!fs.symlink && old.mode == 0o120000 && new.mode & 0o170000 == 0o100000)
-                || (!fs.executable_bit
-                    && old.mode & 0o170000 == 0o100000
-                    && new.mode & 0o170000 == 0o100000) =>
-        {
-            old.mode
-        }
-        _ => new.mode,
-    });
+    let effective_mode = captured
+        .as_ref()
+        .map(|new| effective_mode(&fs, index_side.as_ref().map(|side| side.mode), new.mode));
     check()?;
     let old_size = match &index_side {
         Some(side) if request.entry.area != Area::Untracked => repo
@@ -153,7 +149,12 @@ fn read_inner(request: &WorkingRequest, cancelled: &dyn Fn() -> bool) -> Result<
         diff
     };
     check()?;
-    if capture(&request.repository.path, &relative)? != captured {
+    if capture(
+        &request.repository.path,
+        &relative,
+        Some(MAX_BLOB_BYTES as u64),
+    )? != captured
+    {
         return Err(format!(
             "Working file changed while reading {}. Refresh status.",
             full.display()
@@ -169,13 +170,13 @@ fn read_inner(request: &WorkingRequest, cancelled: &dyn Fn() -> bool) -> Result<
     Ok(result)
 }
 #[derive(PartialEq)]
-struct Capture {
-    bytes: Vec<u8>,
-    size: u64,
-    mode: u16,
+pub(crate) struct Capture {
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) size: u64,
+    pub(crate) mode: u16,
     modified: Option<std::time::SystemTime>,
 }
-fn capture(root: &Path, relative: &Path) -> Result<Option<Capture>> {
+pub(crate) fn capture(root: &Path, relative: &Path, limit: Option<u64>) -> Result<Option<Capture>> {
     let mut parent = root.to_path_buf();
     let components: Vec<_> = relative.components().collect();
     for component in components.iter().take(components.len().saturating_sub(1)) {
@@ -213,10 +214,17 @@ fn capture(root: &Path, relative: &Path) -> Result<Option<Capture>> {
         #[cfg(not(unix))]
         let mode = 0o100644;
         let mut bytes = vec![];
-        if meta.len() <= MAX_BLOB_BYTES as u64 {
-            std::fs::File::open(&path)?
-                .take((MAX_BLOB_BYTES + 1) as u64)
-                .read_to_end(&mut bytes)?;
+        if limit.is_none_or(|limit| meta.len() <= limit) {
+            let file = std::fs::File::open(&path)?;
+            match limit {
+                Some(limit) => {
+                    file.take(limit + 1).read_to_end(&mut bytes)?;
+                }
+                None => {
+                    let mut file = file;
+                    file.read_to_end(&mut bytes)?;
+                }
+            }
         }
         (bytes, mode, meta.len())
     } else {
@@ -228,4 +236,23 @@ fn capture(root: &Path, relative: &Path) -> Result<Option<Capture>> {
         mode,
         modified: meta.modified().ok(),
     }))
+}
+
+/// Resolve the index mode for captured working content on this filesystem.
+pub(crate) fn effective_mode(
+    capabilities: &gix::fs::Capabilities,
+    previous: Option<u16>,
+    mode: u16,
+) -> u16 {
+    match previous {
+        Some(previous)
+            if (!capabilities.symlink && previous == 0o120000 && mode & 0o170000 == 0o100000)
+                || (!capabilities.executable_bit
+                    && previous & 0o170000 == 0o100000
+                    && mode & 0o170000 == 0o100000) =>
+        {
+            previous
+        }
+        _ => mode,
+    }
 }

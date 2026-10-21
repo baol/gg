@@ -7,12 +7,18 @@ use eframe::egui;
 use gg_engine::status::{Area, Kind, StatusEntry};
 use std::{collections::BTreeMap, ops::Range, path::PathBuf};
 const HEIGHT: f32 = 24.0;
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Mutation {
+    Stage,
+    Unstage,
+}
 pub struct StatusView {
     path: PathBuf,
     identity: Option<gg_engine::status::StatusIdentity>,
     diff: crate::diff_view::DiffView,
     reading: bool,
     mutation: Option<std::sync::mpsc::Receiver<Result<(), String>>>,
+    mutation_kind: Option<Mutation>,
     worker: Option<Worker>,
     pending: Option<Worker>,
     staged: Option<Update>,
@@ -38,6 +44,7 @@ impl StatusView {
             diff: crate::diff_view::DiffView::default(),
             reading: false,
             mutation: None,
+            mutation_kind: None,
             worker: None,
             pending: None,
             staged: None,
@@ -174,21 +181,61 @@ impl StatusView {
         if entry.area != Area::Staged {
             return;
         }
+        self.mutate(
+            ctx,
+            Mutation::Unstage,
+            entry,
+            repository,
+            "unstage",
+            gg_git::unstage::file,
+        );
+    }
+    fn stage(&mut self, ctx: &egui::Context) {
+        if self.mutation.is_some() || self.replacing {
+            return;
+        }
+        let Some(entry) = self.selected.and_then(|r| self.rows.get(&r)).cloned() else {
+            return;
+        };
+        let Some(repository) = self.identity.clone() else {
+            return;
+        };
+        if !matches!(entry.area, Area::Unstaged | Area::Untracked) {
+            return;
+        }
+        self.mutate(
+            ctx,
+            Mutation::Stage,
+            entry,
+            repository,
+            "stage",
+            gg_git::stage::file,
+        );
+    }
+    fn mutate(
+        &mut self,
+        ctx: &egui::Context,
+        kind: Mutation,
+        entry: StatusEntry,
+        repository: gg_engine::status::StatusIdentity,
+        name: &'static str,
+        apply: fn(&gg_engine::status::WorkingRequest) -> Result<(), String>,
+    ) {
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         let ctx = ctx.clone();
         match std::thread::Builder::new()
-            .name("unstage".into())
+            .name(name.into())
             .spawn(move || {
-                let result =
-                    gg_git::unstage::file(&gg_engine::status::WorkingRequest { repository, entry });
+                let result = apply(&gg_engine::status::WorkingRequest { repository, entry });
                 let _ = tx.send(result);
                 ctx.request_repaint();
             }) {
             Ok(_) => {
                 self.mutation = Some(rx);
+                self.mutation_kind = Some(kind);
                 self.error = None;
             }
-            Err(e) => self.error = Some(format!("Start unstage: {e}")),
+            Err(e) => self.error = Some(format!("Start {name}: {e}")),
         }
     }
     fn draw_diff(&mut self, ctx: &egui::Context) {
@@ -239,11 +286,12 @@ impl StatusView {
         if let Some(result) = self.mutation.as_ref().and_then(|rx| match rx.try_recv() {
             Ok(result) => Some(result),
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                Some(Err("Unstage worker stopped. Refresh status.".into()))
+                Some(Err("Mutation worker stopped. Refresh status.".into()))
             }
             Err(_) => None,
         }) {
             self.mutation = None;
+            self.mutation_kind = None;
             match result {
                 Ok(()) => self.start(ctx, true),
                 Err(e) => {
@@ -319,6 +367,7 @@ impl StatusView {
         let mut refresh = false;
         let mut open = false;
         let mut unstage = false;
+        let mut stage = false;
         if self.mutation.is_none() && crate::navigation::available(ctx) {
             open |= crate::navigation::activation_available(ctx)
                 && ctx.input_mut(|i| {
@@ -420,23 +469,39 @@ impl StatusView {
                 };
                 bounded_text::field(ui, &text, egui::FontId::proportional(12.0), 22.0);
             });
+        let selected_area = self
+            .selected
+            .and_then(|r| self.rows.get(&r))
+            .map(|entry| entry.area);
+        let pending = self.mutation.is_some();
+        let stage_label = if pending && self.mutation_kind == Some(Mutation::Stage) {
+            "Staging…"
+        } else {
+            "Stage file"
+        };
+        let unstage_label = if pending && self.mutation_kind == Some(Mutation::Unstage) {
+            "Unstaging…"
+        } else {
+            "Unstage file"
+        };
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.horizontal(|ui| {
+                stage |= ui
+                    .add_enabled(
+                        self.mutation.is_none()
+                            && !self.replacing
+                            && self.error.is_none()
+                            && matches!(selected_area, Some(Area::Unstaged | Area::Untracked)),
+                        egui::Button::new(stage_label).min_size(egui::vec2(82.0, 26.0)),
+                    )
+                    .clicked();
                 unstage |= ui
                     .add_enabled(
                         self.mutation.is_none()
                             && !self.replacing
                             && self.error.is_none()
-                            && self
-                                .selected
-                                .and_then(|r| self.rows.get(&r))
-                                .is_some_and(|e| e.area == Area::Staged),
-                        egui::Button::new(if self.mutation.is_some() {
-                            "Unstaging…"
-                        } else {
-                            "Unstage file"
-                        })
-                        .min_size(egui::vec2(100.0, 26.0)),
+                            && selected_area == Some(Area::Staged),
+                        egui::Button::new(unstage_label).min_size(egui::vec2(100.0, 26.0)),
                     )
                     .clicked();
                 open |= ui
@@ -595,6 +660,10 @@ impl StatusView {
         if self.mutation.is_some() {
             return false;
         }
+        if stage {
+            self.stage(ctx);
+            return false;
+        }
         if unstage {
             self.unstage(ctx);
             return false;
@@ -626,6 +695,7 @@ mod tests {
             diff: crate::diff_view::DiffView::default(),
             reading: false,
             mutation: None,
+            mutation_kind: None,
             worker: None,
             pending: None,
             staged: None,
@@ -898,5 +968,78 @@ mod tests {
         assert!(view.rows.values().all(|e| e.area == Area::Untracked));
         assert_eq!(std::fs::read(dir.path().join("a"))?, b"working");
         Ok(())
+    }
+    #[test]
+    fn stage_worker_refreshes_and_retains_rows_on_failure() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let dir = tempfile::tempdir()?;
+        assert!(
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(dir.path())
+                .args(["init", "-q"])
+                .status()?
+                .success()
+        );
+        std::fs::write(dir.path().join("a"), "working")?;
+        let ctx = egui::Context::default();
+        let mut view = StatusView::new(dir.path().into(), &ctx);
+        let wait = |view: &mut StatusView| {
+            let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            loop {
+                frame(&ctx, view, 720.0, vec![]);
+                if view.mutation.is_none() && !view.replacing && view.complete {
+                    break;
+                }
+                assert!(std::time::Instant::now() < until, "status did not settle");
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+        };
+        wait(&mut view);
+        assert_eq!(view.rows[&0].area, Area::Untracked);
+        let identity = view.identity.clone();
+        std::fs::write(dir.path().join(".git/index.lock"), "owner")?;
+        view.stage(&ctx);
+        view.stage(&ctx); // A pending action remains single-flight.
+        wait(&mut view);
+        assert!(view.error.as_ref().is_some_and(|e| e.contains("Stage")));
+        assert_eq!(view.identity, identity);
+        assert_eq!(view.rows[&0].area, Area::Untracked);
+        std::fs::remove_file(dir.path().join(".git/index.lock"))?;
+        view.start(&ctx, true);
+        wait(&mut view);
+        view.stage(&ctx);
+        wait(&mut view);
+        assert!(view.error.is_none());
+        assert_eq!(view.rows[&0].area, Area::Staged);
+        assert_eq!(std::fs::read(dir.path().join("a"))?, b"working");
+        Ok(())
+    }
+    #[test]
+    fn action_row_offers_stage_unstage_and_view_diff() {
+        let ctx = egui::Context::default();
+        let mut view = view(1);
+        view.identity = Some(update(1, true).identity);
+        let output = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(720.0, 480.0),
+                )),
+                ..Default::default()
+            },
+            |ctx| {
+                view.draw(ctx);
+            },
+        );
+        for label in ["Stage file", "Unstage file", "View diff"] {
+            assert!(
+                output.shapes.iter().any(|shape| matches!(
+                    &shape.shape,
+                    egui::epaint::Shape::Text(text) if text.galley.job.text == label
+                )),
+                "missing {label}"
+            );
+        }
     }
 }

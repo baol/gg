@@ -79,6 +79,8 @@ Before connecting M1 controls, test Review/Back anchor restoration, active-view 
 - Working comparisons reconstruct each side and match Git line counts. Fixtures verify normalization, symlink targets, binary/budget summaries, stale HEAD/index, and files changing during a read.
 - In-memory input tests preserve hovered slots, last-page geometry, history anchors, and status selection/offset through working-diff navigation. CLI tests require an explicit area for selected paths and verify JSON and failure output.
 
+File staging: compare staged entries and subsequent trees with `git add -A`; preserve working bytes, mode bits, symlink targets, and unrelated staging. Cover additions, modifications, deletions, type changes, intent-to-add, text attributes, emulated symlinks, unborn branches, SHA-1/SHA-256, stale HEAD/index/file observations, lock ownership, submodules, file/directory collisions, CLI receipts/errors, and worker refresh/failure.
+
 Whole-file unstaging: compare restored entries and subsequent trees with Git; preserve working bytes and unrelated staging. Cover unborn branches, SHA-1/SHA-256, stale observations, lock ownership, file/directory collisions, CLI receipts/errors, and worker refresh/failure.
 
 Navigation and diff continuity: Enter opens commits at both widths; text editors retain keys while focused buttons allow navigation. Reading keys scroll without changing files. File selection retains displayed rows until current-generation adoption; hover defers replacement. Toolbar geometry covers Repository, View, and Status.

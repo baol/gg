@@ -15,6 +15,7 @@ git good
 git good history
 git good status
 git good status --file src/main.rs --area unstaged
+git good stage --file src/main.rs
 git good show HEAD
 git good show HEAD --file src/main.rs
 git good show HEAD --file assets/logo.png --export after --output /tmp/logo.png
@@ -24,7 +25,7 @@ git good show HEAD --file assets/logo.png --export after --output /tmp/logo.png
 
 Stream, filter, and inspect history; copy commit IDs. `git good history` streams JSON for scripts. Select a commit and press **Enter** to browse its changed files; **Back to history** restores your position. `git good show HEAD [--repo PATH] [--parent N]` streams the same file summaries as JSON. For merges, choose a parent in Review. Binary files show PNG/JPEG previews or a hexadecimal sample. Use **Export before/after** to save complete content to a new file. Select a file to read its diff; **Enter** opens a full-width reading view and **Escape** returns to files. Add `--file PATH` to output that diff as JSON. Parents are one-based; the default is the first parent, or the empty tree for a root commit.
 
-Choose **Status** to inspect staged, unstaged, untracked, and conflicted paths. **Refresh** rescans the worktree; **Back** restores history. `git good status [PATH]` streams the same entries as JSON. Open a row with **View diff** or Enter; **Back to files** restores its position. Add `--file PATH --area staged|unstaged|untracked` for a selected-file comparison.
+Choose **Status** to inspect staged, unstaged, untracked, and conflicted paths. **Refresh** rescans the worktree; **Back** restores history. `git good status [PATH]` streams the same entries as JSON. Open a row with **View diff** or Enter; **Back to files** restores its position. Select a row and choose **Stage file** to record its current working content, including additions and deletions. Add `--file PATH --area staged|unstaged|untracked` for a selected-file comparison.
 
 [Contributing](CONTRIBUTING.md) · [Development](docs/development.md) · [Architecture](docs/architecture.md) · [Design](docs/design.md) · [Plan](docs/plan.md) · [Roadmap](ROADMAP.md) · [Regression coverage](docs/regression.md) · [Verification](docs/verification.md)
 
@@ -32,6 +33,6 @@ Inspiration: [Fork](https://fork.dev/) workflows and PhotoCraft's [guide](https:
 
 Apache-2.0 · [LICENSE](LICENSE)
 
-In Status, select a staged row and choose **Unstage file** to restore its index entry from HEAD while preserving working edits. CLI: `git good unstage --file PATH [--repo PATH]`.
+In Status, **Stage file** records the selected working path in the index at action time; **Unstage file** restores a staged row from HEAD. Both preserve working edits and unrelated staging. CLI: `git good stage --file PATH [--repo PATH]` and `git good unstage --file PATH [--repo PATH]`.
 
 Use **Repository** for Open/Refresh and **View** or Space for commit details. Arrows and j/k navigate lists; in reading views they scroll content. Page keys move a viewport; Enter/Right opens the selection and Escape/Left returns. Text editors retain their keys.

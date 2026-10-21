@@ -36,7 +36,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("--help")) {
         println!(
-            "gg · good git\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good status [PATH] [--file PATH --area AREA]   Print working status or diff as JSON\ngit-good unstage --file PATH [--repo PATH]   Unstage one file\ngit-good show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]   Review or export\n\nBrowse all commits reachable from HEAD."
+            "gg · good git\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good status [PATH] [--file PATH --area AREA]   Print working status or diff as JSON\ngit-good stage --file PATH [--repo PATH]   Stage one file\ngit-good unstage --file PATH [--repo PATH]   Unstage one file\ngit-good show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]   Review or export\n\nBrowse all commits reachable from HEAD."
         );
         return Ok(());
     }
@@ -48,6 +48,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("unstage")) {
         return status_cli::unstage(args);
+    }
+    if first.as_deref() == Some(std::ffi::OsStr::new("stage")) {
+        return status_cli::stage(args);
     }
     let headless = first.as_deref() == Some(std::ffi::OsStr::new("history"));
     let path = if headless { args.next() } else { first }
