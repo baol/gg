@@ -546,7 +546,7 @@ fn narrow_details_navigation_preserves_hidden_history_and_back_anchor() -> Resul
     let offset = h.app.scroll_offset;
     let selected = h.app.state.selected.clone();
     let query = h.app.state.query.clone();
-    frame(&mut h, vec![key(egui::Key::Enter)]);
+    frame(&mut h, vec![key(egui::Key::Space)]);
     assert!(h.app.narrow_details);
     for event in [
         key(egui::Key::ArrowDown),
@@ -625,4 +625,31 @@ fn review_navigation_and_late_history_preserve_history_until_back() -> Result {
     assert_eq!(h.app.state.query, query);
     assert_eq!(h.app.state.count, 2000);
     Ok(())
+}
+
+#[test]
+fn status_back_preserves_history_selection_and_anchor() {
+    let mut h = Harness::new(1000);
+    h.app.state.select_row(900);
+    h.app.scroll_to_selection = true;
+    h.frame(vec![]);
+    let selected = h.app.state.selected.clone();
+    let offset = h.app.scroll_offset;
+    h.app.working = Some(status_view::StatusView::new(
+        "missing-status-fixture".into(),
+        &h.ctx,
+    ));
+    h.frame(vec![]);
+    assert_eq!(h.app.state.selected, selected);
+    h.frame(vec![egui::Event::Key {
+        key: egui::Key::Escape,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    }]);
+    assert!(h.app.working.is_none());
+    h.frame(vec![]);
+    assert_eq!(h.app.state.selected, selected);
+    assert!((h.app.scroll_offset - offset).abs() < 1.0);
 }

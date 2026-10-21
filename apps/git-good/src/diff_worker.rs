@@ -15,6 +15,7 @@ struct Request {
     path: PathBuf,
     change: FileChange,
     range: Range<usize>,
+    working: Option<gg_engine::status::WorkingRequest>,
 }
 #[derive(Clone)]
 pub struct Update {
@@ -35,7 +36,11 @@ pub struct Worker {
 impl Worker {
     pub fn start(ctx: eframe::egui::Context) -> Result<Self, String> {
         Self::with_reader(ctx, |request, cancelled| {
-            gg_git::diff::read(&request.path, &request.change, cancelled)
+            if let Some(working) = &request.working {
+                gg_git::working_diff::read(working, cancelled)
+            } else {
+                gg_git::diff::read(&request.path, &request.change, cancelled)
+            }
         })
     }
     fn with_reader(
@@ -73,13 +78,15 @@ impl Worker {
                         };
                         let result = read(&request, &cancelled);
                         preview = None;
-                        if result.as_ref().is_ok_and(|diff| {
-                            matches!(
-                                diff.kind,
-                                gg_engine::diff::DiffKind::Binary
-                                    | gg_engine::diff::DiffKind::Limited
-                            )
-                        }) && !cancelled()
+                        if request.working.is_none()
+                            && result.as_ref().is_ok_and(|diff| {
+                                matches!(
+                                    diff.kind,
+                                    gg_engine::diff::DiffKind::Binary
+                                        | gg_engine::diff::DiffKind::Limited
+                                )
+                            })
+                            && !cancelled()
                         {
                             preview = Some(Arc::new(crate::binary_preview::read(
                                 &request.path,
@@ -152,6 +159,37 @@ impl Worker {
         })
     }
     pub fn request(&self, generation: u64, path: PathBuf, change: FileChange, range: Range<usize>) {
+        self.submit(generation, path, change, range, None);
+    }
+    pub fn request_working(
+        &self,
+        generation: u64,
+        working: gg_engine::status::WorkingRequest,
+        range: Range<usize>,
+    ) {
+        let change = FileChange {
+            path: working.entry.path.clone(),
+            path_bytes: working.entry.path_bytes.clone(),
+            kind: gg_engine::review::ChangeKind::Modified,
+            old: None,
+            new: None,
+        };
+        self.submit(
+            generation,
+            working.repository.path.clone(),
+            change,
+            range,
+            Some(working),
+        );
+    }
+    fn submit(
+        &self,
+        generation: u64,
+        path: PathBuf,
+        change: FileChange,
+        range: Range<usize>,
+        working: Option<gg_engine::status::WorkingRequest>,
+    ) {
         self.generation.store(generation, Ordering::Relaxed);
         if let Ok(mut slot) = self.input.lock() {
             *slot = Some(Request {
@@ -159,6 +197,7 @@ impl Worker {
                 path,
                 change,
                 range,
+                working,
             });
             self.thread.unpark();
         }

@@ -44,14 +44,14 @@ pub fn change(visuals: &Visuals, kind: &ChangeKind) -> (&'static str, Color32) {
             ChangeKind::Added => ("+ Added", Color32::from_rgb(20, 100, 45)),
             ChangeKind::Deleted => ("− Deleted", Color32::from_rgb(160, 35, 40)),
             ChangeKind::Modified => ("~ Modified", Color32::from_rgb(119, 76, 0)),
-            ChangeKind::TypeChanged => ("↔ Type", Color32::from_rgb(105, 58, 160)),
+            ChangeKind::TypeChanged => ("~ Type", Color32::from_rgb(105, 58, 160)),
         };
     }
     match kind {
         ChangeKind::Added => ("+ Added", Color32::from_rgb(120, 200, 150)),
         ChangeKind::Deleted => ("− Deleted", Color32::from_rgb(240, 140, 140)),
         ChangeKind::Modified => ("~ Modified", Color32::from_rgb(220, 195, 125)),
-        ChangeKind::TypeChanged => ("↔ Type", Color32::from_rgb(170, 160, 230)),
+        ChangeKind::TypeChanged => ("~ Type", Color32::from_rgb(170, 160, 230)),
     }
 }
 pub fn selection(visuals: &Visuals) -> Color32 {

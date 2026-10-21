@@ -66,9 +66,10 @@ Preserve matching selection; otherwise select the first published match. Clear s
 | Filter / refresh / copy full ID | Ctrl+F/R/C; Command on macOS |
 | Previous / next commit | Up/Down, k/j, Ctrl+P/N |
 | Previous / next page | Page Up/Down; Alt+V for previous |
-| Open details / return | Enter / Escape or Back |
+| Open selected commit/file / return | Enter or Right / Escape, Left, or Back |
+| Toggle commit details | Space |
 
-Emacs bindings use physical Control. Ctrl+V retains native paste. Escape leaves filter focus. Text editors retain editing/navigation shortcuts; history bindings apply while history is visible and editors are unfocused. Empty results keep selection empty.
+Emacs bindings use physical Control. Ctrl+V retains native paste. Escape leaves filter focus. Text editors and open menus retain editing/navigation shortcuts; focused buttons allow list navigation. Reading views use Up/Down, j/k, Ctrl+P/N, and page keys to scroll their content. Enter opens a full-width diff from either file-list layout. History bindings apply while history is visible and editors are unfocused. Empty results keep selection empty.
 
 Follow [bounded-reveal rules](design.md). Page by the rendered viewport with one row of overlap, clamp at history boundaries, and stream uncached destinations. Show cached selected metadata immediately; reserve the full-message slot while loading. Narrow details preserve hidden history selection and pixel offset.
 
@@ -101,6 +102,8 @@ Parent switches retain the displayed comparison through loading/failure, label i
 ### Loading
 
 Stream file summaries before blob reads. Virtualize rows using history's paging and interaction rules; counts progress to exact completion. Within a comparison, preserve selection by exact path, otherwise first result; clear it for empty comparisons.
+
+Keep requested and displayed file identities separate. Retain the displayed diff and its scroll offset while a replacement loads; publish its identity, metadata, preview, and rows together after hover and scrolling settle. Errors retain labeled previous content. Reset the new file to its first row on adoption.
 
 Read selected-file content on a worker independent of history indexing. Key results by review generation, comparison, and file. Coalesce requests, cancel obsolete work between batches, and apply current results. Page diff rows and keep every file reachable through bounded caches.
 
@@ -140,3 +143,67 @@ Export either present blob side to a new user-chosen path, preserving exact byte
 `git good show <commit> [--repo PATH] [--parent N]` streams JSON summaries. Add `--file PATH` for a repository-relative selected-file diff, including exact source-line bytes. Add `--export before|after --output PATH` to save that side and emit a JSON receipt. Use cwd discovery by default. Validate one-based parent numbers; roots use the empty tree automatically. Include repository/comparison identity and exact path bytes. Apply runtime error conventions; document usage when implemented.
 
 Rationale: summaries provide early feedback; pinned, cancellable work keeps rapid selection accurate; a dedicated review view gives source readable width.
+
+## Working status · M2
+
+`git good status [PATH]` discovers the whole worktree from cwd or an explicit path and streams JSON. Bare repositories return an identified working-tree requirement. Unborn repositories compare the index with an empty tree.
+
+Emit independent staged, unstaged, untracked, and conflict entries with exact path bytes and escaped one-line labels. A path can appear in both staged and unstaged categories. Honor ignore rules; enumerate individual untracked files. Represent renames as deletion/addition. Identify intent-to-add explicitly. Preserve repository contents, including index stat data.
+
+Run scans on cancellable workers. Publish rows in discovery order and keep their ordinals stable for the scan. Stream through a 128-entry queue into disk-backed records; request visible pages of at most 256 rows and retain at most 768 rows in the UI. Index/tree metadata follows repository size; file comparison buffers follow gitoxide's status implementation.
+
+Open Status from the repository header, including on unborn branches. Show category, change, and path in fixed-height rows; expose full paths through the shared overflow view. Count discovered entries until completion; show Clean only after a successful empty scan. Refresh retains the previous scan until replacement completes, then adopts it after hover and scrolling settle. Fresh scans begin at the first row. Keep the previous paging worker available throughout refresh. Back restores history's selection and offset. Failed scans retain identified results and offer retry. Status scans remain observational; file actions use the validated mutation contract below.
+
+### Working diffs
+
+Open a status row with Enter, double-click, or View diff to enter **Review & stage**. Show the staged comparison (HEAD to index) and the unstaged comparison (index to working file) for the same path together: side by side at 860 px and wider, stacked below that. Back restores the status selection and scroll position. `git good status [PATH] --file PATH --area staged|unstaged|untracked|conflict` reads one comparison as JSON.
+
+Pin HEAD and the index fingerprint from the status scan. Compare HEAD to index for the staged pane, index to working file for the unstaged pane, and empty to working file for untracked paths. Capture working bytes on selection, apply Git text normalization, and validate repository inputs and working bytes again before publication. Changed inputs return an identified stale-result error with Refresh status. Compute both panes on one cancellable worker and publish each pane as soon as its comparison completes; adoption must not wait for pointer hover or scrolling to settle.
+
+Reuse the bounded diff engine and fixed source rows. Give each pane its own scroll area and preserve its offset across refreshes. Preserve symlink targets and mode changes. Show explicit binary, gitlink, conflict, and budget summaries. Conflict resolution belongs to M5. Exact immutable-object export remains in commit review.
+
+### File staging
+
+Stage file adds one observed working path to the index. Capture the bytes on disk at action time, like `git add`, rather than publishing a previously reviewed snapshot. Support unstaged modifications, untracked additions, deletions, type changes, intent-to-add, executables, and symlinks. Preserve working files, unrelated index entries, symlink targets, and executable modes. CLI `git good stage --file PATH [--repo PATH]` uses repository-relative paths and returns a JSON receipt after success.
+
+Require an unstaged or untracked observation whose working path still matches its scanned kind: deletions stay absent and every other kind stays present. Normalize regular-file content through Git's attributes and conversion pipeline, then write the blob and its real stat data. Without symlink or executable-bit support, retain the indexed mode for emulated links and files. Reject already-staged paths, conflicts, sparse indexes, submodules, and file/directory collisions.
+
+Acquire the index lock before checking the observed HEAD and index fingerprint. Re-capture the working path before publication and invalidate the tree cache; revalidate HEAD and publish the index atomically. Stale observations, absent or reappearing paths, lock ownership, and working changes during the action return actionable errors. Run UI mutations on a worker; disable duplicate actions and navigation while pending, then refresh status at an interaction-safe boundary.
+
+### Hunk, line, and drop actions
+
+Stage or unstage selected changes from either pane, or drop selected working changes from the unstaged pane. A hunk header carries inline Stage hunk or Unstage hunk actions and, for unstaged text edits, Drop hunk. Clicking the header selects or clears every changed line in that hunk; clicking an added or deleted row toggles that line. The hunk action applies the selected lines when any are selected, otherwise the whole hunk. Pane headers expose whole-file Stage all and Unstage all, and Drop all on the unstaged pane. Identify each hunk by its exact `@@` header and each line by its old- or new-side line number; reject selections that no longer match. CLI `git good stage --file PATH --hunk HEADER` accepts repeated `--hunk` selections and adds `"hunks"` to the stage receipt.
+
+Partial staging requires an unstaged, regular text modification with a 100644 or 100755 index entry. Reject untracked additions, intent-to-add, deletions, type or mode changes, symlinks, submodules, conflicts, sparse indexes, binary comparisons, and comparisons beyond the text budget. Acquire the index lock, then capture and normalize the working bytes through the same pipeline as the displayed diff and recompute index to working. Unknown headers or lines mean the diff is stale and publish nothing.
+
+Rebuild the staged index blob by line ranges: keep unchanged gaps and unselected old-side lines, and take selected new-side lines. When every change is selected, write real working stat data, matching `git add -p` after a full selection. Otherwise write zeroed stat data so status compares content and reports the remaining unstaged edit (`MM`). Preserve unrelated index entries, modes, and working bytes; re-capture working bytes and revalidate HEAD before atomic publication.
+
+Partial unstaging supports staged regular text additions, modifications, and deletions. Rebuild from the HEAD side and the index side: restore selected old-side lines and retain unselected new-side lines. If the result equals HEAD, restore the HEAD index entry; if HEAD is absent and the result is empty, remove the index entry. Otherwise write the partial blob with zeroed stat data. Mode, type, and symlink changes require whole-file actions.
+
+After a successful mutation, open a fresh status session for the new HEAD/index identity, update both pane requests, and reload them in place. Retain scroll offsets, clear line selections, and stay in **Review & stage**; refresh the status list when the user returns with Back. Failures keep the panes and index unchanged and show the error above them.
+
+Rationale: hunk- and line-level actions follow `git add -p` while zeroed partial stat keeps omitted edits visible instead of silently clean. Showing both comparisons lets a user move a change between staged and unstaged without losing context.
+
+### Dropping working changes
+
+Drop discards selected working changes without touching the index. For an unstaged regular text modification, rebuild the working file from the index and working sides: restore selected old-side lines and retain unselected new-side lines. Expand any selected row to its contiguous change block so a replacement cannot be half-discarded. Convert the normalized result back through Git filters before writing, validate the working snapshot again, and replace the file atomically. Partial drops reject mode, type, and symlink changes; use Drop all for those.
+
+Drop all restores tracked modifications, deletions, mode changes, type changes, and symlinks from the index, and removes untracked files. Acquire the index lock for consistency, reject conflicts, intent-to-add, submodules, sparse indexes, and file/directory collisions, and leave every index byte unchanged. Require an explicit confirmation before any drop; keep the panes visible, reload both comparisons in place after success, and refresh the status list on Back.
+
+Rationale: dropping is intentionally working-tree-only and reversible with the index still intact. Confirmation and change-block expansion prevent accidental loss while keeping the split review usable.
+
+### Committing
+
+Commit writes the current index, not working-tree content. Pin HEAD and the index when the action starts, reject commits with no staged changes, unmerged entries, intent-to-add entries, sparse indexes, and an unavailable worktree, and resolve author and committer identities from Git configuration or the documented environment variables. Normalize the message, write `COMMIT_EDITMSG`, and run hooks through `git hook run` so `core.hooksPath`, linked worktrees, and native Git execution rules are honored.
+
+Run `pre-commit`, `prepare-commit-msg` with the message file and `message` source, and `commit-msg` before taking the index lock. Hooks may stage content or edit the message, so re-read the index and message afterwards and reject a HEAD change made during the hooks. Acquire the index lock only after hooks finish, rebuild the tree from the current index, verify it differs from HEAD, and create the commit object with the observed parent. Update `HEAD` atomically with the reference lock and write the reflog. Run `post-commit` after publication; its failure is a warning because the commit already exists.
+
+Every other hook failure aborts before the commit is published. Preserve the index, working tree, and message file, and return the hook name, exit status, and captured output with a retry path. The native view keeps the draft message, refreshes status to expose any hook staging, and stays on Status; Back refreshes history and selects the new commit. CLI `git good commit -m MESSAGE` returns a JSON receipt with the commit, tree, parents, and any post-commit warnings. Amend and signing remain later milestones.
+
+### Whole-file unstaging
+
+Unstage file restores exactly one staged path from the observed HEAD, or removes its index entry on an unborn branch. Preserve working files and unrelated index entries. CLI `git good unstage --file PATH [--repo PATH]` uses repository-relative paths and returns a JSON receipt after success.
+
+Acquire the index lock before checking the observed HEAD and index fingerprint. Restore the entry, invalidate the tree cache, revalidate, and publish the index atomically. Conflicts, sparse indexes, file/directory collisions, stale observations, and an existing lock return actionable errors. Run UI mutations on a worker; disable duplicate actions and navigation while pending, then refresh status at an interaction-safe boundary. Whole-file unstaging remains the fallback for modes, types, symlinks, untracked additions, deletions, and conflict changes.
+
+Rationale: restoring one entry gives a reversible operation while preserving the user's working edits and other staging decisions.

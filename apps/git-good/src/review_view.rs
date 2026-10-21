@@ -226,15 +226,22 @@ impl Review {
         let narrow = ctx.content_rect().width() < 1040.0;
         let mut back = false;
         let mut reveal = false;
-        if !ctx.wants_keyboard_input() && !self.diff.export_open() {
-            back = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
-            if back && narrow && self.show_diff {
+        if crate::navigation::available(ctx) && !self.diff.export_open() {
+            back = ctx.input_mut(|i| {
+                i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)
+                    || i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft)
+            });
+            if back && self.show_diff {
                 self.show_diff = false;
                 self.restore_files = true;
                 back = false;
             }
             if self.selected.is_some()
-                && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter))
+                && crate::navigation::activation_available(ctx)
+                && ctx.input_mut(|i| {
+                    i.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
+                        || i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight)
+                })
             {
                 self.show_diff = true;
             }
@@ -250,7 +257,7 @@ impl Review {
                 (egui::Modifiers::ALT, egui::Key::V, -page),
                 (egui::Modifiers::NONE, egui::Key::PageDown, page),
             ] {
-                if !(narrow && self.show_diff)
+                if !(self.show_diff)
                     && ctx.input_mut(|i| i.consume_key(modifiers, key))
                     && self.count > 0
                 {
@@ -260,11 +267,15 @@ impl Review {
                             .saturating_add_signed(step)
                             .min(self.count - 1),
                     );
+                    crate::navigation::focus_content(ctx);
                     reveal = true;
                 }
             }
         }
-        if !narrow || self.show_diff {
+        if (!narrow || self.show_diff)
+            && (self.selected.is_none()
+                || self.selected.is_some_and(|r| self.rows.contains_key(&r)))
+        {
             self.diff.select(
                 self.request.path.clone(),
                 self.selected.and_then(|row| self.rows.get(&row)).cloned(),
@@ -276,14 +287,14 @@ impl Review {
             .show(ctx, |ui| {
                 ui.horizontal_centered(|ui| {
                     if ui
-                        .button(if narrow && self.show_diff {
+                        .button(if self.show_diff {
                             "Back to files"
                         } else {
                             "Back to history"
                         })
                         .clicked()
                     {
-                        if narrow && self.show_diff {
+                        if self.show_diff {
                             self.show_diff = false;
                             self.restore_files = true;
                         } else {
@@ -348,7 +359,7 @@ impl Review {
                 bounded_text::field(
                     ui,
                     &format!(
-                        "{} · {} ← {}",
+                        "{} · {} · parent {}",
                         self.request.path.display(),
                         self.request.revision,
                         base
@@ -376,10 +387,10 @@ impl Review {
                 });
                 let text = failure.as_deref().unwrap_or(if self.replacing {
                     &pending
-                } else if narrow && self.show_diff && self.diff.binary() {
+                } else if self.show_diff && self.diff.binary() {
                     "Scroll to inspect · Export either side · Esc: files"
-                } else if narrow && self.show_diff {
-                    "Scroll to read · Click line: copy · Esc: files"
+                } else if self.show_diff {
+                    crate::navigation::READING_HINT
                 } else if self.complete {
                     "Up/Down / j k: select · PgUp/PgDn: page · Esc: history"
                 } else {
@@ -387,8 +398,8 @@ impl Review {
                 });
                 bounded_text::field(ui, text, egui::FontId::proportional(12.0), 18.0);
             });
-        if narrow && self.show_diff {
-            egui::CentralPanel::default().show(ctx, |ui| self.diff.draw(ui));
+        if self.show_diff {
+            egui::CentralPanel::default().show(ctx, |ui| self.diff.draw_reading(ui));
             bounded_text::show_disclosure(ctx);
             return back;
         }
@@ -485,6 +496,7 @@ impl Review {
                             ui.visuals().strong_text_color(),
                         );
                         if response.clicked() {
+                            response.surrender_focus();
                             self.selected = Some(row);
                         }
                     } else {
@@ -501,7 +513,10 @@ impl Review {
             self.offset = result.state.offset.y;
             self.page = (result.inner_rect.height() / ROW).floor().max(1.0) as usize;
         });
-        if !narrow || self.show_diff {
+        if (!narrow || self.show_diff)
+            && (self.selected.is_none()
+                || self.selected.is_some_and(|r| self.rows.contains_key(&r)))
+        {
             self.diff.select(
                 self.request.path.clone(),
                 self.selected.and_then(|row| self.rows.get(&row)).cloned(),
@@ -694,6 +709,35 @@ mod tests {
             assert!(view.diff.change.is_none());
         }
         Ok(())
+    }
+    #[test]
+    fn enter_and_left_open_and_return_to_files_at_both_widths() {
+        for width in [720.0, 1120.0] {
+            let ctx = egui::Context::default();
+            let mut view = Review::fixture(&ctx);
+            let frame = |view: &mut Review, key: Option<egui::Key>| {
+                let events = key
+                    .into_iter()
+                    .map(|key| egui::Event::Key {
+                        key,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: egui::Modifiers::NONE,
+                    })
+                    .collect();
+                let _ = ctx.run(crate::tests::frame_input(width, 480.0, events), |ctx| {
+                    view.draw(ctx);
+                });
+            };
+            frame(&mut view, None::<egui::Key>);
+            let selected = view.selected;
+            frame(&mut view, Some(egui::Key::Enter));
+            assert!(view.show_diff);
+            frame(&mut view, Some(egui::Key::ArrowLeft));
+            assert!(!view.show_diff);
+            assert_eq!(view.selected, selected);
+        }
     }
     #[test]
     fn narrow_diff_back_preserves_file_selection_and_offset() {

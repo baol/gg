@@ -152,3 +152,60 @@ M1 is complete: commit review, selected-parent diffs, binary previews, exact exp
 - Embed the supplied `gg.png` for the native window and fixed-size toolbar brand.
 - Reproduced oversized avatar textures in an in-memory regression. List/detail textures now match physical display sizes and share one cached source; filtered-detail tests cover 100%, 125%, and 200% scale.
 - 89 workspace tests, seven release-script tests, formatting, Clippy, and debug build pass. Native light 1120×740 and dark 720×480 layouts preserve header geometry.
+
+## M2 status · 2026-10-21
+
+- 99 workspace tests, formatting, Clippy, and debug build pass. Git porcelain fixtures cover independent staged/unstaged entries, ignores, intent-to-add, conflicts, unborn branches, nested discovery, linked worktrees, and repository preservation.
+- Worker and egui checks cover bounded delivery, cancellation, deep/back paging, hovered loading slots, refresh failure/retry, last-page stability, and history restoration.
+- Linux x86_64, debug build, fresh process, warm 10,000-file fixture: first CLI entry 7.3 ms; complete JSON 185.7 ms. Native X11 light 1120×740 and dark 720×480 layouts inspected.
+
+## M2 working diffs · 2026-10-21
+
+- 108 workspace tests, formatting, Clippy, and debug build pass. Git oracles verify reconstructed sides and line counts; fixtures cover stale HEAD/index, changing working files, CRLF normalization, symlinks, emulated symlinks, and binary/budget summaries.
+- A failing production-worker regression reproduced cached working bytes after refresh with unchanged HEAD/index. Explicit refresh now invalidates that snapshot; reopening reads the new bytes.
+- Native X11 review confirms compact [wide status](screenshots/m2-status-wide.png), [narrow status](screenshots/m2-status-narrow.png), [light staged diffs](screenshots/m2-staged-diff.png), and [dark unstaged diffs](screenshots/m2-unstaged-diff.png).
+
+## M2 whole-file unstaging · 2026-10-21
+
+- 113 workspace tests, formatting, Clippy, and debug build pass. SHA-1/SHA-256 Git oracles cover additions, deletions, staged/working edits, unborn branches, tree-cache invalidation, unrelated staging, stale HEAD/index, lock ownership, and file/directory collisions. CLI checks verify receipts, stderr, and exit status.
+- A failing worker regression reproduced paging clearing an action error. Mutation failures now remain visible until explicit retry; successful actions refresh status through its existing interaction boundary.
+- Native X11 clicks in disposable repositories verify unstaging at 1120×740 and 720×480. Git confirms the selected path leaves staged changes and working bytes remain intact. [Narrow result](screenshots/m2-unstage-result.png).
+
+## M2 navigation and diff continuity · 2026-10-21
+
+- 119 workspace tests, formatting, Clippy, and debug build pass. Six added tests cover Enter/Right opening a commit at 720 and 1120 widths, Esc/Left returning to files with selection retained, reading keys scrolling without changing files, hover-deferred replacement, and input ownership for focused buttons versus text editors.
+- Shared navigation keys treat text editors and open menus as owners of their input; focused buttons still allow list movement, and activation releases focus before opening a selection.
+- Diffs retain the displayed path, metadata, preview, rows, and scroll offset while a replacement loads. The current generation publishes together after hover and scrolling settle; failures keep labeled previous content, and an adopted replacement starts at its first row.
+- Repository actions live under **Repository** (Open…, Refresh) and presentation under **View** (Commit details · Space). Enter opens commits at both widths, the full-width reading view scrolls with the shared keys, and Status actions sit beside the file list.
+- Native X11 review at 1120×740 and 720×480 confirms the reorganized toolbar and Enter-opened views: [wide](screenshots/m2-navigation-wide.png), [narrow](screenshots/m2-navigation-narrow.png), [wide reading](screenshots/m2-reading-wide.png), [narrow reading](screenshots/m2-reading-narrow.png), [status actions](screenshots/m2-status-actions.png), [narrow status actions](screenshots/m2-status-actions-narrow.png).
+
+## M2 file staging · 2026-10-21
+
+- 127 workspace tests, formatting, Clippy, and debug build pass. SHA-1/SHA-256 Git oracles stage modifications, deletions, untracked additions, type changes, intent-to-add, executable modes, and unrelated entries, then compare `ls-files` with `git add -A`. Attribute normalization, symlink targets, and emulated symlinks match Git while working bytes stay intact.
+- Fixtures cover unborn branches, lock ownership, stale HEAD/index/file observations, reappearing deletions, conflicts, submodules, and file/directory collisions. CLI checks verify the stage receipt, stderr, exit status, and repeated-action errors; worker tests verify single-flight staging, retained rows on failure, and refreshed areas after success.
+- Native X11 clicks stage `README.md` in a disposable repository at 1120×740 and 720×480; Git confirms the path moves to staged changes and its working bytes remain intact. [Wide action](screenshots/m2-stage-wide.png), [narrow action](screenshots/m2-stage-narrow.png), [wide result](screenshots/m2-stage-result.png), [narrow result](screenshots/m2-stage-narrow-result.png).
+
+## M2 hunk staging · 2026-10-21
+
+- 134 workspace tests, formatting, Clippy, and debug build pass. Five engine tests compare selected index blobs with scripted `git add -p` in SHA-1 and SHA-256 repositories. Partial selection writes zeroed stat and reports `MM`; selecting every hunk writes real stat and leaves only staged changes. Multiple selections, CRLF attributes, missing final newlines, and unrelated staged entries match Git while working bytes and lock ownership stay intact.
+- Rejections cover untracked additions, intent-to-add, deletions, mode and symlink-target changes, binary comparisons, the 2-MiB text budget, empty selections, unknown headers, stale HEAD/index observations, and an existing index lock. Every rejection leaves the index unchanged.
+- CLI `--hunk` receipts report the selected count; unknown headers and a missing value exit with stderr and publish nothing. The egui test clicks a hunk header, verifies the selected highlight and enabled **Stage hunk** action at 720 and 1120 widths, stages successfully back to a refreshed list with staged and unstaged rows, then fails under a held lock and retains the reading view, error, and index.
+- Native X11 clicks stage the first of two hunks in a disposable repository at 1120×740 and 720×480. Git reports `MM notes.txt`, one staged and one unstaged hunk, and zeroed index stat. [Wide selection](screenshots/m2-hunk-wide.png), [wide result](screenshots/m2-hunk-result-wide.png), [narrow selection](screenshots/m2-hunk-narrow.png), [narrow result](screenshots/m2-hunk-result-narrow.png).
+
+## M2 split stage view · 2026-10-21
+
+- All workspace tests pass: 149 passed and 3 stress tests ignored. Formatting, Clippy with `-D warnings`, and the debug build pass.
+- Engine oracles cover individual-line staging and unstaging, paired old/new line replacement, zeroed stat for partial results, real stat when every change is selected, and partial unstaging of staged additions, modifications, and deletions. Restoring every line restores the HEAD entry; removing the last staged addition removes the index entry. Working bytes, unrelated entries, modes, and locks remain intact.
+- Drop oracles select one hunk or one change block, restore filtered CRLF content and missing final newlines, restore modified/deleted/executable/symlink paths from the index, and remove untracked files. The index file bytes stay identical throughout. Partial mode changes and staged inputs are rejected.
+- The egui tests open both panes at 720 and 1120 widths, adopt results with the pointer resting over the view, stage a whole hunk from the inline header action, stage one selected line, unstage an inline hunk and the whole file, and confirm the view stays open. Drop tests cancel and then confirm a hunk drop, verify that a selected line reverts its whole change block, drop the remaining file, and confirm the index is byte-identical and the view stays open. Back refreshes the status list; failures retain the panes, error, and unchanged index.
+- Native X11 review at 1120×740 uses a disposable repository with one staged and one unstaged hunk. Clicking the unstaged added line changes the inline actions to **Stage 1** and **Drop selected**; staging refreshes both panes in place while Git reports `MM` and the expected mixed index content. Inline **Unstage hunk** and **Unstage all** also stay in the view and refresh both panes. **Drop hunk** requires confirmation, then restores the working side from the index while leaving the staged hunk untouched. At 720×740 the panes stack, the inline actions and line selection remain usable, and the same staging flow works.
+- Captures: [wide split](screenshots/m2-split-wide.png), [wide line selected](screenshots/m2-split-line-selected-wide.png), [wide in-place result](screenshots/m2-split-line-result-wide.png), [wide full unstage](screenshots/m2-split-unstage-wide.png), [wide drop confirmation](screenshots/m2-split-drop-confirm-wide.png), [wide drop result](screenshots/m2-split-drop-result-wide.png), [narrow split](screenshots/m2-split-narrow.png), [narrow line selected](screenshots/m2-split-line-selected-narrow.png).
+
+## M2 commit · 2026-10-21
+
+- All workspace tests pass: 163 passed and 3 stress tests ignored. Formatting, Clippy with `-D warnings`, and the debug build pass.
+- Commit oracles cover root, normal, detached-HEAD, and linked-worktree commits; only index content is committed, unstaged working bytes survive, the parent and reflog match Git, and history selects the new commit after Back.
+- Hook fixtures cover execution order and arguments for `pre-commit`, `prepare-commit-msg`, `commit-msg`, and `post-commit`, custom `core.hooksPath`, index changes made by `pre-commit`, message edits by `commit-msg`, and an empty message left by a hook. A failing post-commit hook returns a warning with the created commit.
+- Rejections cover empty messages, empty staged changes, conflicts, intent-to-add, stale HEAD/index observations, and an existing index lock. Hook failures abort before HEAD changes, preserve the index and working tree, include the hook name/status/output, and leave an actionable retry path.
+- CLI checks verify JSON receipts and hook-failure stderr. Egui checks verify the commit panel at 720 and 1120 widths, successful commit adoption, refresh, draft retention, and status recovery after a failing hook. Native X11 review confirms commit-panel layout, a clean post-commit status, and the new commit selected in history.
+- Captures: [commit message wide](screenshots/m2-commit-message-wide.png), [commit result wide](screenshots/m2-commit-result-wide.png), [history selection wide](screenshots/m2-commit-history-wide.png), [commit panel narrow](screenshots/m2-commit-narrow.png).
