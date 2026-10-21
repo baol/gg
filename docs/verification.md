@@ -209,3 +209,14 @@ M1 is complete: commit review, selected-parent diffs, binary previews, exact exp
 - Rejections cover empty messages, empty staged changes, conflicts, intent-to-add, stale HEAD/index observations, and an existing index lock. Hook failures abort before HEAD changes, preserve the index and working tree, include the hook name/status/output, and leave an actionable retry path.
 - CLI checks verify JSON receipts and hook-failure stderr. Egui checks verify the commit panel at 720 and 1120 widths, successful commit adoption, refresh, draft retention, and status recovery after a failing hook. Native X11 review confirms commit-panel layout, a clean post-commit status, and the new commit selected in history.
 - Captures: [commit message wide](screenshots/m2-commit-message-wide.png), [commit result wide](screenshots/m2-commit-result-wide.png), [history selection wide](screenshots/m2-commit-history-wide.png), [commit panel narrow](screenshots/m2-commit-narrow.png).
+
+## M3 read-only graph and refs · 2026-10-21
+
+- All workspace tests pass: 171 passed and 3 stress tests ignored. Formatting, Clippy with `-D warnings`, and the debug build pass.
+- Ref oracles cover HEAD, local branches, remote branches, lightweight tags, annotated tag peeling, symbolic remote HEAD omission, unborn refs, and detached HEAD. `git good refs [PATH]` emits the shared snapshot without changing refs, the index, or working files.
+- Graph unit tests cover linear lanes, merge parents, joins, lane reuse, and retirement. Stream tests keep graph rows aligned with their commits when filtering, and deep selected-ID recovery finds completed rows by identity.
+- egui tests verify graph-column geometry, ref-label prefixes, and explicit `+N` overflow at supported widths. Ref navigation clears a hiding filter, targets the commit, and reveals the row.
+- Native X11 review at 1120×740 and 720×740 shows merge lanes, branch/remote/tag labels, grouped **Branches/Remotes/Tags** menus, the HEAD marker, and selection of the `feature` branch commit without mutating the repository.
+- Captures: [wide graph](screenshots/m3-graph-wide.png), [wide branches](screenshots/m3-refs-branches-wide.png), [wide ref jump](screenshots/m3-refs-jump-wide.png), [narrow graph](screenshots/m3-graph-narrow.png).
+
+Branch checkout and creation remain the next M3 increment.

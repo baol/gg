@@ -1,5 +1,6 @@
 //! Background traversal, disk-backed rows, and coalesced viewport requests.
-use gg_engine::{Commit, History, HistoryReader, HistoryRequest};
+use crate::graph;
+use gg_engine::{Commit, History, HistoryReader, HistoryRequest, refs::Snapshot};
 use std::{
     fs::File,
     io::{Read, Seek, SeekFrom, Write},
@@ -48,6 +49,8 @@ pub struct Update {
     pub scanned: usize,
     pub complete: bool,
     pub rows: Vec<(usize, Commit)>,
+    pub graphs: Vec<(usize, graph::Row)>,
+    pub refs: Snapshot,
     pub selection: Option<(usize, Commit)>,
     pub error: Option<String>,
 }
@@ -189,6 +192,7 @@ fn run(
     stop: &AtomicBool,
     ctx: &eframe::egui::Context,
 ) -> Result<(), String> {
+    let refs = gg_git::refs::read(&path)?;
     let session = gg_git::Session::open(&HistoryRequest { path })?;
     if previous_path
         .as_ref()
@@ -206,17 +210,21 @@ fn run(
             ..Default::default()
         };
     }
-    run_session(session, input, output, stop, ctx)
+    run_session(session, refs, input, output, stop, ctx)
 }
 
 fn run_session(
     mut session: impl HistoryReader,
+    refs: Snapshot,
     input: &Mutex<Request>,
     output: &Mutex<Option<Result<Update, String>>>,
     stop: &AtomicBool,
     ctx: &eframe::egui::Context,
 ) -> Result<(), String> {
     let mut spool = Spool::new()?;
+    let mut graph_state = graph::Graph::default();
+    let mut graph_rows = Vec::new();
+    let mut ids = Vec::new();
     let mut current = input.lock().map_err(err)?.clone();
     let mut scanned = 0;
     let mut finished = false;
@@ -225,6 +233,7 @@ fn run_session(
     let mut anchor_row = None;
     let mut cached_range = 0..0;
     let mut cached_rows = Vec::new();
+    let mut cached_graphs = Vec::new();
     loop {
         if stop.load(Ordering::Relaxed) {
             return Ok(());
@@ -258,6 +267,8 @@ fn run_session(
                 match session.next_commit() {
                     Ok(Some(commit)) => {
                         spool.append(&commit)?;
+                        graph_rows.push(graph_state.push(&commit));
+                        ids.push(commit.id.clone());
                         appended = Some(commit);
                     }
                     Ok(None) => finished = true,
@@ -295,9 +306,14 @@ fn run_session(
                 selection = Some((row, spool.read(row, true)?));
             }
         } else if selection.is_none()
-            && spool.matched > 0
-            && (current.selected_id.is_none() || (finished && scanned == spool.count))
+            && finished
+            && scanned == spool.count
+            && current.query.is_empty()
+            && let Some(id) = current.selected_id.as_deref()
+            && let Some(row) = ids.iter().position(|candidate| candidate == id)
         {
+            selection = Some((row, spool.read(row, true)?));
+        } else if selection.is_none() && current.selected_id.is_none() && spool.matched > 0 {
             selection = Some((0, spool.read(0, true)?));
         }
         let requested = if let Some(row) = anchor_row {
@@ -312,10 +328,12 @@ fn run_session(
                 .min(requested.start.saturating_add(PAGE_ROWS));
         if range != cached_range {
             cached_rows.clear();
+            cached_graphs.clear();
             for row in range.clone() {
                 let mut commit = spool.read(row, true)?;
                 commit.message = commit.subject().to_owned();
                 cached_rows.push((row, commit));
+                cached_graphs.push((row, graph_rows[row].clone()));
             }
             cached_range = range;
         }
@@ -330,6 +348,8 @@ fn run_session(
             scanned,
             complete,
             rows: cached_rows.clone(),
+            graphs: cached_graphs.clone(),
+            refs: refs.clone(),
             selection: selection.clone(),
             error: failure.clone(),
         };
@@ -460,8 +480,16 @@ mod tests {
             gate: gate.clone(),
         };
         let (i, o, s) = (input.clone(), output.clone(), stop.clone());
-        let handle =
-            thread::spawn(move || run_session(fake, &i, &o, &s, &eframe::egui::Context::default()));
+        let handle = thread::spawn(move || {
+            run_session(
+                fake,
+                Default::default(),
+                &i,
+                &o,
+                &s,
+                &eframe::egui::Context::default(),
+            )
+        });
         let result = (|| -> TestResult {
             // Time slicing may publish fewer than 32 rows before the reader reaches its gate.
             // Accept that first batch: waiting for exactly 32 can deadlock the test itself.
@@ -489,6 +517,22 @@ mod tests {
                 assert_eq!(visits.load(Ordering::Relaxed), 100_000);
             }
             {
+                let target = format!("{:040x}", 99_999);
+                let mut request = input.lock().map_err(err)?;
+                request.selected_id = Some(target.clone());
+                request.selected_row = None;
+                request.range = 0..64;
+            }
+            handle.thread().unpark();
+            let target = format!("{:040x}", 99_999);
+            let jumped = wait(&output, |u| {
+                u.selection
+                    .as_ref()
+                    .is_some_and(|(_, commit)| commit.id == target)
+            })?;
+            assert_eq!(jumped.selection.as_ref().map(|(row, _)| *row), Some(99_999));
+
+            {
                 let mut request = input.lock().map_err(err)?;
                 request.query = "needle".into();
                 request.range = 0..64;
@@ -499,6 +543,12 @@ mod tests {
             assert_eq!(
                 found.rows.first().map(|(_, c)| c.subject()),
                 Some("Commit 99999")
+            );
+            assert!(
+                found
+                    .graphs
+                    .iter()
+                    .all(|(row, _)| found.rows.iter().any(|(visible, _)| visible == row))
             );
             input.lock().map_err(err)?.query = "absent".into();
             handle.thread().unpark();

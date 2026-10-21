@@ -78,5 +78,6 @@ mod tests {
 }
 
 pub mod diff;
+pub mod refs;
 pub mod review;
 pub mod status;

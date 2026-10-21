@@ -122,6 +122,7 @@ pub mod commit;
 pub mod diff;
 pub mod drop;
 pub mod patch;
+pub mod refs;
 pub mod review;
 pub mod status;
 pub mod working_diff;

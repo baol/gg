@@ -8,11 +8,13 @@ mod details_view;
 mod diff_view;
 mod diff_worker;
 mod export;
+mod graph;
 mod history_view;
 #[cfg(test)]
 mod interaction_tests;
 mod navigation;
 mod records;
+mod refs_cli;
 mod review_cli;
 mod review_view;
 mod review_worker;
@@ -38,7 +40,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("--help")) {
         println!(
-            "gg · good git\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good status [PATH] [--file PATH --area AREA]   Print working status or diff as JSON\ngit-good stage --file PATH [--hunk HEADER]... [--repo PATH]   Stage one file or selected hunks\ngit-good unstage --file PATH [--repo PATH]   Unstage one file\ngit-good commit -m MESSAGE [--repo PATH]   Commit the index after Git hooks\ngit-good show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]   Review or export\n\nBrowse all commits reachable from HEAD."
+            "gg · good git\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good refs [PATH]      Print branches, remotes, tags, and HEAD as JSON\ngit-good status [PATH] [--file PATH --area AREA]   Print working status or diff as JSON\ngit-good stage --file PATH [--hunk HEADER]... [--repo PATH]   Stage one file or selected hunks\ngit-good unstage --file PATH [--repo PATH]   Unstage one file\ngit-good commit -m MESSAGE [--repo PATH]   Commit the index after Git hooks\ngit-good show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]   Review or export\n\nBrowse all commits reachable from HEAD."
         );
         return Ok(());
     }
@@ -56,6 +58,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("commit")) {
         return commit_cli::run(args);
+    }
+    if first.as_deref() == Some(std::ffi::OsStr::new("refs")) {
+        return refs_cli::run(args);
     }
     let headless = first.as_deref() == Some(std::ffi::OsStr::new("history"));
     let path = if headless { args.next() } else { first }
@@ -218,6 +223,17 @@ impl Browser {
             Ok(worker) => self.pending = Some(worker),
             Err(error) => self.state.error = Some(error),
         }
+    }
+
+    fn jump_to_ref(&mut self, id: String) {
+        if !self.state.query.is_empty() {
+            self.state.query.clear();
+            self.state.start_filter();
+        }
+        self.state.selected = Some(id);
+        self.state.selected_row = None;
+        self.state.details = None;
+        self.scroll_to_selection = false;
     }
 
     fn open_review(&mut self, ctx: &egui::Context) {
@@ -490,6 +506,43 @@ impl Browser {
                             ui.close();
                         }
                     });
+                    let refs = self.state.refs.clone();
+                    ui.menu_button("Refs", |ui| {
+                        let head_name = refs.head.as_ref().and_then(|head| head.name.as_deref());
+                        let mut jump = None;
+                        let mut section = |ui: &mut egui::Ui, title: &str, kind| {
+                            let filtered = refs
+                                .items
+                                .iter()
+                                .filter(|item| item.kind == kind)
+                                .collect::<Vec<_>>();
+                            if filtered.is_empty() {
+                                return;
+                            }
+                            ui.menu_button(title, |ui| {
+                                for item in filtered {
+                                    let label = if Some(item.full_name.as_str()) == head_name {
+                                        format!("{}  ·  HEAD", item.name)
+                                    } else {
+                                        item.name.clone()
+                                    };
+                                    if ui.button(label).clicked() {
+                                        jump = Some(item.commit.clone());
+                                        ui.close();
+                                    }
+                                }
+                            });
+                        };
+                        section(ui, "Branches", gg_engine::refs::RefKind::Branch);
+                        section(ui, "Remotes", gg_engine::refs::RefKind::Remote);
+                        section(ui, "Tags", gg_engine::refs::RefKind::Tag);
+                        if refs.items.is_empty() {
+                            ui.weak("No branches or tags");
+                        }
+                        if let Some(id) = jump {
+                            self.jump_to_ref(id);
+                        }
+                    });
                     ui.menu_button("View", |ui| {
                         let shown = if narrow {
                             &mut self.narrow_details
@@ -711,11 +764,20 @@ impl Browser {
                                 self.row_rects.clear();
                                 for row in rows {
                                     if let Some(commit) = self.state.rows.get(&row) {
+                                        let refs = self
+                                            .state
+                                            .refs
+                                            .for_commit(&commit.id)
+                                            .cloned()
+                                            .collect::<Vec<_>>();
+                                        let graph = self.state.graphs.get(&row);
                                         let response = ui
                                             .push_id(&commit.id, |ui| {
                                                 history_view::row(
                                                     ui,
                                                     commit,
+                                                    graph,
+                                                    &refs,
                                                     Some(&commit.id)
                                                         == self.state.selected.as_ref(),
                                                     &mut self.avatars,
@@ -851,6 +913,17 @@ mod tests {
             repeat: false,
             modifiers,
         }
+    }
+
+    #[test]
+    fn ref_jump_clears_filters_and_retargets_selection() {
+        let mut app = layout_fixture();
+        app.state.query = "filter".into();
+        app.state.selected = Some("old".into());
+        app.jump_to_ref("new".into());
+        assert!(app.state.query.is_empty());
+        assert_eq!(app.state.selected.as_deref(), Some("new"));
+        assert!(app.state.selected_row.is_none());
     }
 
     #[test]
@@ -1039,6 +1112,8 @@ mod tests {
             scanned: 100_000,
             complete: true,
             rows: vec![],
+            graphs: vec![],
+            refs: Default::default(),
             selection: None,
             error: None,
         });

@@ -869,3 +869,39 @@ fn commit_cli_runs_hooks_and_reports_failures_with_recovery() -> Result {
     assert_eq!(std::fs::read(repo.path().join(".git/index"))?, index);
     Ok(())
 }
+
+#[test]
+fn refs_cli_streams_branches_and_tags_without_mutating() -> Result {
+    let repo = tempfile::tempdir()?;
+    git(repo.path(), &["init", "-b", "main"])?;
+    git(repo.path(), &["config", "user.name", "Test"])?;
+    git(repo.path(), &["config", "user.email", "test@example.org"])?;
+    std::fs::write(repo.path().join("a"), b"base\n")?;
+    git(repo.path(), &["add", "a"])?;
+    git(repo.path(), &["commit", "-qm", "base"])?;
+    git(repo.path(), &["branch", "feature"])?;
+    git(repo.path(), &["tag", "v1"])?;
+    let before = git_output(repo.path(), &["rev-parse", "HEAD"])?;
+    let output = Command::new(env!("CARGO_BIN_EXE_git-good"))
+        .arg("refs")
+        .arg(repo.path())
+        .current_dir(repo.path())
+        .output()?;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    let snapshot = &json["refs"];
+    assert_eq!(snapshot["head"]["name"], "refs/heads/main");
+    let items = snapshot["items"].as_array().ok_or("missing refs")?;
+    for name in ["main", "feature", "v1"] {
+        assert!(
+            items.iter().any(|item| item["name"] == name),
+            "missing {name}"
+        );
+    }
+    assert_eq!(git_output(repo.path(), &["rev-parse", "HEAD"])?, before);
+    Ok(())
+}

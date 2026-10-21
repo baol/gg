@@ -144,6 +144,16 @@ Export either present blob side to a new user-chosen path, preserving exact byte
 
 Rationale: summaries provide early feedback; pinned, cancellable work keeps rapid selection accurate; a dedicated review view gives source readable width.
 
+## History graph and refs · M3
+
+Ref discovery is read-only and shared by CLI and native views. Emit HEAD state (symbolic name, detached flag, commit), local branches, remote branches, and tags with exact short and full names and peeled commit IDs. Skip symbolic remote `HEAD` refs and tags that cannot peel to commits. Keep HEAD explicit for unborn and detached repositories. `git good refs [PATH]` streams this snapshot as JSON; the history worker loads the same snapshot alongside a traversal and replaces it on refresh.
+
+Compute graph rows in traversal order, including commits later hidden by a filter, so lane identities stay coherent. Each row carries its own lane, the set of lanes entering and leaving the row, and parent lanes. Reuse a parent's existing lane, allocate free lanes for additional merge parents, retire empty lanes, and cap layout at 64 lanes. Render stable per-lane colors, vertical continuations, parent joins, commit dots, and a ring for merge commits. Cache graph rows with the visible page and evict them with their commits.
+
+Prefix each commit subject with matching branch, remote, and tag labels, showing at most four plus an overflow count. Group refs by kind in the toolbar; mark the current symbolic branch as HEAD. Selecting a ref clears a hiding filter, targets its commit by ID, and scans the completed spool to recover the row before revealing it. Ref navigation never moves HEAD, checks out content, writes refs, or modifies the index or working tree.
+
+The next increment adds branch checkout and creation. It must validate worktree cleanliness, repository identity, and ref collisions before publishing; it is not part of the read-only foundation.
+
 ## Working status · M2
 
 `git good status [PATH]` discovers the whole worktree from cwd or an explicit path and streams JSON. Bare repositories return an identified working-tree requirement. Unborn repositories compare the index with an empty tree.
