@@ -10,6 +10,7 @@ mod export;
 mod history_view;
 #[cfg(test)]
 mod interaction_tests;
+mod navigation;
 mod records;
 mod review_cli;
 mod review_view;
@@ -385,17 +386,29 @@ impl Browser {
             self.load(ctx);
         }
         let narrow = ctx.content_rect().width() < 1040.0;
-        if !ctx.wants_keyboard_input() {
-            if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+        if crate::navigation::available(ctx) {
+            if ctx.input_mut(|i| {
+                i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)
+                    || i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft)
+            }) {
                 self.narrow_details = false;
             }
             if self.state.selected.is_some()
-                && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter))
+                && crate::navigation::activation_available(ctx)
+                && ctx.input_mut(|i| {
+                    i.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
+                        || i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight)
+                })
+            {
+                self.open_review(ctx);
+            }
+            if crate::navigation::activation_available(ctx)
+                && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Space))
             {
                 if narrow {
-                    self.narrow_details = true;
+                    self.narrow_details = !self.narrow_details;
                 } else {
-                    self.details_visible = true;
+                    self.details_visible = !self.details_visible;
                 }
             }
             let page = self.page_rows.saturating_sub(1).max(1) as i32;
@@ -423,6 +436,7 @@ impl Browser {
                     } else {
                         self.state.move_selection(distance);
                     }
+                    crate::navigation::focus_content(ctx);
                     self.scroll_to_selection = true;
                 }
             }
@@ -438,8 +452,34 @@ impl Browser {
                 ui.add_space(5.0);
                 ui.horizontal(|ui| {
                     branding::toolbar(ui, &mut self.logo);
+                    ui.menu_button("Repository", |ui| {
+                        if ui.button("Open…").clicked() {
+                            self.edit_path = true;
+                            ui.close();
+                        }
+                        if ui
+                            .add_enabled(
+                                self.pending.is_none(),
+                                egui::Button::new("Refresh").shortcut_text("Ctrl/Cmd+R"),
+                            )
+                            .clicked()
+                        {
+                            self.load(ctx);
+                            ui.close();
+                        }
+                    });
+                    ui.menu_button("View", |ui| {
+                        let shown = if narrow {
+                            &mut self.narrow_details
+                        } else {
+                            &mut self.details_visible
+                        };
+                        if ui.checkbox(shown, "Commit details · Space").clicked() {
+                            ui.close();
+                        }
+                    });
                     ui.separator();
-                    let identity_width = (ui.available_width() - 392.0).max(80.0);
+                    let identity_width = (ui.available_width() - 84.0).max(80.0);
                     let (identity, path) = if let Some(history) = &self.state.history {
                         (
                             format!(
@@ -474,33 +514,6 @@ impl Browser {
                         },
                     );
                     if ui
-                        .add_sized(
-                            [62.0, 26.0],
-                            egui::Button::new("Open…").selected(self.edit_path),
-                        )
-                        .clicked()
-                    {
-                        self.edit_path = !self.edit_path;
-                    }
-                    if ui
-                        .add_enabled(
-                            self.pending.is_none(),
-                            egui::Button::new("Refresh").min_size(egui::vec2(66.0, 26.0)),
-                        )
-                        .clicked()
-                    {
-                        self.load(ctx);
-                    }
-                    if ui
-                        .add_enabled(
-                            self.state.selected.is_some(),
-                            egui::Button::new("Review").min_size(egui::vec2(66.0, 26.0)),
-                        )
-                        .clicked()
-                    {
-                        self.open_review(ctx);
-                    }
-                    if ui
                         .add_enabled(
                             self.state.history.is_some(),
                             egui::Button::new("Status").min_size(egui::vec2(66.0, 26.0)),
@@ -510,21 +523,6 @@ impl Browser {
                     {
                         self.working =
                             Some(status_view::StatusView::new(history.path.clone(), ctx));
-                    }
-                    let shown = if narrow {
-                        self.narrow_details
-                    } else {
-                        self.details_visible
-                    };
-                    if ui
-                        .add_sized([64.0, 26.0], egui::Button::new("Details").selected(shown))
-                        .clicked()
-                    {
-                        if narrow {
-                            self.narrow_details = !self.narrow_details;
-                        } else {
-                            self.details_visible = !self.details_visible;
-                        }
                     }
                 });
             });
@@ -557,7 +555,7 @@ impl Browser {
             } else if !self.state.finished && self.worker.is_some() {
                 (format!("{} · {} commits examined", if self.state.query.is_empty() { "Counting history" } else { "Searching history" }, self.state.scanned), ui.visuals().text_color())
             } else {
-                ("Up/Down / j k: select   ·   PgUp/PgDn: page   ·   Enter: details   ·   Esc: history   ·   Ctrl/Cmd+F: filter   ·   Ctrl/Cmd+C: copy ID".into(), ui.visuals().weak_text_color())
+                ("Up/Down / j k: select   ·   PgUp/PgDn: page   ·   Enter: review   ·   Space: details   ·   Esc: history   ·   Ctrl/Cmd+F: filter   ·   Ctrl/Cmd+C: copy ID".into(), ui.visuals().weak_text_color())
             };
             let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 18.0), egui::Sense::hover());
             bounded_text::paint(ui, rect, &message, egui::FontId::proportional(11.0), color);
@@ -704,6 +702,7 @@ impl Browser {
                                             .inner;
                                         self.row_rects.push((row, response.rect));
                                         if response.clicked() {
+                                            response.surrender_focus();
                                             self.state.select_row(row);
                                             if self.worker.is_none() {
                                                 self.state.details =
@@ -978,7 +977,7 @@ mod tests {
                 } else {
                     assert_eq!(app.details_rect, egui::Rect::NOTHING);
                 }
-                for label in ["Open…", "Refresh", "Details"] {
+                for label in ["Repository", "View", "Status"] {
                     let shape = output.shapes.iter().find_map(|shape| match &shape.shape {
                         egui::epaint::Shape::Text(text) if text.galley.job.text == label => {
                             Some(text)
@@ -1051,6 +1050,23 @@ mod tests {
     }
 
     #[test]
+    fn enter_opens_selected_commit_at_both_widths() {
+        for width in [720.0, 1120.0] {
+            let ctx = egui::Context::default();
+            let mut app = layout_fixture();
+            let _ = ctx.run(frame_input(width, 480.0, vec![]), |ctx| app.draw(ctx));
+            let _ = ctx.run(
+                frame_input(
+                    width,
+                    480.0,
+                    vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
+                ),
+                |ctx| app.draw(ctx),
+            );
+            assert!(app.review.is_some());
+        }
+    }
+    #[test]
     fn narrow_details_returns_to_the_same_selected_history_row() {
         let ctx = egui::Context::default();
         let mut app = layout_fixture();
@@ -1061,7 +1077,7 @@ mod tests {
             frame_input(
                 720.0,
                 480.0,
-                vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
+                vec![key(egui::Key::Space, egui::Modifiers::NONE)],
             ),
             |ctx| app.draw(ctx),
         );

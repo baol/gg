@@ -192,8 +192,11 @@ impl StatusView {
         }
     }
     fn draw_diff(&mut self, ctx: &egui::Context) {
-        let mut back = !ctx.wants_keyboard_input()
-            && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+        let mut back = crate::navigation::available(ctx)
+            && ctx.input_mut(|i| {
+                i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)
+                    || i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft)
+            });
         let mut refresh = false;
         egui::TopBottomPanel::top("working-diff-header")
             .exact_height(42.0)
@@ -221,7 +224,7 @@ impl StatusView {
                         .clicked();
                 });
             });
-        egui::CentralPanel::default().show(ctx, |ui| self.diff.draw(ui));
+        egui::CentralPanel::default().show(ctx, |ui| self.diff.draw_reading(ui));
         bounded_text::show_disclosure(ctx);
         if back || refresh {
             self.reading = false;
@@ -316,9 +319,16 @@ impl StatusView {
         let mut refresh = false;
         let mut open = false;
         let mut unstage = false;
-        if self.mutation.is_none() && !ctx.wants_keyboard_input() {
-            open |= ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
-            back |= ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+        if self.mutation.is_none() && crate::navigation::available(ctx) {
+            open |= crate::navigation::activation_available(ctx)
+                && ctx.input_mut(|i| {
+                    i.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
+                        || i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight)
+                });
+            back |= ctx.input_mut(|i| {
+                i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)
+                    || i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft)
+            });
             refresh |= ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::R));
             let page = (self.content.height() / HEIGHT).floor().max(2.0) as isize - 1;
             for (mods, key, distance) in [
@@ -339,6 +349,7 @@ impl StatusView {
                             .saturating_add_signed(distance)
                             .min(self.count - 1),
                     );
+                    crate::navigation::focus_content(ctx);
                     self.reveal = true;
                 }
             }
@@ -356,7 +367,7 @@ impl StatusView {
                         .clicked();
                     ui.strong("Status");
                     ui.allocate_ui_with_layout(
-                        egui::vec2((ui.available_width() - 280.0).max(100.0), 26.0),
+                        egui::vec2((ui.available_width() - 82.0).max(100.0), 26.0),
                         egui::Layout::left_to_right(egui::Align::Center),
                         |ui| {
                             bounded_text::field(
@@ -367,32 +378,6 @@ impl StatusView {
                             );
                         },
                     );
-                    unstage |= ui
-                        .add_enabled(
-                            self.mutation.is_none()
-                                && !self.replacing
-                                && self.error.is_none()
-                                && self
-                                    .selected
-                                    .and_then(|r| self.rows.get(&r))
-                                    .is_some_and(|e| e.area == Area::Staged),
-                            egui::Button::new(if self.mutation.is_some() {
-                                "Unstaging…"
-                            } else {
-                                "Unstage file"
-                            })
-                            .min_size(egui::vec2(100.0, 26.0)),
-                        )
-                        .clicked();
-                    open |= ui
-                        .add_enabled(
-                            self.mutation.is_none()
-                                && self
-                                    .selected
-                                    .is_some_and(|row| self.rows.contains_key(&row)),
-                            egui::Button::new("View diff").min_size(egui::vec2(82.0, 26.0)),
-                        )
-                        .clicked();
                     refresh |= ui
                         .add_enabled(
                             self.mutation.is_none(),
@@ -436,6 +421,34 @@ impl StatusView {
                 bounded_text::field(ui, &text, egui::FontId::proportional(12.0), 22.0);
             });
         egui::CentralPanel::default().show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                unstage |= ui
+                    .add_enabled(
+                        self.mutation.is_none()
+                            && !self.replacing
+                            && self.error.is_none()
+                            && self
+                                .selected
+                                .and_then(|r| self.rows.get(&r))
+                                .is_some_and(|e| e.area == Area::Staged),
+                        egui::Button::new(if self.mutation.is_some() {
+                            "Unstaging…"
+                        } else {
+                            "Unstage file"
+                        })
+                        .min_size(egui::vec2(100.0, 26.0)),
+                    )
+                    .clicked();
+                open |= ui
+                    .add_enabled(
+                        self.mutation.is_none()
+                            && self
+                                .selected
+                                .is_some_and(|row| self.rows.contains_key(&row)),
+                        egui::Button::new("View diff").min_size(egui::vec2(82.0, 26.0)),
+                    )
+                    .clicked();
+            });
             let header = ui
                 .allocate_exact_size(
                     egui::vec2(ui.available_width(), HEIGHT),
@@ -507,6 +520,7 @@ impl StatusView {
                     }
                     if let Some(entry) = self.rows.get(&row) {
                         if response.clicked() && self.mutation.is_none() {
+                            response.surrender_focus();
                             self.selected = Some(row);
                         }
                         if response.double_clicked() && self.mutation.is_none() {

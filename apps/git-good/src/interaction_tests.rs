@@ -546,7 +546,7 @@ fn narrow_details_navigation_preserves_hidden_history_and_back_anchor() -> Resul
     let offset = h.app.scroll_offset;
     let selected = h.app.state.selected.clone();
     let query = h.app.state.query.clone();
-    frame(&mut h, vec![key(egui::Key::Enter)]);
+    frame(&mut h, vec![key(egui::Key::Space)]);
     assert!(h.app.narrow_details);
     for event in [
         key(egui::Key::ArrowDown),

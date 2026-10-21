@@ -66,9 +66,10 @@ Preserve matching selection; otherwise select the first published match. Clear s
 | Filter / refresh / copy full ID | Ctrl+F/R/C; Command on macOS |
 | Previous / next commit | Up/Down, k/j, Ctrl+P/N |
 | Previous / next page | Page Up/Down; Alt+V for previous |
-| Open details / return | Enter / Escape or Back |
+| Open selected commit/file / return | Enter or Right / Escape, Left, or Back |
+| Toggle commit details | Space |
 
-Emacs bindings use physical Control. Ctrl+V retains native paste. Escape leaves filter focus. Text editors retain editing/navigation shortcuts; history bindings apply while history is visible and editors are unfocused. Empty results keep selection empty.
+Emacs bindings use physical Control. Ctrl+V retains native paste. Escape leaves filter focus. Text editors and open menus retain editing/navigation shortcuts; focused buttons allow list navigation. Reading views use Up/Down, j/k, Ctrl+P/N, and page keys to scroll their content. Enter opens a full-width diff from either file-list layout. History bindings apply while history is visible and editors are unfocused. Empty results keep selection empty.
 
 Follow [bounded-reveal rules](design.md). Page by the rendered viewport with one row of overlap, clamp at history boundaries, and stream uncached destinations. Show cached selected metadata immediately; reserve the full-message slot while loading. Narrow details preserve hidden history selection and pixel offset.
 
@@ -101,6 +102,8 @@ Parent switches retain the displayed comparison through loading/failure, label i
 ### Loading
 
 Stream file summaries before blob reads. Virtualize rows using history's paging and interaction rules; counts progress to exact completion. Within a comparison, preserve selection by exact path, otherwise first result; clear it for empty comparisons.
+
+Keep requested and displayed file identities separate. Retain the displayed diff and its scroll offset while a replacement loads; publish its identity, metadata, preview, and rows together after hover and scrolling settle. Errors retain labeled previous content. Reset the new file to its first row on adoption.
 
 Read selected-file content on a worker independent of history indexing. Key results by review generation, comparison, and file. Coalesce requests, cancel obsolete work between batches, and apply current results. Page diff rows and keep every file reachable through bounded caches.
 
@@ -149,7 +152,7 @@ Emit independent staged, unstaged, untracked, and conflict entries with exact pa
 
 Run scans on cancellable workers. Publish rows in discovery order and keep their ordinals stable for the scan. Stream through a 128-entry queue into disk-backed records; request visible pages of at most 256 rows and retain at most 768 rows in the UI. Index/tree metadata follows repository size; file comparison buffers follow gitoxide's status implementation.
 
-Open Status from the repository header, including on unborn branches. Show category, change, and path in fixed-height rows; expose full paths through the shared overflow view. Count discovered entries until completion; show Clean only after a successful empty scan. Refresh retains the previous scan until replacement completes, then adopts it after hover and scrolling settle. Fresh scans begin at the first row. Keep the previous paging worker available throughout refresh. Back restores history's selection and offset. Failed scans retain identified results and offer retry. Status is observational; subsequent M2 increments add working diffs and validated mutations.
+Open Status from the repository header, including on unborn branches. Show category, change, and path in fixed-height rows; expose full paths through the shared overflow view. Count discovered entries until completion; show Clean only after a successful empty scan. Refresh retains the previous scan until replacement completes, then adopts it after hover and scrolling settle. Fresh scans begin at the first row. Keep the previous paging worker available throughout refresh. Back restores history's selection and offset. Failed scans retain identified results and offer retry. Status scans remain observational; file actions use the validated mutation contract below.
 
 ### Working diffs
 

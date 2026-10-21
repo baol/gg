@@ -127,7 +127,7 @@ pub struct View {
     hex: bool,
 }
 impl View {
-    pub fn draw(&mut self, ui: &mut egui::Ui, pair: &Pair) {
+    pub fn draw(&mut self, ui: &mut egui::Ui, pair: &Pair, keyboard: bool) {
         if pair.before.image.is_some() || pair.after.image.is_some() {
             ui.checkbox(&mut self.hex, "Hexadecimal");
         }
@@ -143,9 +143,13 @@ impl View {
                 ));
             }
         }
+        let page_height = ui.available_height();
         egui::ScrollArea::both()
             .id_salt("binary-preview")
             .show(ui, |ui| {
+                if keyboard {
+                    crate::navigation::scroll(ui, page_height);
+                }
                 let side = |ui: &mut egui::Ui, i: usize| {
                     ui.strong(if i == 0 { "Before" } else { "After" });
                     let p = previews[i];
@@ -196,7 +200,7 @@ mod tests {
             let ctx = egui::Context::default();
             let mut view = View::default();
             let output = ctx.run(crate::tests::frame_input(width, 740.0, vec![]), |ctx| {
-                egui::CentralPanel::default().show(ctx, |ui| view.draw(ui, &pair));
+                egui::CentralPanel::default().show(ctx, |ui| view.draw(ui, &pair, false));
             });
             let rows: Vec<_> = output
                 .shapes

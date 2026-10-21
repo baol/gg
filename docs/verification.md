@@ -170,3 +170,11 @@ M1 is complete: commit review, selected-parent diffs, binary previews, exact exp
 - 113 workspace tests, formatting, Clippy, and debug build pass. SHA-1/SHA-256 Git oracles cover additions, deletions, staged/working edits, unborn branches, tree-cache invalidation, unrelated staging, stale HEAD/index, lock ownership, and file/directory collisions. CLI checks verify receipts, stderr, and exit status.
 - A failing worker regression reproduced paging clearing an action error. Mutation failures now remain visible until explicit retry; successful actions refresh status through its existing interaction boundary.
 - Native X11 clicks in disposable repositories verify unstaging at 1120×740 and 720×480. Git confirms the selected path leaves staged changes and working bytes remain intact. [Narrow result](screenshots/m2-unstage-result.png).
+
+## M2 navigation and diff continuity · 2026-10-21
+
+- 119 workspace tests, formatting, Clippy, and debug build pass. Six added tests cover Enter/Right opening a commit at 720 and 1120 widths, Esc/Left returning to files with selection retained, reading keys scrolling without changing files, hover-deferred replacement, and input ownership for focused buttons versus text editors.
+- Shared navigation keys treat text editors and open menus as owners of their input; focused buttons still allow list movement, and activation releases focus before opening a selection.
+- Diffs retain the displayed path, metadata, preview, rows, and scroll offset while a replacement loads. The current generation publishes together after hover and scrolling settle; failures keep labeled previous content, and an adopted replacement starts at its first row.
+- Repository actions live under **Repository** (Open…, Refresh) and presentation under **View** (Commit details · Space). Enter opens commits at both widths, the full-width reading view scrolls with the shared keys, and Status actions sit beside the file list.
+- Native X11 review at 1120×740 and 720×480 confirms the reorganized toolbar and Enter-opened views: [wide](screenshots/m2-navigation-wide.png), [narrow](screenshots/m2-navigation-narrow.png), [wide reading](screenshots/m2-reading-wide.png), [narrow reading](screenshots/m2-reading-narrow.png), [status actions](screenshots/m2-status-actions.png), [narrow status actions](screenshots/m2-status-actions-narrow.png).

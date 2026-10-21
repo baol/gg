@@ -80,3 +80,5 @@ Before connecting M1 controls, test Review/Back anchor restoration, active-view 
 - In-memory input tests preserve hovered slots, last-page geometry, history anchors, and status selection/offset through working-diff navigation. CLI tests require an explicit area for selected paths and verify JSON and failure output.
 
 Whole-file unstaging: compare restored entries and subsequent trees with Git; preserve working bytes and unrelated staging. Cover unborn branches, SHA-1/SHA-256, stale observations, lock ownership, file/directory collisions, CLI receipts/errors, and worker refresh/failure.
+
+Navigation and diff continuity: Enter opens commits at both widths; text editors retain keys while focused buttons allow navigation. Reading keys scroll without changing files. File selection retains displayed rows until current-generation adoption; hover defers replacement. Toolbar geometry covers Repository, View, and Status.

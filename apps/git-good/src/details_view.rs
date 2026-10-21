@@ -8,9 +8,11 @@ pub fn show(ui: &mut egui::Ui, commit: Option<&Commit>, loading: bool, avatars: 
         ui.label("Select a commit to inspect it.");
         return;
     };
+    let page_height = ui.available_height();
     egui::ScrollArea::vertical()
         .id_salt("commit-details")
         .show(ui, |ui| {
+            crate::navigation::scroll(ui, page_height);
             crate::bounded_text::field(
                 ui,
                 commit.subject(),
