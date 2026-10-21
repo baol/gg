@@ -118,6 +118,7 @@ impl gg_engine::HistoryReader for Session {
 }
 
 pub mod blob;
+pub mod branch;
 pub mod commit;
 pub mod diff;
 pub mod drop;

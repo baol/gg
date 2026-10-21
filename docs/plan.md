@@ -2,7 +2,7 @@
 
 Purpose: sequence M3 delivery and acceptance.
 
-## M3 · In progress · Graph, refs, and branches
+## M3 · Complete · Graph, refs, and branches
 
 Goal: understand repository topology and move confidently between branches, refs, and tags.
 
@@ -13,7 +13,7 @@ Contracts: [history graph and refs](architecture.md#history-graph-and-refs--m3).
 1. **Ref snapshot · implemented.** Read HEAD, local branches, remote branches, and tags with peeled commit targets through shared engine types and `git good refs [PATH]` JSON.
 2. **Graph and labels · implemented.** Draw incremental commit lanes, merge nodes, and branch/remote/tag labels in the history view without changing repository state.
 3. **Ref navigation · implemented.** Group refs in a toolbar menu, mark HEAD, clear filters when needed, and reveal the selected commit even after history completion.
-4. **Branch checkout and creation · pending.** Add safe branch switching and creation with worktree/index preconditions and coherent history/status refresh.
+4. **Branch switching and creation · implemented.** Add clean-worktree switching and creation with name/collision validation, Git post-checkout hooks, CLI receipts, modal UI, and coherent history/ref refresh.
 
 ### Acceptance
 
@@ -27,6 +27,7 @@ Contracts: [history graph and refs](architecture.md#history-graph-and-refs--m3).
 | Ref labels | Branches, remotes, and tags prefix the matching commit; overflow is explicit | egui and native review |
 | Ref navigation | Menu marks HEAD; selection clears filters and reveals deep commits | Worker and egui tests |
 | Read-only safety | Objects, refs, index, and working files unchanged | Byte/reference comparison |
-| Branch checkout/create | Preconditions and atomic refresh are defined before implementation | Pending increment |
+| Branch switch/create | Dirty trees, missing/colliding refs, and invalid names reject without moving HEAD; success refreshes refs/history | Git oracle, CLI, and native review |
+| Branch actions safety | Local branches only; tags/remotes remain read-only jumps; post-checkout failure is reported | Git fixtures and native review |
 
 Record native wide/narrow captures and verification in [verification](verification.md).

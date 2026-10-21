@@ -905,3 +905,65 @@ fn refs_cli_streams_branches_and_tags_without_mutating() -> Result {
     assert_eq!(git_output(repo.path(), &["rev-parse", "HEAD"])?, before);
     Ok(())
 }
+
+#[test]
+fn switch_cli_changes_branches_and_reports_dirty_worktrees() -> Result {
+    let repo = tempfile::tempdir()?;
+    git(repo.path(), &["init", "-b", "main"])?;
+    git(repo.path(), &["config", "user.name", "Test"])?;
+    git(repo.path(), &["config", "user.email", "test@example.org"])?;
+    std::fs::write(repo.path().join("a"), b"main\n")?;
+    git(repo.path(), &["add", "a"])?;
+    git(repo.path(), &["commit", "-qm", "base"])?;
+    git(repo.path(), &["switch", "-c", "feature"])?;
+    std::fs::write(repo.path().join("a"), b"feature\n")?;
+    git(repo.path(), &["commit", "-qam", "feature"])?;
+    git(repo.path(), &["switch", "main"])?;
+
+    let output = Command::new(env!("CARGO_BIN_EXE_git-good"))
+        .args(["switch", "feature"])
+        .current_dir(repo.path())
+        .output()?;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let receipt: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(receipt["operation"], "switch");
+    assert_eq!(receipt["branch"], "feature");
+    assert_eq!(
+        git_output(repo.path(), &["symbolic-ref", "--short", "HEAD"])?,
+        b"feature\n"
+    );
+
+    std::fs::write(repo.path().join("a"), b"dirty\n")?;
+    let dirty = Command::new(env!("CARGO_BIN_EXE_git-good"))
+        .args(["switch", "main"])
+        .current_dir(repo.path())
+        .output()?;
+    assert!(!dirty.status.success());
+    assert!(String::from_utf8_lossy(&dirty.stderr).contains("not clean"));
+    assert_eq!(
+        git_output(repo.path(), &["symbolic-ref", "--short", "HEAD"])?,
+        b"feature\n"
+    );
+    std::fs::write(repo.path().join("a"), b"feature\n")?;
+
+    let created = Command::new(env!("CARGO_BIN_EXE_git-good"))
+        .args(["switch", "--create", "next"])
+        .current_dir(repo.path())
+        .output()?;
+    assert!(
+        created.status.success(),
+        "{}",
+        String::from_utf8_lossy(&created.stderr)
+    );
+    let receipt: serde_json::Value = serde_json::from_slice(&created.stdout)?;
+    assert_eq!(receipt["operation"], "create");
+    assert_eq!(
+        git_output(repo.path(), &["symbolic-ref", "--short", "HEAD"])?,
+        b"next\n"
+    );
+    Ok(())
+}

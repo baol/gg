@@ -4,12 +4,12 @@ use eframe::egui;
 use gg_engine::Commit;
 
 pub const ROW_HEIGHT: f32 = 26.0;
-pub const MIN_WIDTH: f32 = 660.0;
+pub const MIN_WIDTH: f32 = 680.0;
 
 pub fn columns(rect: egui::Rect) -> [egui::Rect; 5] {
     let widths = [
-        52.0,
-        (rect.width() - 52.0 - 168.0 - 76.0 - 132.0).max(0.0),
+        92.0,
+        (rect.width() - 92.0 - 168.0 - 76.0 - 132.0).max(0.0),
         168.0,
         76.0,
         132.0,

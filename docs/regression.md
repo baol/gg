@@ -104,3 +104,9 @@ Ref snapshots: compare HEAD, local branches, remote branches, and annotated/ligh
 Graph layout: unit tests cover linear history, merge parents, lane reuse, joins, and lane retirement. Worker tests verify graph rows stay aligned with commits when the query filters rows, and egui tests require the graph column and ref labels at 720 and 1120 widths. Long or numerous refs must remain single-line with an explicit overflow count.
 
 Ref navigation: the Refs menu groups branches, remotes, and tags, marks the symbolic HEAD branch, and selects a target commit without mutating the repository. Jumping must clear a hiding filter, recover the correct row after traversal completion, preserve the selected anchor, and reveal deep targets. Native wide/narrow review verifies graph lanes, labels, grouped menus, and selection.
+
+## M3 branch switching and creation
+
+Branch safety: switch between local branches and create from the current HEAD only on a clean worktree. Cover unstaged, staged, and untracked inputs, missing branches, duplicate names, invalid names, detached HEAD starts, and unborn repositories. Verify HEAD, index, and working files are unchanged on every rejection.
+
+Branch actions: compare the checkout result with Git for worktree content, symbolic HEAD, and post-checkout hooks, including a failing hook that leaves the branch switched but returns a warning. Verify `git good switch [--create] BRANCH` receipts/errors, Refs-menu HEAD marking, modal creation, branch-switch refresh of history/refs, and dirty-tree recovery. Tags and remotes remain read-only jumps; branch deletion, rename, and remote tracking are outside this increment.

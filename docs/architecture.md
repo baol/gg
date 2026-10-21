@@ -152,7 +152,11 @@ Compute graph rows in traversal order, including commits later hidden by a filte
 
 Prefix each commit subject with matching branch, remote, and tag labels, showing at most four plus an overflow count. Group refs by kind in the toolbar; mark the current symbolic branch as HEAD. Selecting a ref clears a hiding filter, targets its commit by ID, and scans the completed spool to recover the row before revealing it. Ref navigation never moves HEAD, checks out content, writes refs, or modifies the index or working tree.
 
-The next increment adds branch checkout and creation. It must validate worktree cleanliness, repository identity, and ref collisions before publishing; it is not part of the read-only foundation.
+### Branch switching and creation
+
+Switch and create operate on local branches only after a clean-worktree check. Open the observed status identity, scan for staged, unstaged, untracked, or conflicted paths, and reject the action before invoking Git if anything is dirty. Validate branch names as full local refs, reject collisions on creation and missing branches on switch, and run `git switch` or `git switch -c` from the worktree root so Git performs the atomic index/worktree/ref update and runs `post-checkout` hooks. Remove ambient `GIT_DIR` and `GIT_WORK_TREE` overrides. A missing Git executable, name error, dirty tree, collision, or checkout failure returns an actionable message and leaves the user on the current branch unless Git partially advanced the worktree; the message directs the user to inspect the current branch and hook output. If Git advanced to the target branch but returned nonzero, treat that as a successful switch with a `post-checkout` warning rather than a failed action.
+
+The Refs menu treats local branches as switch actions, marks the current branch as HEAD, and keeps tags and remotes as read-only jumps. **New branch…** opens a modal whose Create action targets the current HEAD. CLI `git good switch [--create] BRANCH [--repo PATH]` returns a JSON receipt. On success, clear the history filter, select the new HEAD, reload history/refs, and refresh Status on its next open. Branch deletion, rename, remote tracking, and tag creation remain later work.
 
 ## Working status · M2
 

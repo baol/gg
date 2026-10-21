@@ -96,7 +96,7 @@ fn mask(lanes: &[Option<String>]) -> u64 {
 }
 
 fn x(rect: egui::Rect, lane: u8) -> f32 {
-    rect.left() + 8.0 + lane as f32 * 8.0
+    rect.left() + 9.0 + lane as f32 * 11.0
 }
 
 fn color(lane: u8) -> egui::Color32 {
@@ -107,32 +107,48 @@ pub fn paint(ui: &egui::Ui, rect: egui::Rect, row: &Row, selected: bool) {
     let painter = ui.painter().with_clip_rect(rect);
     let center = egui::pos2(x(rect, row.lane), rect.center().y);
     for lane in 0..MAX_LANES as u8 {
-        if row.before & (1 << lane) != 0 {
+        let before = row.before & (1 << lane) != 0;
+        let after = row.after & (1 << lane) != 0;
+        if before && after {
+            painter.line_segment(
+                [
+                    egui::pos2(x(rect, lane), rect.top()),
+                    egui::pos2(x(rect, lane), rect.bottom()),
+                ],
+                egui::Stroke::new(1.75, color(lane)),
+            );
+        } else if before {
             painter.line_segment(
                 [
                     egui::pos2(x(rect, lane), rect.top()),
                     egui::pos2(x(rect, lane), center.y),
                 ],
-                egui::Stroke::new(1.5, color(lane)),
-            );
-        }
-        if row.after & (1 << lane) != 0 {
-            painter.line_segment(
-                [
-                    egui::pos2(x(rect, lane), center.y),
-                    egui::pos2(x(rect, lane), rect.bottom()),
-                ],
-                egui::Stroke::new(1.5, color(lane)),
+                egui::Stroke::new(1.75, color(lane)),
             );
         }
     }
+    let join = center.y + (rect.bottom() - center.y) * 0.62;
     for parent in &row.parents {
-        painter.line_segment(
-            [center, egui::pos2(x(rect, *parent), rect.bottom())],
-            egui::Stroke::new(1.5, color(*parent)),
-        );
+        if *parent == row.lane {
+            continue;
+        }
+        let end = egui::pos2(x(rect, *parent), rect.bottom());
+        painter.add(egui::epaint::CubicBezierShape::from_points_stroke(
+            [
+                center,
+                egui::pos2(center.x, join),
+                egui::pos2(end.x, join),
+                end,
+            ],
+            false,
+            egui::Color32::TRANSPARENT,
+            egui::Stroke::new(1.75, color(*parent)),
+        ));
     }
-    painter.circle_filled(center, if selected { 4.0 } else { 3.0 }, color(row.lane));
+    if selected {
+        painter.circle_filled(center, 6.0, color(row.lane).gamma_multiply(0.28));
+    }
+    painter.circle_filled(center, if selected { 4.0 } else { 3.25 }, color(row.lane));
     if row.parents.len() > 1 {
         painter.circle_stroke(center, 6.0, egui::Stroke::new(1.0, color(row.lane)));
     }
