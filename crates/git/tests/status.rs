@@ -1147,6 +1147,314 @@ fn stage_hunks_reject_unsupported_changes_and_selections() -> Result {
 }
 
 #[test]
+fn stage_selected_lines_keeps_unselected_sides_and_marks_partial_stat() -> Result {
+    use gg_engine::diff::RowKind;
+    use gg_git::patch::{Change, Edit};
+    let dir = tempfile::tempdir()?;
+    let p = dir.path();
+    hunk_fixture(p, "sha1")?;
+    let req = request(p, b"a", Area::Unstaged)?;
+    let diff = gg_git::working_diff::read(&req, || false)?;
+    let hunk = diff
+        .rows
+        .iter()
+        .find(|row| row.kind == RowKind::Hunk)
+        .ok_or("missing hunk")?;
+    let added = diff
+        .rows
+        .iter()
+        .find(|row| row.kind == RowKind::Added && row.new_line == Some(1))
+        .ok_or("missing added line")?;
+    let edits = vec![Edit {
+        header: hunk.text.clone(),
+        changes: vec![Change::Added(added.new_line.ok_or("missing line")?)],
+    }];
+    gg_git::stage::changes(&req, &edits)?;
+    assert_eq!(
+        git(p, &["show", ":a"])?,
+        b"one\nONE\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\ntwelve\n"
+    );
+    assert_eq!(
+        std::fs::read(p.join("a"))?,
+        b"ONE\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\nTWELVE\n"
+    );
+    assert_eq!(
+        git(p, &["status", "--porcelain=v1", "-z", "--", "a"])?,
+        b"MM a\0"
+    );
+    let debug = String::from_utf8(git(p, &["ls-files", "--debug", "--", "a"])?)?;
+    assert!(debug.contains("size: 0"), "{debug}");
+
+    let req = request(p, b"a", Area::Unstaged)?;
+    let diff = gg_git::working_diff::read(&req, || false)?;
+    let hunk = diff
+        .rows
+        .iter()
+        .find(|row| row.kind == RowKind::Hunk)
+        .ok_or("missing hunk")?;
+    let deleted = diff
+        .rows
+        .iter()
+        .find(|row| row.kind == RowKind::Deleted && row.old_line == Some(1))
+        .ok_or("missing deleted line")?;
+    gg_git::stage::changes(
+        &req,
+        &[Edit {
+            header: hunk.text.clone(),
+            changes: vec![Change::Deleted(deleted.old_line.ok_or("missing line")?)],
+        }],
+    )?;
+    assert_eq!(
+        git(p, &["show", ":a"])?,
+        b"ONE\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\ntwelve\n"
+    );
+    assert_eq!(
+        git(p, &["status", "--porcelain=v1", "-z", "--", "a"])?,
+        b"MM a\0"
+    );
+
+    let req = request(p, b"a", Area::Unstaged)?;
+    let headers = hunk_headers(&req)?;
+    gg_git::stage::hunks(&req, &headers)?;
+    assert_eq!(git(p, &["show", ":a"])?, std::fs::read(p.join("a"))?);
+    assert_eq!(
+        git(p, &["status", "--porcelain=v1", "-z", "--", "a"])?,
+        b"M  a\0"
+    );
+    let debug = String::from_utf8(git(p, &["ls-files", "--debug", "--", "a"])?)?;
+    assert!(!debug.contains("size: 0"), "{debug}");
+    oracle(p)?;
+    Ok(())
+}
+
+#[test]
+fn stage_selected_lines_can_replace_one_line_without_touching_another_hunk() -> Result {
+    use gg_engine::diff::RowKind;
+    use gg_git::patch::{Change, Edit};
+    let dir = tempfile::tempdir()?;
+    let p = dir.path();
+    hunk_fixture(p, "sha1")?;
+    let req = request(p, b"a", Area::Unstaged)?;
+    let diff = gg_git::working_diff::read(&req, || false)?;
+    let hunk = diff
+        .rows
+        .iter()
+        .find(|row| row.kind == RowKind::Hunk)
+        .ok_or("missing hunk")?;
+    let deleted = diff
+        .rows
+        .iter()
+        .find(|row| row.kind == RowKind::Deleted)
+        .and_then(|row| row.old_line)
+        .ok_or("missing deleted line")?;
+    let added = diff
+        .rows
+        .iter()
+        .find(|row| row.kind == RowKind::Added)
+        .and_then(|row| row.new_line)
+        .ok_or("missing added line")?;
+    gg_git::stage::changes(
+        &req,
+        &[Edit {
+            header: hunk.text.clone(),
+            changes: vec![Change::Deleted(deleted), Change::Added(added)],
+        }],
+    )?;
+    assert_eq!(
+        git(p, &["show", ":a"])?,
+        b"ONE\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\ntwelve\n"
+    );
+    assert_eq!(
+        git(p, &["status", "--porcelain=v1", "-z", "--", "a"])?,
+        b"MM a\0"
+    );
+    oracle(p)?;
+    Ok(())
+}
+
+#[test]
+fn unstage_selected_lines_restores_old_sides_and_preserves_working_tree() -> Result {
+    use gg_engine::diff::RowKind;
+    use gg_git::patch::{Change, Edit};
+    let dir = tempfile::tempdir()?;
+    let p = dir.path();
+    hunk_fixture(p, "sha1")?;
+    git(p, &["add", "a"])?;
+    let req = request(p, b"a", Area::Staged)?;
+    let diff = gg_git::working_diff::read(&req, || false)?;
+    let hunk = diff
+        .rows
+        .iter()
+        .find(|row| row.kind == RowKind::Hunk)
+        .ok_or("missing hunk")?;
+    let deleted = diff
+        .rows
+        .iter()
+        .find(|row| row.kind == RowKind::Deleted)
+        .and_then(|row| row.old_line)
+        .ok_or("missing deleted line")?;
+    let working = std::fs::read(p.join("a"))?;
+    gg_git::unstage::changes(
+        &req,
+        &[Edit {
+            header: hunk.text.clone(),
+            changes: vec![Change::Deleted(deleted)],
+        }],
+    )?;
+    assert_eq!(
+        git(p, &["show", ":a"])?,
+        b"one\nONE\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\nTWELVE\n"
+    );
+    assert_eq!(std::fs::read(p.join("a"))?, working);
+    assert_eq!(
+        git(p, &["status", "--porcelain=v1", "-z", "--", "a"])?,
+        b"MM a\0"
+    );
+
+    let req = request(p, b"a", Area::Staged)?;
+    let diff = gg_git::working_diff::read(&req, || false)?;
+    let hunk = diff
+        .rows
+        .iter()
+        .find(|row| row.kind == RowKind::Hunk)
+        .ok_or("missing hunk")?;
+    let start = diff
+        .rows
+        .iter()
+        .position(|row| row.kind == RowKind::Hunk)
+        .ok_or("missing hunk")?;
+    let end = diff.rows[start + 1..]
+        .iter()
+        .position(|row| row.kind == RowKind::Hunk)
+        .map_or(diff.rows.len(), |offset| start + 1 + offset);
+    let mut changes = vec![];
+    for row in &diff.rows[start + 1..end] {
+        match row.kind {
+            RowKind::Added => changes.push(Change::Added(row.new_line.ok_or("missing line")?)),
+            RowKind::Deleted => changes.push(Change::Deleted(row.old_line.ok_or("missing line")?)),
+            _ => {}
+        }
+    }
+    gg_git::unstage::changes(
+        &req,
+        &[Edit {
+            header: hunk.text.clone(),
+            changes,
+        }],
+    )?;
+    assert_eq!(
+        git(p, &["show", ":a"])?,
+        b"one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\nTWELVE\n"
+    );
+    assert_eq!(std::fs::read(p.join("a"))?, working);
+    assert_eq!(
+        git(p, &["status", "--porcelain=v1", "-z", "--", "a"])?,
+        b"MM a\0"
+    );
+
+    let req = request(p, b"a", Area::Staged)?;
+    let headers = hunk_headers(&req)?;
+    gg_git::unstage::hunks(&req, &headers)?;
+    assert_eq!(git(p, &["show", ":a"])?, git(p, &["show", "HEAD:a"])?);
+    assert_eq!(std::fs::read(p.join("a"))?, working);
+    assert_eq!(
+        git(p, &["status", "--porcelain=v1", "-z", "--", "a"])?,
+        b" M a\0"
+    );
+    oracle(p)?;
+    Ok(())
+}
+
+#[test]
+fn unstage_selected_added_and_deleted_file_lines_restores_index_shape() -> Result {
+    use gg_engine::diff::RowKind;
+    use gg_git::patch::{Change, Edit};
+    let dir = tempfile::tempdir()?;
+    let p = dir.path();
+    git(p, &["init", "-b", "main"])?;
+    std::fs::write(p.join("base"), b"base\n")?;
+    git(p, &["add", "base"])?;
+    git(p, &["commit", "-qm", "base"])?;
+    std::fs::write(p.join("new"), b"a\nb\nc\n")?;
+    git(p, &["add", "new"])?;
+    let req = request(p, b"new", Area::Staged)?;
+    let diff = gg_git::working_diff::read(&req, || false)?;
+    let hunk = diff
+        .rows
+        .iter()
+        .find(|row| row.kind == RowKind::Hunk)
+        .ok_or("missing hunk")?;
+    let added = diff
+        .rows
+        .iter()
+        .find(|row| row.kind == RowKind::Added)
+        .and_then(|row| row.new_line)
+        .ok_or("missing added line")?;
+    gg_git::unstage::changes(
+        &req,
+        &[Edit {
+            header: hunk.text.clone(),
+            changes: vec![Change::Added(added)],
+        }],
+    )?;
+    assert_eq!(git(p, &["show", ":new"])?, b"b\nc\n");
+    assert_eq!(std::fs::read(p.join("new"))?, b"a\nb\nc\n");
+    assert_eq!(
+        git(p, &["status", "--porcelain=v1", "-z", "--", "new"])?,
+        b"AM new\0"
+    );
+    let req = request(p, b"new", Area::Staged)?;
+    let headers = hunk_headers(&req)?;
+    gg_git::unstage::hunks(&req, &headers)?;
+    assert!(git(p, &["show", ":new"]).is_err());
+    assert_eq!(
+        git(p, &["status", "--porcelain=v1", "-z", "--", "new"])?,
+        b"?? new\0"
+    );
+
+    std::fs::write(p.join("gone"), b"one\ntwo\nthree\n")?;
+    git(p, &["add", "gone"])?;
+    git(p, &["commit", "-qm", "gone"])?;
+    git(p, &["rm", "gone"])?;
+    let req = request(p, b"gone", Area::Staged)?;
+    let diff = gg_git::working_diff::read(&req, || false)?;
+    let hunk = diff
+        .rows
+        .iter()
+        .find(|row| row.kind == RowKind::Hunk)
+        .ok_or("missing hunk")?;
+    let deleted = diff
+        .rows
+        .iter()
+        .find(|row| row.kind == RowKind::Deleted && row.old_line == Some(2))
+        .and_then(|row| row.old_line)
+        .ok_or("missing deleted line")?;
+    gg_git::unstage::changes(
+        &req,
+        &[Edit {
+            header: hunk.text.clone(),
+            changes: vec![Change::Deleted(deleted)],
+        }],
+    )?;
+    assert_eq!(git(p, &["show", ":gone"])?, b"two\n");
+    assert!(!p.join("gone").exists());
+    assert_eq!(
+        git(p, &["status", "--porcelain=v1", "-z", "--", "gone"])?,
+        b"MD gone\0"
+    );
+    let req = request(p, b"gone", Area::Staged)?;
+    let headers = hunk_headers(&req)?;
+    gg_git::unstage::hunks(&req, &headers)?;
+    assert_eq!(git(p, &["show", ":gone"])?, b"one\ntwo\nthree\n");
+    assert_eq!(
+        git(p, &["status", "--porcelain=v1", "-z", "--", "gone"])?,
+        b" D gone\0"
+    );
+    oracle(p)?;
+    Ok(())
+}
+
+#[test]
 fn stage_hunks_reject_stale_inputs_and_locks_without_publishing() -> Result {
     let dir = tempfile::tempdir()?;
     let p = dir.path();
@@ -1196,5 +1504,215 @@ fn stage_hunks_reject_stale_inputs_and_locks_without_publishing() -> Result {
     );
     assert_eq!(std::fs::read(p.join(".git/index"))?, index);
     assert!(!p.join(".git/index.lock").exists());
+    Ok(())
+}
+
+#[test]
+fn drop_selected_working_lines_restores_index_sides_and_keeps_other_hunks() -> Result {
+    use gg_engine::diff::RowKind;
+    use gg_git::patch::{Change, Edit};
+    for hash in ["sha1", "sha256"] {
+        let dir = tempfile::tempdir()?;
+        let p = dir.path();
+        hunk_fixture(p, hash)?;
+        let index = std::fs::read(p.join(".git/index"))?;
+        let base = b"one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\ntwelve\n";
+
+        let req = request(p, b"a", Area::Unstaged)?;
+        let diff = gg_git::working_diff::read(&req, || false)?;
+        let start = diff
+            .rows
+            .iter()
+            .position(|row| row.kind == RowKind::Hunk)
+            .ok_or("missing first hunk")?;
+        let end = diff.rows[start + 1..]
+            .iter()
+            .position(|row| row.kind == RowKind::Hunk)
+            .map_or(diff.rows.len(), |offset| start + 1 + offset);
+        let hunk = &diff.rows[start];
+        let changes = diff.rows[start + 1..end]
+            .iter()
+            .filter_map(|row| match row.kind {
+                RowKind::Added => row.new_line.map(Change::Added),
+                RowKind::Deleted => row.old_line.map(Change::Deleted),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        gg_git::drop::changes(
+            &req,
+            &[Edit {
+                header: hunk.text.clone(),
+                changes,
+            }],
+        )?;
+        assert_eq!(
+            std::fs::read(p.join("a"))?,
+            b"one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\nTWELVE\n"
+        );
+        assert_eq!(git(p, &["show", ":a"])?, base.as_slice());
+        assert_eq!(std::fs::read(p.join(".git/index"))?, index);
+        assert_eq!(
+            git(p, &["status", "--porcelain=v1", "-z", "--", "a"])?,
+            b" M a\0"
+        );
+
+        let req = request(p, b"a", Area::Unstaged)?;
+        gg_git::drop::changes(
+            &req,
+            &[Edit {
+                header: hunk_headers(&req)?[0].clone(),
+                changes: vec![],
+            }],
+        )?;
+        assert_eq!(std::fs::read(p.join("a"))?, base.as_slice());
+        assert_eq!(std::fs::read(p.join(".git/index"))?, index);
+        oracle(p)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn drop_whole_working_changes_restores_index_and_removes_untracked() -> Result {
+    let dir = tempfile::tempdir()?;
+    let p = dir.path();
+    git(p, &["init", "-b", "main"])?;
+    std::fs::write(p.join("regular"), b"base\n")?;
+    std::fs::write(p.join("deleted"), b"deleted\n")?;
+    std::fs::write(p.join("exec"), b"exec\n")?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(p.join("exec"), std::fs::Permissions::from_mode(0o755))?;
+        std::os::unix::fs::symlink("regular", p.join("link"))?;
+    }
+    git(p, &["add", "."])?;
+    git(p, &["commit", "-qm", "base"])?;
+    let index = std::fs::read(p.join(".git/index"))?;
+
+    std::fs::write(p.join("regular"), b"working\n")?;
+    std::fs::remove_file(p.join("deleted"))?;
+    std::fs::write(p.join("exec"), b"changed\n")?;
+    std::fs::write(p.join("untracked"), b"new\n")?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        std::fs::set_permissions(p.join("exec"), std::fs::Permissions::from_mode(0o644))?;
+        std::fs::remove_file(p.join("link"))?;
+        symlink("untracked", p.join("link"))?;
+    }
+
+    let req = request(p, b"regular", Area::Unstaged)?;
+    gg_git::drop::file(&req)?;
+    assert_eq!(std::fs::read(p.join("regular"))?, b"base\n");
+    let req = request(p, b"deleted", Area::Unstaged)?;
+    gg_git::drop::file(&req)?;
+    assert_eq!(std::fs::read(p.join("deleted"))?, b"deleted\n");
+    let req = request(p, b"exec", Area::Unstaged)?;
+    gg_git::drop::file(&req)?;
+    assert_eq!(std::fs::read(p.join("exec"))?, b"exec\n");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            std::fs::metadata(p.join("exec"))?.permissions().mode() & 0o777,
+            0o755
+        );
+    }
+    let req = request(p, b"untracked", Area::Untracked)?;
+    gg_git::drop::file(&req)?;
+    assert!(!p.join("untracked").exists());
+    #[cfg(unix)]
+    {
+        let req = request(p, b"link", Area::Unstaged)?;
+        gg_git::drop::file(&req)?;
+        assert_eq!(
+            std::fs::read_link(p.join("link"))?,
+            std::path::Path::new("regular")
+        );
+    }
+    assert_eq!(std::fs::read(p.join(".git/index"))?, index);
+    assert!(scan(p)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn drop_rejects_partial_mode_changes_and_staged_inputs() -> Result {
+    let dir = tempfile::tempdir()?;
+    let p = dir.path();
+    git(p, &["init", "-b", "main"])?;
+    std::fs::write(p.join("a"), b"one\ntwo\n")?;
+    git(p, &["add", "a"])?;
+    git(p, &["commit", "-qm", "base"])?;
+    std::fs::write(p.join("a"), b"ONE\ntwo\n")?;
+    let req = request(p, b"a", Area::Unstaged)?;
+    let headers = hunk_headers(&req)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(p.join("a"), std::fs::Permissions::from_mode(0o755))?;
+        let Err(error) = gg_git::drop::changes(
+            &req,
+            &[gg_git::patch::Edit {
+                header: headers[0].clone(),
+                changes: vec![],
+            }],
+        ) else {
+            return Err("mode change was not rejected".into());
+        };
+        assert!(error.contains("whole file"), "{error}");
+        std::fs::set_permissions(p.join("a"), std::fs::Permissions::from_mode(0o644))?;
+    }
+    let stale = request(p, b"a", Area::Unstaged)?;
+    git(p, &["add", "a"])?;
+    let Err(error) = gg_git::drop::file(&stale) else {
+        return Err("stale drop was not rejected".into());
+    };
+    assert!(error.contains("changed since"), "{error}");
+    let req = request(p, b"a", Area::Staged)?;
+    let Err(error) = gg_git::drop::file(&req) else {
+        return Err("staged file was not rejected".into());
+    };
+    assert!(error.contains("Unstage"), "{error}");
+    let Err(error) = gg_git::drop::changes(
+        &req,
+        &[gg_git::patch::Edit {
+            header: headers[0].clone(),
+            changes: vec![],
+        }],
+    ) else {
+        return Err("staged line drop was not rejected".into());
+    };
+    assert!(error.contains("unstaged modification"), "{error}");
+    Ok(())
+}
+
+#[test]
+fn drop_restores_filtered_line_endings_and_missing_final_newline() -> Result {
+    let dir = tempfile::tempdir()?;
+    let p = dir.path();
+    git(p, &["init", "-b", "main"])?;
+    std::fs::write(p.join(".gitattributes"), b"*.txt text eol=crlf\n")?;
+    let original = b"one\r\ntwo\r\n";
+    std::fs::write(p.join("a.txt"), original)?;
+    git(p, &["add", "."])?;
+    git(p, &["commit", "-qm", "base"])?;
+    let index = std::fs::read(p.join(".git/index"))?;
+    std::fs::write(p.join("a.txt"), b"ONE\r\ntwo")?;
+
+    let req = request(p, b"a.txt", Area::Unstaged)?;
+    let header = hunk_headers(&req)?
+        .into_iter()
+        .next()
+        .ok_or("missing hunk")?;
+    gg_git::drop::changes(
+        &req,
+        &[gg_git::patch::Edit {
+            header,
+            changes: vec![],
+        }],
+    )?;
+    assert_eq!(std::fs::read(p.join("a.txt"))?, original);
+    assert_eq!(std::fs::read(p.join(".git/index"))?, index);
+    assert!(scan(p)?.is_empty());
     Ok(())
 }

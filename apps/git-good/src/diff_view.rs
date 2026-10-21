@@ -5,7 +5,7 @@ use crate::{
 };
 use eframe::egui;
 use gg_engine::{
-    diff::{DiffKind, DiffRow, FileDiff, RowKind},
+    diff::{DiffRow, FileDiff},
     review::FileChange,
 };
 use std::{collections::BTreeMap, ops::Range, path::PathBuf};
@@ -25,7 +25,6 @@ pub struct DiffView {
     pub generation: u64,
     pub rows: BTreeMap<usize, DiffRow>,
     pub count: usize,
-    selected_hunk: Option<(usize, String)>,
     columns: usize,
     info: Option<FileDiff>,
     error: Option<String>,
@@ -55,7 +54,6 @@ impl Default for DiffView {
             generation: 0,
             rows: BTreeMap::new(),
             count: 0,
-            selected_hunk: None,
             columns: 0,
             info: None,
             error: None,
@@ -80,53 +78,6 @@ impl DiffView {
     pub fn hovered(&self, point: Option<egui::Pos2>) -> bool {
         point.is_some_and(|p| self.bounds.contains(p))
     }
-    pub fn selected_hunk(&self) -> Option<&str> {
-        self.selected_hunk
-            .as_ref()
-            .map(|(_, header)| header.as_str())
-    }
-    /// A selected hunk that the engine can stage: an unstaged text modification.
-    pub fn stageable_hunk(&self) -> Option<(&gg_engine::status::WorkingRequest, &str)> {
-        Some((self.stageable_working()?, self.selected_hunk()?))
-    }
-    fn stageable_working(&self) -> Option<&gg_engine::status::WorkingRequest> {
-        let request = self.displayed_working.as_ref()?;
-        if request.entry.area != gg_engine::status::Area::Unstaged
-            || request.entry.kind != gg_engine::status::Kind::Modified
-        {
-            return None;
-        }
-        let info = self.info.as_ref()?;
-        if info.kind != DiffKind::Text || !info.complete {
-            return None;
-        }
-        Some(request)
-    }
-    pub fn select_working(
-        &mut self,
-        request: gg_engine::status::WorkingRequest,
-        ctx: &egui::Context,
-    ) {
-        if self.working.as_ref() == Some(&request) {
-            return;
-        }
-        self.path = request.repository.path.clone();
-        self.change = Some(FileChange {
-            path: request.entry.path.clone(),
-            path_bytes: request.entry.path_bytes.clone(),
-            kind: gg_engine::review::ChangeKind::Modified,
-            old: None,
-            new: None,
-        });
-        self.working = Some(request);
-        self.generation += 1;
-        self.staged = None;
-        self.sent = None;
-        self.error = None;
-        self.selected_hunk = None;
-        self.send(ctx);
-        ctx.request_repaint();
-    }
     pub fn select(&mut self, path: PathBuf, change: Option<FileChange>, ctx: &egui::Context) {
         let same = self.path == path
             && self
@@ -148,7 +99,6 @@ impl DiffView {
         self.error = None;
         self.staged = None;
         self.sent = None;
-        self.selected_hunk = None;
         self.send(ctx);
         ctx.request_repaint();
     }
@@ -202,7 +152,6 @@ impl DiffView {
                     self.displayed_path = self.path.clone();
                     self.displayed_working = self.working.clone();
                     self.displayed_generation = update.generation;
-                    self.selected_hunk = None;
                 }
                 self.preview = update.preview;
                 self.count = update.count;
@@ -415,7 +364,6 @@ impl DiffView {
             }
         }
         ui.spacing_mut().item_spacing.y = 0.0;
-        let working = self.stageable_working().is_some();
         let result = scroll.show_rows(ui, HEIGHT, self.count, |ui, rows| {
             self.range = rows.start.saturating_sub(24)..rows.end.saturating_add(24);
             // A conservative monospace width keeps every source column reachable.
@@ -435,21 +383,6 @@ impl DiffView {
                 };
                 let (sign, color, fill) = crate::colors::diff(ui.visuals(), row.kind);
                 ui.painter().rect_filled(rect, 0.0, fill);
-                let selected = working
-                    && row.kind == RowKind::Hunk
-                    && self
-                        .selected_hunk
-                        .as_ref()
-                        .is_some_and(|(selected, _)| *selected == index);
-                if selected {
-                    ui.painter()
-                        .rect_filled(rect, 0.0, crate::colors::selection(ui.visuals()));
-                    ui.painter().rect_filled(
-                        egui::Rect::from_min_size(rect.min, egui::vec2(3.0, HEIGHT)),
-                        0.0,
-                        ui.visuals().selection.stroke.color,
-                    );
-                }
                 let font = egui::FontId::monospace(12.0);
                 for (x, text) in [
                     (0.0, row.old_line.map(|n| n.to_string()).unwrap_or_default()),
@@ -495,18 +428,10 @@ impl DiffView {
                     color,
                 );
                 if response
-                    .on_hover_text(if working && row.kind == RowKind::Hunk {
-                        "Click to select this hunk for staging"
-                    } else {
-                        "Click to copy this displayed line"
-                    })
+                    .on_hover_text("Click to copy this displayed line")
                     .clicked()
                 {
-                    if working && row.kind == RowKind::Hunk {
-                        self.selected_hunk = Some((index, row.text.clone()));
-                    } else {
-                        ctx.copy_text(row.text.clone());
-                    }
+                    ctx.copy_text(row.text.clone());
                 }
             }
         });

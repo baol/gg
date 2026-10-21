@@ -10,13 +10,12 @@ const HEIGHT: f32 = 24.0;
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mutation {
     Stage,
-    StageHunks,
     Unstage,
 }
 pub struct StatusView {
     path: PathBuf,
     identity: Option<gg_engine::status::StatusIdentity>,
-    diff: crate::diff_view::DiffView,
+    stage: crate::stage_view::StageView,
     reading: bool,
     mutation: Option<std::sync::mpsc::Receiver<Result<(), String>>>,
     mutation_kind: Option<Mutation>,
@@ -42,7 +41,7 @@ impl StatusView {
         let mut view = Self {
             path,
             identity: None,
-            diff: crate::diff_view::DiffView::default(),
+            stage: crate::stage_view::StageView::default(),
             reading: false,
             mutation: None,
             mutation_kind: None,
@@ -71,10 +70,6 @@ impl StatusView {
         self.error = None;
         self.action_error = None;
         self.replacing = replacing;
-        // A fresh scan can observe new working bytes with the same HEAD and index.
-        if replacing {
-            self.diff = crate::diff_view::DiffView::default();
-        }
         match Worker::start(self.path.clone(), ctx.clone()) {
             Ok(worker) => {
                 if replacing {
@@ -164,8 +159,27 @@ impl StatusView {
         if let Some(entry) = self.selected.and_then(|row| self.rows.get(&row)).cloned()
             && let Some(repository) = self.identity.clone()
         {
-            self.diff
-                .select_working(gg_engine::status::WorkingRequest { repository, entry }, ctx);
+            let companion = self
+                .rows
+                .values()
+                .find(|candidate| {
+                    candidate.path_bytes == entry.path_bytes && candidate.area != entry.area
+                })
+                .cloned()
+                .or_else(|| {
+                    self.staged.as_ref().and_then(|update| {
+                        update
+                            .rows
+                            .iter()
+                            .map(|(_, entry)| entry)
+                            .find(|candidate| {
+                                candidate.path_bytes == entry.path_bytes
+                                    && candidate.area != entry.area
+                            })
+                            .cloned()
+                    })
+                });
+            self.stage.select_working(repository, entry, companion, ctx);
             self.reading = true;
         }
     }
@@ -203,19 +217,6 @@ impl StatusView {
             gg_git::stage::file(&gg_engine::status::WorkingRequest { repository, entry })
         });
     }
-    fn stage_hunks(
-        &mut self,
-        ctx: &egui::Context,
-        request: gg_engine::status::WorkingRequest,
-        headers: Vec<String>,
-    ) {
-        if self.mutation.is_some() || self.replacing {
-            return;
-        }
-        self.mutate(ctx, Mutation::StageHunks, "stage hunk", move || {
-            gg_git::stage::hunks(&request, &headers)
-        });
-    }
     fn mutate(
         &mut self,
         ctx: &egui::Context,
@@ -241,50 +242,43 @@ impl StatusView {
         }
     }
     fn draw_diff(&mut self, ctx: &egui::Context) {
-        let mut back = crate::navigation::available(ctx)
+        let pending = self.stage.pending();
+        let mut back = !pending
+            && crate::navigation::available(ctx)
             && ctx.input_mut(|i| {
                 i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)
                     || i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft)
             });
-        let mut refresh = false;
-        let mut stage_hunk = false;
+        let mut reload = false;
         egui::TopBottomPanel::top("working-diff-header")
             .exact_height(42.0)
             .show(ctx, |ui| {
                 ui.add_space(5.0);
                 ui.horizontal(|ui| {
                     back |= ui
-                        .add_sized([100.0, 26.0], egui::Button::new("Back to files"))
+                        .add_enabled(
+                            !pending,
+                            egui::Button::new("Back to files").min_size(egui::vec2(100.0, 26.0)),
+                        )
                         .clicked();
-                    ui.strong("Working diff");
+                    ui.strong("Review & stage");
                     ui.allocate_ui_with_layout(
-                        egui::vec2((ui.available_width() - 230.0).max(100.0), 26.0),
+                        egui::vec2((ui.available_width() - 110.0).max(100.0), 26.0),
                         egui::Layout::left_to_right(egui::Align::Center),
                         |ui| {
                             bounded_text::field(
                                 ui,
-                                &self.path.display().to_string(),
+                                self.stage.path(),
                                 egui::FontId::proportional(12.0),
                                 26.0,
                             );
                         },
                     );
-                    stage_hunk |= ui
+                    reload |= ui
                         .add_enabled(
-                            self.mutation.is_none() && self.diff.stageable_hunk().is_some(),
-                            egui::Button::new(
-                                if self.mutation_kind == Some(Mutation::StageHunks) {
-                                    "Staging…"
-                                } else {
-                                    "Stage hunk"
-                                },
-                            )
-                            .min_size(egui::vec2(96.0, 26.0)),
+                            !pending,
+                            egui::Button::new("Reload").min_size(egui::vec2(94.0, 26.0)),
                         )
-                        .on_disabled_hover_text("Select an unstaged hunk header")
-                        .clicked();
-                    refresh |= ui
-                        .add_sized([114.0, 26.0], egui::Button::new("Refresh status"))
                         .clicked();
                 });
             });
@@ -295,23 +289,17 @@ impl StatusView {
                     bounded_text::field(ui, error, egui::FontId::proportional(12.0), 22.0);
                 });
         }
-        egui::CentralPanel::default().show(ctx, |ui| self.diff.draw_reading(ui));
+        egui::CentralPanel::default().show(ctx, |ui| self.stage.draw(ui, ctx));
         bounded_text::show_disclosure(ctx);
-        if stage_hunk
-            && let Some((request, header)) = self
-                .diff
-                .stageable_hunk()
-                .map(|(request, header)| (request.clone(), header.to_string()))
-        {
-            self.stage_hunks(ctx, request, vec![header]);
+        if reload {
+            self.stage.reload(ctx);
         }
-        if back || refresh {
+        if back {
+            if self.stage.take_changed() {
+                self.start(ctx, true);
+            }
             self.reading = false;
             self.restore = true;
-        }
-        if refresh {
-            self.diff = crate::diff_view::DiffView::default();
-            self.start(ctx, true);
         }
     }
     pub fn draw(&mut self, ctx: &egui::Context) -> bool {
@@ -322,14 +310,9 @@ impl StatusView {
             }
             Err(_) => None,
         }) {
-            let completed = self.mutation_kind.take();
             self.mutation = None;
             match result {
                 Ok(()) => {
-                    if completed == Some(Mutation::StageHunks) {
-                        self.reading = false;
-                        self.restore = true;
-                    }
                     self.start(ctx, true);
                 }
                 Err(e) => {
@@ -730,7 +713,7 @@ mod tests {
         StatusView {
             path: "/repository".into(),
             identity: None,
-            diff: crate::diff_view::DiffView::default(),
+            stage: crate::stage_view::StageView::default(),
             reading: false,
             mutation: None,
             mutation_kind: None,
@@ -842,7 +825,7 @@ mod tests {
             loop {
                 frame(&ctx, view, 1120.0, vec![]);
                 if (!reading && view.complete && !view.replacing)
-                    || (reading && view.diff.rows.values().any(|row| row.text.contains(text)))
+                    || (reading && view.stage.ready() && view.stage.has_text(text))
                 {
                     return Ok(());
                 }
@@ -863,13 +846,7 @@ mod tests {
         assert_eq!(view.identity, identity);
         view.open_diff(&ctx);
         wait(&mut view, true, "after")?;
-        assert!(
-            !view
-                .diff
-                .rows
-                .values()
-                .any(|row| row.text.contains("before"))
-        );
+        assert!(!view.stage.has_text("before"));
         Ok(())
     }
     #[test]
@@ -1132,145 +1109,389 @@ mod tests {
         );
         run(ctx, view, width, vec![release]);
     }
-    #[test]
-    fn hunk_header_click_stages_and_returns_to_the_refreshed_list()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let dir = tempfile::tempdir()?;
-        let git = |args: &[&str]| -> Result<(), Box<dyn std::error::Error>> {
-            let out = std::process::Command::new("git")
-                .arg("-C")
-                .arg(dir.path())
-                .args(args)
-                .output()?;
-            assert!(
-                out.status.success(),
-                "{}",
-                String::from_utf8_lossy(&out.stderr)
-            );
-            Ok(())
-        };
-        git(&["init", "-q"])?;
-        let base = b"one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\ntwelve\n";
-        std::fs::write(dir.path().join("a"), base)?;
-        git(&["add", "a"])?;
-        git(&[
-            "-c",
-            "user.name=Test",
-            "-c",
-            "user.email=test@example.org",
-            "commit",
-            "-qm",
-            "base",
-        ])?;
-        let working =
-            b"ONE\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\nTWELVE\n";
-        std::fs::write(dir.path().join("a"), working)?;
-        let ctx = egui::Context::default();
-        let mut view = StatusView::new(dir.path().into(), &ctx);
+    fn git(path: &std::path::Path, args: &[&str]) -> Result<(), Box<dyn std::error::Error>> {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(path)
+            .args(args)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env(
+                "GIT_CONFIG_GLOBAL",
+                if cfg!(windows) { "NUL" } else { "/dev/null" },
+            )
+            .env("GIT_AUTHOR_NAME", "Test")
+            .env("GIT_COMMITTER_NAME", "Test")
+            .env("GIT_AUTHOR_EMAIL", "test@example.org")
+            .env("GIT_COMMITTER_EMAIL", "test@example.org")
+            .output()?;
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        Ok(())
+    }
+    fn file(path: &std::path::Path, args: &[&str]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(path)
+            .args(args)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env(
+                "GIT_CONFIG_GLOBAL",
+                if cfg!(windows) { "NUL" } else { "/dev/null" },
+            )
+            .env("GIT_OPTIONAL_LOCKS", "0")
+            .output()?;
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        Ok(out.stdout)
+    }
+    fn pump(
+        ctx: &egui::Context,
+        view: &mut StatusView,
+        width: f32,
+        mut done: impl FnMut(&StatusView) -> bool,
+    ) {
         let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
         loop {
-            frame(&ctx, &mut view, 1120.0, vec![]);
-            if view.complete && !view.replacing && view.mutation.is_none() {
-                break;
+            frame(ctx, view, width, vec![]);
+            if done(view) {
+                return;
             }
-            assert!(std::time::Instant::now() < until, "status timed out");
+            assert!(std::time::Instant::now() < until, "working view timed out");
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
-        assert_eq!(view.rows[&0].area, Area::Unstaged);
-        view.open_diff(&ctx);
-        let header = loop {
-            frame(&ctx, &mut view, 1120.0, vec![]);
-            if let Some(header) = view
-                .diff
-                .rows
-                .values()
-                .find(|row| row.kind == gg_engine::diff::RowKind::Hunk)
-                .map(|row| row.text.clone())
-            {
-                break header;
-            }
-            assert!(std::time::Instant::now() < until, "diff timed out");
-            std::thread::sleep(std::time::Duration::from_millis(2));
-        };
-        for width in [720.0, 1120.0] {
-            let output = run(&ctx, &mut view, width, vec![]);
-            assert!(
-                text_pos(&output, "Stage hunk").is_some(),
-                "missing stage hunk at {width}"
-            );
-        }
-        let output = run(&ctx, &mut view, 1120.0, vec![]);
-        let pos = text_pos(&output, &header).ok_or("missing hunk header")?;
-        click(&ctx, &mut view, 1120.0, pos + egui::vec2(5.0, 0.0));
-        assert_eq!(view.diff.selected_hunk(), Some(header.as_str()));
-        assert!(view.diff.stageable_hunk().is_some());
-        let output = run(&ctx, &mut view, 1120.0, vec![]);
-        let button = text_pos(&output, "Stage hunk").ok_or("missing stage hunk button")?;
-        click(&ctx, &mut view, 1120.0, button + egui::vec2(5.0, 0.0));
-        let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        loop {
-            frame(&ctx, &mut view, 1120.0, vec![]);
-            if view.mutation.is_none() && !view.replacing && view.complete && !view.reading {
-                break;
-            }
-            assert!(std::time::Instant::now() < until, "hunk stage timed out");
-            std::thread::sleep(std::time::Duration::from_millis(2));
-        }
-        assert!(!view.reading);
-        assert!(view.rows.values().any(|entry| entry.area == Area::Staged));
-        assert!(view.rows.values().any(|entry| entry.area == Area::Unstaged));
-        assert_eq!(std::fs::read(dir.path().join("a"))?, working);
-
-        let row = view
+    }
+    fn settle(ctx: &egui::Context, view: &mut StatusView, width: f32) {
+        pump(ctx, view, width, |view| {
+            view.complete && !view.replacing && view.mutation.is_none()
+        });
+    }
+    fn ready(ctx: &egui::Context, view: &mut StatusView, width: f32) {
+        pump(ctx, view, width, |view| {
+            view.stage.ready() && view.stage.pane_ready(0) && view.stage.pane_ready(1)
+        });
+    }
+    fn generated(path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+        git(path, &["init", "-q"])?;
+        std::fs::write(
+            path.join("a"),
+            b"one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\ntwelve\n",
+        )?;
+        git(path, &["add", "a"])?;
+        git(path, &["commit", "-qm", "base"])?;
+        std::fs::write(
+            path.join("a"),
+            b"ONE\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\nTWELVE\n",
+        )?;
+        Ok(())
+    }
+    fn select_area(view: &mut StatusView, area: Area) {
+        view.selected = view
             .rows
             .iter()
-            .find(|(_, entry)| entry.area == Area::Unstaged)
-            .map(|(row, _)| *row)
-            .ok_or("remaining unstaged row")?;
-        view.selected = Some(row);
+            .find(|(_, entry)| entry.area == area)
+            .map(|(row, _)| *row);
+    }
+
+    #[test]
+    fn combined_view_shows_both_panes_and_adopts_under_hover()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        generated(dir.path())?;
+        git(dir.path(), &["add", "a"])?;
+        std::fs::write(
+            dir.path().join("a"),
+            b"ONE\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\nTWELVE!\n",
+        )?;
+        let ctx = egui::Context::default();
+        let mut view = StatusView::new(dir.path().into(), &ctx);
+        settle(&ctx, &mut view, 1120.0);
+        select_area(&mut view, Area::Staged);
+        assert!(view.selected.is_some());
         view.open_diff(&ctx);
-        let header = loop {
-            frame(&ctx, &mut view, 1120.0, vec![]);
-            if let Some(header) = view
-                .diff
-                .rows
-                .values()
-                .find(|row| row.kind == gg_engine::diff::RowKind::Hunk)
-                .map(|row| row.text.clone())
-            {
-                break header;
-            }
-            assert!(
-                std::time::Instant::now() < until,
-                "remaining diff timed out"
+        // A pointer resting over the split view must not delay the first result.
+        let hovered = |ctx: &egui::Context, view: &mut StatusView| {
+            let _ = run(
+                ctx,
+                view,
+                1120.0,
+                vec![egui::Event::PointerMoved(egui::pos2(560.0, 250.0))],
             );
-            std::thread::sleep(std::time::Duration::from_millis(2));
         };
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            hovered(&ctx, &mut view);
+            if view.stage.ready() && view.stage.pane_ready(0) && view.stage.pane_ready(1) {
+                break;
+            }
+            assert!(std::time::Instant::now() < until, "hovered diff timed out");
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        for width in [1120.0, 720.0] {
+            let output = run(&ctx, &mut view, width, vec![]);
+            for label in ["Staged", "Unstaged", "Unstage hunk", "Stage hunk"] {
+                assert!(
+                    text_pos(&output, label).is_some(),
+                    "missing {label} at {width}"
+                );
+            }
+        }
+        assert!(view.reading);
+        Ok(())
+    }
+
+    #[test]
+    fn inline_hunk_button_moves_the_hunk_and_keeps_the_view()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        generated(dir.path())?;
+        let working = std::fs::read(dir.path().join("a"))?;
+        let ctx = egui::Context::default();
+        let mut view = StatusView::new(dir.path().into(), &ctx);
+        settle(&ctx, &mut view, 1120.0);
+        select_area(&mut view, Area::Unstaged);
+        view.open_diff(&ctx);
+        ready(&ctx, &mut view, 1120.0);
         let output = run(&ctx, &mut view, 1120.0, vec![]);
-        let hunk = text_pos(&output, &header).ok_or("missing remaining hunk")?;
-        click(&ctx, &mut view, 1120.0, hunk + egui::vec2(5.0, 0.0));
+        let button = text_pos(&output, "Stage hunk").ok_or("missing stage hunk")?;
+        click(&ctx, &mut view, 1120.0, button + egui::vec2(5.0, 0.0));
+        pump(&ctx, &mut view, 1120.0, |view| {
+            !view.stage.pending() && view.stage.ready() && view.stage.pane_has_text(0, "ONE")
+        });
+        assert!(view.reading, "staging must not leave the combined view");
+        assert_eq!(
+            file(dir.path(), &["show", ":a"])?,
+            b"ONE\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\ntwelve\n"
+        );
+        assert!(view.stage.pane_has_text(1, "TWELVE"));
+        assert!(!view.stage.pane_has_text(1, "ONE"));
+        assert_eq!(std::fs::read(dir.path().join("a"))?, working);
+
+        let key = |key| egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame(&ctx, &mut view, 1120.0, vec![key(egui::Key::Escape)]);
+        assert!(!view.reading);
+        settle(&ctx, &mut view, 1120.0);
+        assert_eq!(view.rows.len(), 2);
+        assert!(view.rows.values().any(|entry| entry.area == Area::Staged));
+        assert!(view.rows.values().any(|entry| entry.area == Area::Unstaged));
+        Ok(())
+    }
+
+    #[test]
+    fn inline_selected_line_stages_only_that_line_and_stays()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        generated(dir.path())?;
+        let working = std::fs::read(dir.path().join("a"))?;
+        let ctx = egui::Context::default();
+        let mut view = StatusView::new(dir.path().into(), &ctx);
+        settle(&ctx, &mut view, 1120.0);
+        select_area(&mut view, Area::Unstaged);
+        view.open_diff(&ctx);
+        ready(&ctx, &mut view, 1120.0);
+        let output = run(&ctx, &mut view, 1120.0, vec![]);
+        let line = text_pos(&output, "TWELVE").ok_or("missing added line")?;
+        click(&ctx, &mut view, 1120.0, line + egui::vec2(5.0, 0.0));
+        let output = run(&ctx, &mut view, 1120.0, vec![]);
+        let button = text_pos(&output, "Stage 1").ok_or("missing selected-line action")?;
+        click(&ctx, &mut view, 1120.0, button + egui::vec2(5.0, 0.0));
+        pump(&ctx, &mut view, 1120.0, |view| {
+            !view.stage.pending() && view.stage.ready() && view.stage.pane_has_text(0, "TWELVE")
+        });
+        assert!(view.reading);
+        assert_eq!(
+            file(dir.path(), &["show", ":a"])?,
+            b"one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\ntwelve\nTWELVE\n"
+        );
+        assert!(view.stage.pane_has_text(1, "twelve"));
+        assert_eq!(std::fs::read(dir.path().join("a"))?, working);
+        Ok(())
+    }
+
+    #[test]
+    fn inline_unstage_restores_head_and_keeps_the_view() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        generated(dir.path())?;
+        git(dir.path(), &["add", "a"])?;
+        std::fs::write(
+            dir.path().join("a"),
+            b"ONE\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\nTWELVE!\n",
+        )?;
+        let ctx = egui::Context::default();
+        let mut view = StatusView::new(dir.path().into(), &ctx);
+        settle(&ctx, &mut view, 1120.0);
+        select_area(&mut view, Area::Staged);
+        view.open_diff(&ctx);
+        ready(&ctx, &mut view, 1120.0);
+        let output = run(&ctx, &mut view, 1120.0, vec![]);
+        let button = text_pos(&output, "Unstage hunk").ok_or("missing unstage hunk")?;
+        click(&ctx, &mut view, 1120.0, button + egui::vec2(5.0, 0.0));
+        pump(&ctx, &mut view, 1120.0, |view| {
+            !view.stage.pending() && view.stage.ready()
+        });
+        assert!(view.reading);
+        assert_eq!(
+            file(dir.path(), &["show", ":a"])?,
+            b"one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\nTWELVE\n"
+        );
+        let output = run(&ctx, &mut view, 1120.0, vec![]);
+        let button = text_pos(&output, "Unstage all").ok_or("missing unstage all")?;
+        click(&ctx, &mut view, 1120.0, button + egui::vec2(5.0, 0.0));
+        pump(&ctx, &mut view, 1120.0, |view| {
+            !view.stage.pending() && view.stage.ready() && !view.stage.pane_has_text(0, "TWELVE")
+        });
+        assert!(view.reading);
+        assert_eq!(
+            file(dir.path(), &["show", ":a"])?,
+            b"one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\ntwelve\n"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn selected_line_drop_reverts_the_whole_change_block() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let dir = tempfile::tempdir()?;
+        generated(dir.path())?;
+        let index = std::fs::read(dir.path().join(".git/index"))?;
+        let ctx = egui::Context::default();
+        let mut view = StatusView::new(dir.path().into(), &ctx);
+        settle(&ctx, &mut view, 1120.0);
+        select_area(&mut view, Area::Unstaged);
+        view.open_diff(&ctx);
+        ready(&ctx, &mut view, 1120.0);
+        let output = run(&ctx, &mut view, 1120.0, vec![]);
+        let line = text_pos(&output, "TWELVE").ok_or("missing selected line")?;
+        click(&ctx, &mut view, 1120.0, line + egui::vec2(5.0, 0.0));
+        let output = run(&ctx, &mut view, 1120.0, vec![]);
+        let drop = text_pos(&output, "Drop selected").ok_or("missing selected drop")?;
+        click(&ctx, &mut view, 1120.0, drop + egui::vec2(5.0, 0.0));
+        let output = run(&ctx, &mut view, 1120.0, vec![]);
+        let discard = text_pos(&output, "Discard").ok_or("missing discard")?;
+        click(&ctx, &mut view, 1120.0, discard + egui::vec2(5.0, 0.0));
+        pump(&ctx, &mut view, 1120.0, |view| {
+            !view.stage.pending() && view.stage.ready()
+        });
+        assert!(view.reading);
+        assert_eq!(
+            std::fs::read(dir.path().join("a"))?,
+            b"ONE\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\ntwelve\n"
+        );
+        assert_eq!(std::fs::read(dir.path().join(".git/index"))?, index);
+        Ok(())
+    }
+
+    #[test]
+    fn drop_requires_confirmation_and_leaves_the_index_alone()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for width in [720.0, 1120.0] {
+            let dir = tempfile::tempdir()?;
+            generated(dir.path())?;
+            let index = std::fs::read(dir.path().join(".git/index"))?;
+            let working = std::fs::read(dir.path().join("a"))?;
+            let ctx = egui::Context::default();
+            let mut view = StatusView::new(dir.path().into(), &ctx);
+            settle(&ctx, &mut view, width);
+            select_area(&mut view, Area::Unstaged);
+            view.open_diff(&ctx);
+            ready(&ctx, &mut view, width);
+
+            let output = run(&ctx, &mut view, width, vec![]);
+            let drop = text_pos(&output, "Drop hunk").ok_or("missing drop hunk")?;
+            click(&ctx, &mut view, width, drop + egui::vec2(5.0, 0.0));
+            let output = run(&ctx, &mut view, width, vec![]);
+            let cancel = text_pos(&output, "Cancel").ok_or("missing drop cancel")?;
+            click(&ctx, &mut view, width, cancel + egui::vec2(5.0, 0.0));
+            assert_eq!(std::fs::read(dir.path().join("a"))?, working);
+            assert_eq!(std::fs::read(dir.path().join(".git/index"))?, index);
+
+            let output = run(&ctx, &mut view, width, vec![]);
+            let drop = text_pos(&output, "Drop hunk").ok_or("missing drop hunk")?;
+            click(&ctx, &mut view, width, drop + egui::vec2(5.0, 0.0));
+            let output = run(&ctx, &mut view, width, vec![]);
+            let discard = text_pos(&output, "Discard").ok_or("missing discard")?;
+            click(&ctx, &mut view, width, discard + egui::vec2(5.0, 0.0));
+            pump(&ctx, &mut view, width, |view| {
+                !view.stage.pending()
+                    && view.stage.ready()
+                    && view.stage.pane_has_text(1, "TWELVE")
+                    && !view.stage.pane_has_text(1, "ONE")
+            });
+            assert!(view.reading);
+            assert_eq!(
+                std::fs::read(dir.path().join("a"))?,
+                b"one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\nTWELVE\n"
+            );
+            assert_eq!(std::fs::read(dir.path().join(".git/index"))?, index);
+
+            let output = run(&ctx, &mut view, width, vec![]);
+            let drop = text_pos(&output, "Drop all").ok_or("missing drop all")?;
+            click(&ctx, &mut view, width, drop + egui::vec2(5.0, 0.0));
+            let output = run(&ctx, &mut view, width, vec![]);
+            let discard = text_pos(&output, "Discard").ok_or("missing discard all")?;
+            click(&ctx, &mut view, width, discard + egui::vec2(5.0, 0.0));
+            pump(&ctx, &mut view, width, |view| {
+                !view.stage.pending() && view.stage.ready()
+            });
+            assert!(view.reading);
+            assert_eq!(
+                std::fs::read(dir.path().join("a"))?,
+                b"one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\ntwelve\n"
+            );
+            assert_eq!(std::fs::read(dir.path().join(".git/index"))?, index);
+            frame(
+                &ctx,
+                &mut view,
+                width,
+                vec![egui::Event::Key {
+                    key: egui::Key::Escape,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+            );
+            assert!(!view.reading);
+            settle(&ctx, &mut view, width);
+            assert!(view.rows.is_empty());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn inline_action_failure_keeps_the_view_and_index() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        generated(dir.path())?;
+        let ctx = egui::Context::default();
+        let mut view = StatusView::new(dir.path().into(), &ctx);
+        settle(&ctx, &mut view, 1120.0);
+        select_area(&mut view, Area::Unstaged);
+        view.open_diff(&ctx);
+        ready(&ctx, &mut view, 1120.0);
         let index = std::fs::read(dir.path().join(".git/index"))?;
         std::fs::write(dir.path().join(".git/index.lock"), "owner")?;
         let output = run(&ctx, &mut view, 1120.0, vec![]);
-        let button = text_pos(&output, "Stage hunk").ok_or("missing stage hunk button")?;
+        let button = text_pos(&output, "Stage hunk").ok_or("missing stage hunk")?;
         click(&ctx, &mut view, 1120.0, button + egui::vec2(5.0, 0.0));
-        let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        loop {
-            frame(&ctx, &mut view, 1120.0, vec![]);
-            if view.mutation.is_none() {
-                break;
-            }
-            assert!(std::time::Instant::now() < until, "hunk failure timed out");
-            std::thread::sleep(std::time::Duration::from_millis(2));
-        }
+        pump(&ctx, &mut view, 1120.0, |view| !view.stage.pending());
         assert!(view.reading);
         assert!(
-            view.error
-                .as_ref()
-                .is_some_and(|error| error.contains("Stage hunks"))
+            view.stage
+                .error()
+                .is_some_and(|error| error.contains("Stage"))
         );
         assert_eq!(std::fs::read(dir.path().join(".git/index"))?, index);
-        assert_eq!(std::fs::read(dir.path().join("a"))?, working);
         std::fs::remove_file(dir.path().join(".git/index.lock"))?;
         Ok(())
     }

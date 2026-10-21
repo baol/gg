@@ -15,6 +15,7 @@ mod records;
 mod review_cli;
 mod review_view;
 mod review_worker;
+mod stage_view;
 mod state;
 mod status_cli;
 mod status_view;

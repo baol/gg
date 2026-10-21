@@ -156,11 +156,11 @@ Open Status from the repository header, including on unborn branches. Show categ
 
 ### Working diffs
 
-Open a status row with Enter, double-click, or View diff. Use a full-width reading view; Back restores the status selection and scroll position. `git good status [PATH] --file PATH --area staged|unstaged|untracked|conflict` reads the same comparison as JSON.
+Open a status row with Enter, double-click, or View diff to enter **Review & stage**. Show the staged comparison (HEAD to index) and the unstaged comparison (index to working file) for the same path together: side by side at 860 px and wider, stacked below that. Back restores the status selection and scroll position. `git good status [PATH] --file PATH --area staged|unstaged|untracked|conflict` reads one comparison as JSON.
 
-Pin HEAD and the index fingerprint from the status scan. Compare HEAD → index for staged paths, index → working file for unstaged paths, and empty → working file for untracked paths. Capture working bytes on selection, apply Git text normalization, and validate repository inputs and working bytes again before publication. Changed inputs return an identified stale-result error with Refresh status. Keep captured results stable until an explicit refresh or new selection.
+Pin HEAD and the index fingerprint from the status scan. Compare HEAD to index for the staged pane, index to working file for the unstaged pane, and empty to working file for untracked paths. Capture working bytes on selection, apply Git text normalization, and validate repository inputs and working bytes again before publication. Changed inputs return an identified stale-result error with Refresh status. Compute both panes on one cancellable worker and publish each pane as soon as its comparison completes; adoption must not wait for pointer hover or scrolling to settle.
 
-Reuse the bounded diff engine, paged worker, keyboard scrolling, and fixed source rows. Preserve symlink targets and mode changes. Show explicit binary, gitlink, conflict, and budget summaries. Conflict resolution belongs to M5. Working comparisons expose reading controls; exact immutable-object export remains in commit review.
+Reuse the bounded diff engine and fixed source rows. Give each pane its own scroll area and preserve its offset across refreshes. Preserve symlink targets and mode changes. Show explicit binary, gitlink, conflict, and budget summaries. Conflict resolution belongs to M5. Exact immutable-object export remains in commit review.
 
 ### File staging
 
@@ -170,22 +170,32 @@ Require an unstaged or untracked observation whose working path still matches it
 
 Acquire the index lock before checking the observed HEAD and index fingerprint. Re-capture the working path before publication and invalidate the tree cache; revalidate HEAD and publish the index atomically. Stale observations, absent or reappearing paths, lock ownership, and working changes during the action return actionable errors. Run UI mutations on a worker; disable duplicate actions and navigation while pending, then refresh status at an interaction-safe boundary.
 
-### Hunk staging
+### Hunk, line, and drop actions
 
-Stage selected hunks from one unstaged modification. Select a hunk by its exact `@@` header in the working diff; reopen or refresh the comparison after the index changes. CLI `git good stage --file PATH --hunk HEADER` accepts repeated `--hunk` selections and adds `"hunks"` to the stage receipt.
+Stage or unstage selected changes from either pane, or drop selected working changes from the unstaged pane. A hunk header carries inline Stage hunk or Unstage hunk actions and, for unstaged text edits, Drop hunk. Clicking the header selects or clears every changed line in that hunk; clicking an added or deleted row toggles that line. The hunk action applies the selected lines when any are selected, otherwise the whole hunk. Pane headers expose whole-file Stage all and Unstage all, and Drop all on the unstaged pane. Identify each hunk by its exact `@@` header and each line by its old- or new-side line number; reject selections that no longer match. CLI `git good stage --file PATH --hunk HEADER` accepts repeated `--hunk` selections and adds `"hunks"` to the stage receipt.
 
-Require an unstaged, regular text modification with a 100644 or 100755 index entry. Reject untracked additions, intent-to-add, deletions, type or mode changes, symlinks, submodules, conflicts, sparse indexes, binary comparisons, and comparisons beyond the text budget. Acquire the index lock, then capture and normalize the working bytes through the same pipeline as the displayed diff and recompute index → working. Unknown headers mean the diff is stale and publish nothing.
+Partial staging requires an unstaged, regular text modification with a 100644 or 100755 index entry. Reject untracked additions, intent-to-add, deletions, type or mode changes, symlinks, submodules, conflicts, sparse indexes, binary comparisons, and comparisons beyond the text budget. Acquire the index lock, then capture and normalize the working bytes through the same pipeline as the displayed diff and recompute index to working. Unknown headers or lines mean the diff is stale and publish nothing.
 
-Rebuild the index blob by line ranges: keep unchanged gaps and unselected hunks from the old side, and take selected hunks from the new side. When every hunk is selected, write real working stat data, matching `git add -p` after a full selection. Otherwise write zeroed stat data so status compares content and reports the remaining unstaged edit (`MM`). Preserve unrelated index entries, modes, and working bytes; re-capture working bytes and revalidate HEAD before atomic publication.
+Rebuild the staged index blob by line ranges: keep unchanged gaps and unselected old-side lines, and take selected new-side lines. When every change is selected, write real working stat data, matching `git add -p` after a full selection. Otherwise write zeroed stat data so status compares content and reports the remaining unstaged edit (`MM`). Preserve unrelated index entries, modes, and working bytes; re-capture working bytes and revalidate HEAD before atomic publication.
 
-In the reading view, click a hunk header to select and highlight it, then choose Stage hunk. Successful staging returns to the refreshed status list so the path appears in both staged and unstaged areas; failures keep the diff readable and show the error above it.
+Partial unstaging supports staged regular text additions, modifications, and deletions. Rebuild from the HEAD side and the index side: restore selected old-side lines and retain unselected new-side lines. If the result equals HEAD, restore the HEAD index entry; if HEAD is absent and the result is empty, remove the index entry. Otherwise write the partial blob with zeroed stat data. Mode, type, and symlink changes require whole-file actions.
 
-Rationale: hunk-level staging follows `git add -p` while zeroed partial stat keeps omitted edits visible instead of silently clean.
+After a successful mutation, open a fresh status session for the new HEAD/index identity, update both pane requests, and reload them in place. Retain scroll offsets, clear line selections, and stay in **Review & stage**; refresh the status list when the user returns with Back. Failures keep the panes and index unchanged and show the error above them.
+
+Rationale: hunk- and line-level actions follow `git add -p` while zeroed partial stat keeps omitted edits visible instead of silently clean. Showing both comparisons lets a user move a change between staged and unstaged without losing context.
+
+### Dropping working changes
+
+Drop discards selected working changes without touching the index. For an unstaged regular text modification, rebuild the working file from the index and working sides: restore selected old-side lines and retain unselected new-side lines. Expand any selected row to its contiguous change block so a replacement cannot be half-discarded. Convert the normalized result back through Git filters before writing, validate the working snapshot again, and replace the file atomically. Partial drops reject mode, type, and symlink changes; use Drop all for those.
+
+Drop all restores tracked modifications, deletions, mode changes, type changes, and symlinks from the index, and removes untracked files. Acquire the index lock for consistency, reject conflicts, intent-to-add, submodules, sparse indexes, and file/directory collisions, and leave every index byte unchanged. Require an explicit confirmation before any drop; keep the panes visible, reload both comparisons in place after success, and refresh the status list on Back.
+
+Rationale: dropping is intentionally working-tree-only and reversible with the index still intact. Confirmation and change-block expansion prevent accidental loss while keeping the split review usable.
 
 ### Whole-file unstaging
 
 Unstage file restores exactly one staged path from the observed HEAD, or removes its index entry on an unborn branch. Preserve working files and unrelated index entries. CLI `git good unstage --file PATH [--repo PATH]` uses repository-relative paths and returns a JSON receipt after success.
 
-Acquire the index lock before checking the observed HEAD and index fingerprint. Restore the entry, invalidate the tree cache, revalidate, and publish the index atomically. Conflicts, sparse indexes, file/directory collisions, stale observations, and an existing lock return actionable errors. Run UI mutations on a worker; disable duplicate actions and navigation while pending, then refresh status at an interaction-safe boundary.
+Acquire the index lock before checking the observed HEAD and index fingerprint. Restore the entry, invalidate the tree cache, revalidate, and publish the index atomically. Conflicts, sparse indexes, file/directory collisions, stale observations, and an existing lock return actionable errors. Run UI mutations on a worker; disable duplicate actions and navigation while pending, then refresh status at an interaction-safe boundary. Whole-file unstaging remains the fallback for modes, types, symlinks, untracked additions, deletions, and conflict changes.
 
 Rationale: restoring one entry gives a reversible operation while preserving the user's working edits and other staging decisions.
