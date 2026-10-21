@@ -2,7 +2,7 @@
 
 Purpose: sequence M2 delivery and acceptance.
 
-## M2 · In progress · Prepare commits
+## M2 · Complete · Prepare commits
 
 Goal: inspect working changes, stage deliberate edits, and create a commit.
 
@@ -14,7 +14,7 @@ Contracts: [architecture](architecture.md#working-status--m2). Preserve the [reg
 2. **Working diffs · implemented.** Review index and working-tree content with explicit comparison identities and stale-result detection.
 3. **File staging · implemented.** Stage working content or restore a staged path under the observed HEAD/index identity. Preserve working files and unrelated entries, then refresh status.
 4. **Hunk, line, and drop actions · implemented.** Review staged and unstaged comparisons together; stage or unstage selected hunks and lines inline, and discard selected working changes after confirmation. Preserve omitted edits, the index, and unrelated state with stale-source validation and in-place refresh.
-5. **Commit.** Validate index and HEAD preconditions, create a commit, and refresh history/status coherently.
+5. **Commit · implemented.** Validate index and HEAD preconditions, create a commit from the index, run Git hooks with actionable failure recovery, and refresh history/status coherently.
 
 ### Status acceptance
 
@@ -35,6 +35,9 @@ Contracts: [architecture](architecture.md#working-status--m2). Preserve the [reg
 | Hunk and line limits, stale inputs | Actionable errors; index, lock, and working bytes preserved | Git fixtures and CLI |
 | Split stage view | Both comparisons visible at wide and narrow widths; actions refresh in place | egui worker test |
 | Drop selected working changes | Restores the index side or removes untracked files; index unchanged; confirmation required | Git oracle and egui test |
+| Commit staged content | Tree and parent match Git; unstaged working bytes preserved; history selects the new commit | Git oracle, CLI, and egui |
+| Commit hooks and failures | Hooks may stage or edit the message; failures preserve the index and surface recovery; post-commit failure is a warning | Git hook fixtures and CLI/egui |
+| Empty index, conflicts, intent-to-add, stale HEAD/index, lock | Actionable errors; HEAD and index preserved | Git fixtures and CLI |
 | Read-only inspection | Index, refs, objects, and files preserved | Byte comparison |
 
 Record measurements and native wide/narrow captures in [verification](verification.md). M2 completes after all five increments meet their contracts.

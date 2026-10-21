@@ -3,6 +3,7 @@ mod binary_preview;
 mod bounded_text;
 mod branding;
 mod colors;
+mod commit_cli;
 mod details_view;
 mod diff_view;
 mod diff_worker;
@@ -37,7 +38,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("--help")) {
         println!(
-            "gg · good git\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good status [PATH] [--file PATH --area AREA]   Print working status or diff as JSON\ngit-good stage --file PATH [--hunk HEADER]... [--repo PATH]   Stage one file or selected hunks\ngit-good unstage --file PATH [--repo PATH]   Unstage one file\ngit-good show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]   Review or export\n\nBrowse all commits reachable from HEAD."
+            "gg · good git\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good status [PATH] [--file PATH --area AREA]   Print working status or diff as JSON\ngit-good stage --file PATH [--hunk HEADER]... [--repo PATH]   Stage one file or selected hunks\ngit-good unstage --file PATH [--repo PATH]   Unstage one file\ngit-good commit -m MESSAGE [--repo PATH]   Commit the index after Git hooks\ngit-good show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]   Review or export\n\nBrowse all commits reachable from HEAD."
         );
         return Ok(());
     }
@@ -52,6 +53,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("stage")) {
         return status_cli::stage(args);
+    }
+    if first.as_deref() == Some(std::ffi::OsStr::new("commit")) {
+        return commit_cli::run(args);
     }
     let headless = first.as_deref() == Some(std::ffi::OsStr::new("history"));
     let path = if headless { args.next() } else { first }
@@ -137,6 +141,7 @@ struct Browser {
     path: String,
     review: Option<review_view::Review>,
     working: Option<status_view::StatusView>,
+    pending_commit: Option<String>,
     state: state::State,
     pending: Option<stream::Worker>,
     pending_filter_edit: bool,
@@ -165,6 +170,7 @@ impl Browser {
             path: path.to_string_lossy().into_owned(),
             review: None,
             working: None,
+            pending_commit: None,
             state: state::State::default(),
             pending: None,
             pending_filter_edit: false,
@@ -256,9 +262,21 @@ impl Browser {
     fn draw(&mut self, ctx: &egui::Context) {
         colors::apply(ctx);
         if let Some(working) = &mut self.working {
-            if working.draw(ctx) {
+            let close = working.draw(ctx);
+            if let Some(id) = working.take_commit() {
+                self.pending_commit = Some(id);
+            }
+            if close {
                 self.working = None;
-                self.restore_offset = Some(self.scroll_offset);
+                if let Some(id) = self.pending_commit.take() {
+                    self.state.selected = Some(id);
+                    self.scroll_offset = 0.0;
+                    self.restore_offset = None;
+                    self.scroll_to_selection = true;
+                    self.load(ctx);
+                } else {
+                    self.restore_offset = Some(self.scroll_offset);
+                }
                 ctx.request_repaint();
             }
             return;

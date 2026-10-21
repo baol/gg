@@ -19,6 +19,11 @@ pub struct StatusView {
     reading: bool,
     mutation: Option<std::sync::mpsc::Receiver<Result<(), String>>>,
     mutation_kind: Option<Mutation>,
+    commit: Option<std::sync::mpsc::Receiver<Result<gg_git::commit::Receipt, String>>>,
+    commit_done: Option<String>,
+    last_commit: Option<String>,
+    commit_warning: Option<String>,
+    message: String,
     worker: Option<Worker>,
     pending: Option<Worker>,
     staged: Option<Update>,
@@ -45,6 +50,11 @@ impl StatusView {
             reading: false,
             mutation: None,
             mutation_kind: None,
+            commit: None,
+            commit_done: None,
+            last_commit: None,
+            commit_warning: None,
+            message: String::new(),
             worker: None,
             pending: None,
             staged: None,
@@ -183,8 +193,43 @@ impl StatusView {
             self.reading = true;
         }
     }
+    fn busy(&self) -> bool {
+        self.mutation.is_some() || self.commit.is_some()
+    }
+
+    pub fn take_commit(&mut self) -> Option<String> {
+        self.commit_done.take()
+    }
+
+    fn start_commit(&mut self, ctx: &egui::Context) {
+        if self.busy() || self.replacing || self.message.trim().is_empty() {
+            return;
+        }
+        let Some(repository) = self.identity.clone() else {
+            self.error = Some("Status has not finished loading".into());
+            return;
+        };
+        let message = self.message.clone();
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        let repaint = ctx.clone();
+        match std::thread::Builder::new()
+            .name("gg-commit".into())
+            .spawn(move || {
+                let result = gg_git::commit::create(&repository, &message);
+                let _ = tx.send(result);
+                repaint.request_repaint();
+            }) {
+            Ok(_) => {
+                self.commit = Some(rx);
+                self.error = None;
+                self.action_error = None;
+            }
+            Err(e) => self.error = Some(format!("Start commit: {e}")),
+        }
+    }
+
     fn unstage(&mut self, ctx: &egui::Context) {
-        if self.mutation.is_some() || self.replacing {
+        if self.busy() || self.replacing {
             return;
         }
         let Some(entry) = self.selected.and_then(|r| self.rows.get(&r)).cloned() else {
@@ -201,7 +246,7 @@ impl StatusView {
         });
     }
     fn stage(&mut self, ctx: &egui::Context) {
-        if self.mutation.is_some() || self.replacing {
+        if self.busy() || self.replacing {
             return;
         }
         let Some(entry) = self.selected.and_then(|r| self.rows.get(&r)).cloned() else {
@@ -321,6 +366,33 @@ impl StatusView {
                 }
             }
         }
+        if let Some(result) = self.commit.as_ref().and_then(|rx| match rx.try_recv() {
+            Ok(result) => Some(result),
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                Some(Err("Commit worker stopped. Refresh status.".into()))
+            }
+            Err(_) => None,
+        }) {
+            self.commit = None;
+            match result {
+                Ok(receipt) => {
+                    self.last_commit = Some(receipt.id.get(..7).unwrap_or(&receipt.id).to_string());
+                    self.commit_done = Some(receipt.id.clone());
+                    self.commit_warning = if receipt.warnings.is_empty() {
+                        None
+                    } else {
+                        Some(receipt.warnings.join(" · "))
+                    };
+                    self.message.clear();
+                    self.start(ctx, true);
+                }
+                Err(e) => {
+                    self.start(ctx, true);
+                    self.action_error = Some(e.clone());
+                    self.error = Some(e);
+                }
+            }
+        }
         if self.reading {
             self.draw_diff(ctx);
             return false;
@@ -389,7 +461,8 @@ impl StatusView {
         let mut open = false;
         let mut unstage = false;
         let mut stage = false;
-        if self.mutation.is_none() && crate::navigation::available(ctx) {
+        let mut commit_now = false;
+        if !self.busy() && crate::navigation::available(ctx) {
             open |= crate::navigation::activation_available(ctx)
                 && ctx.input_mut(|i| {
                     i.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
@@ -431,7 +504,7 @@ impl StatusView {
                 ui.horizontal(|ui| {
                     back |= ui
                         .add_enabled(
-                            self.mutation.is_none(),
+                            !self.busy(),
                             egui::Button::new("Back").min_size(egui::vec2(64.0, 26.0)),
                         )
                         .clicked();
@@ -450,7 +523,7 @@ impl StatusView {
                     );
                     refresh |= ui
                         .add_enabled(
-                            self.mutation.is_none(),
+                            !self.busy(),
                             egui::Button::new(if self.error.is_some() {
                                 "Retry"
                             } else {
@@ -474,21 +547,67 @@ impl StatusView {
                         },
                         error
                     )
+                } else if let Some(warning) = &self.commit_warning {
+                    format!(
+                        "Committed {} · {warning}",
+                        self.last_commit.as_deref().unwrap_or("")
+                    )
+                } else if let Some(id) = &self.last_commit {
+                    format!(
+                        "Committed {id} · {}",
+                        if self.complete && self.count == 0 {
+                            "Clean working tree".into()
+                        } else {
+                            format!(
+                                "{} {}",
+                                self.count,
+                                if self.count == 1 { "entry" } else { "entries" }
+                            )
+                        }
+                    )
                 } else if self.replacing {
                     format!(
-                        "Refreshing · showing previous results · {} entries",
-                        self.count
+                        "Refreshing · showing previous results · {} {}",
+                        self.count,
+                        if self.count == 1 { "entry" } else { "entries" }
                     )
                 } else if self.complete && self.count == 0 {
                     "Clean working tree".into()
                 } else {
                     format!(
-                        "{} entries{}",
+                        "{} {}{}",
                         self.count,
+                        if self.count == 1 { "entry" } else { "entries" },
                         if self.complete { "" } else { " · scanning…" }
                     )
                 };
                 bounded_text::field(ui, &text, egui::FontId::proportional(12.0), 22.0);
+            });
+        egui::TopBottomPanel::bottom("working-commit")
+            .exact_height(82.0)
+            .show(ctx, |ui| {
+                ui.add_space(4.0);
+                let can_commit = !self.busy() && !self.replacing && !self.message.trim().is_empty();
+                ui.horizontal(|ui| {
+                    let width = (ui.available_width() - 102.0).max(180.0);
+                    ui.add_sized(
+                        [width, 54.0],
+                        egui::TextEdit::multiline(&mut self.message)
+                            .hint_text("Commit subject\n\nOptional body")
+                            .desired_rows(2),
+                    );
+                    let label = if self.commit.is_some() {
+                        "Committing…"
+                    } else {
+                        "Commit"
+                    };
+                    commit_now |= ui
+                        .add_enabled(
+                            can_commit,
+                            egui::Button::new(label).min_size(egui::vec2(88.0, 26.0)),
+                        )
+                        .clicked();
+                });
             });
         let selected_area = self
             .selected
@@ -509,7 +628,7 @@ impl StatusView {
             ui.horizontal(|ui| {
                 stage |= ui
                     .add_enabled(
-                        self.mutation.is_none()
+                        !self.busy()
                             && !self.replacing
                             && self.error.is_none()
                             && matches!(selected_area, Some(Area::Unstaged | Area::Untracked)),
@@ -518,7 +637,7 @@ impl StatusView {
                     .clicked();
                 unstage |= ui
                     .add_enabled(
-                        self.mutation.is_none()
+                        !self.busy()
                             && !self.replacing
                             && self.error.is_none()
                             && selected_area == Some(Area::Staged),
@@ -527,7 +646,7 @@ impl StatusView {
                     .clicked();
                 open |= ui
                     .add_enabled(
-                        self.mutation.is_none()
+                        !self.busy()
                             && self
                                 .selected
                                 .is_some_and(|row| self.rows.contains_key(&row)),
@@ -605,11 +724,11 @@ impl StatusView {
                             .rect_filled(rect, 0.0, crate::colors::selection(ui.visuals()));
                     }
                     if let Some(entry) = self.rows.get(&row) {
-                        if response.clicked() && self.mutation.is_none() {
+                        if response.clicked() && !self.busy() {
                             response.surrender_focus();
                             self.selected = Some(row);
                         }
-                        if response.double_clicked() && self.mutation.is_none() {
+                        if response.double_clicked() && !self.busy() {
                             self.selected = Some(row);
                             open = true;
                         }
@@ -678,7 +797,11 @@ impl StatusView {
             worker.request(self.viewport.clone());
         }
         bounded_text::show_disclosure(ctx);
-        if self.mutation.is_some() {
+        if self.busy() {
+            return false;
+        }
+        if commit_now {
+            self.start_commit(ctx);
             return false;
         }
         if stage {
@@ -717,6 +840,11 @@ mod tests {
             reading: false,
             mutation: None,
             mutation_kind: None,
+            commit: None,
+            commit_done: None,
+            last_commit: None,
+            commit_warning: None,
+            message: String::new(),
             worker: None,
             pending: None,
             staged: None,
@@ -1357,6 +1485,88 @@ mod tests {
             b"one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\ntwelve\n"
         );
         Ok(())
+    }
+
+    #[test]
+    fn commit_panel_is_visible_at_both_widths() -> Result<(), Box<dyn std::error::Error>> {
+        for width in [720.0, 1120.0] {
+            let ctx = egui::Context::default();
+            let mut view = view(2);
+            view.message = "A commit".into();
+            let output = run(&ctx, &mut view, width, vec![]);
+            assert!(
+                text_pos(&output, "Commit").is_some(),
+                "missing commit at {width}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn commit_panel_commits_the_index_and_reports_hook_failures()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        generated(dir.path())?;
+        git(dir.path(), &["config", "user.name", "Test"])?;
+        git(dir.path(), &["config", "user.email", "test@example.org"])?;
+        git(dir.path(), &["add", "a"])?;
+        let index = std::fs::read(dir.path().join(".git/index"))?;
+        let ctx = egui::Context::default();
+        let mut view = StatusView::new(dir.path().into(), &ctx);
+        settle(&ctx, &mut view, 1120.0);
+        view.message = "UI commit".into();
+        let output = run(&ctx, &mut view, 1120.0, vec![]);
+        let commit = text_pos(&output, "Commit").ok_or("missing commit button")?;
+        click(&ctx, &mut view, 1120.0, commit + egui::vec2(5.0, 0.0));
+        pump(&ctx, &mut view, 1120.0, |view| {
+            !view.busy() && view.complete && !view.replacing && view.commit_done.is_some()
+        });
+        assert!(view.take_commit().is_some());
+        assert_eq!(
+            file(dir.path(), &["show", "-s", "--format=%s", "HEAD"])?,
+            b"UI commit\n"
+        );
+        assert!(scan_is_clean(dir.path())?);
+        assert_eq!(std::fs::read(dir.path().join(".git/index"))?, index);
+
+        std::fs::write(dir.path().join("a"), b"next\n")?;
+        git(dir.path(), &["add", "a"])?;
+        view.start(&ctx, true);
+        settle(&ctx, &mut view, 1120.0);
+        let blocked = std::fs::read(dir.path().join(".git/index"))?;
+        let road = dir.path().join(".git/hooks/pre-commit");
+        std::fs::create_dir_all(road.parent().ok_or("missing hooks dir")?)?;
+        std::fs::write(&road, "#!/bin/sh\necho blocked >&2\nexit 4\n")?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&road, std::fs::Permissions::from_mode(0o755))?;
+        }
+        view.message = "should fail".into();
+        view.start_commit(&ctx);
+        pump(&ctx, &mut view, 1120.0, |view| {
+            !view.busy() && view.complete && !view.replacing && view.error.is_some()
+        });
+        assert!(
+            view.error
+                .as_ref()
+                .is_some_and(|e| e.contains("pre-commit"))
+        );
+        assert!(view.error.as_ref().is_some_and(|e| e.contains("preserved")));
+        assert_eq!(view.message, "should fail");
+        assert_eq!(std::fs::read(dir.path().join(".git/index"))?, blocked);
+        assert_eq!(file(dir.path(), &["rev-list", "--count", "HEAD"])?, b"2\n");
+        Ok(())
+    }
+
+    fn scan_is_clean(path: &std::path::Path) -> Result<bool, Box<dyn std::error::Error>> {
+        let session = gg_git::status::Session::open(path)?;
+        let mut clean = true;
+        session.scan(&std::sync::atomic::AtomicBool::new(false), |_| {
+            clean = false;
+            Ok(())
+        })?;
+        Ok(clean)
     }
 
     #[test]

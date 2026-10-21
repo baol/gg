@@ -192,6 +192,14 @@ Drop all restores tracked modifications, deletions, mode changes, type changes, 
 
 Rationale: dropping is intentionally working-tree-only and reversible with the index still intact. Confirmation and change-block expansion prevent accidental loss while keeping the split review usable.
 
+### Committing
+
+Commit writes the current index, not working-tree content. Pin HEAD and the index when the action starts, reject commits with no staged changes, unmerged entries, intent-to-add entries, sparse indexes, and an unavailable worktree, and resolve author and committer identities from Git configuration or the documented environment variables. Normalize the message, write `COMMIT_EDITMSG`, and run hooks through `git hook run` so `core.hooksPath`, linked worktrees, and native Git execution rules are honored.
+
+Run `pre-commit`, `prepare-commit-msg` with the message file and `message` source, and `commit-msg` before taking the index lock. Hooks may stage content or edit the message, so re-read the index and message afterwards and reject a HEAD change made during the hooks. Acquire the index lock only after hooks finish, rebuild the tree from the current index, verify it differs from HEAD, and create the commit object with the observed parent. Update `HEAD` atomically with the reference lock and write the reflog. Run `post-commit` after publication; its failure is a warning because the commit already exists.
+
+Every other hook failure aborts before the commit is published. Preserve the index, working tree, and message file, and return the hook name, exit status, and captured output with a retry path. The native view keeps the draft message, refreshes status to expose any hook staging, and stays on Status; Back refreshes history and selects the new commit. CLI `git good commit -m MESSAGE` returns a JSON receipt with the commit, tree, parents, and any post-commit warnings. Amend and signing remain later milestones.
+
 ### Whole-file unstaging
 
 Unstage file restores exactly one staged path from the observed HEAD, or removes its index entry on an unborn branch. Preserve working files and unrelated index entries. CLI `git good unstage --file PATH [--repo PATH]` uses repository-relative paths and returns a JSON receipt after success.

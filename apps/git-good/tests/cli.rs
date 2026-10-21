@@ -16,6 +16,22 @@ fn git(path: &Path, args: &[&str]) -> Result {
     }
     Ok(())
 }
+fn git_output(path: &Path, args: &[&str]) -> Result<Vec<u8>> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(path)
+        .args(args)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env(
+            "GIT_CONFIG_GLOBAL",
+            if cfg!(windows) { "NUL" } else { "/dev/null" },
+        )
+        .output()?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).into_owned().into());
+    }
+    Ok(output.stdout)
+}
 #[test]
 fn git_dispatch_discovers_current_and_nested_repositories() -> Result {
     let repo = tempfile::tempdir()?;
@@ -757,5 +773,99 @@ fn stage_cli_selected_hunks_match_git_and_keep_remaining_edits() -> Result {
         .output()?;
     assert_eq!(staged.stdout, working);
     assert_eq!(std::fs::read(p.join("a"))?, working);
+    Ok(())
+}
+
+#[test]
+fn commit_cli_commits_the_index_and_preserves_working_changes() -> Result {
+    let repo = tempfile::tempdir()?;
+    git(repo.path(), &["init", "-b", "main"])?;
+    git(repo.path(), &["config", "user.name", "Test"])?;
+    git(repo.path(), &["config", "user.email", "test@example.org"])?;
+    std::fs::write(repo.path().join("a"), b"base\n")?;
+    git(repo.path(), &["add", "a"])?;
+    git(repo.path(), &["commit", "-qm", "base"])?;
+    std::fs::write(repo.path().join("a"), b"staged\n")?;
+    git(repo.path(), &["add", "a"])?;
+    std::fs::write(repo.path().join("a"), b"working\n")?;
+    let output = Command::new(env!("CARGO_BIN_EXE_git-good"))
+        .args(["commit", "-m", "from cli"])
+        .current_dir(repo.path())
+        .output()?;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let receipt: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(receipt["operation"], "commit");
+    let id = receipt["id"].as_str().ok_or("missing id")?;
+    assert_eq!(
+        id,
+        String::from_utf8(git_output(repo.path(), &["rev-parse", "HEAD"])?)?.trim()
+    );
+    assert_eq!(
+        git_output(repo.path(), &["show", "-s", "--format=%s", "HEAD"])?,
+        b"from cli\n"
+    );
+    assert_eq!(git_output(repo.path(), &["show", ":a"])?, b"staged\n");
+    assert_eq!(std::fs::read(repo.path().join("a"))?, b"working\n");
+    assert_eq!(
+        git_output(repo.path(), &["status", "--porcelain=v1"])?,
+        b" M a\n"
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn commit_cli_runs_hooks_and_reports_failures_with_recovery() -> Result {
+    use std::os::unix::fs::PermissionsExt;
+    let repo = tempfile::tempdir()?;
+    git(repo.path(), &["init", "-b", "main"])?;
+    git(repo.path(), &["config", "user.name", "Test"])?;
+    git(repo.path(), &["config", "user.email", "test@example.org"])?;
+    std::fs::write(repo.path().join("a"), b"base\n")?;
+    git(repo.path(), &["add", "a"])?;
+    git(repo.path(), &["commit", "-qm", "base"])?;
+    std::fs::write(repo.path().join("a"), b"staged\n")?;
+    git(repo.path(), &["add", "a"])?;
+    let hooks = repo.path().join(".git/hooks");
+    std::fs::create_dir_all(&hooks)?;
+    let hook = hooks.join("pre-commit");
+    std::fs::write(
+        &hook,
+        "#!/bin/sh\nprintf 'hooked\\n' > hook.txt\ngit add hook.txt\n",
+    )?;
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755))?;
+    let output = Command::new(env!("CARGO_BIN_EXE_git-good"))
+        .args(["commit", "-m", "with hook"])
+        .current_dir(repo.path())
+        .output()?;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        git_output(repo.path(), &["show", "HEAD:hook.txt"])?,
+        b"hooked\n"
+    );
+
+    std::fs::write(repo.path().join("a"), b"next\n")?;
+    git(repo.path(), &["add", "a"])?;
+    let index = std::fs::read(repo.path().join(".git/index"))?;
+    std::fs::write(&hook, "#!/bin/sh\necho blocked >&2\nexit 5\n")?;
+    let failed = Command::new(env!("CARGO_BIN_EXE_git-good"))
+        .args(["commit", "-m", "blocked"])
+        .current_dir(repo.path())
+        .output()?;
+    assert!(!failed.status.success());
+    assert!(failed.stdout.is_empty());
+    let error = String::from_utf8_lossy(&failed.stderr);
+    assert!(error.contains("pre-commit"), "{error}");
+    assert!(error.contains("blocked"), "{error}");
+    assert!(error.contains("preserved"), "{error}");
+    assert_eq!(std::fs::read(repo.path().join(".git/index"))?, index);
     Ok(())
 }
