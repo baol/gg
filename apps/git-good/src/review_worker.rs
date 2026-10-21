@@ -1,8 +1,6 @@
 //! Cancellable comparison worker with disk-backed records and a single page mailbox.
 use gg_engine::review::*;
 use std::{
-    fs::File,
-    io::{Read, Seek, SeekFrom, Write},
     ops::Range,
     sync::{
         Arc, Mutex,
@@ -12,7 +10,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub const PAGE: usize = 256;
 #[derive(Clone)]
 pub struct Update {
     pub comparison: Comparison,
@@ -74,55 +71,8 @@ impl Drop for Worker {
 fn error(e: impl std::fmt::Display) -> String {
     format!("Could not store comparison: {e}")
 }
-struct Store {
-    data: File,
-    index: File,
-    count: usize,
-}
-impl Store {
-    fn new() -> Result<Self, String> {
-        Ok(Self {
-            data: tempfile::tempfile().map_err(error)?,
-            index: tempfile::tempfile().map_err(error)?,
-            count: 0,
-        })
-    }
-    fn append(&mut self, change: &FileChange) -> Result<(), String> {
-        let bytes = serde_json::to_vec(change).map_err(error)?;
-        let offset = self.data.seek(SeekFrom::End(0)).map_err(error)?;
-        self.data.write_all(&bytes).map_err(error)?;
-        self.index.seek(SeekFrom::End(0)).map_err(error)?;
-        self.index.write_all(&offset.to_le_bytes()).map_err(error)?;
-        self.index
-            .write_all(&(bytes.len() as u64).to_le_bytes())
-            .map_err(error)?;
-        self.count += 1;
-        Ok(())
-    }
-    fn page(&mut self, range: Range<usize>) -> Result<Vec<(usize, FileChange)>, String> {
-        let mut rows = Vec::new();
-        for row in range.start
-            ..range
-                .end
-                .min(self.count)
-                .min(range.start.saturating_add(PAGE))
-        {
-            self.index
-                .seek(SeekFrom::Start(row as u64 * 16))
-                .map_err(error)?;
-            let (mut offset, mut len) = ([0; 8], [0; 8]);
-            self.index.read_exact(&mut offset).map_err(error)?;
-            self.index.read_exact(&mut len).map_err(error)?;
-            self.data
-                .seek(SeekFrom::Start(u64::from_le_bytes(offset)))
-                .map_err(error)?;
-            let mut bytes = vec![0; u64::from_le_bytes(len) as usize];
-            self.data.read_exact(&mut bytes).map_err(error)?;
-            rows.push((row, serde_json::from_slice(&bytes).map_err(error)?));
-        }
-        Ok(rows)
-    }
-}
+type Store = crate::records::Store<FileChange>;
+
 fn run(
     mut reader: impl ReviewReader,
     input: &Mutex<Range<usize>>,
@@ -286,7 +236,7 @@ mod tests {
                         let page = wait(&output, |u| {
                             u.rows.first().is_some_and(|(row, _)| *row == range.start)
                         })?;
-                        assert!(page.rows.len() <= PAGE);
+                        assert!(page.rows.len() <= 256);
                         assert_eq!(page.rows[0].1.path, format!("file-{:05}", range.start));
                         assert_eq!(visits.load(Ordering::Relaxed), 10_000);
                     }

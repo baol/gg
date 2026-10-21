@@ -140,3 +140,29 @@ Export either present blob side to a new user-chosen path, preserving exact byte
 `git good show <commit> [--repo PATH] [--parent N]` streams JSON summaries. Add `--file PATH` for a repository-relative selected-file diff, including exact source-line bytes. Add `--export before|after --output PATH` to save that side and emit a JSON receipt. Use cwd discovery by default. Validate one-based parent numbers; roots use the empty tree automatically. Include repository/comparison identity and exact path bytes. Apply runtime error conventions; document usage when implemented.
 
 Rationale: summaries provide early feedback; pinned, cancellable work keeps rapid selection accurate; a dedicated review view gives source readable width.
+
+## Working status · M2
+
+`git good status [PATH]` discovers the whole worktree from cwd or an explicit path and streams JSON. Bare repositories return an identified working-tree requirement. Unborn repositories compare the index with an empty tree.
+
+Emit independent staged, unstaged, untracked, and conflict entries with exact path bytes and escaped one-line labels. A path can appear in both staged and unstaged categories. Honor ignore rules; enumerate individual untracked files. Represent renames as deletion/addition. Identify intent-to-add explicitly. Preserve repository contents, including index stat data.
+
+Run scans on cancellable workers. Publish rows in discovery order and keep their ordinals stable for the scan. Stream through a 128-entry queue into disk-backed records; request visible pages of at most 256 rows and retain at most 768 rows in the UI. Index/tree metadata follows repository size; file comparison buffers follow gitoxide's status implementation.
+
+Open Status from the repository header, including on unborn branches. Show category, change, and path in fixed-height rows; expose full paths through the shared overflow view. Count discovered entries until completion; show Clean only after a successful empty scan. Refresh retains the previous scan until replacement completes, then adopts it after hover and scrolling settle. Fresh scans begin at the first row. Keep the previous paging worker available throughout refresh. Back restores history's selection and offset. Failed scans retain identified results and offer retry. Status is observational; subsequent M2 increments add working diffs and validated mutations.
+
+### Working diffs
+
+Open a status row with Enter, double-click, or View diff. Use a full-width reading view; Back restores the status selection and scroll position. `git good status [PATH] --file PATH --area staged|unstaged|untracked|conflict` reads the same comparison as JSON.
+
+Pin HEAD and the index fingerprint from the status scan. Compare HEAD → index for staged paths, index → working file for unstaged paths, and empty → working file for untracked paths. Capture working bytes on selection, apply Git text normalization, and validate repository inputs and working bytes again before publication. Changed inputs return an identified stale-result error with Refresh status. Keep captured results stable until an explicit refresh or new selection.
+
+Reuse the bounded diff engine, paged worker, keyboard scrolling, and fixed source rows. Preserve symlink targets and mode changes. Show explicit binary, gitlink, conflict, and budget summaries. Conflict resolution belongs to M5. Working comparisons expose reading controls; exact immutable-object export remains in commit review.
+
+### Whole-file unstaging
+
+Unstage file restores exactly one staged path from the observed HEAD, or removes its index entry on an unborn branch. Preserve working files and unrelated index entries. CLI `git good unstage --file PATH [--repo PATH]` uses repository-relative paths and returns a JSON receipt after success.
+
+Acquire the index lock before checking the observed HEAD and index fingerprint. Restore the entry, invalidate the tree cache, revalidate, and publish the index atomically. Conflicts, sparse indexes, file/directory collisions, stale observations, and an existing lock return actionable errors. Run UI mutations on a worker; disable duplicate actions and navigation while pending, then refresh status at an interaction-safe boundary.
+
+Rationale: restoring one entry gives a reversible operation while preserving the user's working edits and other staging decisions.

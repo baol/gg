@@ -10,10 +10,14 @@ mod export;
 mod history_view;
 #[cfg(test)]
 mod interaction_tests;
+mod records;
 mod review_cli;
 mod review_view;
 mod review_worker;
 mod state;
+mod status_cli;
+mod status_view;
+mod status_worker;
 mod stream;
 mod thumbnails;
 use eframe::egui;
@@ -31,12 +35,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("--help")) {
         println!(
-            "gg · good git\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]   Review or export\n\nBrowse all commits reachable from HEAD."
+            "gg · good git\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good status [PATH] [--file PATH --area AREA]   Print working status or diff as JSON\ngit-good unstage --file PATH [--repo PATH]   Unstage one file\ngit-good show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]   Review or export\n\nBrowse all commits reachable from HEAD."
         );
         return Ok(());
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("show")) {
         return review_cli::run(args);
+    }
+    if first.as_deref() == Some(std::ffi::OsStr::new("status")) {
+        return status_cli::run(args);
+    }
+    if first.as_deref() == Some(std::ffi::OsStr::new("unstage")) {
+        return status_cli::unstage(args);
     }
     let headless = first.as_deref() == Some(std::ffi::OsStr::new("history"));
     let path = if headless { args.next() } else { first }
@@ -121,6 +131,7 @@ struct Browser {
     logo: Option<egui::TextureHandle>,
     path: String,
     review: Option<review_view::Review>,
+    working: Option<status_view::StatusView>,
     state: state::State,
     pending: Option<stream::Worker>,
     pending_filter_edit: bool,
@@ -148,6 +159,7 @@ impl Browser {
             logo: None,
             path: path.to_string_lossy().into_owned(),
             review: None,
+            working: None,
             state: state::State::default(),
             pending: None,
             pending_filter_edit: false,
@@ -238,6 +250,14 @@ impl Browser {
 
     fn draw(&mut self, ctx: &egui::Context) {
         colors::apply(ctx);
+        if let Some(working) = &mut self.working {
+            if working.draw(ctx) {
+                self.working = None;
+                self.restore_offset = Some(self.scroll_offset);
+                ctx.request_repaint();
+            }
+            return;
+        }
         if let Some(review) = &mut self.review {
             if review.draw(ctx) {
                 self.review = None;
@@ -419,7 +439,7 @@ impl Browser {
                 ui.horizontal(|ui| {
                     branding::toolbar(ui, &mut self.logo);
                     ui.separator();
-                    let identity_width = (ui.available_width() - 318.0).max(80.0);
+                    let identity_width = (ui.available_width() - 392.0).max(80.0);
                     let (identity, path) = if let Some(history) = &self.state.history {
                         (
                             format!(
@@ -479,6 +499,17 @@ impl Browser {
                         .clicked()
                     {
                         self.open_review(ctx);
+                    }
+                    if ui
+                        .add_enabled(
+                            self.state.history.is_some(),
+                            egui::Button::new("Status").min_size(egui::vec2(66.0, 26.0)),
+                        )
+                        .clicked()
+                        && let Some(history) = &self.state.history
+                    {
+                        self.working =
+                            Some(status_view::StatusView::new(history.path.clone(), ctx));
                     }
                     let shown = if narrow {
                         self.narrow_details

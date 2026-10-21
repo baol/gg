@@ -152,3 +152,21 @@ M1 is complete: commit review, selected-parent diffs, binary previews, exact exp
 - Embed the supplied `gg.png` for the native window and fixed-size toolbar brand.
 - Reproduced oversized avatar textures in an in-memory regression. List/detail textures now match physical display sizes and share one cached source; filtered-detail tests cover 100%, 125%, and 200% scale.
 - 89 workspace tests, seven release-script tests, formatting, Clippy, and debug build pass. Native light 1120×740 and dark 720×480 layouts preserve header geometry.
+
+## M2 status · 2026-10-21
+
+- 99 workspace tests, formatting, Clippy, and debug build pass. Git porcelain fixtures cover independent staged/unstaged entries, ignores, intent-to-add, conflicts, unborn branches, nested discovery, linked worktrees, and repository preservation.
+- Worker and egui checks cover bounded delivery, cancellation, deep/back paging, hovered loading slots, refresh failure/retry, last-page stability, and history restoration.
+- Linux x86_64, debug build, fresh process, warm 10,000-file fixture: first CLI entry 7.3 ms; complete JSON 185.7 ms. Native X11 light 1120×740 and dark 720×480 layouts inspected.
+
+## M2 working diffs · 2026-10-21
+
+- 108 workspace tests, formatting, Clippy, and debug build pass. Git oracles verify reconstructed sides and line counts; fixtures cover stale HEAD/index, changing working files, CRLF normalization, symlinks, emulated symlinks, and binary/budget summaries.
+- A failing production-worker regression reproduced cached working bytes after refresh with unchanged HEAD/index. Explicit refresh now invalidates that snapshot; reopening reads the new bytes.
+- Native X11 review confirms compact [wide status](screenshots/m2-status-wide.png), [narrow status](screenshots/m2-status-narrow.png), [light staged diffs](screenshots/m2-staged-diff.png), and [dark unstaged diffs](screenshots/m2-unstaged-diff.png).
+
+## M2 whole-file unstaging · 2026-10-21
+
+- 113 workspace tests, formatting, Clippy, and debug build pass. SHA-1/SHA-256 Git oracles cover additions, deletions, staged/working edits, unborn branches, tree-cache invalidation, unrelated staging, stale HEAD/index, lock ownership, and file/directory collisions. CLI checks verify receipts, stderr, and exit status.
+- A failing worker regression reproduced paging clearing an action error. Mutation failures now remain visible until explicit retry; successful actions refresh status through its existing interaction boundary.
+- Native X11 clicks in disposable repositories verify unstaging at 1120×740 and 720×480. Git confirms the selected path leaves staged changes and working bytes remain intact. [Narrow result](screenshots/m2-unstage-result.png).

@@ -16,6 +16,7 @@ pub struct DiffView {
     preview: Option<std::sync::Arc<crate::binary_preview::Pair>>,
     binary_view: crate::binary_preview::View,
     pub change: Option<FileChange>,
+    working: Option<gg_engine::status::WorkingRequest>,
     path: PathBuf,
     pub generation: u64,
     pub rows: BTreeMap<usize, DiffRow>,
@@ -40,6 +41,7 @@ impl Default for DiffView {
             preview: None,
             binary_view: crate::binary_preview::View::default(),
             change: None,
+            working: None,
             path: PathBuf::new(),
             generation: 0,
             rows: BTreeMap::new(),
@@ -67,6 +69,29 @@ impl DiffView {
     }
     pub fn hovered(&self, point: Option<egui::Pos2>) -> bool {
         point.is_some_and(|p| self.bounds.contains(p))
+    }
+    pub fn select_working(
+        &mut self,
+        request: gg_engine::status::WorkingRequest,
+        ctx: &egui::Context,
+    ) {
+        if self.working.as_ref() == Some(&request) {
+            return;
+        }
+        *self = Self::default();
+        self.path = request.repository.path.clone();
+        self.change = Some(FileChange {
+            path: request.entry.path.clone(),
+            path_bytes: request.entry.path_bytes.clone(),
+            kind: gg_engine::review::ChangeKind::Modified,
+            old: None,
+            new: None,
+        });
+        self.working = Some(request);
+        self.generation = 1;
+        self.reset = true;
+        self.send(ctx);
+        ctx.request_repaint();
     }
     pub fn select(&mut self, path: PathBuf, change: Option<FileChange>, ctx: &egui::Context) {
         let same = self.path == path
@@ -112,12 +137,16 @@ impl DiffView {
         if self.sent.as_ref() != Some(&(self.generation, self.range.clone()))
             && let Some(worker) = &self.worker
         {
-            worker.request(
-                self.generation,
-                self.path.clone(),
-                change.clone(),
-                self.range.clone(),
-            );
+            if let Some(working) = &self.working {
+                worker.request_working(self.generation, working.clone(), self.range.clone());
+            } else {
+                worker.request(
+                    self.generation,
+                    self.path.clone(),
+                    change.clone(),
+                    self.range.clone(),
+                );
+            }
             self.sent = Some((self.generation, self.range.clone()));
         }
     }
@@ -198,38 +227,49 @@ impl DiffView {
             return;
         };
         bounded_text::field(ui, &change.path, egui::FontId::proportional(14.0), 24.0);
-        let side = |s: &Option<gg_engine::review::FileSide>| {
-            s.as_ref()
-                .map(|s| format!("{:06o} {}", s.mode, s.id))
-                .unwrap_or_else(|| "absent".into())
-        };
-        bounded_text::field(
-            ui,
-            &format!("{} → {}", side(&change.old), side(&change.new)),
-            egui::FontId::monospace(10.0),
-            20.0,
-        );
-        ui.horizontal(|ui| {
-            for (label, side) in [
-                ("Export before", &change.old),
-                ("Export after", &change.new),
-            ] {
-                if ui
-                    .add_enabled(
-                        side.as_ref().is_some_and(|s| s.mode != 0o160000) && !self.export.busy(),
-                        egui::Button::new(label),
-                    )
-                    .clicked()
-                    && let Some(side) = side
-                {
-                    self.export.choose(
-                        self.path.clone(),
-                        side.clone(),
-                        format!("{label} · {}", change.path),
-                    );
+        if let Some(working) = &self.working {
+            let label = match working.entry.area {
+                gg_engine::status::Area::Staged => "Staged: HEAD to index",
+                gg_engine::status::Area::Unstaged => "Unstaged: index to working snapshot",
+                gg_engine::status::Area::Untracked => "Untracked: empty to working snapshot",
+                gg_engine::status::Area::Conflict => "Unmerged path",
+            };
+            bounded_text::field(ui, label, egui::FontId::proportional(12.0), 20.0);
+        } else {
+            let side = |s: &Option<gg_engine::review::FileSide>| {
+                s.as_ref()
+                    .map(|s| format!("{:06o} {}", s.mode, s.id))
+                    .unwrap_or_else(|| "absent".into())
+            };
+            bounded_text::field(
+                ui,
+                &format!("{} → {}", side(&change.old), side(&change.new)),
+                egui::FontId::monospace(10.0),
+                20.0,
+            );
+            ui.horizontal(|ui| {
+                for (label, side) in [
+                    ("Export before", &change.old),
+                    ("Export after", &change.new),
+                ] {
+                    if ui
+                        .add_enabled(
+                            side.as_ref().is_some_and(|s| s.mode != 0o160000)
+                                && !self.export.busy(),
+                            egui::Button::new(label),
+                        )
+                        .clicked()
+                        && let Some(side) = side
+                    {
+                        self.export.choose(
+                            self.path.clone(),
+                            side.clone(),
+                            format!("{label} · {}", change.path),
+                        );
+                    }
                 }
-            }
-        });
+            });
+        }
         if let Some(error) = &self.error {
             bounded_text::field(ui, error, egui::FontId::proportional(12.0), 22.0);
             if ui.button("Retry diff").clicked() {

@@ -120,3 +120,7 @@ impl gg_engine::HistoryReader for Session {
 pub mod blob;
 pub mod diff;
 pub mod review;
+pub mod status;
+pub mod working_diff;
+
+pub mod unstage;

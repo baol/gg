@@ -469,3 +469,134 @@ fn export_is_exact_beyond_diff_budget_and_preserves_existing_destinations() -> R
     assert_eq!(std::fs::read(repo.path().join("large.bin"))?, bytes);
     Ok(())
 }
+
+#[test]
+fn status_cli_streams_whole_worktree_and_reports_errors() -> Result {
+    let repo = tempfile::tempdir()?;
+    git(repo.path(), &["init", "-b", "main"])?;
+    std::fs::create_dir(repo.path().join("nested"))?;
+    std::fs::write(repo.path().join("new.txt"), b"new")?;
+    let binary = env!("CARGO_BIN_EXE_git-good");
+    for explicit in [false, true] {
+        let mut command = Command::new(binary);
+        command
+            .arg("status")
+            .current_dir(repo.path().join("nested"));
+        if explicit {
+            command.arg(repo.path());
+        }
+        let out = command.output()?;
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(out.stderr.is_empty());
+        let json: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+        assert_eq!(json["complete"], true);
+        assert_eq!(json["entries"][0]["area"], "untracked");
+        assert_eq!(json["entries"][0]["path"], "new.txt");
+        assert_eq!(json["repository"]["head"], serde_json::Value::Null);
+    }
+    let missing = repo.path().join("missing");
+    for args in [
+        vec!["status".into(), missing.into_os_string()],
+        vec![
+            "status".into(),
+            repo.path().as_os_str().into(),
+            "extra".into(),
+        ],
+    ] {
+        let out = Command::new(binary).args(args).output()?;
+        assert!(!out.status.success());
+        assert!(out.stdout.is_empty());
+        assert!(!out.stderr.is_empty());
+    }
+    Ok(())
+}
+
+#[test]
+fn selected_status_cli_requires_area_and_returns_working_diff() -> Result {
+    let dir = tempfile::tempdir()?;
+    let p = dir.path();
+    git(p, &["init", "-b", "main"])?;
+    std::fs::write(p.join("a"), b"staged\n")?;
+    git(p, &["add", "a"])?;
+    std::fs::write(p.join("a"), b"working\n")?;
+    let binary = env!("CARGO_BIN_EXE_git-good");
+    for area in ["staged", "unstaged"] {
+        let output = Command::new(binary)
+            .args(["status", "--file", "a", "--area", area])
+            .current_dir(p)
+            .output()?;
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let json: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+        assert_eq!(json["comparison"]["entry"]["area"], area);
+        assert_eq!(json["diff"]["kind"], "text");
+        assert!(
+            json["diff"]["rows"]
+                .as_array()
+                .is_some_and(|rows| !rows.is_empty())
+        );
+    }
+    for args in [
+        vec!["status", "--file", "a"],
+        vec!["status", "--file", "missing", "--area", "unstaged"],
+        vec!["status", "--area", "wrong"],
+    ] {
+        let output = Command::new(binary).args(args).current_dir(p).output()?;
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
+        assert!(!output.stderr.is_empty());
+    }
+    Ok(())
+}
+
+#[test]
+fn unstage_cli_receipt_and_errors_preserve_working_files() -> Result {
+    let dir = tempfile::tempdir()?;
+    let p = dir.path();
+    git(p, &["init"])?;
+    std::fs::write(p.join("a"), "staged")?;
+    git(p, &["add", "a"])?;
+    std::fs::write(p.join("a"), "working")?;
+    let binary = env!("CARGO_BIN_EXE_git-good");
+    let out = Command::new(binary)
+        .args(["unstage", "--file", "a", "--repo"])
+        .arg(p)
+        .output()?;
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(out.stderr.is_empty());
+    let receipt: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(receipt["complete"], true);
+    assert_eq!(receipt["operation"], "unstage");
+    assert_eq!(std::fs::read(p.join("a"))?, b"working");
+    assert!(
+        Command::new("git")
+            .arg("-C")
+            .arg(p)
+            .arg("ls-files")
+            .output()?
+            .stdout
+            .is_empty()
+    );
+    for args in [
+        vec!["unstage"],
+        vec!["unstage", "--file", "missing"],
+        vec!["unstage", "--file", "../a"],
+    ] {
+        let out = Command::new(binary).args(args).current_dir(p).output()?;
+        assert!(!out.status.success());
+        assert!(out.stdout.is_empty());
+        assert!(!out.stderr.is_empty());
+    }
+    Ok(())
+}
