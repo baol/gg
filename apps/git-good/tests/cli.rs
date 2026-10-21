@@ -645,3 +645,117 @@ fn stage_cli_receipt_and_errors_preserve_working_files() -> Result {
     assert_eq!(std::fs::read(p.join("a"))?, b"working");
     Ok(())
 }
+
+#[test]
+fn stage_cli_selected_hunks_match_git_and_keep_remaining_edits() -> Result {
+    let dir = tempfile::tempdir()?;
+    let p = dir.path();
+    git(p, &["init", "-b", "main"])?;
+    std::fs::write(
+        p.join("a"),
+        b"one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\ntwelve\n",
+    )?;
+    git(p, &["add", "a"])?;
+    git(
+        p,
+        &[
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.org",
+            "commit",
+            "-qm",
+            "base",
+        ],
+    )?;
+    let working = b"ONE\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\nTWELVE\n";
+    std::fs::write(p.join("a"), working)?;
+    let binary = env!("CARGO_BIN_EXE_git-good");
+    let header = |p: &Path| -> Result<String> {
+        let status = Command::new(env!("CARGO_BIN_EXE_git-good"))
+            .args(["status", "--file", "a", "--area", "unstaged"])
+            .current_dir(p)
+            .output()?;
+        assert!(
+            status.status.success(),
+            "{}",
+            String::from_utf8_lossy(&status.stderr)
+        );
+        let json: serde_json::Value = serde_json::from_slice(&status.stdout)?;
+        json["diff"]["rows"]
+            .as_array()
+            .and_then(|rows| rows.iter().find(|row| row["kind"] == "hunk"))
+            .and_then(|row| row["text"].as_str())
+            .map(str::to_string)
+            .ok_or_else(|| "missing hunk header".into())
+    };
+    let first = header(p)?;
+    let out = Command::new(binary)
+        .args(["stage", "--file", "a", "--hunk", &first])
+        .current_dir(p)
+        .output()?;
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(out.stderr.is_empty());
+    let receipt: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(receipt["operation"], "stage");
+    assert_eq!(receipt["hunks"], 1);
+    assert_eq!(receipt["complete"], true);
+    let staged = Command::new("git")
+        .arg("-C")
+        .arg(p)
+        .args(["show", ":a"])
+        .output()?;
+    assert!(staged.status.success());
+    assert_eq!(
+        staged.stdout,
+        b"ONE\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\ntwelve\n"
+    );
+    assert_eq!(std::fs::read(p.join("a"))?, working);
+    let status = Command::new("git")
+        .arg("-C")
+        .arg(p)
+        .args(["status", "--porcelain=v1", "-z", "--", "a"])
+        .output()?;
+    assert_eq!(status.stdout, b"MM a\0");
+    let index = std::fs::read(p.join(".git/index"))?;
+    let bad = Command::new(binary)
+        .args(["stage", "--file", "a", "--hunk", "@@ -99,1 +99,1 @@"])
+        .current_dir(p)
+        .output()?;
+    assert!(!bad.status.success());
+    assert!(bad.stdout.is_empty());
+    assert!(!bad.stderr.is_empty());
+    assert_eq!(std::fs::read(p.join(".git/index"))?, index);
+    let missing = Command::new(binary)
+        .args(["stage", "--file", "a", "--hunk"])
+        .current_dir(p)
+        .output()?;
+    assert!(!missing.status.success());
+    assert!(missing.stdout.is_empty());
+    assert!(!missing.stderr.is_empty());
+
+    let remaining = header(p)?;
+    let out = Command::new(binary)
+        .args(["stage", "--file", "a", "--hunk", &remaining])
+        .current_dir(p)
+        .output()?;
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let receipt: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(receipt["hunks"], 1);
+    let staged = Command::new("git")
+        .arg("-C")
+        .arg(p)
+        .args(["show", ":a"])
+        .output()?;
+    assert_eq!(staged.stdout, working);
+    assert_eq!(std::fs::read(p.join("a"))?, working);
+    Ok(())
+}

@@ -170,6 +170,18 @@ Require an unstaged or untracked observation whose working path still matches it
 
 Acquire the index lock before checking the observed HEAD and index fingerprint. Re-capture the working path before publication and invalidate the tree cache; revalidate HEAD and publish the index atomically. Stale observations, absent or reappearing paths, lock ownership, and working changes during the action return actionable errors. Run UI mutations on a worker; disable duplicate actions and navigation while pending, then refresh status at an interaction-safe boundary.
 
+### Hunk staging
+
+Stage selected hunks from one unstaged modification. Select a hunk by its exact `@@` header in the working diff; reopen or refresh the comparison after the index changes. CLI `git good stage --file PATH --hunk HEADER` accepts repeated `--hunk` selections and adds `"hunks"` to the stage receipt.
+
+Require an unstaged, regular text modification with a 100644 or 100755 index entry. Reject untracked additions, intent-to-add, deletions, type or mode changes, symlinks, submodules, conflicts, sparse indexes, binary comparisons, and comparisons beyond the text budget. Acquire the index lock, then capture and normalize the working bytes through the same pipeline as the displayed diff and recompute index → working. Unknown headers mean the diff is stale and publish nothing.
+
+Rebuild the index blob by line ranges: keep unchanged gaps and unselected hunks from the old side, and take selected hunks from the new side. When every hunk is selected, write real working stat data, matching `git add -p` after a full selection. Otherwise write zeroed stat data so status compares content and reports the remaining unstaged edit (`MM`). Preserve unrelated index entries, modes, and working bytes; re-capture working bytes and revalidate HEAD before atomic publication.
+
+In the reading view, click a hunk header to select and highlight it, then choose Stage hunk. Successful staging returns to the refreshed status list so the path appears in both staged and unstaged areas; failures keep the diff readable and show the error above it.
+
+Rationale: hunk-level staging follows `git add -p` while zeroed partial stat keeps omitted edits visible instead of silently clean.
+
 ### Whole-file unstaging
 
 Unstage file restores exactly one staged path from the observed HEAD, or removes its index entry on an unborn branch. Preserve working files and unrelated index entries. CLI `git good unstage --file PATH [--repo PATH]` uses repository-relative paths and returns a JSON receipt after success.

@@ -120,13 +120,24 @@ pub fn unstage(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn s
 pub fn stage(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::error::Error>> {
     let mut path = std::env::current_dir()?;
     let mut file = None;
+    let mut hunks = vec![];
     while let Some(arg) = args.next() {
         match arg.to_str() {
             Some("--repo") => path = PathBuf::from(args.next().ok_or("--repo needs a path")?),
             Some("--file") if file.is_none() => {
                 file = Some(args.next().ok_or("--file needs a path")?)
             }
-            _ => return Err("Usage: git good stage --file PATH [--repo PATH]".into()),
+            Some("--hunk") => hunks.push(
+                args.next()
+                    .ok_or("--hunk needs an @@ header")?
+                    .into_string()
+                    .map_err(|_| "Hunk header must be Unicode")?,
+            ),
+            _ => {
+                return Err(
+                    "Usage: git good stage --file PATH [--hunk HEADER]... [--repo PATH]".into(),
+                );
+            }
         }
     }
     let file = file.ok_or("Stage requires --file PATH")?;
@@ -161,11 +172,16 @@ pub fn stage(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std
         repository: session.identity,
         entry,
     };
-    gg_git::stage::file(&request)?;
-    serde_json::to_writer(
-        std::io::stdout().lock(),
-        &serde_json::json!({"operation":"stage", "path_bytes":request.entry.path_bytes, "complete":true}),
-    )?;
+    if hunks.is_empty() {
+        gg_git::stage::file(&request)?;
+    } else {
+        gg_git::stage::hunks(&request, &hunks)?;
+    }
+    let mut receipt = serde_json::json!({"operation":"stage", "path_bytes":request.entry.path_bytes, "complete":true});
+    if !hunks.is_empty() {
+        receipt["hunks"] = hunks.len().into();
+    }
+    serde_json::to_writer(std::io::stdout().lock(), &receipt)?;
     println!();
     Ok(())
 }

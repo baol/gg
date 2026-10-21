@@ -10,6 +10,7 @@ const HEIGHT: f32 = 24.0;
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mutation {
     Stage,
+    StageHunks,
     Unstage,
 }
 pub struct StatusView {
@@ -181,14 +182,9 @@ impl StatusView {
         if entry.area != Area::Staged {
             return;
         }
-        self.mutate(
-            ctx,
-            Mutation::Unstage,
-            entry,
-            repository,
-            "unstage",
-            gg_git::unstage::file,
-        );
+        self.mutate(ctx, Mutation::Unstage, "unstage", move || {
+            gg_git::unstage::file(&gg_engine::status::WorkingRequest { repository, entry })
+        });
     }
     fn stage(&mut self, ctx: &egui::Context) {
         if self.mutation.is_some() || self.replacing {
@@ -203,30 +199,36 @@ impl StatusView {
         if !matches!(entry.area, Area::Unstaged | Area::Untracked) {
             return;
         }
-        self.mutate(
-            ctx,
-            Mutation::Stage,
-            entry,
-            repository,
-            "stage",
-            gg_git::stage::file,
-        );
+        self.mutate(ctx, Mutation::Stage, "stage", move || {
+            gg_git::stage::file(&gg_engine::status::WorkingRequest { repository, entry })
+        });
+    }
+    fn stage_hunks(
+        &mut self,
+        ctx: &egui::Context,
+        request: gg_engine::status::WorkingRequest,
+        headers: Vec<String>,
+    ) {
+        if self.mutation.is_some() || self.replacing {
+            return;
+        }
+        self.mutate(ctx, Mutation::StageHunks, "stage hunk", move || {
+            gg_git::stage::hunks(&request, &headers)
+        });
     }
     fn mutate(
         &mut self,
         ctx: &egui::Context,
         kind: Mutation,
-        entry: StatusEntry,
-        repository: gg_engine::status::StatusIdentity,
         name: &'static str,
-        apply: fn(&gg_engine::status::WorkingRequest) -> Result<(), String>,
+        apply: impl FnOnce() -> Result<(), String> + Send + 'static,
     ) {
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         let ctx = ctx.clone();
         match std::thread::Builder::new()
             .name(name.into())
             .spawn(move || {
-                let result = apply(&gg_engine::status::WorkingRequest { repository, entry });
+                let result = apply();
                 let _ = tx.send(result);
                 ctx.request_repaint();
             }) {
@@ -245,6 +247,7 @@ impl StatusView {
                     || i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft)
             });
         let mut refresh = false;
+        let mut stage_hunk = false;
         egui::TopBottomPanel::top("working-diff-header")
             .exact_height(42.0)
             .show(ctx, |ui| {
@@ -255,7 +258,7 @@ impl StatusView {
                         .clicked();
                     ui.strong("Working diff");
                     ui.allocate_ui_with_layout(
-                        egui::vec2((ui.available_width() - 125.0).max(100.0), 26.0),
+                        egui::vec2((ui.available_width() - 230.0).max(100.0), 26.0),
                         egui::Layout::left_to_right(egui::Align::Center),
                         |ui| {
                             bounded_text::field(
@@ -266,13 +269,42 @@ impl StatusView {
                             );
                         },
                     );
+                    stage_hunk |= ui
+                        .add_enabled(
+                            self.mutation.is_none() && self.diff.stageable_hunk().is_some(),
+                            egui::Button::new(
+                                if self.mutation_kind == Some(Mutation::StageHunks) {
+                                    "Staging…"
+                                } else {
+                                    "Stage hunk"
+                                },
+                            )
+                            .min_size(egui::vec2(96.0, 26.0)),
+                        )
+                        .on_disabled_hover_text("Select an unstaged hunk header")
+                        .clicked();
                     refresh |= ui
                         .add_sized([114.0, 26.0], egui::Button::new("Refresh status"))
                         .clicked();
                 });
             });
+        if let Some(error) = &self.error {
+            egui::TopBottomPanel::top("working-diff-error")
+                .exact_height(23.0)
+                .show(ctx, |ui| {
+                    bounded_text::field(ui, error, egui::FontId::proportional(12.0), 22.0);
+                });
+        }
         egui::CentralPanel::default().show(ctx, |ui| self.diff.draw_reading(ui));
         bounded_text::show_disclosure(ctx);
+        if stage_hunk
+            && let Some((request, header)) = self
+                .diff
+                .stageable_hunk()
+                .map(|(request, header)| (request.clone(), header.to_string()))
+        {
+            self.stage_hunks(ctx, request, vec![header]);
+        }
         if back || refresh {
             self.reading = false;
             self.restore = true;
@@ -290,10 +322,16 @@ impl StatusView {
             }
             Err(_) => None,
         }) {
+            let completed = self.mutation_kind.take();
             self.mutation = None;
-            self.mutation_kind = None;
             match result {
-                Ok(()) => self.start(ctx, true),
+                Ok(()) => {
+                    if completed == Some(Mutation::StageHunks) {
+                        self.reading = false;
+                        self.restore = true;
+                    }
+                    self.start(ctx, true);
+                }
                 Err(e) => {
                     self.action_error = Some(e.clone());
                     self.error = Some(e);
@@ -1041,5 +1079,199 @@ mod tests {
                 "missing {label}"
             );
         }
+    }
+    fn run(
+        ctx: &egui::Context,
+        view: &mut StatusView,
+        width: f32,
+        events: Vec<egui::Event>,
+    ) -> egui::FullOutput {
+        ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(width, 480.0),
+                )),
+                events,
+                ..Default::default()
+            },
+            |ctx| {
+                view.draw(ctx);
+            },
+        )
+    }
+    fn text_pos(output: &egui::FullOutput, needle: &str) -> Option<egui::Pos2> {
+        output.shapes.iter().find_map(|shape| match &shape.shape {
+            egui::epaint::Shape::Text(text)
+                if text.galley.job.text == needle
+                    || text.galley.job.text.starts_with(needle) && needle.starts_with("@@") =>
+            {
+                Some(text.pos)
+            }
+            _ => None,
+        })
+    }
+    fn click(ctx: &egui::Context, view: &mut StatusView, width: f32, pos: egui::Pos2) {
+        let press = egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let release = egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        run(
+            ctx,
+            view,
+            width,
+            vec![egui::Event::PointerMoved(pos), press],
+        );
+        run(ctx, view, width, vec![release]);
+    }
+    #[test]
+    fn hunk_header_click_stages_and_returns_to_the_refreshed_list()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let git = |args: &[&str]| -> Result<(), Box<dyn std::error::Error>> {
+            let out = std::process::Command::new("git")
+                .arg("-C")
+                .arg(dir.path())
+                .args(args)
+                .output()?;
+            assert!(
+                out.status.success(),
+                "{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            Ok(())
+        };
+        git(&["init", "-q"])?;
+        let base = b"one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\ntwelve\n";
+        std::fs::write(dir.path().join("a"), base)?;
+        git(&["add", "a"])?;
+        git(&[
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.org",
+            "commit",
+            "-qm",
+            "base",
+        ])?;
+        let working =
+            b"ONE\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\nTWELVE\n";
+        std::fs::write(dir.path().join("a"), working)?;
+        let ctx = egui::Context::default();
+        let mut view = StatusView::new(dir.path().into(), &ctx);
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            frame(&ctx, &mut view, 1120.0, vec![]);
+            if view.complete && !view.replacing && view.mutation.is_none() {
+                break;
+            }
+            assert!(std::time::Instant::now() < until, "status timed out");
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert_eq!(view.rows[&0].area, Area::Unstaged);
+        view.open_diff(&ctx);
+        let header = loop {
+            frame(&ctx, &mut view, 1120.0, vec![]);
+            if let Some(header) = view
+                .diff
+                .rows
+                .values()
+                .find(|row| row.kind == gg_engine::diff::RowKind::Hunk)
+                .map(|row| row.text.clone())
+            {
+                break header;
+            }
+            assert!(std::time::Instant::now() < until, "diff timed out");
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        };
+        for width in [720.0, 1120.0] {
+            let output = run(&ctx, &mut view, width, vec![]);
+            assert!(
+                text_pos(&output, "Stage hunk").is_some(),
+                "missing stage hunk at {width}"
+            );
+        }
+        let output = run(&ctx, &mut view, 1120.0, vec![]);
+        let pos = text_pos(&output, &header).ok_or("missing hunk header")?;
+        click(&ctx, &mut view, 1120.0, pos + egui::vec2(5.0, 0.0));
+        assert_eq!(view.diff.selected_hunk(), Some(header.as_str()));
+        assert!(view.diff.stageable_hunk().is_some());
+        let output = run(&ctx, &mut view, 1120.0, vec![]);
+        let button = text_pos(&output, "Stage hunk").ok_or("missing stage hunk button")?;
+        click(&ctx, &mut view, 1120.0, button + egui::vec2(5.0, 0.0));
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            frame(&ctx, &mut view, 1120.0, vec![]);
+            if view.mutation.is_none() && !view.replacing && view.complete && !view.reading {
+                break;
+            }
+            assert!(std::time::Instant::now() < until, "hunk stage timed out");
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert!(!view.reading);
+        assert!(view.rows.values().any(|entry| entry.area == Area::Staged));
+        assert!(view.rows.values().any(|entry| entry.area == Area::Unstaged));
+        assert_eq!(std::fs::read(dir.path().join("a"))?, working);
+
+        let row = view
+            .rows
+            .iter()
+            .find(|(_, entry)| entry.area == Area::Unstaged)
+            .map(|(row, _)| *row)
+            .ok_or("remaining unstaged row")?;
+        view.selected = Some(row);
+        view.open_diff(&ctx);
+        let header = loop {
+            frame(&ctx, &mut view, 1120.0, vec![]);
+            if let Some(header) = view
+                .diff
+                .rows
+                .values()
+                .find(|row| row.kind == gg_engine::diff::RowKind::Hunk)
+                .map(|row| row.text.clone())
+            {
+                break header;
+            }
+            assert!(
+                std::time::Instant::now() < until,
+                "remaining diff timed out"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        };
+        let output = run(&ctx, &mut view, 1120.0, vec![]);
+        let hunk = text_pos(&output, &header).ok_or("missing remaining hunk")?;
+        click(&ctx, &mut view, 1120.0, hunk + egui::vec2(5.0, 0.0));
+        let index = std::fs::read(dir.path().join(".git/index"))?;
+        std::fs::write(dir.path().join(".git/index.lock"), "owner")?;
+        let output = run(&ctx, &mut view, 1120.0, vec![]);
+        let button = text_pos(&output, "Stage hunk").ok_or("missing stage hunk button")?;
+        click(&ctx, &mut view, 1120.0, button + egui::vec2(5.0, 0.0));
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            frame(&ctx, &mut view, 1120.0, vec![]);
+            if view.mutation.is_none() {
+                break;
+            }
+            assert!(std::time::Instant::now() < until, "hunk failure timed out");
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert!(view.reading);
+        assert!(
+            view.error
+                .as_ref()
+                .is_some_and(|error| error.contains("Stage hunks"))
+        );
+        assert_eq!(std::fs::read(dir.path().join(".git/index"))?, index);
+        assert_eq!(std::fs::read(dir.path().join("a"))?, working);
+        std::fs::remove_file(dir.path().join(".git/index.lock"))?;
+        Ok(())
     }
 }

@@ -851,3 +851,350 @@ fn stage_rejects_conflicts_submodules_collisions_and_stale_paths() -> Result {
     );
     Ok(())
 }
+
+fn hunk_headers(request: &gg_engine::status::WorkingRequest) -> Result<Vec<String>> {
+    use gg_engine::diff::RowKind;
+    Ok(gg_git::working_diff::read(request, || false)?
+        .rows
+        .iter()
+        .filter(|row| row.kind == RowKind::Hunk)
+        .map(|row| row.text.clone())
+        .collect())
+}
+
+fn hunk_fixture(path: &Path, hash: &str) -> Result {
+    git(path, &["init", &format!("--object-format={hash}")])?;
+    std::fs::write(
+        path.join("a"),
+        "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\ntwelve\n",
+    )?;
+    std::fs::write(path.join("other"), "base\n")?;
+    git(path, &["add", "."])?;
+    git(path, &["commit", "-qm", "base"])?;
+    std::fs::write(
+        path.join("a"),
+        "ONE\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\nTWELVE\n",
+    )?;
+    Ok(())
+}
+
+fn add_patch(path: &Path, file: &str, answers: &str) -> Result {
+    use std::{io::Write, process::Stdio};
+    let mut child = Command::new("git")
+        .arg("-C")
+        .arg(path)
+        .args(["add", "-p", "--", file])
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env(
+            "GIT_CONFIG_GLOBAL",
+            if cfg!(windows) { "NUL" } else { "/dev/null" },
+        )
+        .env("GIT_PAGER", "cat")
+        .env("GIT_AUTHOR_NAME", "Test")
+        .env("GIT_COMMITTER_NAME", "Test")
+        .env("GIT_AUTHOR_EMAIL", "test@example.org")
+        .env("GIT_COMMITTER_EMAIL", "test@example.org")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    child
+        .stdin
+        .take()
+        .ok_or("missing stdin")?
+        .write_all(answers.as_bytes())?;
+    let output = child.wait_with_output()?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).into_owned().into());
+    }
+    Ok(())
+}
+
+#[test]
+fn stage_hunks_match_git_add_patch_and_keep_remaining_edits() -> Result {
+    for hash in ["sha1", "sha256"] {
+        let ours = tempfile::tempdir()?;
+        let reference = tempfile::tempdir()?;
+        for path in [ours.path(), reference.path()] {
+            hunk_fixture(path, hash)?;
+        }
+        let req = request(ours.path(), b"a", Area::Unstaged)?;
+        let headers = hunk_headers(&req)?;
+        assert_eq!(headers.len(), 2);
+        let index = std::fs::read(ours.path().join(".git/index"))?;
+        gg_git::stage::hunks(&req, &headers[..1])?;
+        add_patch(reference.path(), "a", "y\nn\n")?;
+        assert_eq!(
+            git(ours.path(), &["show", ":a"])?,
+            git(reference.path(), &["show", ":a"])?
+        );
+        assert_ne!(std::fs::read(ours.path().join(".git/index"))?, index);
+        assert_eq!(
+            git(ours.path(), &["status", "--porcelain=v1", "-z", "--", "a"])?,
+            b"MM a\0"
+        );
+        let debug = String::from_utf8(git(ours.path(), &["ls-files", "--debug", "--", "a"])?)?;
+        assert!(debug.contains("size: 0"), "{debug}");
+        assert_eq!(
+            std::fs::read(ours.path().join("a"))?,
+            b"ONE\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\nTWELVE\n"
+        );
+        assert_eq!(git(ours.path(), &["show", ":other"])?, b"base\n");
+
+        let req = request(ours.path(), b"a", Area::Unstaged)?;
+        let remaining = hunk_headers(&req)?;
+        assert_eq!(remaining.len(), 1);
+        gg_git::stage::hunks(&req, &remaining)?;
+        assert_eq!(
+            git(ours.path(), &["show", ":a"])?,
+            std::fs::read(ours.path().join("a"))?
+        );
+        assert_eq!(
+            git(ours.path(), &["status", "--porcelain=v1", "-z", "--", "a"])?,
+            b"M  a\0"
+        );
+        let debug = String::from_utf8(git(ours.path(), &["ls-files", "--debug", "--", "a"])?)?;
+        assert!(!debug.contains("size: 0"), "{debug}");
+        assert!(!ours.path().join(".git/index.lock").exists());
+        oracle(ours.path())?;
+    }
+    Ok(())
+}
+
+#[test]
+fn stage_hunks_select_multiple_and_preserve_other_entries() -> Result {
+    let dir = tempfile::tempdir()?;
+    let p = dir.path();
+    hunk_fixture(p, "sha1")?;
+    std::fs::write(p.join("other"), "other working\n")?;
+    git(p, &["add", "other"])?;
+    std::fs::write(p.join("other"), "other working again\n")?;
+    let req = request(p, b"a", Area::Unstaged)?;
+    let headers = hunk_headers(&req)?;
+    assert_eq!(headers.len(), 2);
+    gg_git::stage::hunks(&req, &[headers[1].clone(), headers[0].clone()])?;
+    assert_eq!(git(p, &["show", ":a"])?, std::fs::read(p.join("a"))?);
+    assert_eq!(git(p, &["show", ":other"])?, b"other working\n");
+    assert_eq!(
+        git(p, &["status", "--porcelain=v1", "-z", "--", "other"])?,
+        b"MM other\0"
+    );
+    assert_eq!(std::fs::read(p.join("other"))?, b"other working again\n");
+    oracle(p)?;
+    Ok(())
+}
+
+#[test]
+fn stage_hunks_respect_attributes_crlf_and_final_newlines() -> Result {
+    let ours = tempfile::tempdir()?;
+    let reference = tempfile::tempdir()?;
+    for p in [ours.path(), reference.path()] {
+        git(p, &["init"])?;
+        std::fs::write(p.join(".gitattributes"), b"*.txt text eol=lf\n")?;
+        std::fs::write(
+            p.join("a.txt"),
+            b"one\r\ntwo\r\nthree\r\nfour\r\nfive\r\nsix\r\nseven\r\neight\r\nnine\r\nten\r\n",
+        )?;
+        std::fs::write(p.join("nonewline"), b"a\nb")?;
+        git(p, &["add", "."])?;
+        git(p, &["commit", "-qm", "base"])?;
+        std::fs::write(
+            p.join("a.txt"),
+            b"ONE\r\ntwo\r\nthree\r\nfour\r\nfive\r\nsix\r\nseven\r\neight\r\nnine\r\nTEN\r\n",
+        )?;
+        std::fs::write(p.join("nonewline"), b"a\nB")?;
+    }
+    let req = request(ours.path(), b"a.txt", Area::Unstaged)?;
+    let headers = hunk_headers(&req)?;
+    assert_eq!(headers.len(), 2);
+    gg_git::stage::hunks(&req, &headers[..1])?;
+    add_patch(reference.path(), "a.txt", "y\nn\n")?;
+    assert_eq!(
+        git(ours.path(), &["show", ":a.txt"])?,
+        git(reference.path(), &["show", ":a.txt"])?
+    );
+    assert_eq!(
+        std::fs::read(ours.path().join("a.txt"))?,
+        b"ONE\r\ntwo\r\nthree\r\nfour\r\nfive\r\nsix\r\nseven\r\neight\r\nnine\r\nTEN\r\n"
+    );
+    assert_eq!(
+        git(
+            ours.path(),
+            &["status", "--porcelain=v1", "-z", "--", "a.txt"]
+        )?,
+        b"MM a.txt\0"
+    );
+
+    let req = request(ours.path(), b"nonewline", Area::Unstaged)?;
+    let headers = hunk_headers(&req)?;
+    assert_eq!(headers.len(), 1);
+    gg_git::stage::hunks(&req, &headers)?;
+    assert_eq!(git(ours.path(), &["show", ":nonewline"])?, b"a\nB");
+    assert_eq!(std::fs::read(ours.path().join("nonewline"))?, b"a\nB");
+    assert_eq!(
+        git(
+            ours.path(),
+            &["status", "--porcelain=v1", "-z", "--", "nonewline"]
+        )?,
+        b"M  nonewline\0"
+    );
+    oracle(ours.path())?;
+    Ok(())
+}
+
+#[test]
+fn stage_hunks_reject_unsupported_changes_and_selections() -> Result {
+    let dir = tempfile::tempdir()?;
+    let p = dir.path();
+    git(p, &["init", "-b", "main"])?;
+    std::fs::write(p.join("text"), b"base\n")?;
+    std::fs::write(p.join("binary"), b"base\n")?;
+    std::fs::write(p.join("large"), b"base\n")?;
+    std::fs::write(p.join("mode"), b"base\n")?;
+    git(p, &["add", "."])?;
+    git(p, &["commit", "-qm", "base"])?;
+    std::fs::write(p.join("text"), b"changed\n")?;
+    std::fs::write(p.join("binary"), [0, 1, 2])?;
+    std::fs::write(
+        p.join("large"),
+        vec![b'a'; gg_engine::diff::MAX_BLOB_BYTES + 1],
+    )?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(p.join("mode"), std::fs::Permissions::from_mode(0o755))?;
+    }
+    let req = request(p, b"text", Area::Unstaged)?;
+    let headers = hunk_headers(&req)?;
+    assert_eq!(headers.len(), 1);
+    let index = std::fs::read(p.join(".git/index"))?;
+    assert!(
+        gg_git::stage::hunks(&req, &[])
+            .err()
+            .is_some_and(|e| e.contains("at least one hunk"))
+    );
+    assert!(
+        gg_git::stage::hunks(&req, &["@@ -99,1 +99,1 @@".into()])
+            .err()
+            .is_some_and(|e| e.contains("stale"))
+    );
+    assert_eq!(std::fs::read(p.join(".git/index"))?, index);
+
+    let binary = request(p, b"binary", Area::Unstaged)?;
+    assert!(
+        gg_git::stage::hunks(&binary, &["@@ -1 +1 @@".into()])
+            .err()
+            .is_some_and(|e| e.contains("text comparison"))
+    );
+    let large = request(p, b"large", Area::Unstaged)?;
+    assert!(
+        gg_git::stage::hunks(&large, &[headers[0].clone()])
+            .err()
+            .is_some_and(|e| e.contains("2 MiB"))
+    );
+    #[cfg(unix)]
+    {
+        let mode = request(p, b"mode", Area::Unstaged)?;
+        assert!(
+            gg_git::stage::hunks(&mode, &[headers[0].clone()])
+                .err()
+                .is_some_and(|e| e.contains("mode or type"))
+        );
+    }
+    assert_eq!(std::fs::read(p.join(".git/index"))?, index);
+
+    std::fs::write(p.join("untracked"), b"new\n")?;
+    let untracked = request(p, b"untracked", Area::Untracked)?;
+    assert!(
+        gg_git::stage::hunks(&untracked, &[headers[0].clone()])
+            .err()
+            .is_some_and(|e| e.contains("unstaged modification"))
+    );
+    std::fs::write(p.join("ita"), b"intent\n")?;
+    git(p, &["add", "-N", "ita"])?;
+    let ita = request(p, b"ita", Area::Unstaged)?;
+    assert!(
+        gg_git::stage::hunks(&ita, &[headers[0].clone()])
+            .err()
+            .is_some_and(|e| e.contains("unstaged modification"))
+    );
+    std::fs::remove_file(p.join("text"))?;
+    let deleted = request(p, b"text", Area::Unstaged)?;
+    assert!(
+        gg_git::stage::hunks(&deleted, &[headers[0].clone()])
+            .err()
+            .is_some_and(|e| e.contains("unstaged modification"))
+    );
+    std::fs::write(p.join("text"), b"changed\n")?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::symlink;
+        symlink("before", p.join("link"))?;
+        git(p, &["add", "link"])?;
+        git(p, &["commit", "-qm", "link"])?;
+        std::fs::remove_file(p.join("link"))?;
+        symlink("after", p.join("link"))?;
+        let link = request(p, b"link", Area::Unstaged)?;
+        assert!(
+            gg_git::stage::hunks(&link, &["@@ -1 +1 @@".into()])
+                .err()
+                .is_some_and(|e| e.contains("regular text file"))
+        );
+    }
+    oracle(p)?;
+    Ok(())
+}
+
+#[test]
+fn stage_hunks_reject_stale_inputs_and_locks_without_publishing() -> Result {
+    let dir = tempfile::tempdir()?;
+    let p = dir.path();
+    hunk_fixture(p, "sha1")?;
+    let req = request(p, b"a", Area::Unstaged)?;
+    let headers = hunk_headers(&req)?;
+    let index = std::fs::read(p.join(".git/index"))?;
+    std::fs::write(p.join(".git/index.lock"), b"external owner")?;
+    assert!(gg_git::stage::hunks(&req, &headers[..1]).is_err());
+    assert_eq!(std::fs::read(p.join(".git/index"))?, index);
+    assert_eq!(std::fs::read(p.join(".git/index.lock"))?, b"external owner");
+    std::fs::remove_file(p.join(".git/index.lock"))?;
+
+    std::fs::write(p.join("a"), b"rewritten\n")?;
+    assert!(
+        gg_git::stage::hunks(&req, &headers[..1])
+            .err()
+            .is_some_and(|e| e.contains("stale"))
+    );
+    assert_eq!(std::fs::read(p.join(".git/index"))?, index);
+    assert_eq!(std::fs::read(p.join("a"))?, b"rewritten\n");
+
+    std::fs::write(
+        p.join("a"),
+        b"ONE\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\nTWELVE\n",
+    )?;
+    let req = request(p, b"a", Area::Unstaged)?;
+    let headers = hunk_headers(&req)?;
+    std::fs::write(p.join("other"), b"new other\n")?;
+    git(p, &["add", "other"])?;
+    let index = std::fs::read(p.join(".git/index"))?;
+    assert!(
+        gg_git::stage::hunks(&req, &headers[..1])
+            .err()
+            .is_some_and(|e| e.contains("Refresh status"))
+    );
+    assert_eq!(std::fs::read(p.join(".git/index"))?, index);
+
+    let req = request(p, b"a", Area::Unstaged)?;
+    let headers = hunk_headers(&req)?;
+    git(p, &["commit", "--allow-empty", "-qm", "new head"])?;
+    let index = std::fs::read(p.join(".git/index"))?;
+    assert!(
+        gg_git::stage::hunks(&req, &headers[..1])
+            .err()
+            .is_some_and(|e| e.contains("Refresh status"))
+    );
+    assert_eq!(std::fs::read(p.join(".git/index"))?, index);
+    assert!(!p.join(".git/index.lock").exists());
+    Ok(())
+}

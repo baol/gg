@@ -83,4 +83,6 @@ File staging: compare staged entries and subsequent trees with `git add -A`; pre
 
 Whole-file unstaging: compare restored entries and subsequent trees with Git; preserve working bytes and unrelated staging. Cover unborn branches, SHA-1/SHA-256, stale observations, lock ownership, file/directory collisions, CLI receipts/errors, and worker refresh/failure.
 
+Hunk staging: compare selected index blobs with scripted `git add -p` in SHA-1/SHA-256 repositories. Cover partial selection with zeroed stat and `MM` status, all-hunk selection with real stat, multiple selections, CRLF attributes, missing final newlines, unrelated staged entries, binary/budget limits, symlink targets, mode changes, untracked/intent-to-add/deleted inputs, stale headers/HEAD/index, lock ownership, CLI `--hunk` receipts, and hunk-header selection/error behavior in the reading view.
+
 Navigation and diff continuity: Enter opens commits at both widths; text editors retain keys while focused buttons allow navigation. Reading keys scroll without changing files. File selection retains displayed rows until current-generation adoption; hover defers replacement. Toolbar geometry covers Repository, View, and Status.
