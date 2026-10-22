@@ -230,7 +230,13 @@ fn request(path: &Path, name: &[u8], area: Area) -> Result<gg_engine::status::Wo
     })?;
     Ok(gg_engine::status::WorkingRequest {
         repository: session.identity,
-        entry: entry.ok_or("status entry missing")?,
+        entry: entry.ok_or_else(|| {
+            std::io::Error::other(format!(
+                "status entry missing for {} ({:?})",
+                String::from_utf8_lossy(name),
+                area
+            ))
+        })?,
     })
 }
 #[test]
@@ -752,9 +758,19 @@ fn stage_rejects_conflicts_submodules_collisions_and_stale_paths() -> Result {
     std::fs::write(p.join("conflict"), "main\n")?;
     git(p, &["commit", "-qam", "main"])?;
     let _ = Command::new("git")
+        .args(["-c", "core.autocrlf=false"])
         .arg("-C")
         .arg(p)
         .args(["merge", "other"])
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env(
+            "GIT_CONFIG_GLOBAL",
+            if cfg!(windows) { "NUL" } else { "/dev/null" },
+        )
+        .env("GIT_AUTHOR_NAME", "Test")
+        .env("GIT_AUTHOR_EMAIL", "test@example.org")
+        .env("GIT_COMMITTER_NAME", "Test")
+        .env("GIT_COMMITTER_EMAIL", "test@example.org")
         .output()?;
     let req = request(p, b"conflict", Area::Conflict)?;
     assert!(

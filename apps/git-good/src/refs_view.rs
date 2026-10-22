@@ -292,7 +292,7 @@ fn row(
     );
     if current {
         let check = egui::pos2(rect.right() - 10.0, rect.center().y);
-        let stroke = egui::Stroke::new(1.4, color);
+        let stroke = egui::Stroke::new(1.4_f32, color);
         ui.painter().line_segment(
             [check + egui::vec2(-3.0, 0.0), check + egui::vec2(0.0, 3.0)],
             stroke,
@@ -316,7 +316,7 @@ pub(crate) fn paint_icon(
     color: egui::Color32,
 ) {
     let p = |x: f32, y: f32| egui::pos2(rect.left() + x, rect.top() + y);
-    let stroke = egui::Stroke::new(1.15, color);
+    let stroke = egui::Stroke::new(1.15_f32, color);
     match kind {
         RefKind::Branch => {
             painter.circle_filled(p(3.5, 3.0), 1.5, color);

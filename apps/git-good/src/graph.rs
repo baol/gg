@@ -127,7 +127,7 @@ pub fn paint(ui: &egui::Ui, rect: egui::Rect, row: &Row, selected: bool) {
                     egui::pos2(x(rect, lane), rect.top()),
                     egui::pos2(x(rect, lane), rect.bottom()),
                 ],
-                egui::Stroke::new(1.75, color(lane)),
+                egui::Stroke::new(1.75_f32, color(lane)),
             );
         } else if before {
             painter.line_segment(
@@ -135,7 +135,7 @@ pub fn paint(ui: &egui::Ui, rect: egui::Rect, row: &Row, selected: bool) {
                     egui::pos2(x(rect, lane), rect.top()),
                     egui::pos2(x(rect, lane), center.y),
                 ],
-                egui::Stroke::new(1.75, color(lane)),
+                egui::Stroke::new(1.75_f32, color(lane)),
             );
         } else if starts_below(row, lane) {
             painter.line_segment(
@@ -143,7 +143,7 @@ pub fn paint(ui: &egui::Ui, rect: egui::Rect, row: &Row, selected: bool) {
                     egui::pos2(x(rect, lane), center.y),
                     egui::pos2(x(rect, lane), rect.bottom()),
                 ],
-                egui::Stroke::new(1.75, color(lane)),
+                egui::Stroke::new(1.75_f32, color(lane)),
             );
         }
     }
@@ -162,7 +162,7 @@ pub fn paint(ui: &egui::Ui, rect: egui::Rect, row: &Row, selected: bool) {
             ],
             false,
             egui::Color32::TRANSPARENT,
-            egui::Stroke::new(1.75, parent_color(row, *parent)),
+            egui::Stroke::new(1.75_f32, parent_color(row, *parent)),
         ));
     }
     if selected {
@@ -170,7 +170,7 @@ pub fn paint(ui: &egui::Ui, rect: egui::Rect, row: &Row, selected: bool) {
     }
     painter.circle_filled(center, if selected { 4.0 } else { 3.25 }, color(row.lane));
     if row.parents.len() > 1 {
-        painter.circle_stroke(center, 6.0, egui::Stroke::new(1.0, color(row.lane)));
+        painter.circle_stroke(center, 6.0, egui::Stroke::new(1.0_f32, color(row.lane)));
     }
 }
 

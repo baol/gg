@@ -3,6 +3,7 @@ type Result<T = ()> = std::result::Result<T, Box<dyn Error>>;
 
 fn git(path: &Path, args: &[&str]) -> Result<Vec<u8>> {
     let output = Command::new("git")
+        .args(["-c", "core.autocrlf=false"])
         .arg("-C")
         .arg(path)
         .args(args)
@@ -34,6 +35,7 @@ fn repo() -> Result<tempfile::TempDir> {
     git(dir.path(), &["init", "-b", "main"])?;
     git(dir.path(), &["config", "user.name", "Test"])?;
     git(dir.path(), &["config", "user.email", "test@example.org"])?;
+    git(dir.path(), &["config", "core.autocrlf", "false"])?;
     std::fs::write(dir.path().join("a"), b"main\n")?;
     git(dir.path(), &["add", "a"])?;
     git(dir.path(), &["commit", "-qm", "base"])?;
