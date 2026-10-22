@@ -16,6 +16,14 @@ fn git(path: &Path, args: &[&str]) -> Result {
     }
     Ok(())
 }
+fn init(path: &Path, args: &[&str]) -> Result {
+    let mut all = Vec::with_capacity(args.len() + 1);
+    all.push("init");
+    all.extend_from_slice(args);
+    git(path, &all)?;
+    git(path, &["config", "core.autocrlf", "false"])
+}
+
 fn git_output(path: &Path, args: &[&str]) -> Result<Vec<u8>> {
     let output = Command::new("git")
         .arg("-C")
@@ -35,7 +43,7 @@ fn git_output(path: &Path, args: &[&str]) -> Result<Vec<u8>> {
 #[test]
 fn git_dispatch_discovers_current_and_nested_repositories() -> Result {
     let repo = tempfile::tempdir()?;
-    git(repo.path(), &["init", "-b", "main"])?;
+    init(repo.path(), &["-b", "main"])?;
     let nested = repo.path().join("nested");
     std::fs::create_dir(&nested)?;
     let binary = Path::new(env!("CARGO_BIN_EXE_git-good"));
@@ -70,7 +78,7 @@ fn git_dispatch_discovers_current_and_nested_repositories() -> Result {
 fn explicit_path_overrides_cwd_and_failure_uses_stderr() -> Result {
     let repo = tempfile::tempdir()?;
     let other = tempfile::tempdir()?;
-    git(repo.path(), &["init", "-b", "explicit"])?;
+    init(repo.path(), &["-b", "explicit"])?;
     let binary = env!("CARGO_BIN_EXE_git-good");
     let output = Command::new(binary)
         .arg("history")
@@ -95,7 +103,7 @@ fn json_includes_every_commit_beyond_the_former_cap() -> Result {
     use std::io::Write;
     use std::process::Stdio;
     let repo = tempfile::tempdir()?;
-    git(repo.path(), &["init", "-b", "main"])?;
+    init(repo.path(), &["-b", "main"])?;
     let mut child = Command::new("git")
         .arg("-C")
         .arg(repo.path())
@@ -169,7 +177,7 @@ fn browsing_preserves_repository_index_and_dirty_worktree() -> Result {
         Ok(files)
     }
     let repo = tempfile::tempdir()?;
-    git(repo.path(), &["init", "-b", "main"])?;
+    init(repo.path(), &["-b", "main"])?;
     std::fs::write(repo.path().join("tracked"), b"committed\n")?;
     git(repo.path(), &["add", "tracked"])?;
     git(
@@ -267,7 +275,7 @@ fn version_matches_package_without_a_repository() -> Result {
 #[test]
 fn show_discovers_repo_streams_exact_files_and_rejects_invalid_parent() -> Result {
     let repo = tempfile::tempdir()?;
-    git(repo.path(), &["init", "-b", "main"])?;
+    init(repo.path(), &["-b", "main"])?;
     std::fs::create_dir(repo.path().join("nested"))?;
     std::fs::write(repo.path().join("nested/café.txt"), "hello")?;
     git(repo.path(), &["add", "."])?;
@@ -328,7 +336,7 @@ fn show_discovers_repo_streams_exact_files_and_rejects_invalid_parent() -> Resul
 #[test]
 fn show_file_returns_diff_and_missing_path_uses_stderr() -> Result {
     let repo = tempfile::tempdir()?;
-    git(repo.path(), &["init", "-b", "main"])?;
+    init(repo.path(), &["-b", "main"])?;
     std::fs::write(repo.path().join("file"), "hello\nworld")?;
     git(repo.path(), &["add", "."])?;
     git(
@@ -376,7 +384,7 @@ fn show_file_returns_diff_and_missing_path_uses_stderr() -> Result {
 fn show_file_uses_exact_non_utf8_path_bytes() -> Result {
     use std::{ffi::OsString, os::unix::ffi::OsStringExt};
     let repo = tempfile::tempdir()?;
-    git(repo.path(), &["init", "-b", "main"])?;
+    init(repo.path(), &["-b", "main"])?;
     let name = OsString::from_vec(b"raw\xff\nname".to_vec());
     // Store raw Git paths directly: host filesystems need not support these bytes.
     use std::{io::Write, process::Stdio};
@@ -424,7 +432,7 @@ fn show_file_uses_exact_non_utf8_path_bytes() -> Result {
 fn export_is_exact_beyond_diff_budget_and_preserves_existing_destinations() -> Result {
     let repo = tempfile::tempdir()?;
     let destination = tempfile::tempdir()?;
-    git(repo.path(), &["init", "-b", "main"])?;
+    init(repo.path(), &["-b", "main"])?;
     let bytes: Vec<_> = (0..(3 * 1024 * 1024)).map(|n| (n % 251) as u8).collect();
     std::fs::write(repo.path().join("large.bin"), &bytes)?;
     git(repo.path(), &["add", "."])?;
@@ -489,7 +497,7 @@ fn export_is_exact_beyond_diff_budget_and_preserves_existing_destinations() -> R
 #[test]
 fn status_cli_streams_whole_worktree_and_reports_errors() -> Result {
     let repo = tempfile::tempdir()?;
-    git(repo.path(), &["init", "-b", "main"])?;
+    init(repo.path(), &["-b", "main"])?;
     std::fs::create_dir(repo.path().join("nested"))?;
     std::fs::write(repo.path().join("new.txt"), b"new")?;
     let binary = env!("CARGO_BIN_EXE_git-good");
@@ -535,7 +543,7 @@ fn status_cli_streams_whole_worktree_and_reports_errors() -> Result {
 fn selected_status_cli_requires_area_and_returns_working_diff() -> Result {
     let dir = tempfile::tempdir()?;
     let p = dir.path();
-    git(p, &["init", "-b", "main"])?;
+    init(p, &["-b", "main"])?;
     std::fs::write(p.join("a"), b"staged\n")?;
     git(p, &["add", "a"])?;
     std::fs::write(p.join("a"), b"working\n")?;
@@ -576,7 +584,7 @@ fn selected_status_cli_requires_area_and_returns_working_diff() -> Result {
 fn unstage_cli_receipt_and_errors_preserve_working_files() -> Result {
     let dir = tempfile::tempdir()?;
     let p = dir.path();
-    git(p, &["init"])?;
+    init(p, &[])?;
     std::fs::write(p.join("a"), "staged")?;
     git(p, &["add", "a"])?;
     std::fs::write(p.join("a"), "working")?;
@@ -621,7 +629,7 @@ fn unstage_cli_receipt_and_errors_preserve_working_files() -> Result {
 fn stage_cli_receipt_and_errors_preserve_working_files() -> Result {
     let dir = tempfile::tempdir()?;
     let p = dir.path();
-    git(p, &["init"])?;
+    init(p, &[])?;
     std::fs::write(p.join("a"), "working")?;
     let binary = env!("CARGO_BIN_EXE_git-good");
     let out = Command::new(binary)
@@ -666,7 +674,7 @@ fn stage_cli_receipt_and_errors_preserve_working_files() -> Result {
 fn stage_cli_selected_hunks_match_git_and_keep_remaining_edits() -> Result {
     let dir = tempfile::tempdir()?;
     let p = dir.path();
-    git(p, &["init", "-b", "main"])?;
+    init(p, &["-b", "main"])?;
     std::fs::write(
         p.join("a"),
         b"one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\ntwelve\n",
@@ -779,7 +787,7 @@ fn stage_cli_selected_hunks_match_git_and_keep_remaining_edits() -> Result {
 #[test]
 fn commit_cli_commits_the_index_and_preserves_working_changes() -> Result {
     let repo = tempfile::tempdir()?;
-    git(repo.path(), &["init", "-b", "main"])?;
+    init(repo.path(), &["-b", "main"])?;
     git(repo.path(), &["config", "user.name", "Test"])?;
     git(repo.path(), &["config", "user.email", "test@example.org"])?;
     std::fs::write(repo.path().join("a"), b"base\n")?;
@@ -822,7 +830,7 @@ fn commit_cli_commits_the_index_and_preserves_working_changes() -> Result {
 fn commit_cli_runs_hooks_and_reports_failures_with_recovery() -> Result {
     use std::os::unix::fs::PermissionsExt;
     let repo = tempfile::tempdir()?;
-    git(repo.path(), &["init", "-b", "main"])?;
+    init(repo.path(), &["-b", "main"])?;
     git(repo.path(), &["config", "user.name", "Test"])?;
     git(repo.path(), &["config", "user.email", "test@example.org"])?;
     std::fs::write(repo.path().join("a"), b"base\n")?;
@@ -873,7 +881,7 @@ fn commit_cli_runs_hooks_and_reports_failures_with_recovery() -> Result {
 #[test]
 fn refs_cli_streams_branches_and_tags_without_mutating() -> Result {
     let repo = tempfile::tempdir()?;
-    git(repo.path(), &["init", "-b", "main"])?;
+    init(repo.path(), &["-b", "main"])?;
     git(repo.path(), &["config", "user.name", "Test"])?;
     git(repo.path(), &["config", "user.email", "test@example.org"])?;
     std::fs::write(repo.path().join("a"), b"base\n")?;
@@ -909,7 +917,7 @@ fn refs_cli_streams_branches_and_tags_without_mutating() -> Result {
 #[test]
 fn switch_cli_changes_branches_and_reports_dirty_worktrees() -> Result {
     let repo = tempfile::tempdir()?;
-    git(repo.path(), &["init", "-b", "main"])?;
+    init(repo.path(), &["-b", "main"])?;
     git(repo.path(), &["config", "user.name", "Test"])?;
     git(repo.path(), &["config", "user.email", "test@example.org"])?;
     std::fs::write(repo.path().join("a"), b"main\n")?;

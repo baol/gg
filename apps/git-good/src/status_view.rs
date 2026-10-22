@@ -1306,6 +1306,7 @@ mod tests {
     }
     fn generated(path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
         git(path, &["init", "-q"])?;
+        git(path, &["config", "core.autocrlf", "false"])?;
         std::fs::write(
             path.join("a"),
             b"one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\ntwelve\n",
