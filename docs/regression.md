@@ -155,3 +155,9 @@ Native review: the refs sidebar and status line show the current branch upstream
 - Git and CLI tests cover continue, skip, and abort for cherry-pick, revert, and merge, including merge's unsupported skip and restored HEAD/worktree on abort.
 - The native in-progress banner exposes Continue, Skip, and Abort, hides Skip for merges, and shows the conflict count.
 - Recovery refreshes history, refs, and an open Status view at a safe boundary; the conflict window closes once no operation remains.
+
+## Commit-row context menu and reset
+
+- Git oracle tests cover soft, mixed, and hard reset and reject option-shaped or missing targets.
+- CLI tests cover `git good reset --soft|--mixed|--hard COMMIT` receipts and missing-mode errors.
+- egui tests render the reset confirmation, including the hard-reset warning, at 720 and 1120 widths.

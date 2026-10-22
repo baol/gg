@@ -288,3 +288,12 @@ Linux x86_64 · Rust 1.99.1 · local Git fixtures.
 - Continue, skip, and abort are covered for cherry-pick, revert, and merge, including merge's unsupported skip and restored HEAD/worktree on abort.
 - The in-progress banner exposes Continue, Skip, and Abort and hides Skip for merges.
 - Stash, cherry-pick, revert, merge, and conflict resolution refresh an open Status view after success, and the conflict window closes when no operation remains.
+
+## Commit-row context menu and reset · 2026-10-22
+
+Linux x86_64 · Rust 1.99.1 · local Git fixtures.
+
+- 247 workspace tests pass (3 ignored); formatting, Clippy with `-D warnings`, and the debug build pass.
+- The history-row context menu exposes Cherry-pick, Revert, Reset here (Soft/Mixed/Hard), Copy hash, and Copy subject.
+- Git oracle tests cover soft, mixed, and hard reset and reject option-shaped or missing targets; CLI tests verify JSON receipts and missing-mode errors.
+- egui tests render the reset confirmation, including the hard-reset warning, at 720 and 1120 widths.
