@@ -270,3 +270,12 @@ Linux x86_64 · Rust 1.99.1 · local Git fixtures.
 - Git oracle tests cover fast-forward, already-up-to-date, diverged merge commits, forced `--no-ff` merge commits, conflicts with abort and continue, and option-shaped or missing references.
 - CLI tests verify JSON receipts for merge, `fast_forward` and `merge_commit` kinds, conflict reporting, `--abort`, `--continue`, `--no-ff`, and unknown-option stderr.
 - egui tests render the **Merge branch…** dialog and the merge in-progress banner at 720 and 1120 widths; merges hide the unsupported Skip action.
+
+## M5 conflict resolution · 2026-10-22
+
+Linux x86_64 · Rust 1.99.1 · local Git fixtures.
+
+- 241 workspace tests pass (3 ignored); formatting, Clippy with `-D warnings`, and the debug build pass.
+- Git oracle tests cover unmerged path listing, base/ours/theirs content, side selection with staging, manual staging, add/add conflicts without a base, and unknown-path or base-side rejection.
+- CLI tests verify `conflicts` listing, `conflict --file` content, `--use ours|theirs`, `--stage`, and missing-path errors.
+- egui tests render the **Resolve conflicts** window with path selection and Base, Ours, and Theirs panes at 720 and 1120 widths.

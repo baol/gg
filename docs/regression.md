@@ -143,3 +143,9 @@ Native review: the refs sidebar and status line show the current branch upstream
 - Git oracle tests cover fast-forward, already-up-to-date, diverged merge commits, forced `--no-ff` merge commits, conflict detection with abort and continue, and option-shaped or missing references.
 - CLI tests cover JSON receipts for merge, fast-forward and merge-commit kinds, conflict reporting, `--abort`, `--continue`, `--no-ff`, and unknown-option stderr.
 - egui tests render the **Merge branch…** dialog and the merge in-progress banner at 720 and 1120 widths; merges hide the unsupported Skip action.
+
+## M5 conflict resolution
+
+- Git oracle tests cover unmerged path listing, base/ours/theirs content, side selection with staging, manual staging, add/add conflicts without a base, and unknown-path or base-side rejection.
+- CLI tests cover `conflicts` listing, `conflict --file` content, `--use ours|theirs`, `--stage`, and missing-path errors.
+- egui tests render the **Resolve conflicts** window with path selection and Base, Ours, and Theirs panes at 720 and 1120 widths.

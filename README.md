@@ -35,6 +35,8 @@ git good revert COMMIT
 git good cherry-pick|revert --continue|--abort|--skip
 git good merge REF [--no-ff]
 git good merge --continue|--abort
+git good conflicts
+git good conflict --file PATH [--use ours|theirs|--stage]
 ```
 
 `git good` (or `git-good`) opens the containing repository, including from nested directories. Supply a path to open another repository.
@@ -48,6 +50,8 @@ Use **Stash** to park work without committing. **Stash changes…** records a me
 Use the **Commit** menu to cherry-pick or revert the selected history commit. A conflicting operation leaves an in-progress banner with **Continue**, **Skip**, and **Abort**; the status line names the operation and conflict count. The CLI mirrors the same flow with `git good cherry-pick COMMIT`, `git good revert COMMIT`, and their `--continue`, `--skip`, and `--abort` recovery forms.
 
 Use **Refs → Merge branch…** to merge a local branch, remote-tracking ref, or tag. Fast-forward and already-up-to-date merges complete directly; diverged histories create a merge commit, and **Always create a merge commit** forces one. A conflicting merge leaves the in-progress banner with **Continue** and **Abort** (Skip is hidden because Git does not support it), and the status line reports the conflict count. CLI: `git good merge REF [--no-ff]` and `git good merge --continue|--abort`.
+
+While an operation is in progress, choose **Resolve conflicts…** to see each unmerged path with Base, Ours, and Theirs content. Select a side, stage manually resolved content, then Continue or Abort from the banner. CLI: `git good conflicts`, `git good conflict --file PATH`, `git good conflict --file PATH --use ours|theirs`, and `git good conflict --file PATH --stage`.
 
 Choose **Status** to inspect staged, unstaged, untracked, and conflicted paths. **Refresh** rescans the worktree; **Back** restores history. `git good status [PATH]` streams the same entries as JSON.
 
