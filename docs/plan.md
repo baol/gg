@@ -17,7 +17,7 @@ Contracts: [remote tracking and network mutations](architecture.md#remote-tracki
 5. **Remote branch tracking.** Switch to a remote branch by creating a local tracking branch after a clean-worktree check, and expose the same action from the refs sidebar and menu.
 6. **Credentials, progress, and cancellation.** Delegate transport and credential-helper behavior to Git, remove ambient repository overrides, report actionable authentication failures without exposing secrets, bound progress text, and cancel the running network operation on request.
 
-All M4 increments are implemented. The native app now runs on egui/eframe 0.37 and wgpu 30 with Rust 1.95+; the vendored Phosphor font keeps the tracking and cancel icons.
+M4 is complete. The native app now runs on egui/eframe 0.37 and wgpu 30 with Rust 1.95+; the vendored Phosphor font keeps the tracking and cancel icons.
 
 ### Acceptance
 
