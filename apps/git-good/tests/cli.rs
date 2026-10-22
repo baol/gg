@@ -1198,3 +1198,100 @@ fn sync_cli_clones_fetches_pushes_and_reports_failures() -> Result {
     }
     Ok(())
 }
+
+#[test]
+fn stash_cli_lists_pushes_applies_pops_and_drops() -> Result {
+    let repo = tempfile::tempdir()?;
+    init(repo.path(), &["-b", "main"])?;
+    git(repo.path(), &["config", "user.name", "Test"])?;
+    git(repo.path(), &["config", "user.email", "test@example.org"])?;
+    std::fs::write(repo.path().join("a"), b"base\n")?;
+    git(repo.path(), &["add", "a"])?;
+    git(repo.path(), &["commit", "-qm", "base"])?;
+
+    let binary = env!("CARGO_BIN_EXE_git-good");
+    std::fs::write(repo.path().join("a"), b"modified\n")?;
+    let out = Command::new(binary)
+        .args(["stash", "push", "-m", "work", "--repo"])
+        .arg(repo.path())
+        .output()?;
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(out.stderr.is_empty());
+    let receipt: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(receipt["operation"], "stash-push");
+    assert_eq!(receipt["created"], true);
+    assert_eq!(receipt["reference"], "stash@{0}");
+    assert_eq!(std::fs::read(repo.path().join("a"))?, b"base\n");
+
+    let out = Command::new(binary)
+        .args(["stash", "list", "--repo"])
+        .arg(repo.path())
+        .output()?;
+    assert!(out.status.success());
+    let receipt: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(receipt["operation"], "stash-list");
+    assert_eq!(receipt["stashes"][0]["index"], 0);
+    assert_eq!(receipt["stashes"][0]["reference"], "stash@{0}");
+    assert!(
+        receipt["stashes"][0]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("work"))
+    );
+
+    let out = Command::new(binary)
+        .args(["stash", "apply", "--repo"])
+        .arg(repo.path())
+        .output()?;
+    assert!(out.status.success());
+    let receipt: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(receipt["operation"], "stash-apply");
+    assert_eq!(receipt["applied"], true);
+    assert_eq!(receipt["dropped"], false);
+    assert_eq!(receipt["conflicts"], serde_json::json!([]));
+    assert_eq!(std::fs::read(repo.path().join("a"))?, b"modified\n");
+    assert_eq!(
+        git_output(repo.path(), &["stash", "list"])?
+            .split(|byte| *byte == b'\n')
+            .filter(|line| !line.is_empty())
+            .count(),
+        1
+    );
+
+    git(repo.path(), &["checkout", "--", "a"])?;
+    let out = Command::new(binary)
+        .args(["stash", "pop", "--repo"])
+        .arg(repo.path())
+        .output()?;
+    assert!(out.status.success());
+    let receipt: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(receipt["operation"], "stash-pop");
+    assert_eq!(receipt["applied"], true);
+    assert_eq!(receipt["dropped"], true);
+    assert_eq!(std::fs::read(repo.path().join("a"))?, b"modified\n");
+    assert_eq!(git_output(repo.path(), &["stash", "list"])?, b"");
+
+    std::fs::write(repo.path().join("a"), b"again\n")?;
+    git_output(repo.path(), &["stash", "push", "-m", "again"])?;
+    let out = Command::new(binary)
+        .args(["stash", "drop", "--repo"])
+        .arg(repo.path())
+        .output()?;
+    assert!(out.status.success());
+    let receipt: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(receipt["operation"], "stash-drop");
+    assert_eq!(receipt["dropped"], true);
+    assert_eq!(git_output(repo.path(), &["stash", "list"])?, b"");
+
+    let out = Command::new(binary)
+        .args(["stash", "apply", "abc", "--repo"])
+        .arg(repo.path())
+        .output()?;
+    assert!(!out.status.success());
+    assert!(out.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("must look like"));
+    Ok(())
+}

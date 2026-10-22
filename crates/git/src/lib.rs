@@ -178,6 +178,7 @@ pub mod drop;
 pub mod patch;
 pub mod refs;
 pub mod review;
+pub mod stash;
 pub mod status;
 pub mod sync;
 pub mod working_diff;

@@ -23,6 +23,7 @@ mod review_cli;
 mod review_view;
 mod review_worker;
 mod stage_view;
+mod stash_cli;
 mod state;
 mod status_cli;
 mod status_view;
@@ -45,7 +46,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("--help")) {
         println!(
-            "gg · good git\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good refs [PATH]      Print branches, remotes, tags, and HEAD as JSON\ngit-good status [PATH] [--file PATH --area AREA]   Print working status or diff as JSON\ngit-good stage --file PATH [--hunk HEADER]... [--repo PATH]   Stage one file or selected hunks\ngit-good unstage --file PATH [--repo PATH]   Unstage one file\ngit-good commit -m MESSAGE [--repo PATH]   Commit the index after Git hooks\ngit-good switch [--create] BRANCH [--repo PATH]   Switch to or create a local branch\ngit-good show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]   Review or export\n\nBrowse commits reachable from HEAD and all local, remote, and tag refs."
+            "gg · good git\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good refs [PATH]      Print branches, remotes, tags, and HEAD as JSON\ngit-good status [PATH] [--file PATH --area AREA]   Print working status or diff as JSON\ngit-good stage --file PATH [--hunk HEADER]... [--repo PATH]   Stage one file or selected hunks\ngit-good unstage --file PATH [--repo PATH]   Unstage one file\ngit-good commit -m MESSAGE [--repo PATH]   Commit the index after Git hooks\ngit-good switch [--create] BRANCH [--repo PATH]   Switch to or create a local branch\ngit-good stash <list|push|apply|pop|drop> [OPTIONS] [--repo PATH]   List or mutate stashes\ngit-good show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]   Review or export\n\nBrowse commits reachable from HEAD and all local, remote, and tag refs."
         );
         return Ok(());
     }
@@ -69,6 +70,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("switch")) {
         return branch_cli::run(args);
+    }
+    if first.as_deref() == Some(std::ffi::OsStr::new("stash")) {
+        return stash_cli::run(args);
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("fetch")) {
         return sync_cli::fetch(args);
@@ -164,6 +168,26 @@ struct CloneDialog {
     destination: String,
 }
 
+struct StashDialog {
+    message: String,
+    include_untracked: bool,
+    keep_index: bool,
+    error: Option<String>,
+}
+
+struct StashWindow {
+    entries: Vec<gg_engine::stash::StashEntry>,
+    error: Option<String>,
+    notice: Option<String>,
+    confirm_drop: Option<String>,
+}
+
+enum StashAction {
+    Apply(String),
+    Pop(String),
+    Drop(String),
+}
+
 struct Browser {
     logo: Option<egui::TextureHandle>,
     path: String,
@@ -181,6 +205,9 @@ struct Browser {
     network_notice: Option<String>,
     clone_dialog: Option<CloneDialog>,
     track_dialog: Option<String>,
+    stash_dialog: Option<StashDialog>,
+    stash_window: Option<StashWindow>,
+    stash_notice: Option<String>,
     refs_visible: bool,
     refs_query: String,
     state: state::State,
@@ -223,6 +250,9 @@ impl Browser {
             network_notice: None,
             clone_dialog: None,
             track_dialog: None,
+            stash_dialog: None,
+            stash_window: None,
+            stash_notice: None,
             refs_visible: true,
             refs_query: String::new(),
             state: state::State::default(),
@@ -433,6 +463,93 @@ impl Browser {
                 self.network_error = Some(error);
             }
         }
+    }
+
+    fn stash_path(&self) -> Option<PathBuf> {
+        self.state
+            .history
+            .as_ref()
+            .map(|history| history.path.clone())
+    }
+
+    fn refresh_stashes(&mut self) {
+        let Some(path) = self.stash_path() else {
+            return;
+        };
+        let result = gg_git::stash::list(&path);
+        if let Some(window) = &mut self.stash_window {
+            match result {
+                Ok(list) => {
+                    window.entries = list.entries;
+                    window.error = None;
+                }
+                Err(error) => window.error = Some(error),
+            }
+        }
+    }
+
+    fn push_stash(
+        &mut self,
+        ctx: &egui::Context,
+        message: &str,
+        include_untracked: bool,
+        keep_index: bool,
+    ) -> Result<(), String> {
+        let path = self
+            .stash_path()
+            .ok_or("Open a repository before stashing changes.")?;
+        let message = (!message.trim().is_empty()).then_some(message.trim());
+        let receipt = gg_git::stash::push(&path, message, include_untracked, keep_index)?;
+        self.stash_notice = Some(format!(
+            "Stashed{}",
+            receipt
+                .reference
+                .as_deref()
+                .map(|reference| format!(" {reference}"))
+                .unwrap_or_default()
+        ));
+        self.refresh_stashes();
+        self.load(ctx);
+        Ok(())
+    }
+
+    fn restore_stash(
+        &mut self,
+        ctx: &egui::Context,
+        reference: &str,
+        remove: bool,
+    ) -> Result<(), String> {
+        let path = self
+            .stash_path()
+            .ok_or("Open a repository before restoring a stash.")?;
+        let receipt = if remove {
+            gg_git::stash::pop(&path, Some(reference), false)?
+        } else {
+            gg_git::stash::apply(&path, Some(reference), false)?
+        };
+        let action = if remove { "Popped" } else { "Applied" };
+        self.stash_notice = Some(if receipt.conflicts.is_empty() {
+            format!("{action} {reference}")
+        } else {
+            format!(
+                "{action} {reference} · {} conflict(s)",
+                receipt.conflicts.len()
+            )
+        });
+        self.refresh_stashes();
+        self.load(ctx);
+        Ok(())
+    }
+
+    fn drop_stash(&mut self, ctx: &egui::Context, reference: &str) -> Result<(), String> {
+        let path = self
+            .stash_path()
+            .ok_or("Open a repository before dropping a stash.")?;
+        gg_git::stash::drop(&path, Some(reference))?;
+        self.stash_notice = Some(format!("Dropped {reference}"));
+        self.refresh_stashes();
+        self.load(ctx);
+        Ok(())
     }
 
     fn load(&mut self, ctx: &egui::Context) {
@@ -973,6 +1090,40 @@ impl Browser {
                         "Resize the window to at least 1120 px to show the sidebar"
                     });
                 });
+                let stash_busy = self.branch.is_some() || self.network.is_some();
+                let has_repo = self.state.history.is_some();
+                ui.menu_button("Stash", |ui| {
+                    if ui
+                        .add_enabled(has_repo && !stash_busy, egui::Button::new("Stash changes…"))
+                        .on_hover_text("Record working changes in a new stash entry")
+                        .clicked()
+                    {
+                        self.stash_dialog = Some(StashDialog {
+                            message: String::new(),
+                            include_untracked: false,
+                            keep_index: false,
+                            error: None,
+                        });
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(
+                            has_repo && !stash_busy,
+                            egui::Button::new("Manage stashes…"),
+                        )
+                        .on_hover_text("List, apply, pop, or drop stash entries")
+                        .clicked()
+                    {
+                        self.stash_window = Some(StashWindow {
+                            entries: Vec::new(),
+                            error: None,
+                            notice: None,
+                            confirm_drop: None,
+                        });
+                        self.refresh_stashes();
+                        ui.close();
+                    }
+                });
                 ui.separator();
                 let trailing = if self.network.is_some() { 120.0 } else { 84.0 };
                 let identity_width = (ui.available_width() - trailing).max(80.0);
@@ -1251,6 +1402,151 @@ impl Browser {
                 self.track_dialog = None;
             }
         }
+        let mut stash_submit = None;
+        let mut stash_open = true;
+        if let Some(dialog) = &mut self.stash_dialog {
+            let mut cancelled = false;
+            egui::Window::new("Stash changes")
+                .id(egui::Id::unique("stash-changes"))
+                .open(&mut stash_open)
+                .collapsible(false)
+                .resizable(false)
+                .default_width(420.0)
+                .default_pos(ctx.content_rect().center())
+                .pivot(egui::Align2::CENTER_CENTER)
+                .show(ctx, |ui| {
+                    ui.label("Record working changes in a new stash entry.");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut dialog.message)
+                            .hint_text("Message (optional)")
+                            .desired_width(f32::INFINITY),
+                    );
+                    ui.checkbox(&mut dialog.include_untracked, "Include untracked files");
+                    ui.checkbox(&mut dialog.keep_index, "Keep staged changes in the index");
+                    if let Some(error) = &dialog.error {
+                        ui.colored_label(ui.visuals().error_fg_color, error);
+                    }
+                    ui.horizontal(|ui| {
+                        if ui.button("Stash").clicked() {
+                            stash_submit = Some((
+                                dialog.message.clone(),
+                                dialog.include_untracked,
+                                dialog.keep_index,
+                            ));
+                        }
+                        if ui.button("Cancel").clicked() {
+                            cancelled = true;
+                        }
+                    });
+                });
+            if cancelled {
+                stash_open = false;
+            }
+        }
+        if let Some((message, include_untracked, keep_index)) = stash_submit {
+            match self.push_stash(ctx, &message, include_untracked, keep_index) {
+                Ok(()) => self.stash_dialog = None,
+                Err(error) => {
+                    if let Some(dialog) = &mut self.stash_dialog {
+                        dialog.error = Some(error);
+                    }
+                }
+            }
+        } else if self.stash_dialog.is_some() && !stash_open {
+            self.stash_dialog = None;
+        }
+
+        let mut stash_action = None;
+        let mut stash_window_open = true;
+        let mut stash_refresh = false;
+        if let Some(window) = &mut self.stash_window {
+            egui::Window::new("Stashes")
+                .id(egui::Id::unique("stashes"))
+                .open(&mut stash_window_open)
+                .collapsible(false)
+                .resizable(true)
+                .default_width(520.0)
+                .default_pos(ctx.content_rect().center())
+                .pivot(egui::Align2::CENTER_CENTER)
+                .show(ctx, |ui| {
+                    if let Some(error) = &window.error {
+                        ui.colored_label(ui.visuals().error_fg_color, error);
+                    }
+                    if let Some(notice) = &window.notice {
+                        ui.label(notice);
+                    }
+                    if ui.button("Refresh").clicked() {
+                        stash_refresh = true;
+                    }
+                    ui.separator();
+                    if window.entries.is_empty() {
+                        ui.label("No stashes.");
+                    }
+                    for entry in &window.entries {
+                        ui.horizontal(|ui| {
+                            ui.label(egui::RichText::new(&entry.reference).strong());
+                            ui.label(egui::RichText::new(&entry.message).size(11.0));
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if ui.button("Drop").clicked() {
+                                        window.confirm_drop = Some(entry.reference.clone());
+                                    }
+                                    if ui.button("Pop").clicked() {
+                                        stash_action =
+                                            Some(StashAction::Pop(entry.reference.clone()));
+                                    }
+                                    if ui.button("Apply").clicked() {
+                                        stash_action =
+                                            Some(StashAction::Apply(entry.reference.clone()));
+                                    }
+                                },
+                            );
+                        });
+                    }
+                });
+            if window.confirm_drop.is_some() {
+                let reference = window.confirm_drop.clone().unwrap_or_default();
+                egui::Window::new("Drop stash")
+                    .id(egui::Id::unique("drop-stash"))
+                    .collapsible(false)
+                    .resizable(false)
+                    .default_pos(ctx.content_rect().center())
+                    .pivot(egui::Align2::CENTER_CENTER)
+                    .show(ctx, |ui| {
+                        ui.label(format!(
+                            "Drop {reference}? This removes the stash entry, not working files."
+                        ));
+                        ui.horizontal(|ui| {
+                            if ui.button("Drop").clicked() {
+                                stash_action = Some(StashAction::Drop(reference.clone()));
+                                window.confirm_drop = None;
+                            }
+                            if ui.button("Cancel").clicked() {
+                                window.confirm_drop = None;
+                            }
+                        });
+                    });
+            }
+        }
+        if stash_refresh {
+            self.refresh_stashes();
+        }
+        if let Some(action) = stash_action {
+            let result = match action {
+                StashAction::Apply(reference) => self.restore_stash(ctx, &reference, false),
+                StashAction::Pop(reference) => self.restore_stash(ctx, &reference, true),
+                StashAction::Drop(reference) => self.drop_stash(ctx, &reference),
+            };
+            if let Err(error) = result
+                && let Some(window) = &mut self.stash_window
+            {
+                window.error = Some(error);
+            }
+        } else if self.stash_window.is_some() && !stash_window_open {
+            self.stash_window = None;
+        }
+
         egui::Panel::bottom("status").exact_size(25.0).show(ui, |ui| {
             let (message, color) = if let Some(error) = &self.network_error {
                 (format!("Network · {error}"), ui.visuals().error_fg_color)
@@ -1278,6 +1574,8 @@ impl Browser {
                 (format!("Branch · {warning}"), ui.visuals().text_color())
             } else if let Some(label) = &self.branch_label {
                 (label.clone(), ui.visuals().text_color())
+            } else if let Some(notice) = &self.stash_notice {
+                (format!("Stash · {notice}"), ui.visuals().text_color())
             } else if self.pending.is_some() {
                 (format!("Reading {}{}", self.state.requested.as_deref().unwrap_or(std::path::Path::new(".")).display(), if self.state.history.is_some() { " · showing previous results" } else { "" }), ui.visuals().text_color())
             } else if !self.state.finished && self.worker.is_some() {
@@ -1730,6 +2028,71 @@ mod tests {
                     assert!(text.iter().any(|line| line.contains("Track branch")));
                 }
             }
+        }
+    }
+
+    #[test]
+    fn stash_dialog_and_window_render_at_supported_widths() {
+        for width in [720.0, 1120.0] {
+            let ctx = egui::Context::default();
+            let mut app = layout_fixture();
+            app.stash_dialog = Some(StashDialog {
+                message: "work in progress".into(),
+                include_untracked: true,
+                keep_index: false,
+                error: None,
+            });
+            let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let output = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let text = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert!(text.iter().any(|line| line.contains("Stash changes")));
+            assert!(
+                text.iter()
+                    .any(|line| line.contains("Include untracked files"))
+            );
+
+            app.stash_dialog = None;
+            app.stash_window = Some(StashWindow {
+                entries: vec![gg_engine::stash::StashEntry {
+                    index: 0,
+                    reference: "stash@{0}".into(),
+                    commit: "abc123".into(),
+                    message: "On main: work in progress".into(),
+                }],
+                error: None,
+                notice: None,
+                confirm_drop: None,
+            });
+            let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let output = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let text = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert!(text.iter().any(|line| line.contains("Stashes")));
+            assert!(text.iter().any(|line| line.contains("stash@{0}")));
+            assert!(text.iter().any(|line| line.contains("Apply")));
+            assert!(text.iter().any(|line| line.contains("Pop")));
+            assert!(text.iter().any(|line| line.contains("Drop")));
         }
     }
 
