@@ -249,3 +249,4 @@ Linux x86_64 · Rust 1.99.1 · local Git fixtures.
 - Git oracle tests compare stash push, list, apply, pop, and drop with Git for modified, staged, and untracked changes; messages; `--include-untracked`; `--keep-index`; newest-first ordering; conflicting apply and pop; invalid references; clean trees; and preservation of unrelated files.
 - CLI tests verify JSON receipts for `stash list`, `push`, `apply`, `pop`, and `drop`, plus actionable stderr for invalid references.
 - egui tests render the **Stash changes…** dialog and **Manage stashes…** window at 720 and 1120 widths, including entry references and the Apply, Pop, and Drop actions.
+- [Six native CI jobs](https://github.com/baol/gg/actions/runs/39824257394) pass tests, Clippy with `-D warnings`, release builds, CLI smoke checks, and packaging on Linux, macOS, and Windows on x86_64 and arm64 for `f1d2262`.
