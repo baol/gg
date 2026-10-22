@@ -82,6 +82,7 @@ pub mod diff;
 pub mod merge;
 pub mod mutation;
 pub mod refs;
+pub mod reset;
 pub mod review;
 pub mod stash;
 pub mod status;

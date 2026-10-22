@@ -19,6 +19,25 @@ Contracts: [history mutations and recovery](architecture.md#history-mutations-an
 
 M5 is complete. Stash, cherry-pick, revert, merge, conflict resolution, recovery, and operation-state handling are implemented and verified.
 
+## Context menus
+
+Goal: expose commit and ref actions through right-click and keyboard context menus.
+
+### Increments
+
+1. **Commit-row menu · in progress.** Add **Cherry-pick**, **Revert**, **Reset here** (Soft, Mixed, Hard with confirmation), **Copy hash**, and **Copy subject** to history rows, with right-click access.
+2. **Compare to local.** Compare the selected commit against the current branch tip in a review diff.
+3. **Ref menus.** Add checkout/switch, merge, delete branch, delete tag, track remote, and copy actions to branch, tag, and remote items.
+
+### Acceptance
+
+| Scenario | Expected result | Method |
+| --- | --- | --- |
+| Commit menu | Right-click or keyboard opens the commit actions; copy writes the exact hash/subject | egui and native review |
+| Reset here | Soft, Mixed, and Hard reset match Git; Hard warns before discarding changes | Git oracle, CLI, and native review |
+| Compare to local | Selected commit is compared with the current branch tip | Git oracle and native review |
+| Ref menus | Branch/tag/remote actions match Git; destructive actions confirm | Git oracle, CLI, and native review |
+
 ### Acceptance
 
 | Scenario | Expected result | Method |

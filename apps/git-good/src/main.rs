@@ -22,6 +22,7 @@ mod phosphor;
 mod records;
 mod refs_cli;
 mod refs_view;
+mod reset_cli;
 mod review_cli;
 mod review_view;
 mod review_worker;
@@ -49,7 +50,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("--help")) {
         println!(
-            "gg · good git\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good refs [PATH]      Print branches, remotes, tags, and HEAD as JSON\ngit-good status [PATH] [--file PATH --area AREA]   Print working status or diff as JSON\ngit-good stage --file PATH [--hunk HEADER]... [--repo PATH]   Stage one file or selected hunks\ngit-good unstage --file PATH [--repo PATH]   Unstage one file\ngit-good commit -m MESSAGE [--repo PATH]   Commit the index after Git hooks\ngit-good switch [--create] BRANCH [--repo PATH]   Switch to or create a local branch\ngit-good fetch [REMOTE] [--prune] [--repo PATH]   Fetch and update remote-tracking refs\ngit-good push [REMOTE] [BRANCH] [--set-upstream] [--repo PATH]   Push a local branch without force\ngit-good clone URL [PATH]   Clone a repository and open it\ngit-good stash <list|push|apply|pop|drop> [OPTIONS] [--repo PATH]   List or mutate stashes\ngit-good cherry-pick COMMIT [--repo PATH]   Apply a commit\ngit-good revert COMMIT [--repo PATH]   Invert a commit\ngit-good merge REF [--no-ff] [--repo PATH]   Merge a branch, remote, or tag\ngit-good conflicts [--repo PATH]   List unmerged paths\ngit-good conflict --file PATH [--use ours|theirs|--stage] [--repo PATH]   Read or resolve a conflict\ngit-good show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]   Review or export\n\nBrowse commits reachable from HEAD and all local, remote, and tag refs."
+            "gg · good git\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good refs [PATH]      Print branches, remotes, tags, and HEAD as JSON\ngit-good status [PATH] [--file PATH --area AREA]   Print working status or diff as JSON\ngit-good stage --file PATH [--hunk HEADER]... [--repo PATH]   Stage one file or selected hunks\ngit-good unstage --file PATH [--repo PATH]   Unstage one file\ngit-good commit -m MESSAGE [--repo PATH]   Commit the index after Git hooks\ngit-good switch [--create] BRANCH [--repo PATH]   Switch to or create a local branch\ngit-good fetch [REMOTE] [--prune] [--repo PATH]   Fetch and update remote-tracking refs\ngit-good push [REMOTE] [BRANCH] [--set-upstream] [--repo PATH]   Push a local branch without force\ngit-good clone URL [PATH]   Clone a repository and open it\ngit-good stash <list|push|apply|pop|drop> [OPTIONS] [--repo PATH]   List or mutate stashes\ngit-good cherry-pick COMMIT [--repo PATH]   Apply a commit\ngit-good revert COMMIT [--repo PATH]   Invert a commit\ngit-good merge REF [--no-ff] [--repo PATH]   Merge a branch, remote, or tag\ngit-good conflicts [--repo PATH]   List unmerged paths\ngit-good conflict --file PATH [--use ours|theirs|--stage] [--repo PATH]   Read or resolve a conflict\ngit-good reset --soft|--mixed|--hard COMMIT [--repo PATH]   Reset the current branch\ngit-good show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]   Review or export\n\nBrowse commits reachable from HEAD and all local, remote, and tag refs."
         );
         return Ok(());
     }
@@ -91,6 +92,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("conflict")) {
         return conflict_cli::run(args);
+    }
+    if first.as_deref() == Some(std::ffi::OsStr::new("reset")) {
+        return reset_cli::run(args);
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("fetch")) {
         return sync_cli::fetch(args);
@@ -226,6 +230,13 @@ enum MutationAction {
     Abort,
 }
 
+#[derive(Clone, Copy)]
+enum CommitAction {
+    CherryPick,
+    Revert,
+    Reset(gg_engine::reset::Mode),
+}
+
 struct Browser {
     logo: Option<egui::TextureHandle>,
     path: String,
@@ -251,6 +262,7 @@ struct Browser {
     mutation_error: Option<String>,
     merge_dialog: Option<MergeDialog>,
     conflict_view: Option<ConflictView>,
+    reset_confirm: Option<(String, gg_engine::reset::Mode)>,
     refs_visible: bool,
     refs_query: String,
     state: state::State,
@@ -301,6 +313,7 @@ impl Browser {
             mutation_error: None,
             merge_dialog: None,
             conflict_view: None,
+            reset_confirm: None,
             refs_visible: true,
             refs_query: String::new(),
             state: state::State::default(),
@@ -665,6 +678,32 @@ impl Browser {
             gg_engine::mutation::Operation::Merge => String::new(),
         });
         self.conflict_view = None;
+        self.refresh_mutation();
+        self.load(ctx);
+        self.refresh_working(ctx);
+        Ok(())
+    }
+
+    fn start_reset(
+        &mut self,
+        ctx: &egui::Context,
+        commit: &str,
+        mode: gg_engine::reset::Mode,
+    ) -> Result<(), String> {
+        let path = self
+            .stash_path()
+            .ok_or("Open a repository before resetting.")?;
+        let receipt = gg_git::reset::reset(&path, commit, mode)?;
+        self.mutation_error = None;
+        self.mutation_notice = Some(format!(
+            "Reset to {}{}",
+            receipt.commit.chars().take(8).collect::<String>(),
+            if mode == gg_engine::reset::Mode::Hard {
+                " · hard"
+            } else {
+                ""
+            }
+        ));
         self.refresh_mutation();
         self.load(ctx);
         self.refresh_working(ctx);
@@ -1760,6 +1799,47 @@ impl Browser {
                 self.track_dialog = None;
             }
         }
+        let mut reset_submit = None;
+        let mut reset_cancel = false;
+        if let Some((commit, mode)) = self.reset_confirm.clone() {
+            egui::Window::new("Reset here")
+                .id(egui::Id::unique("reset-here"))
+                .collapsible(false)
+                .resizable(false)
+                .default_pos(ctx.content_rect().center())
+                .pivot(egui::Align2::CENTER_CENTER)
+                .show(ctx, |ui| {
+                    ui.label(format!(
+                        "Reset the current branch to {} using {} reset?",
+                        commit.chars().take(8).collect::<String>(),
+                        mode.as_str()
+                    ));
+                    if mode == gg_engine::reset::Mode::Hard {
+                        ui.colored_label(
+                            ui.visuals().warn_fg_color,
+                            "Hard reset discards staged and working changes.",
+                        );
+                    }
+                    ui.horizontal(|ui| {
+                        if ui.button("Reset").clicked() {
+                            reset_submit = Some((commit.clone(), mode));
+                        }
+                        if ui.button("Cancel").clicked() {
+                            reset_cancel = true;
+                        }
+                    });
+                });
+        }
+        if reset_cancel {
+            self.reset_confirm = None;
+        }
+        if let Some((commit, mode)) = reset_submit {
+            self.reset_confirm = None;
+            if let Err(error) = self.start_reset(ctx, &commit, mode) {
+                self.mutation_error = Some(error);
+            }
+        }
+
         let mut conflict_select = None;
         let mut conflict_action = None;
         let mut conflict_open = true;
@@ -2156,6 +2236,7 @@ impl Browser {
                 });
             self.details_rect = details.response.rect;
         }
+        let mut pending_commit_action: Option<(String, CommitAction)> = None;
         egui::CentralPanel::default().show(ui, |ui| {
             if narrow && self.narrow_details {
                 self.history_rect = egui::Rect::NOTHING;
@@ -2248,6 +2329,43 @@ impl Browser {
                                             })
                                             .inner;
                                         self.row_rects.push((row, response.rect));
+                                        response.context_menu(|ui| {
+                                            let id = commit.id.clone();
+                                            if ui.button("Cherry-pick").clicked() {
+                                                pending_commit_action =
+                                                    Some((id.clone(), CommitAction::CherryPick));
+                                                ui.close();
+                                            }
+                                            if ui.button("Revert").clicked() {
+                                                pending_commit_action =
+                                                    Some((id.clone(), CommitAction::Revert));
+                                                ui.close();
+                                            }
+                                            ui.menu_button("Reset here", |ui| {
+                                                for (label, mode) in [
+                                                    ("Soft", gg_engine::reset::Mode::Soft),
+                                                    ("Mixed", gg_engine::reset::Mode::Mixed),
+                                                    ("Hard", gg_engine::reset::Mode::Hard),
+                                                ] {
+                                                    if ui.button(label).clicked() {
+                                                        pending_commit_action = Some((
+                                                            id.clone(),
+                                                            CommitAction::Reset(mode),
+                                                        ));
+                                                        ui.close();
+                                                    }
+                                                }
+                                            });
+                                            ui.separator();
+                                            if ui.button("Copy hash").clicked() {
+                                                ui.ctx().copy_text(id.clone());
+                                                ui.close();
+                                            }
+                                            if ui.button("Copy subject").clicked() {
+                                                ui.ctx().copy_text(commit.subject().to_string());
+                                                ui.close();
+                                            }
+                                        });
                                         if let Some(action) = ref_action {
                                             response.surrender_focus();
                                             self.state.select_row(row);
@@ -2322,6 +2440,29 @@ impl Browser {
                 ui.label("Choose Open… to enter a repository path.");
             }
         });
+        if let Some((id, action)) = pending_commit_action {
+            self.state.selected = Some(id.clone());
+            self.state.reconcile_selection();
+            match action {
+                CommitAction::CherryPick => {
+                    if let Err(error) =
+                        self.start_mutation(ctx, gg_engine::mutation::Operation::CherryPick)
+                    {
+                        self.mutation_error = Some(error);
+                    }
+                }
+                CommitAction::Revert => {
+                    if let Err(error) =
+                        self.start_mutation(ctx, gg_engine::mutation::Operation::Revert)
+                    {
+                        self.mutation_error = Some(error);
+                    }
+                }
+                CommitAction::Reset(mode) => {
+                    self.reset_confirm = Some((id, mode));
+                }
+            }
+        }
         if self.pending_filter_edit
             && let Some(pending) = &self.pending
             && !pending.request(stream::Request {
@@ -2592,6 +2733,33 @@ mod tests {
             assert!(text.iter().any(|line| line.contains("Apply")));
             assert!(text.iter().any(|line| line.contains("Pop")));
             assert!(text.iter().any(|line| line.contains("Drop")));
+        }
+    }
+
+    #[test]
+    fn reset_confirmation_renders_at_supported_widths() {
+        for width in [720.0, 1120.0] {
+            let ctx = egui::Context::default();
+            let mut app = layout_fixture();
+            app.reset_confirm = Some(("abc123".into(), gg_engine::reset::Mode::Hard));
+            let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let output = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let text = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert!(text.iter().any(|line| line.contains("Reset here")));
+            assert!(text.iter().any(|line| line.contains("Hard reset discards")));
+            assert!(text.iter().any(|line| line.contains("Reset")));
+            assert!(text.iter().any(|line| line.contains("Cancel")));
         }
     }
 

@@ -1614,3 +1614,54 @@ fn conflict_cli_lists_reads_and_resolves() -> Result {
     assert!(String::from_utf8_lossy(&out.stderr).contains("No unmerged stages"));
     Ok(())
 }
+
+#[test]
+fn reset_cli_applies_soft_mixed_and_hard() -> Result {
+    let repo = tempfile::tempdir()?;
+    init(repo.path(), &["-b", "main"])?;
+    git(repo.path(), &["config", "user.name", "Test"])?;
+    git(repo.path(), &["config", "user.email", "test@example.org"])?;
+    std::fs::write(repo.path().join("a"), b"one\n")?;
+    git(repo.path(), &["add", "a"])?;
+    git(repo.path(), &["commit", "-qm", "one"])?;
+    std::fs::write(repo.path().join("a"), b"two\n")?;
+    git(repo.path(), &["commit", "-qam", "two"])?;
+    let first = git_output(repo.path(), &["rev-parse", "HEAD^"])?;
+
+    let binary = env!("CARGO_BIN_EXE_git-good");
+    let out = Command::new(binary)
+        .args(["reset", "--soft", "HEAD^", "--repo"])
+        .arg(repo.path())
+        .output()?;
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let receipt: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(receipt["operation"], "reset");
+    assert_eq!(receipt["mode"], "soft");
+    assert_eq!(receipt["applied"], true);
+    assert_eq!(git_output(repo.path(), &["rev-parse", "HEAD"])?, first);
+    assert_eq!(std::fs::read(repo.path().join("a"))?, b"two\n");
+    assert_eq!(
+        git_output(repo.path(), &["diff", "--cached", "--name-only"])?,
+        b"a\n"
+    );
+
+    let out = Command::new(binary)
+        .args(["reset", "--hard", "HEAD", "--repo"])
+        .arg(repo.path())
+        .output()?;
+    assert!(out.status.success());
+    assert_eq!(git_output(repo.path(), &["status", "--porcelain"])?, b"");
+
+    let out = Command::new(binary)
+        .args(["reset", "missing", "--repo"])
+        .arg(repo.path())
+        .output()?;
+    assert!(!out.status.success());
+    assert!(out.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("requires --soft"));
+    Ok(())
+}
