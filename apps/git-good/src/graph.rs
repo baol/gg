@@ -104,10 +104,7 @@ fn color(lane: u8) -> egui::Color32 {
 }
 
 fn parent_color(row: &Row, parent: u8) -> egui::Color32 {
-    let lane_was_active = row.before & (1 << row.lane) != 0;
-    let parent_was_active = row.before & (1 << parent) != 0;
-    let new_single_parent_tip = row.parents.len() == 1 && !lane_was_active;
-    if new_single_parent_tip && parent_was_active {
+    if row.parents.len() == 1 {
         color(row.lane)
     } else {
         color(parent)
@@ -221,7 +218,7 @@ mod tests {
     }
 
     #[test]
-    fn a_new_branch_tip_uses_its_own_color_until_it_joins_an_existing_lane() {
+    fn a_single_parent_branch_keeps_its_color_until_it_joins_an_existing_lane() {
         let mut graph = Graph::default();
         let first = graph.push(&commit("first", &["root"]));
         let second = graph.push(&commit("second", &["root"]));
@@ -230,6 +227,14 @@ mod tests {
         assert!(second.before & (1 << first.lane) != 0);
         assert_eq!(second.parents, vec![first.lane]);
         assert_eq!(parent_color(&second, first.lane), color(second.lane));
+
+        let active = Row {
+            lane: 1,
+            before: 0b11,
+            after: 0b11,
+            parents: vec![0],
+        };
+        assert_eq!(parent_color(&active, 0), color(active.lane));
     }
 
     #[test]
