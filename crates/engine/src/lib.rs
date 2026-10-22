@@ -78,6 +78,7 @@ mod tests {
 }
 
 pub mod diff;
+pub mod merge;
 pub mod mutation;
 pub mod refs;
 pub mod review;

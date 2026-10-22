@@ -21,6 +21,13 @@ pub fn state(path: &Path) -> Result<Option<OperationState>, String> {
             conflicts,
         }));
     }
+    if let Some(commit) = head(path, "MERGE_HEAD")? {
+        return Ok(Some(OperationState {
+            operation: Operation::Merge,
+            commit: Some(commit),
+            conflicts,
+        }));
+    }
     Ok(None)
 }
 
@@ -41,6 +48,11 @@ pub fn abort_operation(path: &Path, operation: Operation) -> Result<MutationRece
 }
 
 pub fn skip_operation(path: &Path, operation: Operation) -> Result<MutationReceipt, String> {
+    if operation == Operation::Merge {
+        return Err(
+            "Merge does not support skip. Resolve conflicts and continue, or abort.".into(),
+        );
+    }
     finish(path, operation, "skip", "Skip")
 }
 
@@ -180,6 +192,7 @@ fn label(operation: Operation) -> &'static str {
     match operation {
         Operation::CherryPick => "Cherry-pick",
         Operation::Revert => "Revert",
+        Operation::Merge => "Merge",
     }
 }
 

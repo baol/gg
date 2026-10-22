@@ -261,3 +261,12 @@ Linux x86_64 · Rust 1.99.1 · local Git fixtures.
 - CLI tests verify JSON receipts for `cherry-pick` and `revert`, conflict reporting, `--abort`, `--continue`, and unknown-option stderr.
 - egui tests render the in-progress banner with Continue, Skip, and Abort at 720 and 1120 widths.
 - [Six native CI jobs](https://github.com/baol/gg/actions/runs/39828199511) pass tests, Clippy with `-D warnings`, release builds, CLI smoke checks, and packaging on Linux, macOS, and Windows on x86_64 and arm64 for `c7a582d`.
+
+## M5 merge and conflicts · 2026-10-22
+
+Linux x86_64 · Rust 1.99.1 · local Git fixtures.
+
+- 234 workspace tests pass (3 ignored); formatting, Clippy with `-D warnings`, and the debug build pass.
+- Git oracle tests cover fast-forward, already-up-to-date, diverged merge commits, forced `--no-ff` merge commits, conflicts with abort and continue, and option-shaped or missing references.
+- CLI tests verify JSON receipts for merge, `fast_forward` and `merge_commit` kinds, conflict reporting, `--abort`, `--continue`, `--no-ff`, and unknown-option stderr.
+- egui tests render the **Merge branch…** dialog and the merge in-progress banner at 720 and 1120 widths; merges hide the unsupported Skip action.

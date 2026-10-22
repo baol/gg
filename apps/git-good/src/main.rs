@@ -13,6 +13,7 @@ mod graph;
 mod history_view;
 #[cfg(test)]
 mod interaction_tests;
+mod merge_cli;
 mod mutation_cli;
 mod navigation;
 mod network;
@@ -47,7 +48,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("--help")) {
         println!(
-            "gg · good git\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good refs [PATH]      Print branches, remotes, tags, and HEAD as JSON\ngit-good status [PATH] [--file PATH --area AREA]   Print working status or diff as JSON\ngit-good stage --file PATH [--hunk HEADER]... [--repo PATH]   Stage one file or selected hunks\ngit-good unstage --file PATH [--repo PATH]   Unstage one file\ngit-good commit -m MESSAGE [--repo PATH]   Commit the index after Git hooks\ngit-good switch [--create] BRANCH [--repo PATH]   Switch to or create a local branch\ngit-good fetch [REMOTE] [--prune] [--repo PATH]   Fetch and update remote-tracking refs\ngit-good push [REMOTE] [BRANCH] [--set-upstream] [--repo PATH]   Push a local branch without force\ngit-good clone URL [PATH]   Clone a repository and open it\ngit-good stash <list|push|apply|pop|drop> [OPTIONS] [--repo PATH]   List or mutate stashes\ngit-good cherry-pick COMMIT [--repo PATH]   Apply a commit\ngit-good revert COMMIT [--repo PATH]   Invert a commit\ngit-good show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]   Review or export\n\nBrowse commits reachable from HEAD and all local, remote, and tag refs."
+            "gg · good git\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good refs [PATH]      Print branches, remotes, tags, and HEAD as JSON\ngit-good status [PATH] [--file PATH --area AREA]   Print working status or diff as JSON\ngit-good stage --file PATH [--hunk HEADER]... [--repo PATH]   Stage one file or selected hunks\ngit-good unstage --file PATH [--repo PATH]   Unstage one file\ngit-good commit -m MESSAGE [--repo PATH]   Commit the index after Git hooks\ngit-good switch [--create] BRANCH [--repo PATH]   Switch to or create a local branch\ngit-good fetch [REMOTE] [--prune] [--repo PATH]   Fetch and update remote-tracking refs\ngit-good push [REMOTE] [BRANCH] [--set-upstream] [--repo PATH]   Push a local branch without force\ngit-good clone URL [PATH]   Clone a repository and open it\ngit-good stash <list|push|apply|pop|drop> [OPTIONS] [--repo PATH]   List or mutate stashes\ngit-good cherry-pick COMMIT [--repo PATH]   Apply a commit\ngit-good revert COMMIT [--repo PATH]   Invert a commit\ngit-good merge REF [--no-ff] [--repo PATH]   Merge a branch, remote, or tag\ngit-good show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]   Review or export\n\nBrowse commits reachable from HEAD and all local, remote, and tag refs."
         );
         return Ok(());
     }
@@ -80,6 +81,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("revert")) {
         return mutation_cli::revert(args);
+    }
+    if first.as_deref() == Some(std::ffi::OsStr::new("merge")) {
+        return merge_cli::run(args);
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("fetch")) {
         return sync_cli::fetch(args);
@@ -189,6 +193,12 @@ struct StashWindow {
     confirm_drop: Option<String>,
 }
 
+struct MergeDialog {
+    reference: String,
+    no_ff: bool,
+    error: Option<String>,
+}
+
 enum StashAction {
     Apply(String),
     Pop(String),
@@ -225,6 +235,7 @@ struct Browser {
     mutation: Option<gg_engine::mutation::OperationState>,
     mutation_notice: Option<String>,
     mutation_error: Option<String>,
+    merge_dialog: Option<MergeDialog>,
     refs_visible: bool,
     refs_query: String,
     state: state::State,
@@ -273,6 +284,7 @@ impl Browser {
             mutation: None,
             mutation_notice: None,
             mutation_error: None,
+            merge_dialog: None,
             refs_visible: true,
             refs_query: String::new(),
             state: state::State::default(),
@@ -599,6 +611,9 @@ impl Browser {
                 gg_git::mutation::cherry_pick(&path, &commit)?
             }
             gg_engine::mutation::Operation::Revert => gg_git::mutation::revert(&path, &commit)?,
+            gg_engine::mutation::Operation::Merge => {
+                return Err("Use the Merge action for merge operations.".into());
+            }
         };
         self.mutation_error = None;
         self.mutation_notice = Some(match operation {
@@ -620,6 +635,7 @@ impl Browser {
                     format!(" · {} conflict(s)", receipt.conflicts.len())
                 }
             ),
+            gg_engine::mutation::Operation::Merge => String::new(),
         });
         self.refresh_mutation();
         self.load(ctx);
@@ -653,6 +669,39 @@ impl Browser {
                 receipt.conflicts.len()
             ));
         }
+        self.refresh_mutation();
+        self.load(ctx);
+        Ok(())
+    }
+
+    fn start_merge(
+        &mut self,
+        ctx: &egui::Context,
+        reference: &str,
+        no_ff: bool,
+    ) -> Result<(), String> {
+        let path = self
+            .stash_path()
+            .ok_or("Open a repository before merging.")?;
+        let receipt = gg_git::merge::merge(&path, reference, no_ff)?;
+        self.mutation_error = None;
+        self.mutation_notice = Some(match receipt.kind {
+            Some(gg_engine::merge::Kind::UpToDate) => {
+                format!("Merge {reference} · already up to date")
+            }
+            Some(gg_engine::merge::Kind::FastForward) => format!("Fast-forwarded to {reference}"),
+            Some(gg_engine::merge::Kind::MergeCommit) => {
+                format!("Merged {reference} as a merge commit")
+            }
+            None => format!(
+                "Merged {reference}{}",
+                if receipt.conflicts.is_empty() {
+                    String::new()
+                } else {
+                    format!(" · {} conflict(s)", receipt.conflicts.len())
+                }
+            ),
+        });
         self.refresh_mutation();
         self.load(ctx);
         Ok(())
@@ -1078,6 +1127,7 @@ impl Browser {
                 let mut switch = None;
                 let mut new_branch = false;
                 let mut track_branch = false;
+                let mut merge = false;
                 let mut section = |ui: &mut egui::Ui, title: &str, kind| {
                     let filtered = refs
                         .items
@@ -1126,6 +1176,17 @@ impl Browser {
                         track_branch = true;
                         ui.close();
                     }
+                    if ui
+                        .add_enabled(
+                            !branch_pending && self.mutation.is_none() && self.network.is_none(),
+                            egui::Button::new("Merge branch…"),
+                        )
+                        .on_hover_text("Merge a local branch, remote-tracking ref, or tag")
+                        .clicked()
+                    {
+                        merge = true;
+                        ui.close();
+                    }
                     let branches = refs
                         .items
                         .iter()
@@ -1172,6 +1233,13 @@ impl Browser {
                 }
                 if track_branch {
                     self.track_dialog = Some(self.default_track_branch());
+                }
+                if merge {
+                    self.merge_dialog = Some(MergeDialog {
+                        reference: String::new(),
+                        no_ff: false,
+                        error: None,
+                    });
                 }
                 if let Some(id) = jump {
                     self.jump_to_ref(id);
@@ -1349,7 +1417,9 @@ impl Browser {
                         if ui.button("Continue").clicked() {
                             mutation_action = Some(MutationAction::Continue);
                         }
-                        if ui.button("Skip").clicked() {
+                        if state.operation != gg_engine::mutation::Operation::Merge
+                            && ui.button("Skip").clicked()
+                        {
                             mutation_action = Some(MutationAction::Skip);
                         }
                         if ui.button("Abort").clicked() {
@@ -1575,6 +1645,61 @@ impl Browser {
                 self.track_dialog = None;
             }
         }
+        let mut merge_submit = None;
+        let mut merge_open = true;
+        if let Some(dialog) = &mut self.merge_dialog {
+            let mut cancelled = false;
+            egui::Window::new("Merge branch")
+                .id(egui::Id::unique("merge-branch"))
+                .open(&mut merge_open)
+                .collapsible(false)
+                .resizable(false)
+                .default_width(420.0)
+                .default_pos(ctx.content_rect().center())
+                .pivot(egui::Align2::CENTER_CENTER)
+                .show(ctx, |ui| {
+                    ui.label("Merge a local branch, remote-tracking ref, or tag into the current branch.");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut dialog.reference)
+                            .hint_text("origin/main or feature")
+                            .desired_width(f32::INFINITY),
+                    );
+                    ui.checkbox(&mut dialog.no_ff, "Always create a merge commit");
+                    if let Some(error) = &dialog.error {
+                        ui.colored_label(ui.visuals().error_fg_color, error);
+                    }
+                    ui.horizontal(|ui| {
+                        if ui
+                            .add_enabled(
+                                !dialog.reference.trim().is_empty(),
+                                egui::Button::new("Merge"),
+                            )
+                            .clicked()
+                        {
+                            merge_submit = Some((dialog.reference.trim().to_string(), dialog.no_ff));
+                        }
+                        if ui.button("Cancel").clicked() {
+                            cancelled = true;
+                        }
+                    });
+                });
+            if cancelled {
+                merge_open = false;
+            }
+        }
+        if let Some((reference, no_ff)) = merge_submit {
+            match self.start_merge(ctx, &reference, no_ff) {
+                Ok(()) => self.merge_dialog = None,
+                Err(error) => {
+                    if let Some(dialog) = &mut self.merge_dialog {
+                        dialog.error = Some(error);
+                    }
+                }
+            }
+        } else if self.merge_dialog.is_some() && !merge_open {
+            self.merge_dialog = None;
+        }
+
         let mut stash_submit = None;
         let mut stash_open = true;
         if let Some(dialog) = &mut self.stash_dialog {
@@ -2270,6 +2395,63 @@ mod tests {
             assert!(text.iter().any(|line| line.contains("Apply")));
             assert!(text.iter().any(|line| line.contains("Pop")));
             assert!(text.iter().any(|line| line.contains("Drop")));
+        }
+    }
+
+    #[test]
+    fn merge_dialog_and_banner_render_at_supported_widths() {
+        for width in [720.0, 1120.0] {
+            let ctx = egui::Context::default();
+            let mut app = layout_fixture();
+            app.merge_dialog = Some(MergeDialog {
+                reference: "origin/main".into(),
+                no_ff: true,
+                error: None,
+            });
+            let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let output = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let text = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert!(text.iter().any(|line| line.contains("Merge branch")));
+            assert!(
+                text.iter()
+                    .any(|line| line.contains("Always create a merge commit"))
+            );
+
+            app.merge_dialog = None;
+            app.mutation = Some(gg_engine::mutation::OperationState {
+                operation: gg_engine::mutation::Operation::Merge,
+                commit: Some("abc123".into()),
+                conflicts: vec!["a".into()],
+            });
+            let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let output = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let text = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert!(text.iter().any(|line| line.contains("merge in progress")));
+            assert!(text.iter().any(|line| line.contains("Continue")));
+            assert!(text.iter().any(|line| line.contains("Abort")));
+            assert!(!text.iter().any(|line| line == &"Skip"), "{text:?}");
         }
     }
 
