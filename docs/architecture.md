@@ -257,3 +257,21 @@ Remote-branch checkout creates a local branch that tracks the selected remote br
 `git good fetch [REMOTE] [--prune] [--repo PATH]` updates remote-tracking refs and prints a JSON receipt with the repository, remote, and fetched state. `git good push [REMOTE] [BRANCH] [--set-upstream] [--repo PATH]` prints the pushed branch, remote, upstream, and any warning. `git good clone URL [PATH]` prints the cloned path and resolved repository state. Commands stream progress on stderr and keep stdout parseable. Failures use stderr and a nonzero status without a partial receipt.
 
 Rationale: Git owns protocol and credential compatibility, while gg owns explicit selection, bounded progress, cancellation, and a single refresh boundary.
+
+## History mutations and recovery · M5
+
+### Stash
+
+List stash entries from the `refs/stash` reflog through the shared engine: position, full `stash@{n}` reference, recorded commit, and reflog subject. Newest entries come first. An empty stash list is explicit rather than an error. Stash listing is read-only and never changes refs, the index, or working files.
+
+Delegating stash mutations to the Git executable keeps conflict detection, index restoration, and reflog semantics identical to Git. Remove ambient `GIT_DIR` and `GIT_WORK_TREE`, run with an explicit working directory, and never invoke a shell. A reference is accepted only as `stash@{n}` or a bare `n`; option-shaped or non-numeric references are rejected before Git runs.
+
+Push records modified and staged changes, optionally including untracked files and keeping staged content in the index. A clean worktree is an actionable error, not an empty receipt. Apply and pop restore the selected entry; `--index` also restores staged state. When Git reports conflicts, the operation keeps the stash entry, lists the unmerged paths, and leaves the conflict markers in the worktree. Pop removes the entry only after a conflict-free apply. Drop removes the selected entry after an explicit confirmation and never touches working files.
+
+`git good stash list [--repo PATH]` prints a JSON snapshot with the repository and entries. `git good stash push [-m MESSAGE] [--include-untracked] [--keep-index] [--repo PATH]`, `git good stash apply|pop [STASH] [--index] [--repo PATH]`, and `git good stash drop [STASH] [--repo PATH]` print JSON receipts with the reference, applied/created/dropped state, conflicts, and warnings. Failures use stderr and a nonzero status without a partial receipt.
+
+The native **Stash changes…** dialog records a message and the untracked/keep-index options. The **Manage stashes…** window lists entries and offers Apply, Pop, and a confirmed Drop. Successful stash mutations refresh the history, refs, and status boundary so the worktree state stays current. A conflict reports its paths in the status line and keeps the entry for recovery.
+
+### Merge, cherry-pick, revert, and recovery
+
+Merge, cherry-pick, and revert are explicit mutations delegated to Git so commit order, parent selection, hooks, and conflict behavior match the executable. Each operation validates a clean worktree, resolves one explicit commit or ref, and reports conflicts with unmerged paths instead of manufacturing a result. An in-progress merge, cherry-pick, or revert is detected from the repository state and exposed as Continue, Skip where supported, and Abort. Abort restores the pre-operation HEAD, index, and worktree as far as Git can; failures report enough detail for manual recovery without deleting user files. Conflict resolution shows base, ours, and theirs content for each unmerged path and marks a path resolved by staging it. UI mutations run on a worker, disable duplicate actions while pending, and refresh refs/history/status at an interaction-safe boundary.

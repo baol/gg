@@ -80,5 +80,6 @@ mod tests {
 pub mod diff;
 pub mod refs;
 pub mod review;
+pub mod stash;
 pub mod status;
 pub mod sync;
