@@ -74,7 +74,7 @@ impl Harness {
         let mut input = super::tests::frame_input(1120.0, 740.0, events);
         input.time = Some(self.time);
         self.app.prepare_input(&mut input);
-        self.ctx.run(input, |ctx| self.app.draw(ctx))
+        crate::tests::run_ui(&self.ctx, input, |ctx| self.app.draw_ui(ctx))
     }
     fn point(&self, row: usize) -> std::result::Result<egui::Pos2, String> {
         self.app
@@ -507,7 +507,7 @@ fn navigation_bindings_preserve_text_focus_and_empty_selection() {
         let mut h = Harness::new(count);
         if count > 0 {
             h.ctx
-                .memory_mut(|m| m.request_focus(egui::Id::new("history-filter")));
+                .memory_mut(|m| m.request_focus(egui::Id::unique("history-filter")));
             h.frame(vec![]);
         }
         let selected = h.app.state.selected_row;
@@ -542,7 +542,7 @@ fn narrow_details_navigation_preserves_hidden_history_and_back_anchor() -> Resul
         let mut input = super::tests::frame_input(720.0, 480.0, events);
         input.time = Some(h.time);
         h.app.prepare_input(&mut input);
-        h.ctx.run(input, |ctx| h.app.draw(ctx))
+        crate::tests::run_ui(&h.ctx, input, |ctx| h.app.draw_ui(ctx))
     };
     frame(&mut h, vec![]);
     let offset = h.app.scroll_offset;

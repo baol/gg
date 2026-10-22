@@ -2,7 +2,7 @@
 
 Purpose: provide build, test, and diagnostic commands.
 
-Use Rust 1.94+ and native graphics drivers. [Installation and usage](../README.md).
+Use Rust 1.95+ and native graphics drivers. [Installation and usage](../README.md).
 
 ```sh
 cargo run -p git-good
@@ -20,7 +20,7 @@ Serialize release runs with GitHub's [concurrency queue](https://docs.github.com
 
 Apply the chosen version to the build checkout's workspace manifest and local lockfile entries before compiling. All binaries report it through `git good --version`; CI verifies that output. Source manifests retain the development baseline. Run `python3 -m unittest discover -s scripts -p 'test_*.py'` to check numbering and manifest updates. Supported-platform acceptance remains in the [roadmap](../ROADMAP.md).
 
-wgpu enables Vulkan, Metal, DX12, and GLES; Linux supports Wayland and X11.
+The native UI uses egui/eframe 0.37 on wgpu 30. wgpu enables Vulkan, Metal, DX12, and GLES; Linux supports Wayland and X11. The vendored Phosphor font and its license live in `apps/git-good/assets/`.
 
 | Variable | Effect |
 | --- | --- |

@@ -71,7 +71,7 @@ impl Export {
         };
         let mut open = !ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
         egui::Window::new("Export file version")
-            .id(egui::Id::new("export-file"))
+            .id(egui::Id::unique("export-file"))
             .open(&mut open)
             .resizable(true)
             .default_width(460.0)
@@ -163,9 +163,10 @@ mod tests {
             repeat: false,
             modifiers: egui::Modifiers::NONE,
         };
-        let _ = ctx.run(
+        let _ = crate::tests::run_ui(
+            &ctx,
             crate::tests::frame_input(720.0, 480.0, vec![event]),
-            |ctx| export.draw(ctx),
+            |ctx| export.draw(ctx.ctx()),
         );
         assert!(!export.is_open());
         assert!(export.stop.load(Ordering::Relaxed));

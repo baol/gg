@@ -2,7 +2,7 @@
 use eframe::egui;
 
 fn disclosure_id() -> egui::Id {
-    egui::Id::new("full-text-disclosure")
+    egui::Id::unique("full-text-disclosure")
 }
 
 pub fn field(ui: &mut egui::Ui, value: &str, font: egui::FontId, height: f32) {
@@ -42,12 +42,12 @@ pub fn paint(
         let response = ui
             .interact(
                 button,
-                ui.id().with(("overflow", value)),
+                ui.scope_id().with(("overflow", value)),
                 egui::Sense::click(),
             )
             .on_hover_text(value);
         response.widget_info(|| {
-            egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), "Show full text")
+            egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), "Show full text")
         });
         ui.painter().with_clip_rect(button).text(
             button.center(),
@@ -64,7 +64,7 @@ pub fn paint(
     });
     ui.interact(
         text_rect,
-        ui.id().with(("text-tooltip", value)),
+        ui.scope_id().with(("text-tooltip", value)),
         egui::Sense::hover(),
     )
     .on_hover_text(value);
@@ -114,8 +114,8 @@ mod tests {
             ctx.set_pixels_per_point(scale);
             let value = "Long Unicode subject 日本語\nSecond paragraph ".repeat(30);
             let slot = egui::Rect::from_min_size(egui::pos2(20.0, 20.0), egui::vec2(240.0, 26.0));
-            let mut draw = |ctx: &egui::Context| {
-                egui::CentralPanel::default().show(ctx, |ui| {
+            let mut draw = |ui: &mut egui::Ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
                     let more = paint(
                         ui,
                         slot,
@@ -134,7 +134,7 @@ mod tests {
                 events,
                 ..Default::default()
             };
-            let output = ctx.run(input(vec![]), &mut draw);
+            let output = crate::tests::run_ui(&ctx, input(vec![]), &mut draw);
             for shape in output.shapes {
                 if let egui::epaint::Shape::Text(text) = shape.shape {
                     assert_eq!(text.galley.rows.len(), 1);
@@ -142,7 +142,8 @@ mod tests {
                 }
             }
             let position = egui::pos2(slot.right() - 12.0, slot.center().y);
-            let _ = ctx.run(
+            let _ = crate::tests::run_ui(
+                &ctx,
                 input(vec![
                     egui::Event::PointerMoved(position),
                     egui::Event::PointerButton {
@@ -154,7 +155,8 @@ mod tests {
                 ]),
                 &mut draw,
             );
-            let _ = ctx.run(
+            let _ = crate::tests::run_ui(
+                &ctx,
                 input(vec![egui::Event::PointerButton {
                     pos: position,
                     button: egui::PointerButton::Primary,

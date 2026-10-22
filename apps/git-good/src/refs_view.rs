@@ -11,6 +11,7 @@ pub enum Action {
     Switch(String),
     Jump(String),
     NewBranch,
+    Track(String),
 }
 
 #[derive(Default)]
@@ -47,6 +48,10 @@ pub fn show(ui: &mut egui::Ui, refs: &Snapshot, filter: &mut String, busy: bool)
         .clicked()
     {
         action = Some(Action::NewBranch);
+    }
+    if let Some(tracking) = refs.current_tracking() {
+        ui.add_space(2.0);
+        tracking_row(ui, tracking);
     }
     ui.add_space(2.0);
 
@@ -220,13 +225,29 @@ fn render_leaf(
         format!("{} · branch operation in progress", item.full_name)
     } else if item.kind == RefKind::Branch {
         format!("Switch to {}\n{}", item.full_name, short(&item.commit))
+    } else if item.kind == RefKind::Remote {
+        format!(
+            "Jump to {}\n{}\nDouble-click to create a tracking branch",
+            item.full_name,
+            short(&item.commit)
+        )
     } else {
         format!("Jump to {}\n{}", item.full_name, short(&item.commit))
     });
-    if response.clicked() && enabled {
+    if item.kind == RefKind::Remote && enabled && response.double_clicked() {
+        *action = Some(Action::Track(item.name.clone()));
+    } else if response.clicked() && enabled {
         *action = Some(match item.kind {
             RefKind::Branch => Action::Switch(item.name.clone()),
             RefKind::Remote | RefKind::Tag => Action::Jump(item.commit.clone()),
+        });
+    }
+    if item.kind == RefKind::Remote && enabled {
+        response.context_menu(|ui| {
+            if ui.button("Create tracking branch…").clicked() {
+                *action = Some(Action::Track(item.name.clone()));
+                ui.close();
+            }
         });
     }
 }
@@ -248,7 +269,7 @@ fn row(
     );
     response.widget_info(|| {
         egui::WidgetInfo::labeled(
-            egui::WidgetType::Button,
+            egui::Role::Button,
             ui.is_enabled(),
             if current {
                 format!("{label}, current branch")
@@ -360,6 +381,53 @@ pub(crate) fn paint_icon(
     }
 }
 
+fn tracking_row(ui: &mut egui::Ui, tracking: &gg_engine::refs::Tracking) {
+    use crate::phosphor;
+    let weak = ui.visuals().weak_text_color();
+    let response = ui
+        .horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
+            ui.label(
+                egui::RichText::new(&tracking.upstream)
+                    .size(11.0)
+                    .color(weak),
+            );
+            if let (Some(ahead), Some(behind)) = (tracking.ahead, tracking.behind) {
+                ui.label(phosphor::icon(phosphor::ARROW_UP).size(10.0).color(weak));
+                ui.label(
+                    egui::RichText::new(ahead.to_string())
+                        .size(11.0)
+                        .color(weak),
+                );
+                ui.label(phosphor::icon(phosphor::ARROW_DOWN).size(10.0).color(weak));
+                ui.label(
+                    egui::RichText::new(behind.to_string())
+                        .size(11.0)
+                        .color(weak),
+                );
+            } else {
+                ui.label(egui::RichText::new("· unavailable").size(11.0).color(weak));
+            }
+        })
+        .response;
+    response.on_hover_text(format!(
+        "{} · {}\nAhead and behind the configured upstream.",
+        tracking.upstream_full_name, tracking.remote
+    ));
+}
+
+pub(crate) fn tracking_label(tracking: &gg_engine::refs::Tracking) -> String {
+    match (tracking.ahead, tracking.behind) {
+        (Some(ahead), Some(behind)) => format!(
+            "{}  {}{ahead} {}{behind}",
+            tracking.upstream,
+            crate::phosphor::ARROW_UP,
+            crate::phosphor::ARROW_DOWN
+        ),
+        _ => format!("{} · upstream unavailable", tracking.upstream),
+    }
+}
+
 fn short(id: &str) -> String {
     id.chars().take(8).collect()
 }
@@ -399,18 +467,35 @@ mod tests {
                     name: "v1.0".into(),
                     full_name: "refs/tags/v1.0".into(),
                     kind: RefKind::Tag,
-                    commit,
+                    commit: commit.clone(),
                 },
             ],
+            remotes: vec![gg_engine::refs::Remote {
+                name: "origin".into(),
+                fetch_url: Some("https://example.org/gg".into()),
+                push_url: None,
+            }],
+            tracking: vec![gg_engine::refs::Tracking {
+                branch: "main".into(),
+                full_name: "refs/heads/main".into(),
+                upstream: "origin/main".into(),
+                upstream_full_name: "refs/remotes/origin/main".into(),
+                remote: "origin".into(),
+                remote_branch: "main".into(),
+                ahead: Some(2),
+                behind: Some(1),
+            }],
         }
     }
 
     #[test]
     fn shows_grouped_sections_and_current_branch() {
         let ctx = egui::Context::default();
+        crate::phosphor::install(&ctx);
         let refs = snapshot();
         let mut filter = String::new();
-        let output = ctx.run(
+        let output = crate::tests::run_ui(
+            &ctx,
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(
                     egui::Pos2::ZERO,
@@ -434,7 +519,15 @@ mod tests {
             })
             .collect::<Vec<_>>();
         for expected in [
-            "Refs", "Branches", "main", "Remotes", "origin", "Tags", "v1.0",
+            "Refs",
+            "Branches",
+            "main",
+            "Remotes",
+            "origin",
+            "Tags",
+            "v1.0",
+            "origin/main",
+            "2",
         ] {
             assert!(
                 text.iter().any(|line| line.contains(expected)),
@@ -447,9 +540,11 @@ mod tests {
     #[test]
     fn filter_flattens_and_clears_unmatched_groups() {
         let ctx = egui::Context::default();
+        crate::phosphor::install(&ctx);
         let refs = snapshot();
         let mut filter = "nomatch".into();
-        let output = ctx.run(
+        let output = crate::tests::run_ui(
+            &ctx,
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(
                     egui::Pos2::ZERO,

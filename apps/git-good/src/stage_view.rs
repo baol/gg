@@ -734,7 +734,7 @@ fn draw_pane(
                     let response = ui
                         .interact(
                             button,
-                            ui.id().with(("stage-hunk", index_kind(kind), index)),
+                            ui.scope_id().with(("stage-hunk", index_kind(kind), index)),
                             egui::Sense::click(),
                         )
                         .on_hover_text(
@@ -827,7 +827,7 @@ fn draw_pane(
                         let response = ui
                             .interact(
                                 button,
-                                ui.id().with(("drop-hunk", index)),
+                                ui.scope_id().with(("drop-hunk", index)),
                                 egui::Sense::click(),
                             )
                             .on_hover_text(
@@ -958,7 +958,7 @@ fn draw_pane(
             }
         }
     });
-    *offset = out.state.offset.y;
+    *offset = out.state.clamped_offset().y;
 }
 
 fn drop_changes(rows: &[DiffRow], hunk: &HunkInfo, selected: &BTreeSet<usize>) -> Vec<Change> {

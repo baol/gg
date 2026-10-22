@@ -286,7 +286,9 @@ impl StatusView {
             Err(e) => self.error = Some(format!("Start {name}: {e}")),
         }
     }
-    fn draw_diff(&mut self, ctx: &egui::Context) {
+    fn draw_diff(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
+        let ctx = &ctx;
         let pending = self.stage.pending();
         let mut back = !pending
             && crate::navigation::available(ctx)
@@ -295,9 +297,9 @@ impl StatusView {
                     || i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft)
             });
         let mut reload = false;
-        egui::TopBottomPanel::top("working-diff-header")
-            .exact_height(42.0)
-            .show(ctx, |ui| {
+        egui::Panel::top("working-diff-header")
+            .exact_size(42.0)
+            .show(ui, |ui| {
                 ui.add_space(5.0);
                 ui.horizontal(|ui| {
                     back |= ui
@@ -328,13 +330,13 @@ impl StatusView {
                 });
             });
         if let Some(error) = &self.error {
-            egui::TopBottomPanel::top("working-diff-error")
-                .exact_height(23.0)
-                .show(ctx, |ui| {
+            egui::Panel::top("working-diff-error")
+                .exact_size(23.0)
+                .show(ui, |ui| {
                     bounded_text::field(ui, error, egui::FontId::proportional(12.0), 22.0);
                 });
         }
-        egui::CentralPanel::default().show(ctx, |ui| self.stage.draw(ui, ctx));
+        egui::CentralPanel::default().show(ui, |ui| self.stage.draw(ui, ctx));
         bounded_text::show_disclosure(ctx);
         if reload {
             self.stage.reload(ctx);
@@ -347,7 +349,9 @@ impl StatusView {
             self.restore = true;
         }
     }
-    pub fn draw(&mut self, ctx: &egui::Context) -> bool {
+    pub(crate) fn draw_ui(&mut self, ui: &mut egui::Ui) -> bool {
+        let ctx = ui.ctx().clone();
+        let ctx = &ctx;
         if let Some(result) = self.mutation.as_ref().and_then(|rx| match rx.try_recv() {
             Ok(result) => Some(result),
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
@@ -394,13 +398,13 @@ impl StatusView {
             }
         }
         if self.reading {
-            self.draw_diff(ctx);
+            self.draw_diff(ui);
             return false;
         }
         let (now, scrolling, pointer_down, hovered) = ctx.input(|i| {
             (
                 i.time,
-                i.raw_scroll_delta != egui::Vec2::ZERO || i.smooth_scroll_delta != egui::Vec2::ZERO,
+                i.smooth_scroll_delta != egui::Vec2::ZERO,
                 i.pointer.any_down(),
                 i.pointer
                     .hover_pos()
@@ -497,9 +501,9 @@ impl StatusView {
                 }
             }
         }
-        egui::TopBottomPanel::top("working-header")
-            .exact_height(42.0)
-            .show(ctx, |ui| {
+        egui::Panel::top("working-header")
+            .exact_size(42.0)
+            .show(ui, |ui| {
                 ui.add_space(5.0);
                 ui.horizontal(|ui| {
                     back |= ui
@@ -534,9 +538,9 @@ impl StatusView {
                         .clicked();
                 });
             });
-        egui::TopBottomPanel::bottom("working-status")
-            .exact_height(25.0)
-            .show(ctx, |ui| {
+        egui::Panel::bottom("working-status")
+            .exact_size(25.0)
+            .show(ui, |ui| {
                 let text = if let Some(error) = &self.error {
                     format!(
                         "{}{}",
@@ -583,9 +587,9 @@ impl StatusView {
                 };
                 bounded_text::field(ui, &text, egui::FontId::proportional(12.0), 22.0);
             });
-        egui::TopBottomPanel::bottom("working-commit")
-            .exact_height(82.0)
-            .show(ctx, |ui| {
+        egui::Panel::bottom("working-commit")
+            .exact_size(82.0)
+            .show(ui, |ui| {
                 ui.add_space(4.0);
                 let can_commit = !self.busy() && !self.replacing && !self.message.trim().is_empty();
                 ui.horizontal(|ui| {
@@ -624,7 +628,7 @@ impl StatusView {
         } else {
             "Unstage file"
         };
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             ui.horizontal(|ui| {
                 stage |= ui
                     .add_enabled(
@@ -791,7 +795,7 @@ impl StatusView {
                     }
                 }
             });
-            self.offset = out.state.offset.y;
+            self.offset = out.state.clamped_offset().y;
         });
         if let Some(worker) = &self.worker {
             worker.request(self.viewport.clone());
@@ -877,7 +881,8 @@ mod tests {
         }
     }
     fn frame(ctx: &egui::Context, view: &mut StatusView, width: f32, events: Vec<egui::Event>) {
-        let _ = ctx.run(
+        let _ = crate::tests::run_ui(
+            ctx,
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(
                     egui::Pos2::ZERO,
@@ -887,7 +892,7 @@ mod tests {
                 ..Default::default()
             },
             |ctx| {
-                view.draw(ctx);
+                view.draw_ui(ctx);
             },
         );
     }
@@ -1163,7 +1168,8 @@ mod tests {
         let ctx = egui::Context::default();
         let mut view = view(1);
         view.identity = Some(update(1, true).identity);
-        let output = ctx.run(
+        let output = crate::tests::run_ui(
+            &ctx,
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(
                     egui::Pos2::ZERO,
@@ -1172,7 +1178,7 @@ mod tests {
                 ..Default::default()
             },
             |ctx| {
-                view.draw(ctx);
+                view.draw_ui(ctx);
             },
         );
         for label in ["Stage file", "Unstage file", "View diff"] {
@@ -1191,7 +1197,8 @@ mod tests {
         width: f32,
         events: Vec<egui::Event>,
     ) -> egui::FullOutput {
-        ctx.run(
+        crate::tests::run_ui(
+            ctx,
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(
                     egui::Pos2::ZERO,
@@ -1201,7 +1208,7 @@ mod tests {
                 ..Default::default()
             },
             |ctx| {
-                view.draw(ctx);
+                view.draw_ui(ctx);
             },
         )
     }

@@ -22,6 +22,65 @@ pub fn create(path: &Path, branch: &str) -> Result<Receipt, String> {
     run(path, branch, true)
 }
 
+/// Create a local branch from a remote-tracking ref and configure its upstream.
+pub fn track_remote(path: &Path, remote_branch: &str) -> Result<Receipt, String> {
+    let (remote, branch) = parse_remote_branch(remote_branch)?;
+    validate_name(&branch)?;
+    let session = crate::status::Session::open(path)?;
+    crate::status::validate(&session.identity)?;
+    if session.identity.head.is_none() {
+        return Err(
+            "Repository has no commits yet. Fetch a remote branch before tracking it.".into(),
+        );
+    }
+    ensure_clean(&session)?;
+    let repo = gix::discover(path).map_err(|e| format!("Read repository: {e}"))?;
+    let remote_exists = repo
+        .remote_names()
+        .iter()
+        .any(|name| <gix::bstr::BString as AsRef<[u8]>>::as_ref(name) == remote.as_bytes());
+    if !remote_exists {
+        return Err(format!(
+            "Remote {remote} is not configured. Add it or choose another remote branch."
+        ));
+    }
+    let remote_full = format!("refs/remotes/{remote}/{branch}");
+    if repo
+        .try_find_reference(remote_full.as_str())
+        .map_err(|e| format!("Read remote branch {remote}/{branch}: {e}"))?
+        .is_none()
+    {
+        return Err(format!(
+            "Remote branch {remote}/{branch} does not exist. Fetch it first."
+        ));
+    }
+    let local_full = format!("refs/heads/{branch}");
+    if repo
+        .try_find_reference(local_full.as_str())
+        .map_err(|e| format!("Read branch {branch}: {e}"))?
+        .is_some()
+    {
+        return Err(format!(
+            "Local branch {branch} already exists. Switch to it or choose another remote branch."
+        ));
+    }
+    let mut command = Command::new("git");
+    command
+        .current_dir(&session.identity.path)
+        .arg("switch")
+        .arg("--track")
+        .arg(format!("{remote}/{branch}"))
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE");
+    let output = command.output().map_err(|e| {
+        format!("Could not run remote branch checkout using Git: {e}. Install Git and retry.")
+    })?;
+    complete(path, output, &branch, true, "remote tracking checkout")
+}
+
 fn run(path: &Path, branch: &str, create: bool) -> Result<Receipt, String> {
     let branch = branch.trim();
     validate_name(branch)?;
@@ -69,6 +128,22 @@ fn run(path: &Path, branch: &str, create: bool) -> Result<Receipt, String> {
             operation = if create { "creation" } else { "switch" }
         )
     })?;
+    complete(
+        path,
+        output,
+        branch,
+        create,
+        if create { "creation" } else { "switch" },
+    )
+}
+
+fn complete(
+    path: &Path,
+    output: std::process::Output,
+    branch: &str,
+    created: bool,
+    operation: &str,
+) -> Result<Receipt, String> {
     let detail = [output.stdout, output.stderr]
         .into_iter()
         .filter(|bytes| !bytes.is_empty())
@@ -91,7 +166,6 @@ fn run(path: &Path, branch: &str, create: bool) -> Result<Receipt, String> {
             output.status,
             if detail.is_empty() { "" } else { "\n" },
             detail,
-            operation = if create { "creation" } else { "switch" }
         ));
     }
     let head = updated
@@ -106,15 +180,28 @@ fn run(path: &Path, branch: &str, create: bool) -> Result<Receipt, String> {
             output.status,
             if detail.is_empty() { "" } else { "\n" },
             detail,
-            operation = if create { "creation" } else { "switch" }
         )]
     };
     Ok(Receipt {
         branch: branch.to_string(),
         head,
-        created: create,
+        created,
         warnings,
     })
+}
+
+fn parse_remote_branch(remote_branch: &str) -> Result<(String, String), String> {
+    let remote_branch = remote_branch.trim();
+    let short = remote_branch
+        .strip_prefix("refs/remotes/")
+        .unwrap_or(remote_branch);
+    let (remote, branch) = short.split_once('/').ok_or_else(|| {
+        "Remote branch must look like origin/main or refs/remotes/origin/main.".to_string()
+    })?;
+    if remote.is_empty() || branch.is_empty() {
+        return Err("Remote branch must look like origin/main or refs/remotes/origin/main.".into());
+    }
+    Ok((remote.to_string(), branch.to_string()))
 }
 
 fn validate_name(branch: &str) -> Result<(), String> {
@@ -134,6 +221,9 @@ fn ensure_clean(session: &crate::status::Session) -> Result<(), String> {
     let stop = AtomicBool::new(false);
     let mut dirty = None;
     session.scan(&stop, |entry| {
+        if entry.area == gg_engine::status::Area::Untracked {
+            return Ok(());
+        }
         dirty = Some(entry.path);
         stop.store(true, Ordering::Relaxed);
         Ok(())

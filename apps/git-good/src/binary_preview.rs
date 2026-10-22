@@ -199,9 +199,13 @@ mod tests {
         for width in [320.0, 720.0] {
             let ctx = egui::Context::default();
             let mut view = View::default();
-            let output = ctx.run(crate::tests::frame_input(width, 740.0, vec![]), |ctx| {
-                egui::CentralPanel::default().show(ctx, |ui| view.draw(ui, &pair, false));
-            });
+            let output = crate::tests::run_ui(
+                &ctx,
+                crate::tests::frame_input(width, 740.0, vec![]),
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| view.draw(ui, &pair, false));
+                },
+            );
             let rows: Vec<_> = output
                 .shapes
                 .iter()
