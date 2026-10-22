@@ -77,6 +77,7 @@ mod tests {
     }
 }
 
+pub mod conflict;
 pub mod diff;
 pub mod merge;
 pub mod mutation;

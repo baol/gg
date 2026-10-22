@@ -5,6 +5,7 @@ mod branch_cli;
 mod branding;
 mod colors;
 mod commit_cli;
+mod conflict_cli;
 mod details_view;
 mod diff_view;
 mod diff_worker;
@@ -48,7 +49,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("--help")) {
         println!(
-            "gg · good git\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good refs [PATH]      Print branches, remotes, tags, and HEAD as JSON\ngit-good status [PATH] [--file PATH --area AREA]   Print working status or diff as JSON\ngit-good stage --file PATH [--hunk HEADER]... [--repo PATH]   Stage one file or selected hunks\ngit-good unstage --file PATH [--repo PATH]   Unstage one file\ngit-good commit -m MESSAGE [--repo PATH]   Commit the index after Git hooks\ngit-good switch [--create] BRANCH [--repo PATH]   Switch to or create a local branch\ngit-good fetch [REMOTE] [--prune] [--repo PATH]   Fetch and update remote-tracking refs\ngit-good push [REMOTE] [BRANCH] [--set-upstream] [--repo PATH]   Push a local branch without force\ngit-good clone URL [PATH]   Clone a repository and open it\ngit-good stash <list|push|apply|pop|drop> [OPTIONS] [--repo PATH]   List or mutate stashes\ngit-good cherry-pick COMMIT [--repo PATH]   Apply a commit\ngit-good revert COMMIT [--repo PATH]   Invert a commit\ngit-good merge REF [--no-ff] [--repo PATH]   Merge a branch, remote, or tag\ngit-good show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]   Review or export\n\nBrowse commits reachable from HEAD and all local, remote, and tag refs."
+            "gg · good git\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good refs [PATH]      Print branches, remotes, tags, and HEAD as JSON\ngit-good status [PATH] [--file PATH --area AREA]   Print working status or diff as JSON\ngit-good stage --file PATH [--hunk HEADER]... [--repo PATH]   Stage one file or selected hunks\ngit-good unstage --file PATH [--repo PATH]   Unstage one file\ngit-good commit -m MESSAGE [--repo PATH]   Commit the index after Git hooks\ngit-good switch [--create] BRANCH [--repo PATH]   Switch to or create a local branch\ngit-good fetch [REMOTE] [--prune] [--repo PATH]   Fetch and update remote-tracking refs\ngit-good push [REMOTE] [BRANCH] [--set-upstream] [--repo PATH]   Push a local branch without force\ngit-good clone URL [PATH]   Clone a repository and open it\ngit-good stash <list|push|apply|pop|drop> [OPTIONS] [--repo PATH]   List or mutate stashes\ngit-good cherry-pick COMMIT [--repo PATH]   Apply a commit\ngit-good revert COMMIT [--repo PATH]   Invert a commit\ngit-good merge REF [--no-ff] [--repo PATH]   Merge a branch, remote, or tag\ngit-good conflicts [--repo PATH]   List unmerged paths\ngit-good conflict --file PATH [--use ours|theirs|--stage] [--repo PATH]   Read or resolve a conflict\ngit-good show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]   Review or export\n\nBrowse commits reachable from HEAD and all local, remote, and tag refs."
         );
         return Ok(());
     }
@@ -84,6 +85,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("merge")) {
         return merge_cli::run(args);
+    }
+    if first.as_deref() == Some(std::ffi::OsStr::new("conflicts")) {
+        return conflict_cli::list(args);
+    }
+    if first.as_deref() == Some(std::ffi::OsStr::new("conflict")) {
+        return conflict_cli::run(args);
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("fetch")) {
         return sync_cli::fetch(args);
@@ -199,6 +206,13 @@ struct MergeDialog {
     error: Option<String>,
 }
 
+struct ConflictView {
+    paths: Vec<String>,
+    selected: usize,
+    content: Option<gg_engine::conflict::Content>,
+    error: Option<String>,
+}
+
 enum StashAction {
     Apply(String),
     Pop(String),
@@ -236,6 +250,7 @@ struct Browser {
     mutation_notice: Option<String>,
     mutation_error: Option<String>,
     merge_dialog: Option<MergeDialog>,
+    conflict_view: Option<ConflictView>,
     refs_visible: bool,
     refs_query: String,
     state: state::State,
@@ -285,6 +300,7 @@ impl Browser {
             mutation_notice: None,
             mutation_error: None,
             merge_dialog: None,
+            conflict_view: None,
             refs_visible: true,
             refs_query: String::new(),
             state: state::State::default(),
@@ -702,6 +718,78 @@ impl Browser {
                 }
             ),
         });
+        self.refresh_mutation();
+        self.load(ctx);
+        Ok(())
+    }
+
+    fn open_conflict_view(&mut self) {
+        let Some(path) = self.stash_path() else {
+            return;
+        };
+        match gg_git::conflict::unmerged(&path) {
+            Ok(paths) => {
+                self.conflict_view = Some(ConflictView {
+                    paths,
+                    selected: 0,
+                    content: None,
+                    error: None,
+                });
+                self.load_conflict_content();
+            }
+            Err(error) => {
+                self.conflict_view = Some(ConflictView {
+                    paths: Vec::new(),
+                    selected: 0,
+                    content: None,
+                    error: Some(error),
+                });
+            }
+        }
+    }
+
+    fn load_conflict_content(&mut self) {
+        let Some(path) = self.stash_path() else {
+            return;
+        };
+        let Some(view) = &mut self.conflict_view else {
+            return;
+        };
+        let Some(file) = view.paths.get(view.selected).cloned() else {
+            view.content = None;
+            return;
+        };
+        match gg_git::conflict::read(&path, &file) {
+            Ok(content) => {
+                view.content = Some(content);
+                view.error = None;
+            }
+            Err(error) => {
+                view.content = None;
+                view.error = Some(error);
+            }
+        }
+    }
+
+    fn resolve_conflict(
+        &mut self,
+        ctx: &egui::Context,
+        side: Option<gg_engine::conflict::Side>,
+    ) -> Result<(), String> {
+        let path = self
+            .stash_path()
+            .ok_or("Open a repository before resolving conflicts.")?;
+        let file = self
+            .conflict_view
+            .as_ref()
+            .and_then(|view| view.paths.get(view.selected))
+            .cloned()
+            .ok_or("Select a conflicted path first.")?;
+        match side {
+            Some(side) => gg_git::conflict::use_side(&path, &file, side)?,
+            None => gg_git::conflict::stage(&path, &file)?,
+        }
+        self.open_conflict_view();
         self.refresh_mutation();
         self.load(ctx);
         Ok(())
@@ -1405,6 +1493,7 @@ impl Browser {
             });
         });
         let mut mutation_action = None;
+        let mut resolve_conflicts = false;
         if let Some(state) = &self.mutation {
             egui::Panel::top("mutation")
                 .exact_size(30.0)
@@ -1413,6 +1502,9 @@ impl Browser {
                         ui.label(format!("{} in progress", state.operation.as_str()));
                         if !state.conflicts.is_empty() {
                             ui.label(format!("· {} conflict(s)", state.conflicts.len()));
+                            if ui.button("Resolve conflicts…").clicked() {
+                                resolve_conflicts = true;
+                            }
                         }
                         if ui.button("Continue").clicked() {
                             mutation_action = Some(MutationAction::Continue);
@@ -1427,6 +1519,9 @@ impl Browser {
                         }
                     });
                 });
+        }
+        if resolve_conflicts {
+            self.open_conflict_view();
         }
         if let Some(action) = mutation_action
             && let Some(operation) = self.mutation.as_ref().map(|state| state.operation)
@@ -1645,6 +1740,88 @@ impl Browser {
                 self.track_dialog = None;
             }
         }
+        let mut conflict_select = None;
+        let mut conflict_action = None;
+        let mut conflict_open = true;
+        if let Some(view) = &mut self.conflict_view {
+            egui::Window::new("Resolve conflicts")
+                .id(egui::Id::unique("resolve-conflicts"))
+                .open(&mut conflict_open)
+                .collapsible(false)
+                .resizable(true)
+                .default_width(760.0)
+                .default_pos(ctx.content_rect().center())
+                .pivot(egui::Align2::CENTER_CENTER)
+                .show(ctx, |ui| {
+                    if let Some(error) = &view.error {
+                        ui.colored_label(ui.visuals().error_fg_color, error);
+                    }
+                    if view.paths.is_empty() {
+                        ui.label("No unmerged paths.");
+                    }
+                    ui.horizontal_top(|ui| {
+                        ui.vertical(|ui| {
+                            ui.label("Paths");
+                            for (index, path) in view.paths.iter().enumerate() {
+                                if ui.selectable_label(index == view.selected, path).clicked() {
+                                    conflict_select = Some(index);
+                                }
+                            }
+                        });
+                        ui.separator();
+                        ui.vertical(|ui| {
+                            if let Some(content) = &view.content {
+                                ui.horizontal(|ui| {
+                                    if ui.button("Use ours").clicked() {
+                                        conflict_action =
+                                            Some(Some(gg_engine::conflict::Side::Ours));
+                                    }
+                                    if ui.button("Use theirs").clicked() {
+                                        conflict_action =
+                                            Some(Some(gg_engine::conflict::Side::Theirs));
+                                    }
+                                    if ui.button("Stage resolved").clicked() {
+                                        conflict_action = Some(None);
+                                    }
+                                });
+                                ui.columns(3, |columns| {
+                                    for (column, (title, text)) in columns.iter_mut().zip([
+                                        ("Base", &content.base),
+                                        ("Ours", &content.ours),
+                                        ("Theirs", &content.theirs),
+                                    ]) {
+                                        column.label(title);
+                                        egui::ScrollArea::both()
+                                            .id_salt(title)
+                                            .max_height(360.0)
+                                            .show(column, |ui| {
+                                                ui.monospace(text.as_deref().unwrap_or("(absent)"));
+                                            });
+                                    }
+                                });
+                            }
+                        });
+                    });
+                });
+        }
+        if let Some(index) = conflict_select
+            && let Some(view) = &mut self.conflict_view
+        {
+            view.selected = index;
+        }
+        if conflict_select.is_some() {
+            self.load_conflict_content();
+        }
+        if let Some(side) = conflict_action {
+            if let Err(error) = self.resolve_conflict(ctx, side)
+                && let Some(view) = &mut self.conflict_view
+            {
+                view.error = Some(error);
+            }
+        } else if self.conflict_view.is_some() && !conflict_open {
+            self.conflict_view = None;
+        }
+
         let mut merge_submit = None;
         let mut merge_open = true;
         if let Some(dialog) = &mut self.merge_dialog {
@@ -2395,6 +2572,49 @@ mod tests {
             assert!(text.iter().any(|line| line.contains("Apply")));
             assert!(text.iter().any(|line| line.contains("Pop")));
             assert!(text.iter().any(|line| line.contains("Drop")));
+        }
+    }
+
+    #[test]
+    fn conflict_view_renders_at_supported_widths() {
+        for width in [720.0, 1120.0] {
+            let ctx = egui::Context::default();
+            let mut app = layout_fixture();
+            app.conflict_view = Some(ConflictView {
+                paths: vec!["a".into()],
+                selected: 0,
+                content: Some(gg_engine::conflict::Content {
+                    path: "a".into(),
+                    base: Some("base\n".into()),
+                    ours: Some("ours\n".into()),
+                    theirs: Some("theirs\n".into()),
+                    binary: false,
+                    truncated: false,
+                }),
+                error: None,
+            });
+            let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let output = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let text = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert!(text.iter().any(|line| line.contains("Resolve conflicts")));
+            assert!(text.iter().any(|line| line.contains("Paths")));
+            assert!(text.iter().any(|line| line.contains("Base")));
+            assert!(text.iter().any(|line| line.contains("Ours")));
+            assert!(text.iter().any(|line| line.contains("Theirs")));
+            assert!(text.iter().any(|line| line.contains("Use ours")));
+            assert!(text.iter().any(|line| line.contains("Use theirs")));
+            assert!(text.iter().any(|line| line.contains("Stage resolved")));
         }
     }
 

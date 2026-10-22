@@ -1554,3 +1554,63 @@ fn merge_cli_no_ff_creates_a_merge_commit() -> Result {
     );
     Ok(())
 }
+
+#[test]
+fn conflict_cli_lists_reads_and_resolves() -> Result {
+    let repo = tempfile::tempdir()?;
+    init(repo.path(), &["-b", "main"])?;
+    git(repo.path(), &["config", "user.name", "Test"])?;
+    git(repo.path(), &["config", "user.email", "test@example.org"])?;
+    std::fs::write(repo.path().join("a"), b"base\n")?;
+    git(repo.path(), &["add", "a"])?;
+    git(repo.path(), &["commit", "-qm", "base"])?;
+    git(repo.path(), &["switch", "-qc", "feature"])?;
+    std::fs::write(repo.path().join("a"), b"feature\n")?;
+    git(repo.path(), &["commit", "-qam", "feature"])?;
+    git(repo.path(), &["switch", "-q", "main"])?;
+    std::fs::write(repo.path().join("a"), b"main\n")?;
+    git(repo.path(), &["commit", "-qam", "main"])?;
+    let _ = git_output(repo.path(), &["merge", "feature"]);
+
+    let binary = env!("CARGO_BIN_EXE_git-good");
+    let out = Command::new(binary)
+        .args(["conflicts", "--repo"])
+        .arg(repo.path())
+        .output()?;
+    assert!(out.status.success());
+    let receipt: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(receipt["operation"], "conflicts");
+    assert_eq!(receipt["paths"], serde_json::json!(["a"]));
+
+    let out = Command::new(binary)
+        .args(["conflict", "--file", "a", "--repo"])
+        .arg(repo.path())
+        .output()?;
+    assert!(out.status.success());
+    let receipt: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(receipt["base"], "base\n");
+    assert_eq!(receipt["ours"], "main\n");
+    assert_eq!(receipt["theirs"], "feature\n");
+
+    let out = Command::new(binary)
+        .args(["conflict", "--file", "a", "--use", "theirs", "--repo"])
+        .arg(repo.path())
+        .output()?;
+    assert!(out.status.success());
+    let receipt: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(receipt["operation"], "conflict-resolve");
+    assert_eq!(std::fs::read(repo.path().join("a"))?, b"feature\n");
+    assert_eq!(
+        git_output(repo.path(), &["diff", "--name-only", "--diff-filter=U"])?,
+        b""
+    );
+
+    let out = Command::new(binary)
+        .args(["conflict", "--file", "missing", "--repo"])
+        .arg(repo.path())
+        .output()?;
+    assert!(!out.status.success());
+    assert!(out.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("No unmerged stages"));
+    Ok(())
+}
