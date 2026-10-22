@@ -558,6 +558,7 @@ impl Browser {
         ));
         self.refresh_stashes();
         self.load(ctx);
+        self.refresh_working(ctx);
         Ok(())
     }
 
@@ -586,6 +587,7 @@ impl Browser {
         });
         self.refresh_stashes();
         self.load(ctx);
+        self.refresh_working(ctx);
         Ok(())
     }
 
@@ -597,7 +599,16 @@ impl Browser {
         self.stash_notice = Some(format!("Dropped {reference}"));
         self.refresh_stashes();
         self.load(ctx);
+        self.refresh_working(ctx);
         Ok(())
+    }
+
+    fn refresh_working(&mut self, ctx: &egui::Context) {
+        if self.working.is_some()
+            && let Some(history) = &self.state.history
+        {
+            self.working = Some(status_view::StatusView::new(history.path.clone(), ctx));
+        }
     }
 
     fn refresh_mutation(&mut self) {
@@ -653,8 +664,10 @@ impl Browser {
             ),
             gg_engine::mutation::Operation::Merge => String::new(),
         });
+        self.conflict_view = None;
         self.refresh_mutation();
         self.load(ctx);
+        self.refresh_working(ctx);
         Ok(())
     }
 
@@ -686,7 +699,11 @@ impl Browser {
             ));
         }
         self.refresh_mutation();
+        if self.mutation.is_none() {
+            self.conflict_view = None;
+        }
         self.load(ctx);
+        self.refresh_working(ctx);
         Ok(())
     }
 
@@ -718,8 +735,10 @@ impl Browser {
                 }
             ),
         });
+        self.conflict_view = None;
         self.refresh_mutation();
         self.load(ctx);
+        self.refresh_working(ctx);
         Ok(())
     }
 
@@ -792,6 +811,7 @@ impl Browser {
         self.open_conflict_view();
         self.refresh_mutation();
         self.load(ctx);
+        self.refresh_working(ctx);
         Ok(())
     }
 

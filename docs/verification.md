@@ -279,3 +279,12 @@ Linux x86_64 · Rust 1.99.1 · local Git fixtures.
 - Git oracle tests cover unmerged path listing, base/ours/theirs content, side selection with staging, manual staging, add/add conflicts without a base, and unknown-path or base-side rejection.
 - CLI tests verify `conflicts` listing, `conflict --file` content, `--use ours|theirs`, `--stage`, and missing-path errors.
 - egui tests render the **Resolve conflicts** window with path selection and Base, Ours, and Theirs panes at 720 and 1120 widths.
+
+## M5 recovery and operation state · 2026-10-22
+
+Linux x86_64 · Rust 1.99.1 · local Git fixtures.
+
+- 241 workspace tests pass (3 ignored); formatting, Clippy with `-D warnings`, and the debug build pass.
+- Continue, skip, and abort are covered for cherry-pick, revert, and merge, including merge's unsupported skip and restored HEAD/worktree on abort.
+- The in-progress banner exposes Continue, Skip, and Abort and hides Skip for merges.
+- Stash, cherry-pick, revert, merge, and conflict resolution refresh an open Status view after success, and the conflict window closes when no operation remains.

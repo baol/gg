@@ -149,3 +149,9 @@ Native review: the refs sidebar and status line show the current branch upstream
 - Git oracle tests cover unmerged path listing, base/ours/theirs content, side selection with staging, manual staging, add/add conflicts without a base, and unknown-path or base-side rejection.
 - CLI tests cover `conflicts` listing, `conflict --file` content, `--use ours|theirs`, `--stage`, and missing-path errors.
 - egui tests render the **Resolve conflicts** window with path selection and Base, Ours, and Theirs panes at 720 and 1120 widths.
+
+## M5 recovery and operation state
+
+- Git and CLI tests cover continue, skip, and abort for cherry-pick, revert, and merge, including merge's unsupported skip and restored HEAD/worktree on abort.
+- The native in-progress banner exposes Continue, Skip, and Abort, hides Skip for merges, and shows the conflict count.
+- Recovery refreshes history, refs, and an open Status view at a safe boundary; the conflict window closes once no operation remains.
