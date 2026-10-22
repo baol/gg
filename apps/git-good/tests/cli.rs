@@ -1432,3 +1432,125 @@ fn revert_cli_inverts_a_commit() -> Result {
     );
     Ok(())
 }
+
+#[test]
+fn merge_cli_fast_forwards_conflicts_and_recovers() -> Result {
+    let repo = tempfile::tempdir()?;
+    init(repo.path(), &["-b", "main"])?;
+    git(repo.path(), &["config", "user.name", "Test"])?;
+    git(repo.path(), &["config", "user.email", "test@example.org"])?;
+    std::fs::write(repo.path().join("a"), b"base\n")?;
+    git(repo.path(), &["add", "a"])?;
+    git(repo.path(), &["commit", "-qm", "base"])?;
+    git(repo.path(), &["switch", "-qc", "feature"])?;
+    std::fs::write(repo.path().join("b"), b"feature\n")?;
+    git(repo.path(), &["add", "b"])?;
+    git(repo.path(), &["commit", "-qm", "feature"])?;
+    git(repo.path(), &["switch", "-q", "main"])?;
+
+    let binary = env!("CARGO_BIN_EXE_git-good");
+    let out = Command::new(binary)
+        .args(["merge", "feature", "--repo"])
+        .arg(repo.path())
+        .output()?;
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let receipt: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(receipt["operation"], "merge");
+    assert_eq!(receipt["kind"], "fast_forward");
+    assert_eq!(receipt["applied"], true);
+    assert_eq!(std::fs::read(repo.path().join("b"))?, b"feature\n");
+
+    git(repo.path(), &["switch", "-qc", "conflict"])?;
+    std::fs::write(repo.path().join("a"), b"feature\n")?;
+    git(repo.path(), &["commit", "-qam", "feature change"])?;
+    git(repo.path(), &["switch", "-q", "main"])?;
+    std::fs::write(repo.path().join("a"), b"main\n")?;
+    git(repo.path(), &["commit", "-qam", "main change"])?;
+    let main_head = git_output(repo.path(), &["rev-parse", "HEAD"])?;
+
+    let out = Command::new(binary)
+        .args(["merge", "conflict", "--repo"])
+        .arg(repo.path())
+        .output()?;
+    assert!(out.status.success());
+    let receipt: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(receipt["applied"], false);
+    assert_eq!(receipt["in_progress"], true);
+    assert_eq!(receipt["conflicts"], serde_json::json!(["a"]));
+
+    let out = Command::new(binary)
+        .args(["merge", "--abort", "--repo"])
+        .arg(repo.path())
+        .output()?;
+    assert!(out.status.success());
+    assert_eq!(git_output(repo.path(), &["rev-parse", "HEAD"])?, main_head);
+    assert_eq!(std::fs::read(repo.path().join("a"))?, b"main\n");
+
+    Command::new(binary)
+        .args(["merge", "conflict", "--repo"])
+        .arg(repo.path())
+        .output()?;
+    std::fs::write(repo.path().join("a"), b"resolved\n")?;
+    git(repo.path(), &["add", "a"])?;
+    let out = Command::new(binary)
+        .args(["merge", "--continue", "--repo"])
+        .arg(repo.path())
+        .output()?;
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let receipt: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(receipt["applied"], true);
+    assert_eq!(receipt["in_progress"], false);
+    assert_eq!(std::fs::read(repo.path().join("a"))?, b"resolved\n");
+
+    let out = Command::new(binary)
+        .args(["merge", "--skip", "--repo"])
+        .arg(repo.path())
+        .output()?;
+    assert!(!out.status.success());
+    assert!(out.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("Unknown merge option"));
+    Ok(())
+}
+
+#[test]
+fn merge_cli_no_ff_creates_a_merge_commit() -> Result {
+    let repo = tempfile::tempdir()?;
+    init(repo.path(), &["-b", "main"])?;
+    git(repo.path(), &["config", "user.name", "Test"])?;
+    git(repo.path(), &["config", "user.email", "test@example.org"])?;
+    std::fs::write(repo.path().join("a"), b"base\n")?;
+    git(repo.path(), &["add", "a"])?;
+    git(repo.path(), &["commit", "-qm", "base"])?;
+    git(repo.path(), &["switch", "-qc", "feature"])?;
+    std::fs::write(repo.path().join("b"), b"feature\n")?;
+    git(repo.path(), &["add", "b"])?;
+    git(repo.path(), &["commit", "-qm", "feature"])?;
+    git(repo.path(), &["switch", "-q", "main"])?;
+
+    let out = Command::new(env!("CARGO_BIN_EXE_git-good"))
+        .args(["merge", "feature", "--no-ff", "--repo"])
+        .arg(repo.path())
+        .output()?;
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let receipt: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(receipt["kind"], "merge_commit");
+    assert_eq!(
+        String::from_utf8(git_output(repo.path(), &["log", "-1", "--format=%P"])?)?
+            .split_whitespace()
+            .count(),
+        2
+    );
+    Ok(())
+}

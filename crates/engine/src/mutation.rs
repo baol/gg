@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 pub enum Operation {
     CherryPick,
     Revert,
+    Merge,
 }
 
 impl Operation {
@@ -13,6 +14,7 @@ impl Operation {
         match self {
             Self::CherryPick => "cherry-pick",
             Self::Revert => "revert",
+            Self::Merge => "merge",
         }
     }
 }

@@ -33,6 +33,8 @@ git good stash drop [STASH]
 git good cherry-pick COMMIT
 git good revert COMMIT
 git good cherry-pick|revert --continue|--abort|--skip
+git good merge REF [--no-ff]
+git good merge --continue|--abort
 ```
 
 `git good` (or `git-good`) opens the containing repository, including from nested directories. Supply a path to open another repository.
@@ -44,6 +46,8 @@ Tracking and network actions stay explicit. The refs sidebar and status line sho
 Use **Stash** to park work without committing. **Stash changes…** records a message and can include untracked files or keep staged content in the index; **Manage stashes…** lists entries with Apply, Pop, and a confirmed Drop. Conflicting applies keep the entry, list the unmerged paths in the status line, and leave the conflict markers for recovery. The CLI exposes the same operations with JSON receipts: `git good stash list`, `git good stash push`, `git good stash apply`, `git good stash pop`, and `git good stash drop`.
 
 Use the **Commit** menu to cherry-pick or revert the selected history commit. A conflicting operation leaves an in-progress banner with **Continue**, **Skip**, and **Abort**; the status line names the operation and conflict count. The CLI mirrors the same flow with `git good cherry-pick COMMIT`, `git good revert COMMIT`, and their `--continue`, `--skip`, and `--abort` recovery forms.
+
+Use **Refs → Merge branch…** to merge a local branch, remote-tracking ref, or tag. Fast-forward and already-up-to-date merges complete directly; diverged histories create a merge commit, and **Always create a merge commit** forces one. A conflicting merge leaves the in-progress banner with **Continue** and **Abort** (Skip is hidden because Git does not support it), and the status line reports the conflict count. CLI: `git good merge REF [--no-ff]` and `git good merge --continue|--abort`.
 
 Choose **Status** to inspect staged, unstaged, untracked, and conflicted paths. **Refresh** rescans the worktree; **Back** restores history. `git good status [PATH]` streams the same entries as JSON.
 
@@ -57,4 +61,4 @@ Apache-2.0 · [LICENSE](LICENSE)
 
 In Status, **Stage file** records the selected working path in the index at action time; **Unstage file** restores a staged row from HEAD. Both preserve working edits and unrelated staging. Inside **Review & stage**, the inline hunk and line actions stage or unstage only the selected changes; whole-file actions remain available for modes, type changes, symlinks, untracked additions, and deletions. **Drop** discards working changes only: tracked content is restored from the index, untracked files are removed, and the index is never modified. CLI: `git good stage --file PATH [--hunk HEADER]... [--repo PATH]`, `git good unstage --file PATH [--repo PATH]`, `git good commit -m MESSAGE [--repo PATH]`, and `git good switch [--create] BRANCH [--repo PATH]`. Commit runs `pre-commit`, `prepare-commit-msg`, `commit-msg`, and `post-commit` hooks; a pre-commit or message-hook failure leaves the index and working tree intact and keeps the message for retry. A failing post-commit hook reports a warning after the commit exists. Repeat `--hunk` with exact `@@` headers from `git good status --file PATH --area unstaged` to stage multiple hunks.
 
-Use **Repository** for Open, Refresh, Fetch, Push, and Clone, **Stash** for stash actions, **Commit** for cherry-pick and revert, and **View** or Space for commit details. Arrows and j/k navigate lists; in reading views they scroll content. Page keys move a viewport; Enter/Right opens the selection and Escape/Left returns. Text editors retain their keys.
+Use **Repository** for Open, Refresh, Fetch, Push, and Clone, **Stash** for stash actions, **Commit** for cherry-pick and revert, **Refs** for branch actions and merge, and **View** or Space for commit details. Arrows and j/k navigate lists; in reading views they scroll content. Page keys move a viewport; Enter/Right opens the selection and Escape/Left returns. Text editors retain their keys.

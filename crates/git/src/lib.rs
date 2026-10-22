@@ -175,6 +175,7 @@ pub mod branch;
 pub mod commit;
 pub mod diff;
 pub mod drop;
+pub mod merge;
 pub mod mutation;
 pub mod patch;
 pub mod refs;
