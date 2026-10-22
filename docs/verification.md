@@ -240,6 +240,7 @@ Linux x86_64 · Rust 1.99.1 · debug and release builds · local bare remotes.
 - Captures: [tracking wide](screenshots/m4-tracking-wide.png), [tracking narrow](screenshots/m4-tracking-narrow.png), [clone dialog](screenshots/m4-clone-dialog.png), [track dialog](screenshots/m4-track-dialog.png), [fetch progress and cancel](screenshots/m4-fetch-progress.png).
 - [Six native CI jobs](https://github.com/baol/gg/actions/runs/39808879624) pass tests, Clippy with `-D warnings`, release builds, CLI smoke checks, and packaging on Linux, macOS, and Windows on x86_64 and arm64 for `beccd6e`. The [release gates](#preview-acceptance-pending) remain unchanged.
 - M4 is complete: tracking snapshots, Git-backed clone/fetch/push, remote-branch checkout, credentials, bounded progress, cancellation, branch switching with untracked files, and the egui/eframe 0.37 upgrade are verified.
+- Follow-up: `git good --help` lists `fetch`, `push`, and `clone`, [ROADMAP](../ROADMAP.md) marks M4 complete, and `help_lists_every_cli_command` guards the usage banner.
 
 ## M5 stash · 2026-10-22
 

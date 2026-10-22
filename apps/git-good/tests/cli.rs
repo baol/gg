@@ -273,6 +273,37 @@ fn version_matches_package_without_a_repository() -> Result {
 }
 
 #[test]
+fn help_lists_every_cli_command() -> Result {
+    let directory = tempfile::tempdir()?;
+    let output = Command::new(env!("CARGO_BIN_EXE_git-good"))
+        .arg("--help")
+        .current_dir(directory.path())
+        .output()?;
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let help = String::from_utf8(output.stdout)?;
+    for usage in [
+        "git-good history",
+        "git-good refs",
+        "git-good status",
+        "git-good stage",
+        "git-good unstage",
+        "git-good commit",
+        "git-good switch",
+        "git-good fetch",
+        "git-good push",
+        "git-good clone",
+        "git-good stash",
+        "git-good cherry-pick",
+        "git-good revert",
+        "git-good show",
+    ] {
+        assert!(help.contains(usage), "help is missing {usage:?}:\n{help}");
+    }
+    Ok(())
+}
+
+#[test]
 fn show_discovers_repo_streams_exact_files_and_rejects_invalid_parent() -> Result {
     let repo = tempfile::tempdir()?;
     init(repo.path(), &["-b", "main"])?;
