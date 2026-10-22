@@ -26,7 +26,7 @@ Resolve the repository from cwd, including nested directories, or an explicit pa
 
 Pin each session to repository identity and resolved HEAD. Carry generations through requests/results; apply current results. Refresh creates a replacement session, adopted when ready and interaction permits. Repository switches clear the old filter/selection; refresh preserves matching selection by ID, otherwise the first visible result.
 
-Traverse a deduplicated frontier from HEAD: emit the newest committer timestamp, break ties by descending object ID, then enqueue parents. Assign stable ordinals and retain continuation state. Every reachable commit remains accessible.
+Traverse the deduplicated union of commits reachable from HEAD and every local branch, remote branch, and tag. A single tip uses the incremental frontier: emit the newest committer timestamp, break ties by descending object ID, then enqueue parents. Divergent non-shallow tips use topological order so parents follow all children. Assign stable ordinals and retain continuation state; shallow traversal stops at recorded boundaries. Every reachable commit remains accessible.
 
 Prioritize visible rows, overscan, then indexing/counting. Publish summaries, selected details, progress, completion, and errors. Summaries carry ID, subject, author, and date; selected details include full message and parents.
 
@@ -146,7 +146,7 @@ Rationale: summaries provide early feedback; pinned, cancellable work keeps rapi
 
 ## History graph and refs · M3
 
-Ref discovery is read-only and shared by CLI and native views. Emit HEAD state (symbolic name, detached flag, commit), local branches, remote branches, and tags with exact short and full names and peeled commit IDs. Skip symbolic remote `HEAD` refs and tags that cannot peel to commits. Keep HEAD explicit for unborn and detached repositories. `git good refs [PATH]` streams this snapshot as JSON; the history worker loads the same snapshot alongside a traversal and replaces it on refresh.
+Ref discovery is read-only and shared by CLI and native views. Emit HEAD state (symbolic name, detached flag, commit), local branches, remote branches, and tags with exact short and full names and peeled commit IDs. Skip symbolic remote `HEAD` refs and tags that cannot peel to commits. Keep HEAD explicit for unborn and detached repositories. `git good refs [PATH]` streams this snapshot as JSON; the history worker loads the same snapshot alongside a traversal and replaces it on refresh. History traversal starts from HEAD and every ref target, so branch, remote, and tag-only commits appear in the graph.
 
 Compute graph rows in traversal order, including commits later hidden by a filter, so lane identities stay coherent. Each row carries its own lane, the set of lanes entering and leaving the row, and parent lanes. Reuse a parent's existing lane, allocate free lanes for additional merge parents, retire empty lanes, and cap layout at 64 lanes. Render stable per-lane colors, vertical continuations, parent joins, commit dots, and a ring for merge commits. Cache graph rows with the visible page and evict them with their commits.
 

@@ -1,5 +1,5 @@
 use gg_engine::{HistoryRequest, HistorySource};
-use std::{error::Error, path::Path, process::Command};
+use std::{collections::HashSet, error::Error, path::Path, process::Command};
 
 type Result<T = ()> = std::result::Result<T, Box<dyn Error>>;
 
@@ -85,6 +85,72 @@ fn history_matches_git_after_packing_and_detaching() -> Result {
     assert_eq!(read(dir.path())?.head, "Detached HEAD");
     Ok(())
 }
+#[test]
+fn history_includes_commits_from_all_local_remote_and_tag_refs() -> Result {
+    let dir = init()?;
+    commit(dir.path(), "Root")?;
+    git(dir.path(), &["checkout", "-b", "side"])?;
+    commit(dir.path(), "Side")?;
+    let side = git(dir.path(), &["rev-parse", "HEAD"])?;
+    git(dir.path(), &["checkout", "main"])?;
+    commit(dir.path(), "Main")?;
+
+    git(dir.path(), &["checkout", "-b", "remote-only"])?;
+    commit(dir.path(), "Remote only")?;
+    let remote_only = git(dir.path(), &["rev-parse", "HEAD"])?;
+    git(dir.path(), &["checkout", "main"])?;
+    git(dir.path(), &["branch", "-D", "remote-only"])?;
+    git(
+        dir.path(),
+        &[
+            "update-ref",
+            "refs/remotes/origin/remote-only",
+            &remote_only,
+        ],
+    )?;
+
+    git(dir.path(), &["checkout", "-b", "tag-only"])?;
+    commit(dir.path(), "Tag only")?;
+    let tag_only = git(dir.path(), &["rev-parse", "HEAD"])?;
+    git(dir.path(), &["tag", "tag-only", &tag_only])?;
+    git(dir.path(), &["checkout", "main"])?;
+    git(dir.path(), &["branch", "-D", "tag-only"])?;
+    git(dir.path(), &["tag", "side-tag", &side])?;
+
+    let history = read(dir.path())?;
+    let mut actual = history
+        .commits
+        .iter()
+        .map(|commit| commit.id.as_str())
+        .collect::<Vec<_>>();
+    actual.sort_unstable();
+    let oracle = git(dir.path(), &["rev-list", "--all"])?;
+    let mut expected = oracle.lines().collect::<Vec<_>>();
+    expected.sort_unstable();
+    assert_eq!(actual, expected);
+    let mut seen = HashSet::new();
+    for history_commit in &history.commits {
+        for parent in &history_commit.parents {
+            assert!(
+                !seen.contains(parent),
+                "parent {parent} appeared before child {}",
+                history_commit.id
+            );
+        }
+        seen.insert(history_commit.id.clone());
+    }
+    for subject in ["Side", "Main", "Remote only", "Tag only"] {
+        assert!(
+            history
+                .commits
+                .iter()
+                .any(|commit| commit.subject() == subject),
+            "missing {subject}"
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn merge_bare_and_linked_worktree() -> Result {
     let dir = init()?;
