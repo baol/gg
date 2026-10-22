@@ -84,6 +84,73 @@ fn switches_branches_only_when_clean() -> Result {
 }
 
 #[test]
+fn untracked_files_do_not_block_switching_or_creation() -> Result {
+    let dir = repo()?;
+    let p = dir.path();
+    git(p, &["branch", "feature"])?;
+    std::fs::write(p.join("new"), b"untracked\n")?;
+
+    let receipt = gg_git::branch::switch(p, "feature")?;
+    assert_eq!(receipt.branch, "feature");
+    assert_eq!(std::fs::read(p.join("new"))?, b"untracked\n");
+
+    let receipt = gg_git::branch::switch(p, "main")?;
+    assert_eq!(receipt.branch, "main");
+    assert_eq!(std::fs::read(p.join("new"))?, b"untracked\n");
+
+    let receipt = gg_git::branch::create(p, "created")?;
+    assert!(receipt.created);
+    assert_eq!(std::fs::read(p.join("new"))?, b"untracked\n");
+    Ok(())
+}
+
+#[test]
+fn branch_specific_ignore_rules_do_not_block_return_switching() -> Result {
+    let dir = repo()?;
+    let p = dir.path();
+    std::fs::write(p.join(".gitignore"), b"/target/\n/data/\n")?;
+    git(p, &["add", ".gitignore"])?;
+    git(p, &["commit", "-qm", "ignore data"])?;
+    git(p, &["branch", "feature"])?;
+    git(p, &["switch", "-q", "feature"])?;
+    std::fs::write(p.join(".gitignore"), b"/target/\n")?;
+    git(p, &["add", ".gitignore"])?;
+    git(p, &["commit", "-qm", "track data"])?;
+    git(p, &["switch", "-q", "main"])?;
+
+    std::fs::create_dir(p.join("data"))?;
+    std::fs::write(p.join("data/state.json"), b"{}\n")?;
+
+    let receipt = gg_git::branch::switch(p, "feature")?;
+    assert_eq!(receipt.branch, "feature");
+    assert_eq!(std::fs::read(p.join("data/state.json"))?, b"{}\n");
+
+    let receipt = gg_git::branch::switch(p, "main")?;
+    assert_eq!(receipt.branch, "main");
+    assert_eq!(std::fs::read(p.join("data/state.json"))?, b"{}\n");
+    Ok(())
+}
+
+#[test]
+fn git_rejects_untracked_files_that_would_be_overwritten() -> Result {
+    let dir = repo()?;
+    let p = dir.path();
+    git(p, &["branch", "feature"])?;
+    git(p, &["switch", "-q", "feature"])?;
+    std::fs::write(p.join("new"), b"tracked\n")?;
+    git(p, &["add", "new"])?;
+    git(p, &["commit", "-qm", "track new"])?;
+    git(p, &["switch", "-q", "main"])?;
+    std::fs::write(p.join("new"), b"untracked\n")?;
+
+    let error = rejected(gg_git::branch::switch(p, "feature"))?;
+    assert!(error.contains("switch failed"), "{error}");
+    assert_eq!(git(p, &["symbolic-ref", "--short", "HEAD"])?, b"main\n");
+    assert_eq!(std::fs::read(p.join("new"))?, b"untracked\n");
+    Ok(())
+}
+
+#[test]
 fn creates_and_switches_to_a_new_branch() -> Result {
     let dir = repo()?;
     let p = dir.path();
@@ -111,11 +178,11 @@ fn rejects_dirty_missing_and_unborn_branches_and_switches_from_detached_head() -
     let dir = repo()?;
     let p = dir.path();
     let head = git(p, &["rev-parse", "HEAD"])?;
-    std::fs::write(p.join("new"), b"untracked\n")?;
+    std::fs::write(p.join("a"), b"modified\n")?;
     let error = rejected(gg_git::branch::create(p, "blocked"))?;
     assert!(error.contains("not clean"), "{error}");
     assert_eq!(git(p, &["rev-parse", "HEAD"])?, head);
-    std::fs::remove_file(p.join("new"))?;
+    git(p, &["reset", "--hard", "HEAD"])?;
 
     std::fs::write(p.join("a"), b"staged\n")?;
     git(p, &["add", "a"])?;
@@ -181,14 +248,14 @@ fn creates_a_tracking_branch_only_when_clean_and_absent() -> Result {
     )?;
     git(local.path(), &["fetch", "-q", "origin"])?;
 
-    std::fs::write(local.path().join("dirty"), b"dirty\n")?;
+    std::fs::write(local.path().join("a"), b"dirty\n")?;
     let error = rejected(gg_git::branch::track_remote(local.path(), "origin/feature"))?;
     assert!(error.contains("not clean"), "{error}");
     assert_eq!(
         git(local.path(), &["symbolic-ref", "--short", "HEAD"])?,
         b"main\n"
     );
-    std::fs::remove_file(local.path().join("dirty"))?;
+    git(local.path(), &["reset", "--hard", "HEAD"])?;
 
     git(local.path(), &["branch", "feature"])?;
     let error = rejected(gg_git::branch::track_remote(local.path(), "origin/feature"))?;

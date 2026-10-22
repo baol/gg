@@ -221,6 +221,9 @@ fn ensure_clean(session: &crate::status::Session) -> Result<(), String> {
     let stop = AtomicBool::new(false);
     let mut dirty = None;
     session.scan(&stop, |entry| {
+        if entry.area == gg_engine::status::Area::Untracked {
+            return Ok(());
+        }
         dirty = Some(entry.path);
         stop.store(true, Ordering::Relaxed);
         Ok(())
