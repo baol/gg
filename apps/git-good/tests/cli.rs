@@ -1069,7 +1069,7 @@ fn sync_cli_clones_fetches_pushes_and_reports_failures() -> Result {
         std::fs::canonicalize(receipt["path"].as_str().ok_or("missing clone path")?)?,
         std::fs::canonicalize(&target)?
     );
-    assert_eq!(std::fs::read(target.join("a"))?, b"base\n");
+    assert_eq!(git_output(&target, &["show", "HEAD:a"])?, b"base\n");
 
     std::fs::write(source.path().join("a"), b"remote\n")?;
     git(

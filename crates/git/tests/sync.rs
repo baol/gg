@@ -89,7 +89,8 @@ fn clone_fetch_push_upstream_and_non_fast_forward() -> Result {
         receipt.head.as_deref(),
         Some(head(source.path(), "HEAD")?.as_str())
     );
-    assert_eq!(std::fs::read(target.join("a"))?, b"base\n");
+    assert_eq!(git(&target, &["show", "HEAD:a"])?, b"base\n");
+    let working = std::fs::read(target.join("a"))?;
     assert!(!progress.is_empty(), "clone produced no progress");
     assert!(
         progress
@@ -117,7 +118,7 @@ fn clone_fetch_push_upstream_and_non_fast_forward() -> Result {
     assert!(!receipt.pruned);
     assert_eq!(head(&target, "refs/remotes/origin/main")?, remote_head);
     assert_eq!(head(&target, "HEAD")?, local_head);
-    assert_eq!(std::fs::read(target.join("a"))?, b"base\n");
+    assert_eq!(std::fs::read(target.join("a"))?, working);
     assert_eq!(std::fs::read(target.join(".git/index"))?, index);
     assert!(!progress.is_empty(), "fetch produced no progress");
 
