@@ -59,7 +59,16 @@ fn read_inner(path: &Path) -> std::result::Result<Snapshot, Box<dyn std::error::
             commit: commit.id.to_string(),
         });
     }
-    items.sort_by(|a, b| (a.kind as u8, a.name.as_str()).cmp(&(b.kind as u8, b.name.as_str())));
+    items.sort_by(|a, b| {
+        (a.kind as u8, a.name.as_str(), a.full_name.as_str()).cmp(&(
+            b.kind as u8,
+            b.name.as_str(),
+            b.full_name.as_str(),
+        ))
+    });
+    // gix can yield the same remote ref from both loose and packed storage.
+    // The overlay iterator favors the loose value, so keep the first entry.
+    items.dedup_by(|a, b| a.full_name == b.full_name && a.kind == b.kind);
     Ok(Snapshot {
         head: Some(head),
         items,

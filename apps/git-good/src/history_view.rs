@@ -4,15 +4,15 @@ use eframe::egui;
 use gg_engine::Commit;
 
 pub const ROW_HEIGHT: f32 = 26.0;
-pub const MIN_WIDTH: f32 = 680.0;
+pub const MIN_WIDTH: f32 = 610.0;
 
 pub fn columns(rect: egui::Rect) -> [egui::Rect; 5] {
     let widths = [
         92.0,
-        (rect.width() - 92.0 - 168.0 - 76.0 - 132.0).max(0.0),
-        168.0,
-        76.0,
-        132.0,
+        (rect.width() - 92.0 - 150.0 - 66.0 - 92.0).max(0.0),
+        150.0,
+        66.0,
+        92.0,
     ];
     let mut x = rect.left();
     widths.map(|width| {
@@ -41,6 +41,20 @@ fn text(ui: &egui::Ui, rect: egui::Rect, value: &str, color: egui::Color32, mono
     );
 }
 
+pub fn sort_labels(refs: &mut [gg_engine::refs::RefItem], head_name: Option<&str>) {
+    refs.sort_by_key(|item| {
+        (
+            Some(item.full_name.as_str()) != head_name,
+            match item.kind {
+                gg_engine::refs::RefKind::Tag => 0,
+                gg_engine::refs::RefKind::Branch => 1,
+                gg_engine::refs::RefKind::Remote => 2,
+            },
+            item.name.clone(),
+        )
+    });
+}
+
 pub fn header(ui: &mut egui::Ui) {
     let (rect, _) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), ROW_HEIGHT),
@@ -57,6 +71,124 @@ pub fn header(ui: &mut egui::Ui) {
         rect.bottom(),
         ui.visuals().widgets.noninteractive.bg_stroke,
     );
+}
+
+fn paint_refs_and_subject(
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    refs: &[gg_engine::refs::RefItem],
+    commit: &Commit,
+    selected: bool,
+    subject_color: egui::Color32,
+    max_labels: usize,
+) {
+    let inner = rect.shrink2(egui::vec2(6.0, 0.0));
+    if inner.width() <= 0.0 {
+        return;
+    }
+    let painter = ui.painter().with_clip_rect(rect);
+    let font = egui::FontId::proportional(10.5);
+    let mut x = inner.left();
+    let mut shown = 0;
+    for item in refs.iter().take(max_labels) {
+        let (background, foreground) = ref_label_colors(ui.visuals(), item.kind, selected);
+        let galley = painter.layout_no_wrap(item.name.clone(), font.clone(), foreground);
+        let width = galley.size().x + 18.0;
+        if x + width > inner.right() - 24.0 {
+            break;
+        }
+        let pill = egui::Rect::from_min_size(
+            egui::pos2(x, inner.center().y - 7.5),
+            egui::vec2(width, 15.0),
+        );
+        painter.rect_filled(pill, 4.0, background);
+        crate::refs_view::paint_icon(
+            &painter,
+            egui::Rect::from_center_size(
+                egui::pos2(pill.left() + 7.0, pill.center().y),
+                egui::vec2(9.0, 9.0),
+            ),
+            item.kind,
+            foreground,
+        );
+        painter.galley(
+            egui::pos2(pill.left() + 13.0, pill.center().y - galley.size().y / 2.0),
+            galley,
+            foreground,
+        );
+        ui.interact(
+            pill,
+            ui.id().with(("ref-pill", &item.full_name)),
+            egui::Sense::hover(),
+        )
+        .on_hover_text(&item.full_name);
+        x = pill.right() + 4.0;
+        shown += 1;
+    }
+    if refs.len() > shown {
+        let more = format!("+{}", refs.len() - shown);
+        let galley = painter.layout_no_wrap(
+            more,
+            font,
+            ui.visuals().weak_text_color().gamma_multiply(0.9),
+        );
+        let width = galley.size().x + 8.0;
+        if x + width <= inner.right() {
+            let rect = egui::Rect::from_min_size(
+                egui::pos2(x, inner.center().y - 7.5),
+                egui::vec2(width, 15.0),
+            );
+            painter.rect_filled(
+                rect,
+                4.0,
+                ui.visuals()
+                    .widgets
+                    .noninteractive
+                    .bg_fill
+                    .gamma_multiply(0.7),
+            );
+            painter.galley(
+                egui::pos2(rect.left() + 4.0, rect.center().y - galley.size().y / 2.0),
+                galley,
+                ui.visuals().weak_text_color(),
+            );
+            x = rect.right() + 4.0;
+        }
+    }
+    let subject_rect = egui::Rect::from_min_max(
+        egui::pos2(x + if shown > 0 { 2.0 } else { 0.0 }, rect.top()),
+        egui::pos2(rect.right() - 6.0, rect.bottom()),
+    );
+    crate::bounded_text::paint(
+        ui,
+        subject_rect,
+        commit.subject(),
+        egui::FontId::proportional(12.0),
+        subject_color,
+    );
+}
+
+fn ref_label_colors(
+    visuals: &egui::Visuals,
+    kind: gg_engine::refs::RefKind,
+    selected: bool,
+) -> (egui::Color32, egui::Color32) {
+    let base = match kind {
+        gg_engine::refs::RefKind::Branch => egui::Color32::from_rgb(112, 166, 242),
+        gg_engine::refs::RefKind::Remote => egui::Color32::from_rgb(160, 164, 176),
+        gg_engine::refs::RefKind::Tag => egui::Color32::from_rgb(224, 178, 96),
+    };
+    let foreground = if selected {
+        visuals.strong_text_color()
+    } else {
+        base.gamma_multiply(if visuals.dark_mode { 1.15 } else { 0.75 })
+    };
+    let background = base.gamma_multiply(if visuals.dark_mode {
+        if selected { 0.28 } else { 0.20 }
+    } else {
+        0.16
+    });
+    (background, foreground)
 }
 
 pub fn row(
@@ -111,21 +243,8 @@ pub fn row(
             );
         }
     }
-    let mut labels = refs
-        .iter()
-        .take(4)
-        .map(|item| item.name.as_str())
-        .collect::<Vec<_>>()
-        .join(" ");
-    if refs.len() > 4 {
-        labels.push_str(&format!(" +{}", refs.len() - 4));
-    }
-    let subject_text = if labels.is_empty() {
-        commit.subject().to_owned()
-    } else {
-        format!("[{labels}] {}", commit.subject())
-    };
-    text(ui, subject, &subject_text, color, false);
+    let max_labels = if subject.width() < 280.0 { 2 } else { 4 };
+    paint_refs_and_subject(ui, subject, refs, commit, selected, color, max_labels);
     let avatar = egui::Rect::from_center_size(
         egui::pos2(author.left() + 14.0, author.center().y),
         egui::vec2(18.0, 18.0),
@@ -145,13 +264,8 @@ pub fn row(
         muted,
         true,
     );
-    let short_date = commit
-        .time
-        .split_whitespace()
-        .take(2)
-        .collect::<Vec<_>>()
-        .join(" ");
-    text(ui, date, &short_date, muted, false);
+    let short_date = commit.time.split_whitespace().next().unwrap_or_default();
+    text(ui, date, short_date, muted, false);
     let refs = refs
         .iter()
         .map(|item| item.name.as_str())
@@ -222,10 +336,17 @@ mod tests {
                 });
             },
         );
-        assert!(output.shapes.iter().any(|shape| matches!(
-            &shape.shape,
-            egui::epaint::Shape::Text(text) if text.galley.job.text.contains("[main] Subject")
-        )));
+        let text = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(text.iter().any(|line| line.contains("main")));
+        assert!(text.iter().any(|line| line.contains("Subject")));
+        assert!(!text.iter().any(|line| line.contains("[main] Subject")));
     }
 
     #[test]
@@ -266,6 +387,35 @@ mod tests {
             &shape.shape,
             egui::epaint::Shape::Text(text) if text.galley.job.text.contains("+1")
         )));
+    }
+
+    #[test]
+    fn current_branch_sorts_before_tags_and_other_refs() {
+        let id = "a".repeat(40);
+        let mut refs = [
+            gg_engine::refs::RefItem {
+                name: "zzz".into(),
+                full_name: "refs/heads/zzz".into(),
+                kind: gg_engine::refs::RefKind::Branch,
+                commit: id.clone(),
+            },
+            gg_engine::refs::RefItem {
+                name: "v1.0".into(),
+                full_name: "refs/tags/v1.0".into(),
+                kind: gg_engine::refs::RefKind::Tag,
+                commit: id.clone(),
+            },
+            gg_engine::refs::RefItem {
+                name: "main".into(),
+                full_name: "refs/heads/main".into(),
+                kind: gg_engine::refs::RefKind::Branch,
+                commit: id,
+            },
+        ];
+        sort_labels(&mut refs, Some("refs/heads/main"));
+        assert_eq!(refs[0].name, "main");
+        assert_eq!(refs[1].name, "v1.0");
+        assert_eq!(refs[2].name, "zzz");
     }
 
     #[test]

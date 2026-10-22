@@ -16,6 +16,7 @@ mod interaction_tests;
 mod navigation;
 mod records;
 mod refs_cli;
+mod refs_view;
 mod review_cli;
 mod review_view;
 mod review_worker;
@@ -155,6 +156,8 @@ struct Browser {
     branch_error: Option<String>,
     branch_warning: Option<String>,
     new_branch: Option<String>,
+    refs_visible: bool,
+    refs_query: String,
     state: state::State,
     pending: Option<stream::Worker>,
     pending_filter_edit: bool,
@@ -188,6 +191,8 @@ impl Browser {
             branch_error: None,
             branch_warning: None,
             new_branch: None,
+            refs_visible: true,
+            refs_query: String::new(),
             state: state::State::default(),
             pending: None,
             pending_filter_edit: false,
@@ -681,6 +686,17 @@ impl Browser {
                         if ui.checkbox(shown, "Commit details · Space").clicked() {
                             ui.close();
                         }
+                        ui.separator();
+                        let sidebar_available = ctx.content_rect().width() >= 1120.0;
+                        ui.add_enabled(
+                            sidebar_available,
+                            egui::Checkbox::new(&mut self.refs_visible, "Refs sidebar"),
+                        )
+                        .on_hover_text(if sidebar_available {
+                            "Show branches, remotes, and tags on the left"
+                        } else {
+                            "Resize the window to at least 1120 px to show the sidebar"
+                        });
                     });
                     ui.separator();
                     let identity_width = (ui.available_width() - 84.0).max(80.0);
@@ -750,6 +766,25 @@ impl Browser {
                     }
                 });
             });
+        }
+        let wide_refs = !narrow && self.refs_visible && ctx.content_rect().width() >= 1120.0;
+        if wide_refs {
+            let refs = self.state.refs.clone();
+            let busy = self.branch.is_some();
+            let mut action = None;
+            egui::SidePanel::left("refs-sidebar")
+                .exact_width(190.0)
+                .resizable(false)
+                .frame(egui::Frame::side_top_panel(&ctx.style()).inner_margin(8.0))
+                .show(ctx, |ui| {
+                    action = refs_view::show(ui, &refs, &mut self.refs_query, busy);
+                });
+            match action {
+                Some(refs_view::Action::Switch(name)) => self.start_branch(ctx, name, false),
+                Some(refs_view::Action::Jump(id)) => self.jump_to_ref(id),
+                Some(refs_view::Action::NewBranch) => self.new_branch = Some(String::new()),
+                None => {}
+            }
         }
         if let Some(name) = &mut self.new_branch {
             let mut submit = None;
@@ -872,8 +907,14 @@ impl Browser {
         self.details_rect = egui::Rect::NOTHING;
         if !narrow && self.details_visible {
             let details = egui::SidePanel::right("details")
-                .default_width(330.0)
-                .width_range(300.0..=(ctx.content_rect().width() - 700.0).max(300.0))
+                .default_width(300.0)
+                .width_range(
+                    300.0
+                        ..=(ctx.content_rect().width()
+                            - if wide_refs { 190.0 } else { 0.0 }
+                            - history_view::MIN_WIDTH)
+                            .max(300.0),
+                )
                 .frame(egui::Frame::side_top_panel(&ctx.style()).inner_margin(12.0))
                 .show(ctx, |ui| {
                     ui.weak("DETAILS");
@@ -944,14 +985,21 @@ impl Browser {
                                 self.viewport =
                                     rows.start.saturating_sub(24)..rows.end.saturating_add(24);
                                 self.row_rects.clear();
+                                let head_name = self
+                                    .state
+                                    .refs
+                                    .head
+                                    .as_ref()
+                                    .and_then(|head| head.name.clone());
                                 for row in rows {
                                     if let Some(commit) = self.state.rows.get(&row) {
-                                        let refs = self
+                                        let mut refs = self
                                             .state
                                             .refs
                                             .for_commit(&commit.id)
                                             .cloned()
                                             .collect::<Vec<_>>();
+                                        history_view::sort_labels(&mut refs, head_name.as_deref());
                                         let graph = self.state.graphs.get(&row);
                                         let response = ui
                                             .push_id(&commit.id, |ui| {
@@ -1094,6 +1142,30 @@ mod tests {
             pressed: true,
             repeat: false,
             modifiers,
+        }
+    }
+
+    #[test]
+    fn refs_sidebar_appears_only_when_there_is_room() {
+        for (width, visible) in [(1119.0, false), (1120.0, true), (1600.0, true)] {
+            let ctx = egui::Context::default();
+            let mut app = layout_fixture();
+            let _ = ctx.run(frame_input(width, 740.0, vec![]), |ctx| app.draw(ctx));
+            let output = ctx.run(frame_input(width, 740.0, vec![]), |ctx| app.draw(ctx));
+            let text = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                text.iter().any(|line| line.contains("Branches  0")),
+                visible,
+                "width={width}: {text:?}"
+            );
+            assert!(app.history_rect.width() >= history_view::MIN_WIDTH);
         }
     }
 
@@ -1266,7 +1338,12 @@ mod tests {
                 // Settle panel geometry and font layout before checking the complete frame.
                 let _ = ctx.run(frame_input(width, height, vec![]), |ctx| app.draw(ctx));
                 let output = ctx.run(frame_input(width, height, vec![]), |ctx| app.draw(ctx));
-                assert!(app.history_rect.width() >= history_view::MIN_WIDTH);
+                assert!(
+                    app.history_rect.width() >= history_view::MIN_WIDTH,
+                    "width={width} scale={scale} history={:?} details={:?}",
+                    app.history_rect,
+                    app.details_rect
+                );
                 assert!(app.history_rect.top() <= 100.0);
                 assert!(app.history_rect.bottom() <= height - 20.0);
                 if width >= 1040.0 {

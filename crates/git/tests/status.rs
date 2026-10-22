@@ -998,11 +998,12 @@ fn stage_hunks_respect_attributes_crlf_and_final_newlines() -> Result {
         std::fs::write(p.join("nonewline"), b"a\nb")?;
         git(p, &["add", "."])?;
         git(p, &["commit", "-qm", "base"])?;
+        // Change the sizes so a coarse index timestamp cannot make the edits look clean.
         std::fs::write(
             p.join("a.txt"),
-            b"ONE\r\ntwo\r\nthree\r\nfour\r\nfive\r\nsix\r\nseven\r\neight\r\nnine\r\nTEN\r\n",
+            b"ONE!\r\ntwo\r\nthree\r\nfour\r\nfive\r\nsix\r\nseven\r\neight\r\nnine\r\nTEN!\r\n",
         )?;
-        std::fs::write(p.join("nonewline"), b"a\nB")?;
+        std::fs::write(p.join("nonewline"), b"a\nB!")?;
     }
     let req = request(ours.path(), b"a.txt", Area::Unstaged)?;
     let headers = hunk_headers(&req)?;
@@ -1015,7 +1016,7 @@ fn stage_hunks_respect_attributes_crlf_and_final_newlines() -> Result {
     );
     assert_eq!(
         std::fs::read(ours.path().join("a.txt"))?,
-        b"ONE\r\ntwo\r\nthree\r\nfour\r\nfive\r\nsix\r\nseven\r\neight\r\nnine\r\nTEN\r\n"
+        b"ONE!\r\ntwo\r\nthree\r\nfour\r\nfive\r\nsix\r\nseven\r\neight\r\nnine\r\nTEN!\r\n"
     );
     assert_eq!(
         git(
@@ -1029,8 +1030,8 @@ fn stage_hunks_respect_attributes_crlf_and_final_newlines() -> Result {
     let headers = hunk_headers(&req)?;
     assert_eq!(headers.len(), 1);
     gg_git::stage::hunks(&req, &headers)?;
-    assert_eq!(git(ours.path(), &["show", ":nonewline"])?, b"a\nB");
-    assert_eq!(std::fs::read(ours.path().join("nonewline"))?, b"a\nB");
+    assert_eq!(git(ours.path(), &["show", ":nonewline"])?, b"a\nB!");
+    assert_eq!(std::fs::read(ours.path().join("nonewline"))?, b"a\nB!");
     assert_eq!(
         git(
             ours.path(),

@@ -90,3 +90,36 @@ fn unborn_and_detached_heads_are_explicit() -> Result {
     assert!(head.commit.is_some());
     Ok(())
 }
+
+#[test]
+fn duplicate_loose_and_packed_refs_are_reported_once() -> Result {
+    let dir = tempfile::tempdir()?;
+    let p = dir.path();
+    git(p, &["init", "-b", "main"])?;
+    std::fs::write(p.join("a"), b"base\n")?;
+    git(p, &["add", "a"])?;
+    git(p, &["commit", "-qm", "base"])?;
+    let old = String::from_utf8(git(p, &["rev-parse", "HEAD"])?)?
+        .trim()
+        .to_string();
+    std::fs::write(p.join("a"), b"newer\n")?;
+    git(p, &["commit", "-qam", "newer"])?;
+    let new = String::from_utf8(git(p, &["rev-parse", "HEAD"])?)?
+        .trim()
+        .to_string();
+    git(p, &["update-ref", "refs/remotes/origin/main", &old])?;
+    git(p, &["pack-refs", "--all"])?;
+    let loose = p.join(".git/refs/remotes/origin");
+    std::fs::create_dir_all(&loose)?;
+    std::fs::write(loose.join("main"), format!("{new}\n"))?;
+
+    let snapshot = gg_git::refs::read(p)?;
+    let remotes = snapshot
+        .items
+        .iter()
+        .filter(|item| item.kind == RefKind::Remote && item.name == "origin/main")
+        .collect::<Vec<_>>();
+    assert_eq!(remotes.len(), 1);
+    assert_eq!(remotes[0].commit, new);
+    Ok(())
+}

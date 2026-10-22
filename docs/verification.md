@@ -212,12 +212,12 @@ M1 is complete: commit review, selected-parent diffs, binary previews, exact exp
 
 ## M3 graph, refs, and branches · 2026-10-21
 
-- All workspace tests pass: 177 passed and 3 stress tests ignored. Formatting, Clippy with `-D warnings`, and the debug build pass.
-- Ref oracles cover HEAD, local branches, remote branches, lightweight tags, annotated tag peeling, symbolic remote HEAD omission, unborn refs, and detached HEAD. `git good refs [PATH]` emits the shared snapshot without changing refs, the index, or working files.
+- All workspace tests pass: 182 passed and 3 stress tests ignored. Formatting, Clippy with `-D warnings`, and the debug build pass.
+- Ref oracles cover HEAD, local branches, remote branches, lightweight tags, annotated tag peeling, symbolic remote HEAD omission, unborn refs, detached HEAD, and duplicate loose/packed refs. `git good refs [PATH]` emits the shared snapshot without changing refs, the index, or working files.
 - Graph unit tests cover linear lanes, merge parents, joins, lane reuse, and retirement. Stream tests keep graph rows aligned with their commits when filtering, and deep selected-ID recovery finds completed rows by identity.
 - Branch oracles cover local switching, creation from HEAD, dirty unstaged/staged/untracked rejection, duplicate and missing names, invalid names, detached starts, unborn repositories, and `post-checkout` hooks; a failing post-checkout hook leaves the branch switched and returns a warning. Successful switches preserve the expected worktree content and symbolic HEAD; failures leave the old branch and working files intact.
-- CLI checks verify `git good switch [--create]` JSON receipts and dirty-tree stderr. egui checks verify graph-column geometry, ref-label prefixes and overflow, ref jumps, and the branch creation window at supported widths.
-- Native X11 review at 1120×740 and 720×740 shows refined continuous lanes with curved merges, branch/remote/tag labels, grouped Refs menus, branch switching to `feature`, branch creation at HEAD, and the New branch modal. The worktree was clean before each mutation.
-- Captures: [wide graph](screenshots/m3-graph-wide.png), [narrow graph](screenshots/m3-graph-narrow.png), [wide branches](screenshots/m3-refs-branches-wide.png), [branch switch](screenshots/m3-branch-switch-wide.png), [branch created](screenshots/m3-branch-create-wide.png), [new branch modal](screenshots/m3-branch-modal-wide.png).
+- CLI checks verify `git good switch [--create]` JSON receipts and dirty-tree stderr. egui checks verify graph-column geometry, current-first ref labels and overflow, sidebar visibility at 1120 px versus 1119 px, grouped branch/remote/tag trees, filtering, and the branch creation window at supported widths.
+- Native X11 review at 1120×740 and 720×740 shows refined continuous lanes with curved merges, Fork-style ref pills with icons, the grouped refs sidebar with branch folders and HEAD check, branch switching through the sidebar, branch creation at HEAD, and the narrow refs-menu fallback. The worktree was clean before each mutation.
+- Captures: [sidebar and history](screenshots/m3-refs-sidebar-wide.png), [branch switched](screenshots/m3-refs-sidebar-switch.png), [new branch modal](screenshots/m3-refs-sidebar-new-branch.png), [narrow history](screenshots/m3-graph-narrow.png).
 
 M3 is complete. Branch deletion/rename, remote tracking, and tag creation remain future work.
