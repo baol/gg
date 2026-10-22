@@ -11,6 +11,7 @@ pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::
         path: std::env::current_dir()?,
         revision,
         parent: None,
+        against: None,
     };
     let mut file = None;
     let mut export_side = None;
@@ -43,12 +44,23 @@ pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::
                         .parse()?,
                 )
             }
+            Some("--against") => {
+                request.against = Some(
+                    args.next()
+                        .ok_or("--against needs a revision")?
+                        .into_string()
+                        .map_err(|_| "Revision must be UTF-8")?,
+                )
+            }
             _ => {
                 return Err(
-                    "Usage: git good show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]".into(),
+                    "Usage: git good show <commit> [--repo PATH] [--parent N] [--against REF] [--file PATH] [--export before|after --output PATH]".into(),
                 );
             }
         }
+    }
+    if request.against.is_some() && request.parent.is_some() {
+        return Err("--against cannot be combined with --parent".into());
     }
     if export_side.is_some() != output.is_some() || (export_side.is_some() && file.is_none()) {
         return Err("Export requires --file PATH --export before|after --output PATH".into());

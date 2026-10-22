@@ -47,44 +47,87 @@ impl ReviewSession {
             .peel_to_kind(gix::object::Kind::Commit)?;
         let commit = object.try_into_commit()?;
         let parents: Vec<_> = commit.parent_ids().map(|id| id.detach()).collect();
-        let parent = match (request.parent, parents.is_empty()) {
-            (None, true) => None,
-            (value, _) => Some(
-                *parents
-                    .get(
-                        value
-                            .unwrap_or(1)
-                            .checked_sub(1)
-                            .ok_or("Parent numbers start at 1")?,
-                    )
-                    .ok_or("Parent is outside this commit's parent list")?,
-            ),
-        };
-        let old = parent
-            .map(|id| -> Result<Side, Error> {
-                Ok(Side {
-                    id: repo.find_commit(id)?.tree_id()?.detach(),
-                    mode: 0o040000,
-                })
-            })
+        let against = request
+            .against
+            .as_ref()
+            .map(
+                |reference| -> Result<(gix::ObjectId, gix::ObjectId), Error> {
+                    let object = repo
+                        .rev_parse_single(reference.as_str())?
+                        .object()?
+                        .peel_to_kind(gix::object::Kind::Commit)?;
+                    let base = object.try_into_commit()?;
+                    let id = base.id;
+                    let tree = base.tree_id()?.detach();
+                    Ok((id, tree))
+                },
+            )
             .transpose()?;
+        let parent = if against.is_none() {
+            match (request.parent, parents.is_empty()) {
+                (None, true) => None,
+                (value, _) => Some(
+                    *parents
+                        .get(
+                            value
+                                .unwrap_or(1)
+                                .checked_sub(1)
+                                .ok_or("Parent numbers start at 1")?,
+                        )
+                        .ok_or("Parent is outside this commit's parent list")?,
+                ),
+            }
+        } else {
+            None
+        };
+        let old = if let Some((_, tree)) = &against {
+            Some(Side {
+                id: *tree,
+                mode: 0o040000,
+            })
+        } else {
+            parent
+                .map(|id| -> Result<Side, Error> {
+                    Ok(Side {
+                        id: repo.find_commit(id)?.tree_id()?.detach(),
+                        mode: 0o040000,
+                    })
+                })
+                .transpose()?
+        };
         let new = Some(Side {
             id: commit.tree_id()?.detach(),
             mode: 0o040000,
         });
-        let comparison = Comparison {
-            path: repo.workdir().unwrap_or(repo.path()).to_path_buf(),
-            commit: commit.id.to_string(),
-            parent: parent.map(|id| id.to_string()),
-            parents: parents.iter().map(ToString::to_string).collect(),
-            subject: commit
+        let subject = if let Some((id, _)) = &against {
+            format!(
+                "Compare {} to {}",
+                &id.to_string()[..8],
+                &commit.id.to_string()[..8]
+            )
+        } else {
+            commit
                 .decode()?
                 .message
                 .to_string()
                 .lines()
                 .next()
                 .unwrap_or("(empty message)")
-                .into(),
+                .into()
+        };
+        let comparison = Comparison {
+            path: repo.workdir().unwrap_or(repo.path()).to_path_buf(),
+            commit: commit.id.to_string(),
+            parent: against
+                .as_ref()
+                .map(|(id, _)| id.to_string())
+                .or_else(|| parent.map(|id| id.to_string())),
+            parents: if against.is_some() {
+                Vec::new()
+            } else {
+                parents.iter().map(ToString::to_string).collect()
+            },
+            subject,
         };
         drop(commit);
         Ok(Self {

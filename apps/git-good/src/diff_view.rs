@@ -674,6 +674,7 @@ mod performance {
             path: path.clone(),
             revision: "HEAD".into(),
             parent: None,
+            against: None,
         })?;
         let mut files = Vec::new();
         loop {

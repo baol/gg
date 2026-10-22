@@ -7,6 +7,8 @@ pub struct ReviewRequest {
     pub path: PathBuf,
     pub revision: String,
     pub parent: Option<usize>,
+    /// Compare `revision` against this commit instead of one of its parents.
+    pub against: Option<String>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Comparison {
