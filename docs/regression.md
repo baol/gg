@@ -131,3 +131,9 @@ Native review: the refs sidebar and status line show the current branch upstream
 - Git oracle tests cover push, list, apply, pop, and drop; messages; `--include-untracked`; `--keep-index`; newest-first ordering; conflicting apply and pop; invalid references; clean trees; and preservation of unrelated files.
 - CLI tests cover JSON receipts for list/push/apply/pop/drop and actionable stderr for invalid references.
 - egui tests render the **Stash changes…** dialog and **Manage stashes…** window at 720 and 1120 widths, including entry references and the Apply/Pop/Drop actions.
+
+## M5 cherry-pick and revert
+
+- Git oracle tests cover a clean cherry-pick with the expected parent, cherry-pick conflicts with abort and continue, revert with a conflict and skip, a clean revert, and option-shaped or missing revisions.
+- CLI tests cover JSON receipts for cherry-pick and revert, conflict reporting, `--abort`, `--continue`, and unknown-option stderr.
+- egui tests render the in-progress banner with Continue, Skip, and Abort at 720 and 1120 widths.

@@ -11,7 +11,7 @@ Contracts: [history mutations and recovery](architecture.md#history-mutations-an
 ### Increments
 
 1. **Stash · complete.** Add `git good stash <list|push|apply|pop|drop>` with shared entries and receipts, native **Stash changes…** and **Manage stashes…** actions, untracked and keep-index options, conflict reporting, and drop confirmation.
-2. **Cherry-pick and revert.** Apply a single commit or invert it with `git good cherry-pick|revert COMMIT`, detect conflicts, keep or abort the in-progress operation, and expose the same actions from commit review.
+2. **Cherry-pick and revert · complete.** Apply a single commit or invert it with `git good cherry-pick|revert COMMIT`, detect conflicts, continue/skip/abort the in-progress operation, and expose the same actions from the **Commit** menu.
 3. **Merge.** Merge a local branch, remote-tracking branch, or tag with fast-forward and merge-commit results, conflict detection, and a clean-worktree precondition.
 4. **Conflict resolution.** Show unmerged paths with base/ours/theirs panes, mark a path resolved by staging it, and continue or abort the merge, cherry-pick, or revert.
 5. **Recovery.** Detect an in-progress merge, cherry-pick, or revert; expose **Continue**, **Abort**, and **Skip** where Git supports it; and restore the pre-operation selection and status after recovery.

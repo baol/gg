@@ -1295,3 +1295,109 @@ fn stash_cli_lists_pushes_applies_pops_and_drops() -> Result {
     assert!(String::from_utf8_lossy(&out.stderr).contains("must look like"));
     Ok(())
 }
+
+#[test]
+fn cherry_pick_cli_applies_conflicts_and_recovers() -> Result {
+    let repo = tempfile::tempdir()?;
+    init(repo.path(), &["-b", "main"])?;
+    git(repo.path(), &["config", "user.name", "Test"])?;
+    git(repo.path(), &["config", "user.email", "test@example.org"])?;
+    std::fs::write(repo.path().join("a"), b"base\n")?;
+    git(repo.path(), &["add", "a"])?;
+    git(repo.path(), &["commit", "-qm", "base"])?;
+    git(repo.path(), &["switch", "-qc", "other"])?;
+    std::fs::write(repo.path().join("a"), b"other\n")?;
+    git(repo.path(), &["commit", "-qam", "other"])?;
+    git(repo.path(), &["switch", "-q", "main"])?;
+    std::fs::write(repo.path().join("a"), b"main\n")?;
+    git(repo.path(), &["commit", "-qam", "main"])?;
+    let main_head = git_output(repo.path(), &["rev-parse", "HEAD"])?;
+
+    let binary = env!("CARGO_BIN_EXE_git-good");
+    let out = Command::new(binary)
+        .args(["cherry-pick", "other", "--repo"])
+        .arg(repo.path())
+        .output()?;
+    assert!(out.status.success());
+    let receipt: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(receipt["operation"], "cherry-pick");
+    assert_eq!(receipt["applied"], false);
+    assert_eq!(receipt["in_progress"], true);
+    assert_eq!(receipt["conflicts"], serde_json::json!(["a"]));
+
+    let out = Command::new(binary)
+        .args(["cherry-pick", "--abort", "--repo"])
+        .arg(repo.path())
+        .output()?;
+    assert!(out.status.success());
+    let receipt: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(receipt["in_progress"], false);
+    assert_eq!(git_output(repo.path(), &["rev-parse", "HEAD"])?, main_head);
+    assert_eq!(std::fs::read(repo.path().join("a"))?, b"main\n");
+
+    Command::new(binary)
+        .args(["cherry-pick", "other", "--repo"])
+        .arg(repo.path())
+        .output()?;
+    std::fs::write(repo.path().join("a"), b"resolved\n")?;
+    git(repo.path(), &["add", "a"])?;
+    let out = Command::new(binary)
+        .args(["cherry-pick", "--continue", "--repo"])
+        .arg(repo.path())
+        .output()?;
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let receipt: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(receipt["applied"], true);
+    assert_eq!(receipt["in_progress"], false);
+    assert_eq!(
+        git_output(repo.path(), &["log", "-1", "--format=%s"])?,
+        b"other\n"
+    );
+
+    let out = Command::new(binary)
+        .args(["cherry-pick", "--bad", "--repo"])
+        .arg(repo.path())
+        .output()?;
+    assert!(!out.status.success());
+    assert!(out.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("Unknown cherry-pick option"));
+    Ok(())
+}
+
+#[test]
+fn revert_cli_inverts_a_commit() -> Result {
+    let repo = tempfile::tempdir()?;
+    init(repo.path(), &["-b", "main"])?;
+    git(repo.path(), &["config", "user.name", "Test"])?;
+    git(repo.path(), &["config", "user.email", "test@example.org"])?;
+    std::fs::write(repo.path().join("a"), b"base\n")?;
+    git(repo.path(), &["add", "a"])?;
+    git(repo.path(), &["commit", "-qm", "base"])?;
+    std::fs::write(repo.path().join("a"), b"changed\n")?;
+    git(repo.path(), &["commit", "-qam", "changed"])?;
+
+    let binary = env!("CARGO_BIN_EXE_git-good");
+    let out = Command::new(binary)
+        .args(["revert", "HEAD", "--repo"])
+        .arg(repo.path())
+        .output()?;
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let receipt: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(receipt["operation"], "revert");
+    assert_eq!(receipt["applied"], true);
+    assert_eq!(receipt["in_progress"], false);
+    assert_eq!(std::fs::read(repo.path().join("a"))?, b"base\n");
+    assert!(
+        String::from_utf8(git_output(repo.path(), &["log", "-1", "--format=%s"])?)?
+            .starts_with("Revert")
+    );
+    Ok(())
+}
