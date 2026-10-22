@@ -106,11 +106,16 @@ fn color(lane: u8) -> egui::Color32 {
 fn parent_color(row: &Row, parent: u8) -> egui::Color32 {
     let lane_was_active = row.before & (1 << row.lane) != 0;
     let parent_was_active = row.before & (1 << parent) != 0;
-    if !lane_was_active && parent_was_active {
+    let new_single_parent_tip = row.parents.len() == 1 && !lane_was_active;
+    if new_single_parent_tip && parent_was_active {
         color(row.lane)
     } else {
         color(parent)
     }
+}
+
+fn starts_below(row: &Row, lane: u8) -> bool {
+    row.after & (1 << lane) != 0 && lane == row.lane
 }
 
 pub fn paint(ui: &egui::Ui, rect: egui::Rect, row: &Row, selected: bool) {
@@ -135,7 +140,7 @@ pub fn paint(ui: &egui::Ui, rect: egui::Rect, row: &Row, selected: bool) {
                 ],
                 egui::Stroke::new(1.75, color(lane)),
             );
-        } else if after {
+        } else if starts_below(row, lane) {
             painter.line_segment(
                 [
                     egui::pos2(x(rect, lane), center.y),
@@ -234,5 +239,24 @@ mod tests {
         let second = merge.parents[1];
         assert_ne!(second, merge.lane);
         assert_eq!(parent_color(&merge, second), color(second));
+
+        let active_parent = Row {
+            lane: 0,
+            before: 1 << second,
+            after: 1 | (1 << second),
+            parents: vec![0, second],
+        };
+        assert_eq!(parent_color(&active_parent, second), color(second));
+    }
+
+    #[test]
+    fn only_the_rows_own_lane_starts_below_the_commit() {
+        let mut graph = Graph::default();
+        let merge = graph.push(&commit("merge", &["main", "side"]));
+        let side = merge.parents[1];
+        assert_ne!(side, merge.lane);
+        assert!(merge.after & (1 << side) != 0);
+        assert!(!starts_below(&merge, side));
+        assert!(starts_below(&merge, merge.lane));
     }
 }
