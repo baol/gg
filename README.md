@@ -51,7 +51,7 @@ Use the **Commit** menu to cherry-pick or revert the selected history commit. A 
 
 Use **Refs → Merge branch…** to merge a local branch, remote-tracking ref, or tag. Fast-forward and already-up-to-date merges complete directly; diverged histories create a merge commit, and **Always create a merge commit** forces one. A conflicting merge leaves the in-progress banner with **Continue** and **Abort** (Skip is hidden because Git does not support it), and the status line reports the conflict count. CLI: `git good merge REF [--no-ff]` and `git good merge --continue|--abort`.
 
-While an operation is in progress, choose **Resolve conflicts…** to see each unmerged path with Base, Ours, and Theirs content. Select a side, stage manually resolved content, then Continue or Abort from the banner. CLI: `git good conflicts`, `git good conflict --file PATH`, `git good conflict --file PATH --use ours|theirs`, and `git good conflict --file PATH --stage`.
+While an operation is in progress, choose **Resolve conflicts…** to see each unmerged path with Base, Ours, and Theirs content. Select a side, stage manually resolved content, then Continue or Abort from the banner. Recovery refreshes history, refs, and an open Status view. CLI: `git good conflicts`, `git good conflict --file PATH`, `git good conflict --file PATH --use ours|theirs`, and `git good conflict --file PATH --stage`.
 
 Choose **Status** to inspect staged, unstaged, untracked, and conflicted paths. **Refresh** rescans the worktree; **Back** restores history. `git good status [PATH]` streams the same entries as JSON.
 
