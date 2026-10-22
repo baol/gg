@@ -60,6 +60,7 @@ fn changes(path: &Path, before: &str, after: &str) -> Result<Vec<FileChange>> {
         path: path.into(),
         revision: commit,
         parent: None,
+        against: None,
     })?;
     let mut result = vec![];
     loop {
@@ -190,5 +191,50 @@ fn cancellation_stops_before_the_next_object_header() -> Result {
     let error = result.err().ok_or("expected cancellation")?;
     assert!(error.contains("Comparison cancelled"), "{error}");
     assert_eq!(calls.get(), 3);
+    Ok(())
+}
+
+#[test]
+fn arbitrary_base_comparison_uses_the_against_commit() -> Result {
+    let dir = tempfile::tempdir()?;
+    git(dir.path(), &["init"], b"")?;
+    let base_blob = git(dir.path(), &["hash-object", "-w", "--stdin"], b"base")?;
+    let new_blob = git(dir.path(), &["hash-object", "-w", "--stdin"], b"new")?;
+    let base_tree = tree(dir.path(), &[(b"file", "100644", &base_blob)])?;
+    let new_tree = tree(dir.path(), &[(b"file", "100644", &new_blob)])?;
+    let base_commit = git(dir.path(), &["commit-tree", &base_tree, "-m", "base"], b"")?;
+    let new_commit = git(
+        dir.path(),
+        &["commit-tree", &new_tree, "-p", &base_commit, "-m", "new"],
+        b"",
+    )?;
+
+    let mut reader = gg_git::review::ReviewSession::open(&ReviewRequest {
+        path: dir.path().into(),
+        revision: new_commit.clone(),
+        parent: None,
+        against: Some(base_commit.clone()),
+    })?;
+    assert_eq!(
+        reader.comparison().subject,
+        format!("Compare {} to {}", &base_commit[..8], &new_commit[..8])
+    );
+    let mut changes = vec![];
+    loop {
+        match reader.step()? {
+            ReviewStep::Change(change) => changes.push(change),
+            ReviewStep::Complete => break,
+            ReviewStep::Pending => {}
+        }
+    }
+    assert_eq!(changes.len(), 1);
+    assert_eq!(
+        changes[0].old.as_ref().map(|side| side.id.as_str()),
+        Some(base_blob.as_str())
+    );
+    assert_eq!(
+        changes[0].new.as_ref().map(|side| side.id.as_str()),
+        Some(new_blob.as_str())
+    );
     Ok(())
 }

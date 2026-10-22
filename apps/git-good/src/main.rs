@@ -235,6 +235,7 @@ enum CommitAction {
     CherryPick,
     Revert,
     Reset(gg_engine::reset::Mode),
+    Compare,
 }
 
 struct Browser {
@@ -907,6 +908,34 @@ impl Browser {
                     path: history.path.clone(),
                     revision: id.clone(),
                     parent: None,
+                    against: None,
+                },
+                subject,
+                ctx,
+            ));
+        }
+    }
+
+    fn open_compare(&mut self, ctx: &egui::Context, id: String) {
+        if let Some(path) = self
+            .state
+            .history
+            .as_ref()
+            .map(|history| history.path.clone())
+        {
+            self.state.selected = Some(id.clone());
+            self.state.reconcile_selection();
+            let subject = self
+                .state
+                .displayed_details()
+                .map(|c| c.subject().to_owned())
+                .unwrap_or_default();
+            self.review = Some(review_view::Review::new(
+                gg_engine::review::ReviewRequest {
+                    path,
+                    revision: id,
+                    parent: None,
+                    against: Some("HEAD".into()),
                 },
                 subject,
                 ctx,
@@ -2356,6 +2385,11 @@ impl Browser {
                                                     }
                                                 }
                                             });
+                                            if ui.button("Compare to local").clicked() {
+                                                pending_commit_action =
+                                                    Some((id.clone(), CommitAction::Compare));
+                                                ui.close();
+                                            }
                                             ui.separator();
                                             if ui.button("Copy hash").clicked() {
                                                 ui.ctx().copy_text(id.clone());
@@ -2460,6 +2494,9 @@ impl Browser {
                 }
                 CommitAction::Reset(mode) => {
                     self.reset_confirm = Some((id, mode));
+                }
+                CommitAction::Compare => {
+                    self.open_compare(ctx, id);
                 }
             }
         }

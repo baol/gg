@@ -161,3 +161,9 @@ Native review: the refs sidebar and status line show the current branch upstream
 - Git oracle tests cover soft, mixed, and hard reset and reject option-shaped or missing targets.
 - CLI tests cover `git good reset --soft|--mixed|--hard COMMIT` receipts and missing-mode errors.
 - egui tests render the reset confirmation, including the hard-reset warning, at 720 and 1120 widths.
+
+## Compare to local
+
+- Git oracle tests compare an arbitrary `against` base with the selected commit and assert the old/new sides.
+- CLI tests cover `git good show HEAD --against HEAD^`, the generated comparison subject, changed files, and the `--against`/`--parent` conflict.
+- The commit-row menu exposes **Compare to local**, which opens the review diff against the current branch tip.

@@ -1665,3 +1665,49 @@ fn reset_cli_applies_soft_mixed_and_hard() -> Result {
     assert!(String::from_utf8_lossy(&out.stderr).contains("requires --soft"));
     Ok(())
 }
+
+#[test]
+fn show_against_compares_with_an_arbitrary_base() -> Result {
+    let repo = tempfile::tempdir()?;
+    init(repo.path(), &["-b", "main"])?;
+    git(repo.path(), &["config", "user.name", "Test"])?;
+    git(repo.path(), &["config", "user.email", "test@example.org"])?;
+    std::fs::write(repo.path().join("a"), b"one\n")?;
+    git(repo.path(), &["add", "a"])?;
+    git(repo.path(), &["commit", "-qm", "one"])?;
+    std::fs::write(repo.path().join("a"), b"two\n")?;
+    git(repo.path(), &["commit", "-qam", "two"])?;
+
+    let out = Command::new(env!("CARGO_BIN_EXE_git-good"))
+        .args(["show", "HEAD", "--against", "HEAD^", "--repo"])
+        .arg(repo.path())
+        .output()?;
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert!(
+        json["comparison"]["subject"]
+            .as_str()
+            .is_some_and(|subject| subject.starts_with("Compare "))
+    );
+    assert_eq!(json["files"][0]["path"], "a");
+
+    let out = Command::new(env!("CARGO_BIN_EXE_git-good"))
+        .args([
+            "show",
+            "HEAD",
+            "--against",
+            "HEAD^",
+            "--parent",
+            "1",
+            "--repo",
+        ])
+        .arg(repo.path())
+        .output()?;
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("cannot be combined"));
+    Ok(())
+}

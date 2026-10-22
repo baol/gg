@@ -297,3 +297,12 @@ Linux x86_64 · Rust 1.99.1 · local Git fixtures.
 - The history-row context menu exposes Cherry-pick, Revert, Reset here (Soft/Mixed/Hard), Copy hash, and Copy subject.
 - Git oracle tests cover soft, mixed, and hard reset and reject option-shaped or missing targets; CLI tests verify JSON receipts and missing-mode errors.
 - egui tests render the reset confirmation, including the hard-reset warning, at 720 and 1120 widths.
+
+## Compare to local · 2026-10-22
+
+Linux x86_64 · Rust 1.99.1 · local Git fixtures.
+
+- 249 workspace tests pass (3 ignored); formatting, Clippy with `-D warnings`, and the debug build pass.
+- Git oracle tests compare an arbitrary `against` base with the selected commit and assert the old/new sides.
+- CLI tests cover `git good show HEAD --against HEAD^`, the generated comparison subject, changed files, and the `--against`/`--parent` conflict.
+- The commit-row menu adds **Compare to local**, opening the review diff against the current branch tip.

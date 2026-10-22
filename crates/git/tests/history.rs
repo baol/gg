@@ -307,6 +307,7 @@ fn review(
         path: path.into(),
         revision: revision.into(),
         parent,
+        against: None,
     })?;
     let mut changes = vec![];
     loop {
@@ -418,6 +419,7 @@ fn comparison_is_pinned_and_reads_trees_without_blobs() -> Result {
         path: dir.path().into(),
         revision: "HEAD".into(),
         parent: None,
+        against: None,
     })?;
     commit(dir.path(), "later")?;
     std::fs::remove_file(
@@ -461,6 +463,7 @@ fn review_merge_defaults_to_first_parent_and_can_select_second() -> Result {
         path: dir.path().into(),
         revision: "HEAD".into(),
         parent: None,
+        against: None,
     };
     let session = gg_git::review::ReviewSession::open(&request)?;
     let expected: Vec<String> = git(dir.path(), &["show", "-s", "--format=%P", "HEAD"])?

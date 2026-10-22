@@ -54,7 +54,7 @@ Use **Refs → Merge branch…** to merge a local branch, remote-tracking ref, o
 
 While an operation is in progress, choose **Resolve conflicts…** to see each unmerged path with Base, Ours, and Theirs content. Select a side, stage manually resolved content, then Continue or Abort from the banner. Recovery refreshes history, refs, and an open Status view. CLI: `git good conflicts`, `git good conflict --file PATH`, `git good conflict --file PATH --use ours|theirs`, and `git good conflict --file PATH --stage`.
 
-Right-click a history row for **Cherry-pick**, **Revert**, **Reset here** (Soft, Mixed, or Hard), **Copy hash**, and **Copy subject**. Reset here confirms first; Hard warns that staged and working changes are discarded. CLI: `git good reset --soft|--mixed|--hard COMMIT`.
+Right-click a history row for **Cherry-pick**, **Revert**, **Reset here** (Soft, Mixed, or Hard), **Compare to local**, **Copy hash**, and **Copy subject**. Reset here confirms first; Hard warns that staged and working changes are discarded. Compare to local opens the selected commit against the current branch tip. CLI: `git good reset --soft|--mixed|--hard COMMIT` and `git good show <commit> --against REF`.
 
 Choose **Status** to inspect staged, unstaged, untracked, and conflicted paths. **Refresh** rescans the worktree; **Back** restores history. `git good status [PATH]` streams the same entries as JSON.
 

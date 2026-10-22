@@ -26,7 +26,7 @@ Goal: expose commit and ref actions through right-click and keyboard context men
 ### Increments
 
 1. **Commit-row menu · in progress.** Add **Cherry-pick**, **Revert**, **Reset here** (Soft, Mixed, Hard with confirmation), **Copy hash**, and **Copy subject** to history rows, with right-click access.
-2. **Compare to local.** Compare the selected commit against the current branch tip in a review diff.
+2. **Compare to local · complete.** Compare the selected commit against the current branch tip in a review diff, exposed from the commit-row menu and `git good show --against REF`.
 3. **Ref menus.** Add checkout/switch, merge, delete branch, delete tag, track remote, and copy actions to branch, tag, and remote items.
 
 ### Acceptance
