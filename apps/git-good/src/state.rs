@@ -7,6 +7,8 @@ use std::path::PathBuf;
 pub struct State {
     pub history: Option<History>,
     pub rows: BTreeMap<usize, Commit>,
+    pub graphs: BTreeMap<usize, crate::graph::Row>,
+    pub refs: gg_engine::refs::Snapshot,
     pub count: usize,
     pub viewport: std::ops::Range<usize>,
     pub scanned: usize,
@@ -81,7 +83,9 @@ impl State {
             .saturating_add(update.request.range.len() / 2);
         if replace {
             self.rows.clear();
+            self.graphs.clear();
             self.history = Some(update.identity);
+            self.refs = update.refs.clone();
             self.query = update.query;
             self.filter_revision = update.request.revision;
             self.count = 0;
@@ -113,6 +117,9 @@ impl State {
                 self.rows.entry(row).or_insert(commit);
             }
         }
+        for (row, graph) in update.graphs {
+            self.graphs.entry(row).or_insert(graph);
+        }
         while self.rows.len() > crate::stream::CACHE_ROWS {
             let victim = self
                 .rows
@@ -122,6 +129,7 @@ impl State {
                 .max_by_key(|r| r.abs_diff(center));
             if let Some(row) = victim {
                 self.rows.remove(&row);
+                self.graphs.remove(&row);
             } else {
                 break;
             }
@@ -131,6 +139,7 @@ impl State {
     pub fn start_filter(&mut self) {
         self.filter_revision = self.filter_revision.saturating_add(1);
         self.rows.clear();
+        self.graphs.clear();
         self.count = 0;
         self.scanned = 0;
         self.finished = false;
@@ -349,6 +358,8 @@ mod streaming_tests {
             complete: true,
             selection: rows.first().cloned(),
             rows,
+            graphs: vec![],
+            refs: Default::default(),
             error: None,
         }
     }

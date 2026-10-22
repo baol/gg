@@ -4,15 +4,22 @@ use eframe::egui;
 use gg_engine::Commit;
 
 pub const ROW_HEIGHT: f32 = 26.0;
-pub const MIN_WIDTH: f32 = 660.0;
+pub const MIN_WIDTH: f32 = 610.0;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RefAction {
+    Select,
+    Switch { name: String, full_name: String },
+    Jump(String),
+}
 
 pub fn columns(rect: egui::Rect) -> [egui::Rect; 5] {
     let widths = [
-        24.0,
-        (rect.width() - 24.0 - 168.0 - 76.0 - 132.0).max(0.0),
-        168.0,
-        76.0,
-        132.0,
+        92.0,
+        (rect.width() - 92.0 - 150.0 - 66.0 - 92.0).max(0.0),
+        150.0,
+        66.0,
+        92.0,
     ];
     let mut x = rect.left();
     widths.map(|width| {
@@ -41,6 +48,20 @@ fn text(ui: &egui::Ui, rect: egui::Rect, value: &str, color: egui::Color32, mono
     );
 }
 
+pub fn sort_labels(refs: &mut [gg_engine::refs::RefItem], head_name: Option<&str>) {
+    refs.sort_by_key(|item| {
+        (
+            Some(item.full_name.as_str()) != head_name,
+            match item.kind {
+                gg_engine::refs::RefKind::Tag => 0,
+                gg_engine::refs::RefKind::Branch => 1,
+                gg_engine::refs::RefKind::Remote => 2,
+            },
+            item.name.clone(),
+        )
+    });
+}
+
 pub fn header(ui: &mut egui::Ui) {
     let (rect, _) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), ROW_HEIGHT),
@@ -59,12 +80,170 @@ pub fn header(ui: &mut egui::Ui) {
     );
 }
 
+fn paint_refs_and_subject(
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    refs: &[gg_engine::refs::RefItem],
+    head_name: Option<&str>,
+    commit: &Commit,
+    selected: bool,
+) -> Option<RefAction> {
+    let max_labels = if rect.width() < 280.0 { 2 } else { 4 };
+    let subject_color = if selected {
+        ui.visuals().strong_text_color()
+    } else {
+        ui.visuals().strong_text_color().gamma_multiply(0.8)
+    };
+    let inner = rect.shrink2(egui::vec2(6.0, 0.0));
+    if inner.width() <= 0.0 {
+        return None;
+    }
+    let mut action = None;
+    let painter = ui.painter().with_clip_rect(rect);
+    let font = egui::FontId::proportional(10.5);
+    let mut x = inner.left();
+    let mut shown = 0;
+    for item in refs.iter().take(max_labels) {
+        let (background, foreground) = ref_label_colors(ui.visuals(), item.kind, selected);
+        let galley = painter.layout_no_wrap(item.name.clone(), font.clone(), foreground);
+        let width = galley.size().x + 18.0;
+        if x + width > inner.right() - 24.0 {
+            break;
+        }
+        let pill = egui::Rect::from_min_size(
+            egui::pos2(x, inner.center().y - 7.5),
+            egui::vec2(width, 15.0),
+        );
+        painter.rect_filled(pill, 4.0, background);
+        crate::refs_view::paint_icon(
+            &painter,
+            egui::Rect::from_center_size(
+                egui::pos2(pill.left() + 7.0, pill.center().y),
+                egui::vec2(9.0, 9.0),
+            ),
+            item.kind,
+            foreground,
+        );
+        painter.galley(
+            egui::pos2(pill.left() + 13.0, pill.center().y - galley.size().y / 2.0),
+            galley,
+            foreground,
+        );
+        let current = Some(item.full_name.as_str()) == head_name;
+        let hint = if current {
+            "Current branch"
+        } else if item.kind == gg_engine::refs::RefKind::Branch {
+            "Double-click to switch branch"
+        } else {
+            "Double-click to jump to this commit"
+        };
+        let response = ui
+            .interact(
+                pill,
+                ui.id().with(("ref-pill", &item.full_name)),
+                egui::Sense::click(),
+            )
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .on_hover_text(format!("{}\n{hint}", item.full_name));
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(
+                egui::WidgetType::Button,
+                true,
+                format!("{:?} {}", item.kind, item.name),
+            )
+        });
+        if response.double_clicked() && !current {
+            action = Some(match item.kind {
+                gg_engine::refs::RefKind::Branch => RefAction::Switch {
+                    name: item.name.clone(),
+                    full_name: item.full_name.clone(),
+                },
+                gg_engine::refs::RefKind::Remote | gg_engine::refs::RefKind::Tag => {
+                    RefAction::Jump(item.commit.clone())
+                }
+            });
+        } else if response.clicked() {
+            action = Some(RefAction::Select);
+        }
+        x = pill.right() + 4.0;
+        shown += 1;
+    }
+    if refs.len() > shown {
+        let more = format!("+{}", refs.len() - shown);
+        let galley = painter.layout_no_wrap(
+            more,
+            font,
+            ui.visuals().weak_text_color().gamma_multiply(0.9),
+        );
+        let width = galley.size().x + 8.0;
+        if x + width <= inner.right() {
+            let rect = egui::Rect::from_min_size(
+                egui::pos2(x, inner.center().y - 7.5),
+                egui::vec2(width, 15.0),
+            );
+            painter.rect_filled(
+                rect,
+                4.0,
+                ui.visuals()
+                    .widgets
+                    .noninteractive
+                    .bg_fill
+                    .gamma_multiply(0.7),
+            );
+            painter.galley(
+                egui::pos2(rect.left() + 4.0, rect.center().y - galley.size().y / 2.0),
+                galley,
+                ui.visuals().weak_text_color(),
+            );
+            x = rect.right() + 4.0;
+        }
+    }
+    let subject_rect = egui::Rect::from_min_max(
+        egui::pos2(x + if shown > 0 { 2.0 } else { 0.0 }, rect.top()),
+        egui::pos2(rect.right() - 6.0, rect.bottom()),
+    );
+    crate::bounded_text::paint(
+        ui,
+        subject_rect,
+        commit.subject(),
+        egui::FontId::proportional(12.0),
+        subject_color,
+    );
+    action
+}
+
+fn ref_label_colors(
+    visuals: &egui::Visuals,
+    kind: gg_engine::refs::RefKind,
+    selected: bool,
+) -> (egui::Color32, egui::Color32) {
+    let base = match kind {
+        gg_engine::refs::RefKind::Branch => egui::Color32::from_rgb(112, 166, 242),
+        gg_engine::refs::RefKind::Remote => egui::Color32::from_rgb(160, 164, 176),
+        gg_engine::refs::RefKind::Tag => egui::Color32::from_rgb(224, 178, 96),
+    };
+    let foreground = if selected {
+        visuals.strong_text_color()
+    } else {
+        base.gamma_multiply(if visuals.dark_mode { 1.15 } else { 0.75 })
+    };
+    let background = base.gamma_multiply(if visuals.dark_mode {
+        if selected { 0.28 } else { 0.20 }
+    } else {
+        0.16
+    });
+    (background, foreground)
+}
+
 pub fn row(
     ui: &mut egui::Ui,
     commit: &Commit,
+    graph: Option<&crate::graph::Row>,
+    refs: &[gg_engine::refs::RefItem],
+    head_name: Option<&str>,
     selected: bool,
     avatars: &mut Avatars,
-) -> egui::Response {
+) -> (egui::Response, Option<RefAction>) {
     let response = ui.add_sized(
         [ui.available_width(), ROW_HEIGHT],
         egui::Button::new("")
@@ -96,16 +275,20 @@ pub fn row(
     } else {
         ui.visuals().text_color()
     };
-    ui.painter()
-        .circle_filled(dot.center(), 3.0, ui.visuals().selection.stroke.color);
-    if commit.parents.len() > 1 {
-        ui.painter().circle_stroke(
-            dot.center(),
-            6.0,
-            egui::Stroke::new(1.0_f32, ui.visuals().selection.stroke.color),
-        );
+    if let Some(graph) = graph {
+        crate::graph::paint(ui, dot, graph, selected);
+    } else {
+        ui.painter()
+            .circle_filled(dot.center(), 3.0, ui.visuals().selection.stroke.color);
+        if commit.parents.len() > 1 {
+            ui.painter().circle_stroke(
+                dot.center(),
+                6.0,
+                egui::Stroke::new(1.0_f32, ui.visuals().selection.stroke.color),
+            );
+        }
     }
-    text(ui, subject, commit.subject(), color, false);
+    let action = paint_refs_and_subject(ui, subject, refs, head_name, commit, selected);
     let avatar = egui::Rect::from_center_size(
         egui::pos2(author.left() + 14.0, author.center().y),
         egui::vec2(18.0, 18.0),
@@ -125,20 +308,26 @@ pub fn row(
         muted,
         true,
     );
-    let short_date = commit
-        .time
-        .split_whitespace()
-        .take(2)
+    let short_date = commit.time.split_whitespace().next().unwrap_or_default();
+    text(ui, date, short_date, muted, false);
+    let refs = refs
+        .iter()
+        .map(|item| item.name.as_str())
         .collect::<Vec<_>>()
-        .join(" ");
-    text(ui, date, &short_date, muted, false);
-    response.on_hover_text(format!(
-        "{}\n{}\n{}\n{}",
+        .join(", ");
+    let response = response.on_hover_text(format!(
+        "{}{}\n{}\n{}\n{}",
+        if refs.is_empty() {
+            String::new()
+        } else {
+            format!("{refs}\n")
+        },
         commit.subject(),
         commit.author,
         commit.id,
         commit.time
-    ))
+    ));
+    (response, action)
 }
 
 #[cfg(test)]
@@ -160,6 +349,247 @@ mod tests {
             assert!(cells[1].width() >= 200.0);
         }
     }
+    #[test]
+    fn ref_labels_prefix_the_subject() {
+        let ctx = egui::Context::default();
+        let commit = Commit {
+            id: "a".repeat(40),
+            parents: vec![],
+            author: "Ada".into(),
+            email: String::new(),
+            time: "2026-10-17 12:30:00 +0200".into(),
+            message: "Subject".into(),
+        };
+        let refs = [gg_engine::refs::RefItem {
+            name: "main".into(),
+            full_name: "refs/heads/main".into(),
+            kind: gg_engine::refs::RefKind::Branch,
+            commit: commit.id.clone(),
+        }];
+        let mut avatars = Avatars::default();
+        let output = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(720.0, 480.0),
+                )),
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let _ = row(ui, &commit, None, &refs, None, false, &mut avatars);
+                });
+            },
+        );
+        let text = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(text.iter().any(|line| line.contains("main")));
+        assert!(text.iter().any(|line| line.contains("Subject")));
+        assert!(!text.iter().any(|line| line.contains("[main] Subject")));
+    }
+
+    fn click_pill_twice(
+        refs: &[gg_engine::refs::RefItem],
+        head_name: Option<&str>,
+    ) -> (egui::Rect, Option<RefAction>, Option<RefAction>) {
+        let ctx = egui::Context::default();
+        let commit = Commit {
+            id: "a".repeat(40),
+            parents: vec![],
+            author: "Ada".into(),
+            email: String::new(),
+            time: "2026-10-17 12:30:00 +0200".into(),
+            message: "Subject".into(),
+        };
+        let mut avatars = Avatars::default();
+        let mut run = |events: Vec<egui::Event>, time: f64| {
+            let mut row_rect = egui::Rect::NOTHING;
+            let mut action = None;
+            let _ = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(720.0, 480.0),
+                    )),
+                    time: Some(time),
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        let (response, next) =
+                            row(ui, &commit, None, refs, head_name, false, &mut avatars);
+                        row_rect = response.rect;
+                        action = next;
+                    });
+                },
+            );
+            (row_rect, action)
+        };
+        let (row_rect, _) = run(vec![], 1.0);
+        let point = egui::pos2(row_rect.left() + 110.0, row_rect.center().y);
+        run(vec![egui::Event::PointerMoved(point)], 1.05);
+        run(
+            vec![egui::Event::PointerButton {
+                pos: point,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            1.10,
+        );
+        let (_, first) = run(
+            vec![egui::Event::PointerButton {
+                pos: point,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            1.15,
+        );
+        run(
+            vec![egui::Event::PointerButton {
+                pos: point,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            1.20,
+        );
+        let (_, second) = run(
+            vec![egui::Event::PointerButton {
+                pos: point,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            1.25,
+        );
+        (row_rect, first, second)
+    }
+
+    #[test]
+    fn double_clicking_a_branch_pill_switches_to_it() {
+        let id = "a".repeat(40);
+        let refs = [gg_engine::refs::RefItem {
+            name: "main".into(),
+            full_name: "refs/heads/main".into(),
+            kind: gg_engine::refs::RefKind::Branch,
+            commit: id.clone(),
+        }];
+        let (_, first, second) = click_pill_twice(&refs, None);
+        assert_eq!(first, Some(RefAction::Select));
+        assert_eq!(
+            second,
+            Some(RefAction::Switch {
+                name: "main".into(),
+                full_name: "refs/heads/main".into(),
+            })
+        );
+    }
+
+    #[test]
+    fn double_clicking_a_tag_pill_jumps_to_its_commit() {
+        let id = "b".repeat(40);
+        let refs = [gg_engine::refs::RefItem {
+            name: "v1.0".into(),
+            full_name: "refs/tags/v1.0".into(),
+            kind: gg_engine::refs::RefKind::Tag,
+            commit: id.clone(),
+        }];
+        let (_, first, second) = click_pill_twice(&refs, None);
+        assert_eq!(first, Some(RefAction::Select));
+        assert_eq!(second, Some(RefAction::Jump(id)));
+    }
+
+    #[test]
+    fn double_clicking_the_current_branch_pill_only_selects_it() {
+        let id = "a".repeat(40);
+        let refs = [gg_engine::refs::RefItem {
+            name: "main".into(),
+            full_name: "refs/heads/main".into(),
+            kind: gg_engine::refs::RefKind::Branch,
+            commit: id,
+        }];
+        let (_, _, second) = click_pill_twice(&refs, Some("refs/heads/main"));
+        assert_eq!(second, Some(RefAction::Select));
+    }
+
+    #[test]
+    fn extra_ref_labels_show_an_overflow_count() {
+        let ctx = egui::Context::default();
+        let commit = Commit {
+            id: "a".repeat(40),
+            parents: vec![],
+            author: "Ada".into(),
+            email: String::new(),
+            time: "2026-10-17 12:30:00 +0200".into(),
+            message: "Subject".into(),
+        };
+        let refs = (0..5)
+            .map(|index| gg_engine::refs::RefItem {
+                name: format!("ref{index}"),
+                full_name: format!("refs/heads/ref{index}"),
+                kind: gg_engine::refs::RefKind::Branch,
+                commit: commit.id.clone(),
+            })
+            .collect::<Vec<_>>();
+        let mut avatars = Avatars::default();
+        let output = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(720.0, 480.0),
+                )),
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let _ = row(ui, &commit, None, &refs, None, false, &mut avatars);
+                });
+            },
+        );
+        assert!(output.shapes.iter().any(|shape| matches!(
+            &shape.shape,
+            egui::epaint::Shape::Text(text) if text.galley.job.text.contains("+1")
+        )));
+    }
+
+    #[test]
+    fn current_branch_sorts_before_tags_and_other_refs() {
+        let id = "a".repeat(40);
+        let mut refs = [
+            gg_engine::refs::RefItem {
+                name: "zzz".into(),
+                full_name: "refs/heads/zzz".into(),
+                kind: gg_engine::refs::RefKind::Branch,
+                commit: id.clone(),
+            },
+            gg_engine::refs::RefItem {
+                name: "v1.0".into(),
+                full_name: "refs/tags/v1.0".into(),
+                kind: gg_engine::refs::RefKind::Tag,
+                commit: id.clone(),
+            },
+            gg_engine::refs::RefItem {
+                name: "main".into(),
+                full_name: "refs/heads/main".into(),
+                kind: gg_engine::refs::RefKind::Branch,
+                commit: id,
+            },
+        ];
+        sort_labels(&mut refs, Some("refs/heads/main"));
+        assert_eq!(refs[0].name, "main");
+        assert_eq!(refs[1].name, "v1.0");
+        assert_eq!(refs[2].name, "zzz");
+    }
+
     #[test]
     fn long_fields_stay_single_line_at_supported_scales() {
         for scale in [1.0, 2.0] {
@@ -184,7 +614,7 @@ mod tests {
                 },
                 |ctx| {
                     egui::CentralPanel::default().show(ctx, |ui| {
-                        let response = row(ui, &commit, true, &mut avatars);
+                        let (response, _) = row(ui, &commit, None, &[], None, true, &mut avatars);
                         assert_eq!(response.rect.height(), ROW_HEIGHT);
                     });
                 },

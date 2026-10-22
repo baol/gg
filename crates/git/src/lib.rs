@@ -19,9 +19,16 @@ impl HistorySource for Git {
 pub struct Session {
     repo: gix::Repository,
     pub identity: History,
-    frontier: BinaryHeap<(i64, gix::ObjectId)>,
-    seen: HashSet<gix::ObjectId>,
-    shallow: HashSet<gix::ObjectId>,
+    walk: Walk,
+}
+
+enum Walk {
+    Frontier {
+        frontier: BinaryHeap<(i64, gix::ObjectId)>,
+        seen: HashSet<gix::ObjectId>,
+        shallow: HashSet<gix::ObjectId>,
+    },
+    Topo(Box<dyn Iterator<Item = Result<gix::ObjectId, String>>>),
 }
 
 impl Session {
@@ -49,29 +56,50 @@ impl Session {
         } else {
             Some(repo.head_commit()?.id)
         };
-        let shallow = repo
+        let refs = crate::refs::read(&request.path)?;
+        let shallow: HashSet<_> = repo
             .shallow_commits()?
             .map(|ids| ids.iter().copied().collect())
             .unwrap_or_default();
-        let mut session = Self {
+        let mut tips = Vec::new();
+        let mut tip_set = HashSet::new();
+        if let Some(id) = id {
+            tips.push(id);
+            tip_set.insert(id);
+        }
+        for item in refs.items {
+            let id = gix::ObjectId::from_hex(item.commit.as_bytes())?;
+            if tip_set.insert(id) {
+                tips.push(id);
+            }
+        }
+        let walk = if tips.len() > 1 && shallow.is_empty() {
+            let walk = gix::traverse::commit::topo::Builder::new(repo.objects.clone())
+                .with_tips(tips)
+                .sorting(gix::traverse::commit::topo::Sorting::TopoOrder)
+                .build()?
+                .map(|info| info.map(|info| info.id).map_err(|error| error.to_string()));
+            Walk::Topo(Box::new(walk))
+        } else {
+            let mut frontier = BinaryHeap::new();
+            let mut seen = HashSet::new();
+            for id in tips {
+                if seen.insert(id) {
+                    let time = repo.find_commit(id)?.committer()?.time()?.seconds;
+                    frontier.push((time, id));
+                }
+            }
+            Walk::Frontier {
+                frontier,
+                seen,
+                shallow,
+            }
+        };
+        Ok(Self {
             repo,
             identity,
-            frontier: BinaryHeap::new(),
-            seen: HashSet::new(),
-            shallow,
-        };
-        if let Some(id) = id {
-            session.enqueue(id)?;
-        }
-        Ok(session)
-    }
-
-    fn enqueue(&mut self, id: gix::ObjectId) -> Result<(), Box<dyn std::error::Error>> {
-        if self.seen.insert(id) {
-            let time = self.repo.find_commit(id)?.committer()?.time()?.seconds;
-            self.frontier.push((time, id));
-        }
-        Ok(())
+            walk,
+        })
     }
 
     pub fn next_commit(&mut self) -> Result<Option<Commit>, String> {
@@ -80,11 +108,43 @@ impl Session {
     }
 
     fn next_inner(&mut self) -> Result<Option<Commit>, Box<dyn std::error::Error>> {
-        let Some((_, id)) = self.frontier.pop() else {
-            self.seen.clear();
-            self.seen.shrink_to_fit();
-            return Ok(None);
+        let id = match &mut self.walk {
+            Walk::Topo(walk) => match walk.next() {
+                Some(Ok(id)) => id,
+                Some(Err(error)) => return Err(std::io::Error::other(error).into()),
+                None => return Ok(None),
+            },
+            Walk::Frontier { frontier, seen, .. } => {
+                let Some((_, id)) = frontier.pop() else {
+                    seen.clear();
+                    seen.shrink_to_fit();
+                    return Ok(None);
+                };
+                id
+            }
         };
+        let (commit, parents) = self.read_commit(id)?;
+        if let Walk::Frontier {
+            frontier,
+            seen,
+            shallow,
+        } = &mut self.walk
+            && !shallow.contains(&id)
+        {
+            for parent in parents {
+                if seen.insert(parent) {
+                    let time = self.repo.find_commit(parent)?.committer()?.time()?.seconds;
+                    frontier.push((time, parent));
+                }
+            }
+        }
+        Ok(Some(commit))
+    }
+
+    fn read_commit(
+        &self,
+        id: gix::ObjectId,
+    ) -> Result<(Commit, Vec<gix::ObjectId>), Box<dyn std::error::Error>> {
         let object = self.repo.find_commit(id)?;
         let decoded = object.decode()?;
         let author = decoded.author()?;
@@ -97,14 +157,7 @@ impl Session {
             time: author.time()?.format(gix::date::time::format::ISO8601)?,
             message: decoded.message.to_string(),
         };
-        drop(decoded);
-        drop(object);
-        if !self.shallow.contains(&id) {
-            for parent in parents {
-                self.enqueue(parent)?;
-            }
-        }
-        Ok(Some(commit))
+        Ok((commit, parents))
     }
 }
 
@@ -118,10 +171,12 @@ impl gg_engine::HistoryReader for Session {
 }
 
 pub mod blob;
+pub mod branch;
 pub mod commit;
 pub mod diff;
 pub mod drop;
 pub mod patch;
+pub mod refs;
 pub mod review;
 pub mod status;
 pub mod working_diff;

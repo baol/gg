@@ -230,7 +230,13 @@ fn request(path: &Path, name: &[u8], area: Area) -> Result<gg_engine::status::Wo
     })?;
     Ok(gg_engine::status::WorkingRequest {
         repository: session.identity,
-        entry: entry.ok_or("status entry missing")?,
+        entry: entry.ok_or_else(|| {
+            std::io::Error::other(format!(
+                "status entry missing for {} ({:?})",
+                String::from_utf8_lossy(name),
+                area
+            ))
+        })?,
     })
 }
 #[test]
@@ -752,9 +758,19 @@ fn stage_rejects_conflicts_submodules_collisions_and_stale_paths() -> Result {
     std::fs::write(p.join("conflict"), "main\n")?;
     git(p, &["commit", "-qam", "main"])?;
     let _ = Command::new("git")
+        .args(["-c", "core.autocrlf=false"])
         .arg("-C")
         .arg(p)
         .args(["merge", "other"])
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env(
+            "GIT_CONFIG_GLOBAL",
+            if cfg!(windows) { "NUL" } else { "/dev/null" },
+        )
+        .env("GIT_AUTHOR_NAME", "Test")
+        .env("GIT_AUTHOR_EMAIL", "test@example.org")
+        .env("GIT_COMMITTER_NAME", "Test")
+        .env("GIT_COMMITTER_EMAIL", "test@example.org")
         .output()?;
     let req = request(p, b"conflict", Area::Conflict)?;
     assert!(
@@ -864,6 +880,7 @@ fn hunk_headers(request: &gg_engine::status::WorkingRequest) -> Result<Vec<Strin
 
 fn hunk_fixture(path: &Path, hash: &str) -> Result {
     git(path, &["init", &format!("--object-format={hash}")])?;
+    git(path, &["config", "core.autocrlf", "false"])?;
     std::fs::write(
         path.join("a"),
         "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\ntwelve\n",
@@ -998,11 +1015,12 @@ fn stage_hunks_respect_attributes_crlf_and_final_newlines() -> Result {
         std::fs::write(p.join("nonewline"), b"a\nb")?;
         git(p, &["add", "."])?;
         git(p, &["commit", "-qm", "base"])?;
+        // Change the sizes so a coarse index timestamp cannot make the edits look clean.
         std::fs::write(
             p.join("a.txt"),
-            b"ONE\r\ntwo\r\nthree\r\nfour\r\nfive\r\nsix\r\nseven\r\neight\r\nnine\r\nTEN\r\n",
+            b"ONE!\r\ntwo\r\nthree\r\nfour\r\nfive\r\nsix\r\nseven\r\neight\r\nnine\r\nTEN!\r\n",
         )?;
-        std::fs::write(p.join("nonewline"), b"a\nB")?;
+        std::fs::write(p.join("nonewline"), b"a\nB!")?;
     }
     let req = request(ours.path(), b"a.txt", Area::Unstaged)?;
     let headers = hunk_headers(&req)?;
@@ -1015,7 +1033,7 @@ fn stage_hunks_respect_attributes_crlf_and_final_newlines() -> Result {
     );
     assert_eq!(
         std::fs::read(ours.path().join("a.txt"))?,
-        b"ONE\r\ntwo\r\nthree\r\nfour\r\nfive\r\nsix\r\nseven\r\neight\r\nnine\r\nTEN\r\n"
+        b"ONE!\r\ntwo\r\nthree\r\nfour\r\nfive\r\nsix\r\nseven\r\neight\r\nnine\r\nTEN!\r\n"
     );
     assert_eq!(
         git(
@@ -1029,8 +1047,8 @@ fn stage_hunks_respect_attributes_crlf_and_final_newlines() -> Result {
     let headers = hunk_headers(&req)?;
     assert_eq!(headers.len(), 1);
     gg_git::stage::hunks(&req, &headers)?;
-    assert_eq!(git(ours.path(), &["show", ":nonewline"])?, b"a\nB");
-    assert_eq!(std::fs::read(ours.path().join("nonewline"))?, b"a\nB");
+    assert_eq!(git(ours.path(), &["show", ":nonewline"])?, b"a\nB!");
+    assert_eq!(std::fs::read(ours.path().join("nonewline"))?, b"a\nB!");
     assert_eq!(
         git(
             ours.path(),
@@ -1576,6 +1594,7 @@ fn drop_whole_working_changes_restores_index_and_removes_untracked() -> Result {
     let dir = tempfile::tempdir()?;
     let p = dir.path();
     git(p, &["init", "-b", "main"])?;
+    git(p, &["config", "core.autocrlf", "false"])?;
     std::fs::write(p.join("regular"), b"base\n")?;
     std::fs::write(p.join("deleted"), b"deleted\n")?;
     std::fs::write(p.join("exec"), b"exec\n")?;

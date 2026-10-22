@@ -40,6 +40,8 @@ fn update(request: stream::Request, count: usize) -> stream::Update {
         scanned: count,
         complete: true,
         rows,
+        graphs: vec![],
+        refs: Default::default(),
         selection,
         error: None,
     }

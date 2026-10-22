@@ -1,6 +1,7 @@
 mod avatars;
 mod binary_preview;
 mod bounded_text;
+mod branch_cli;
 mod branding;
 mod colors;
 mod commit_cli;
@@ -8,11 +9,14 @@ mod details_view;
 mod diff_view;
 mod diff_worker;
 mod export;
+mod graph;
 mod history_view;
 #[cfg(test)]
 mod interaction_tests;
 mod navigation;
 mod records;
+mod refs_cli;
+mod refs_view;
 mod review_cli;
 mod review_view;
 mod review_worker;
@@ -38,7 +42,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("--help")) {
         println!(
-            "gg · good git\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good status [PATH] [--file PATH --area AREA]   Print working status or diff as JSON\ngit-good stage --file PATH [--hunk HEADER]... [--repo PATH]   Stage one file or selected hunks\ngit-good unstage --file PATH [--repo PATH]   Unstage one file\ngit-good commit -m MESSAGE [--repo PATH]   Commit the index after Git hooks\ngit-good show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]   Review or export\n\nBrowse all commits reachable from HEAD."
+            "gg · good git\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good refs [PATH]      Print branches, remotes, tags, and HEAD as JSON\ngit-good status [PATH] [--file PATH --area AREA]   Print working status or diff as JSON\ngit-good stage --file PATH [--hunk HEADER]... [--repo PATH]   Stage one file or selected hunks\ngit-good unstage --file PATH [--repo PATH]   Unstage one file\ngit-good commit -m MESSAGE [--repo PATH]   Commit the index after Git hooks\ngit-good switch [--create] BRANCH [--repo PATH]   Switch to or create a local branch\ngit-good show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]   Review or export\n\nBrowse commits reachable from HEAD and all local, remote, and tag refs."
         );
         return Ok(());
     }
@@ -56,6 +60,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("commit")) {
         return commit_cli::run(args);
+    }
+    if first.as_deref() == Some(std::ffi::OsStr::new("refs")) {
+        return refs_cli::run(args);
+    }
+    if first.as_deref() == Some(std::ffi::OsStr::new("switch")) {
+        return branch_cli::run(args);
     }
     let headless = first.as_deref() == Some(std::ffi::OsStr::new("history"));
     let path = if headless { args.next() } else { first }
@@ -142,6 +152,12 @@ struct Browser {
     review: Option<review_view::Review>,
     working: Option<status_view::StatusView>,
     pending_commit: Option<String>,
+    branch: Option<std::sync::mpsc::Receiver<Result<gg_git::branch::Receipt, String>>>,
+    branch_error: Option<String>,
+    branch_warning: Option<String>,
+    new_branch: Option<String>,
+    refs_visible: bool,
+    refs_query: String,
     state: state::State,
     pending: Option<stream::Worker>,
     pending_filter_edit: bool,
@@ -171,6 +187,12 @@ impl Browser {
             review: None,
             working: None,
             pending_commit: None,
+            branch: None,
+            branch_error: None,
+            branch_warning: None,
+            new_branch: None,
+            refs_visible: true,
+            refs_query: String::new(),
             state: state::State::default(),
             pending: None,
             pending_filter_edit: false,
@@ -193,7 +215,43 @@ impl Browser {
         }
     }
 
+    fn start_branch(&mut self, ctx: &egui::Context, name: String, create: bool) {
+        if self.branch.is_some() {
+            return;
+        }
+        let Some(path) = self
+            .state
+            .history
+            .as_ref()
+            .map(|history| history.path.clone())
+        else {
+            self.branch_error = Some("Open a repository before changing branches".into());
+            return;
+        };
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        let repaint = ctx.clone();
+        match std::thread::Builder::new()
+            .name("gg-branch".into())
+            .spawn(move || {
+                let result = if create {
+                    gg_git::branch::create(&path, &name)
+                } else {
+                    gg_git::branch::switch(&path, &name)
+                };
+                let _ = tx.send(result);
+                repaint.request_repaint();
+            }) {
+            Ok(_) => {
+                self.branch = Some(rx);
+                self.branch_error = None;
+                self.branch_warning = None;
+            }
+            Err(e) => self.branch_error = Some(format!("Start branch operation: {e}")),
+        }
+    }
+
     fn load(&mut self, ctx: &egui::Context) {
+        self.branch_error = None;
         let path = PathBuf::from(&self.path);
         self.state.begin(path.clone());
         let request = stream::Request {
@@ -218,6 +276,17 @@ impl Browser {
             Ok(worker) => self.pending = Some(worker),
             Err(error) => self.state.error = Some(error),
         }
+    }
+
+    fn jump_to_ref(&mut self, id: String) {
+        if !self.state.query.is_empty() {
+            self.state.query.clear();
+            self.state.start_filter();
+        }
+        self.state.selected = Some(id);
+        self.state.selected_row = None;
+        self.state.details = None;
+        self.scroll_to_selection = false;
     }
 
     fn open_review(&mut self, ctx: &egui::Context) {
@@ -261,6 +330,36 @@ impl Browser {
 
     fn draw(&mut self, ctx: &egui::Context) {
         colors::apply(ctx);
+        if let Some(result) = self.branch.as_ref().and_then(|rx| match rx.try_recv() {
+            Ok(result) => Some(result),
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                Some(Err("Branch worker stopped. Refresh refs.".into()))
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => None,
+        }) {
+            self.branch = None;
+            match result {
+                Ok(receipt) => {
+                    self.branch_warning = if receipt.warnings.is_empty() {
+                        None
+                    } else {
+                        Some(receipt.warnings.join(" · "))
+                    };
+                    self.state.query.clear();
+                    self.state.start_filter();
+                    self.state.selected = Some(receipt.head);
+                    self.state.selected_row = None;
+                    self.state.details = None;
+                    self.scroll_offset = 0.0;
+                    self.scroll_to_selection = true;
+                    self.load(ctx);
+                }
+                Err(error) => {
+                    self.branch_warning = None;
+                    self.branch_error = Some(error);
+                }
+            }
+        }
         if let Some(working) = &mut self.working {
             let close = working.draw(ctx);
             if let Some(id) = working.take_commit() {
@@ -490,6 +589,94 @@ impl Browser {
                             ui.close();
                         }
                     });
+                    let refs = self.state.refs.clone();
+                    let branch_pending = self.branch.is_some();
+                    let mut jump = None;
+                    let mut switch = None;
+                    let mut new_branch = false;
+                    let mut section = |ui: &mut egui::Ui, title: &str, kind| {
+                        let filtered = refs
+                            .items
+                            .iter()
+                            .filter(|item| item.kind == kind)
+                            .collect::<Vec<_>>();
+                        if filtered.is_empty() {
+                            return;
+                        }
+                        ui.menu_button(title, |ui| {
+                            for item in filtered {
+                                if ui
+                                    .add_enabled(
+                                        !branch_pending,
+                                        egui::Button::new(item.name.clone()),
+                                    )
+                                    .clicked()
+                                {
+                                    jump = Some(item.commit.clone());
+                                    ui.close();
+                                }
+                            }
+                        });
+                    };
+                    ui.menu_button("Refs", |ui| {
+                        let head_name = refs.head.as_ref().and_then(|head| head.name.as_deref());
+                        if ui
+                            .add_enabled(
+                                !branch_pending && refs.head.is_some(),
+                                egui::Button::new("New branch…"),
+                            )
+                            .clicked()
+                        {
+                            new_branch = true;
+                            ui.close();
+                        }
+                        let branches = refs
+                            .items
+                            .iter()
+                            .filter(|item| item.kind == gg_engine::refs::RefKind::Branch)
+                            .collect::<Vec<_>>();
+                        if !branches.is_empty() {
+                            ui.menu_button("Branches", |ui| {
+                                for item in branches {
+                                    let current = Some(item.full_name.as_str()) == head_name;
+                                    let label = if current {
+                                        format!("{}  ·  HEAD", item.name)
+                                    } else {
+                                        item.name.clone()
+                                    };
+                                    if ui
+                                        .add_enabled(
+                                            !current && !branch_pending,
+                                            egui::Button::new(label),
+                                        )
+                                        .on_hover_text(if current {
+                                            "Already on this branch"
+                                        } else {
+                                            "Switch to this branch (requires a clean worktree)"
+                                        })
+                                        .clicked()
+                                    {
+                                        switch = Some(item.name.clone());
+                                        ui.close();
+                                    }
+                                }
+                            });
+                        }
+                        section(ui, "Remotes", gg_engine::refs::RefKind::Remote);
+                        section(ui, "Tags", gg_engine::refs::RefKind::Tag);
+                        if refs.items.is_empty() {
+                            ui.weak("No branches or tags");
+                        }
+                    });
+                    if let Some(name) = switch {
+                        self.start_branch(ctx, name, false);
+                    }
+                    if new_branch {
+                        self.new_branch = Some(String::new());
+                    }
+                    if let Some(id) = jump {
+                        self.jump_to_ref(id);
+                    }
                     ui.menu_button("View", |ui| {
                         let shown = if narrow {
                             &mut self.narrow_details
@@ -499,6 +686,17 @@ impl Browser {
                         if ui.checkbox(shown, "Commit details · Space").clicked() {
                             ui.close();
                         }
+                        ui.separator();
+                        let sidebar_available = ctx.content_rect().width() >= 1120.0;
+                        ui.add_enabled(
+                            sidebar_available,
+                            egui::Checkbox::new(&mut self.refs_visible, "Refs sidebar"),
+                        )
+                        .on_hover_text(if sidebar_available {
+                            "Show branches, remotes, and tags on the left"
+                        } else {
+                            "Resize the window to at least 1120 px to show the sidebar"
+                        });
                     });
                     ui.separator();
                     let identity_width = (ui.available_width() - 84.0).max(80.0);
@@ -569,9 +767,81 @@ impl Browser {
                 });
             });
         }
+        let wide_refs = !narrow && self.refs_visible && ctx.content_rect().width() >= 1120.0;
+        if wide_refs {
+            let refs = self.state.refs.clone();
+            let busy = self.branch.is_some();
+            let mut action = None;
+            egui::SidePanel::left("refs-sidebar")
+                .exact_width(190.0)
+                .resizable(false)
+                .frame(egui::Frame::side_top_panel(&ctx.style()).inner_margin(8.0))
+                .show(ctx, |ui| {
+                    action = refs_view::show(ui, &refs, &mut self.refs_query, busy);
+                });
+            match action {
+                Some(refs_view::Action::Switch(name)) => self.start_branch(ctx, name, false),
+                Some(refs_view::Action::Jump(id)) => self.jump_to_ref(id),
+                Some(refs_view::Action::NewBranch) => self.new_branch = Some(String::new()),
+                None => {}
+            }
+        }
+        if let Some(name) = &mut self.new_branch {
+            let mut submit = None;
+            let mut open =
+                !ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+            let branch_pending = self.branch.is_some();
+            egui::Window::new("New branch")
+                .id(egui::Id::new("new-branch"))
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(false)
+                .default_width(360.0)
+                .default_pos(ctx.content_rect().center())
+                .pivot(egui::Align2::CENTER_CENTER)
+                .show(ctx, |ui| {
+                    ui.label("Create a branch from the current HEAD. The worktree must be clean.");
+                    let response = ui.add(
+                        egui::TextEdit::singleline(name)
+                            .hint_text("Branch name")
+                            .desired_width(f32::INFINITY),
+                    );
+                    let enter =
+                        response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    ui.horizontal(|ui| {
+                        if ui
+                            .add_enabled(
+                                !branch_pending && !name.trim().is_empty(),
+                                egui::Button::new("Create branch"),
+                            )
+                            .clicked()
+                            || enter
+                        {
+                            submit = Some(name.trim().to_string());
+                        }
+                        if ui.button("Cancel").clicked() {
+                            submit = Some(String::new());
+                        }
+                    });
+                });
+            if let Some(name) = submit {
+                if !name.is_empty() {
+                    self.start_branch(ctx, name, true);
+                }
+                self.new_branch = None;
+            } else if !open {
+                self.new_branch = None;
+            }
+        }
         egui::TopBottomPanel::bottom("status").exact_height(25.0).show(ctx, |ui| {
             let (message, color) = if let Some(error) = &self.state.error {
                 (format!("{}{}", if self.state.history.is_some() { "Previous results · " } else { "" }, error), ui.visuals().error_fg_color)
+            } else if let Some(error) = &self.branch_error {
+                (format!("Branch · {error}"), ui.visuals().error_fg_color)
+            } else if let Some(warning) = &self.branch_warning {
+                (format!("Branch · {warning}"), ui.visuals().text_color())
+            } else if self.branch.is_some() {
+                ("Switching branch…".into(), ui.visuals().text_color())
             } else if self.pending.is_some() {
                 (format!("Reading {}{}", self.state.requested.as_deref().unwrap_or(std::path::Path::new(".")).display(), if self.state.history.is_some() { " · showing previous results" } else { "" }), ui.visuals().text_color())
             } else if !self.state.finished && self.worker.is_some() {
@@ -637,8 +907,14 @@ impl Browser {
         self.details_rect = egui::Rect::NOTHING;
         if !narrow && self.details_visible {
             let details = egui::SidePanel::right("details")
-                .default_width(330.0)
-                .width_range(300.0..=(ctx.content_rect().width() - 700.0).max(300.0))
+                .default_width(300.0)
+                .width_range(
+                    300.0
+                        ..=(ctx.content_rect().width()
+                            - if wide_refs { 190.0 } else { 0.0 }
+                            - history_view::MIN_WIDTH)
+                            .max(300.0),
+                )
                 .frame(egui::Frame::side_top_panel(&ctx.style()).inner_margin(12.0))
                 .show(ctx, |ui| {
                     ui.weak("DETAILS");
@@ -709,13 +985,30 @@ impl Browser {
                                 self.viewport =
                                     rows.start.saturating_sub(24)..rows.end.saturating_add(24);
                                 self.row_rects.clear();
+                                let head_name = self
+                                    .state
+                                    .refs
+                                    .head
+                                    .as_ref()
+                                    .and_then(|head| head.name.clone());
                                 for row in rows {
                                     if let Some(commit) = self.state.rows.get(&row) {
-                                        let response = ui
+                                        let mut refs = self
+                                            .state
+                                            .refs
+                                            .for_commit(&commit.id)
+                                            .cloned()
+                                            .collect::<Vec<_>>();
+                                        history_view::sort_labels(&mut refs, head_name.as_deref());
+                                        let graph = self.state.graphs.get(&row);
+                                        let (response, ref_action) = ui
                                             .push_id(&commit.id, |ui| {
                                                 history_view::row(
                                                     ui,
                                                     commit,
+                                                    graph,
+                                                    &refs,
+                                                    head_name.as_deref(),
                                                     Some(&commit.id)
                                                         == self.state.selected.as_ref(),
                                                     &mut self.avatars,
@@ -723,16 +1016,46 @@ impl Browser {
                                             })
                                             .inner;
                                         self.row_rects.push((row, response.rect));
-                                        if response.clicked() {
+                                        if let Some(action) = ref_action {
                                             response.surrender_focus();
                                             self.state.select_row(row);
                                             if self.worker.is_none() {
                                                 self.state.details =
                                                     self.state.rows.get(&row).cloned();
                                             }
-                                        }
-                                        if response.double_clicked() && narrow {
-                                            self.narrow_details = true;
+                                            match action {
+                                                history_view::RefAction::Select => {}
+                                                history_view::RefAction::Switch {
+                                                    name,
+                                                    full_name,
+                                                } => {
+                                                    let current = self
+                                                        .state
+                                                        .refs
+                                                        .head
+                                                        .as_ref()
+                                                        .and_then(|head| head.name.as_deref())
+                                                        == Some(full_name.as_str());
+                                                    if !current && self.branch.is_none() {
+                                                        self.start_branch(ctx, name, false);
+                                                    }
+                                                }
+                                                history_view::RefAction::Jump(id) => {
+                                                    self.jump_to_ref(id)
+                                                }
+                                            }
+                                        } else {
+                                            if response.clicked() {
+                                                response.surrender_focus();
+                                                self.state.select_row(row);
+                                                if self.worker.is_none() {
+                                                    self.state.details =
+                                                        self.state.rows.get(&row).cloned();
+                                                }
+                                            }
+                                            if response.double_clicked() && narrow {
+                                                self.narrow_details = true;
+                                            }
                                         }
                                     } else {
                                         let (rect, _) = ui.allocate_exact_size(
@@ -851,6 +1174,62 @@ mod tests {
             repeat: false,
             modifiers,
         }
+    }
+
+    #[test]
+    fn refs_sidebar_appears_only_when_there_is_room() {
+        for (width, visible) in [(1119.0, false), (1120.0, true), (1600.0, true)] {
+            let ctx = egui::Context::default();
+            let mut app = layout_fixture();
+            let _ = ctx.run(frame_input(width, 740.0, vec![]), |ctx| app.draw(ctx));
+            let output = ctx.run(frame_input(width, 740.0, vec![]), |ctx| app.draw(ctx));
+            let text = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                text.iter().any(|line| line.contains("Branches  0")),
+                visible,
+                "width={width}: {text:?}"
+            );
+            assert!(app.history_rect.width() >= history_view::MIN_WIDTH);
+        }
+    }
+
+    #[test]
+    fn branch_creation_window_renders_at_supported_widths() {
+        for width in [720.0, 1120.0] {
+            let ctx = egui::Context::default();
+            let mut app = layout_fixture();
+            app.new_branch = Some("feature-x".into());
+            let _ = ctx.run(frame_input(width, 740.0, vec![]), |ctx| app.draw(ctx));
+            let output = ctx.run(frame_input(width, 740.0, vec![]), |ctx| app.draw(ctx));
+            let text = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert!(text.iter().any(|line| line.contains("New branch")));
+            assert!(text.iter().any(|line| line.contains("Create branch")));
+        }
+    }
+
+    #[test]
+    fn ref_jump_clears_filters_and_retargets_selection() {
+        let mut app = layout_fixture();
+        app.state.query = "filter".into();
+        app.state.selected = Some("old".into());
+        app.jump_to_ref("new".into());
+        assert!(app.state.query.is_empty());
+        assert_eq!(app.state.selected.as_deref(), Some("new"));
+        assert!(app.state.selected_row.is_none());
     }
 
     #[test]
@@ -990,7 +1369,12 @@ mod tests {
                 // Settle panel geometry and font layout before checking the complete frame.
                 let _ = ctx.run(frame_input(width, height, vec![]), |ctx| app.draw(ctx));
                 let output = ctx.run(frame_input(width, height, vec![]), |ctx| app.draw(ctx));
-                assert!(app.history_rect.width() >= history_view::MIN_WIDTH);
+                assert!(
+                    app.history_rect.width() >= history_view::MIN_WIDTH,
+                    "width={width} scale={scale} history={:?} details={:?}",
+                    app.history_rect,
+                    app.details_rect
+                );
                 assert!(app.history_rect.top() <= 100.0);
                 assert!(app.history_rect.bottom() <= height - 20.0);
                 if width >= 1040.0 {
@@ -1039,6 +1423,8 @@ mod tests {
             scanned: 100_000,
             complete: true,
             rows: vec![],
+            graphs: vec![],
+            refs: Default::default(),
             selection: None,
             error: None,
         });

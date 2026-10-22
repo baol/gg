@@ -9,7 +9,7 @@ Each milestone delivers CLI and native views of shared engine behavior. Current 
 | M0 · Baseline | Browse and search history; [evidence](docs/verification.md) |
 | M1 · Complete | Review files and diffs against a chosen parent; [acceptance](docs/verification.md#m1-acceptance--2026-10-20) |
 | M2 · Complete | Status, file/hunk/line staging, drop, hooks-aware commits, mutation preconditions |
-| M3 | Graph, refs, tags, branch navigation and creation |
+| M3 · Complete | Graph, refs, tags, branch navigation and creation |
 | M4 | Clone, fetch, push, tracking, credentials, progress |
 | M5 | Merge, conflicts, cherry-pick, revert, stash, recovery |
 | M6 | Rebase, reorder, squash, amend, reflog recovery |
