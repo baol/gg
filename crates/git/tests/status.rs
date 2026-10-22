@@ -880,6 +880,7 @@ fn hunk_headers(request: &gg_engine::status::WorkingRequest) -> Result<Vec<Strin
 
 fn hunk_fixture(path: &Path, hash: &str) -> Result {
     git(path, &["init", &format!("--object-format={hash}")])?;
+    git(path, &["config", "core.autocrlf", "false"])?;
     std::fs::write(
         path.join("a"),
         "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\ntwelve\n",
@@ -1593,6 +1594,7 @@ fn drop_whole_working_changes_restores_index_and_removes_untracked() -> Result {
     let dir = tempfile::tempdir()?;
     let p = dir.path();
     git(p, &["init", "-b", "main"])?;
+    git(p, &["config", "core.autocrlf", "false"])?;
     std::fs::write(p.join("regular"), b"base\n")?;
     std::fs::write(p.join("deleted"), b"deleted\n")?;
     std::fs::write(p.join("exec"), b"exec\n")?;
