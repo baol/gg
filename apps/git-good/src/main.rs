@@ -13,6 +13,7 @@ mod graph;
 mod history_view;
 #[cfg(test)]
 mod interaction_tests;
+mod mutation_cli;
 mod navigation;
 mod network;
 mod phosphor;
@@ -46,7 +47,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("--help")) {
         println!(
-            "gg · good git\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good refs [PATH]      Print branches, remotes, tags, and HEAD as JSON\ngit-good status [PATH] [--file PATH --area AREA]   Print working status or diff as JSON\ngit-good stage --file PATH [--hunk HEADER]... [--repo PATH]   Stage one file or selected hunks\ngit-good unstage --file PATH [--repo PATH]   Unstage one file\ngit-good commit -m MESSAGE [--repo PATH]   Commit the index after Git hooks\ngit-good switch [--create] BRANCH [--repo PATH]   Switch to or create a local branch\ngit-good stash <list|push|apply|pop|drop> [OPTIONS] [--repo PATH]   List or mutate stashes\ngit-good show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]   Review or export\n\nBrowse commits reachable from HEAD and all local, remote, and tag refs."
+            "gg · good git\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good refs [PATH]      Print branches, remotes, tags, and HEAD as JSON\ngit-good status [PATH] [--file PATH --area AREA]   Print working status or diff as JSON\ngit-good stage --file PATH [--hunk HEADER]... [--repo PATH]   Stage one file or selected hunks\ngit-good unstage --file PATH [--repo PATH]   Unstage one file\ngit-good commit -m MESSAGE [--repo PATH]   Commit the index after Git hooks\ngit-good switch [--create] BRANCH [--repo PATH]   Switch to or create a local branch\ngit-good stash <list|push|apply|pop|drop> [OPTIONS] [--repo PATH]   List or mutate stashes\ngit-good cherry-pick COMMIT [--repo PATH]   Apply a commit\ngit-good revert COMMIT [--repo PATH]   Invert a commit\ngit-good show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]   Review or export\n\nBrowse commits reachable from HEAD and all local, remote, and tag refs."
         );
         return Ok(());
     }
@@ -73,6 +74,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("stash")) {
         return stash_cli::run(args);
+    }
+    if first.as_deref() == Some(std::ffi::OsStr::new("cherry-pick")) {
+        return mutation_cli::cherry_pick(args);
+    }
+    if first.as_deref() == Some(std::ffi::OsStr::new("revert")) {
+        return mutation_cli::revert(args);
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("fetch")) {
         return sync_cli::fetch(args);
@@ -188,6 +195,13 @@ enum StashAction {
     Drop(String),
 }
 
+#[derive(Clone, Copy)]
+enum MutationAction {
+    Continue,
+    Skip,
+    Abort,
+}
+
 struct Browser {
     logo: Option<egui::TextureHandle>,
     path: String,
@@ -208,6 +222,9 @@ struct Browser {
     stash_dialog: Option<StashDialog>,
     stash_window: Option<StashWindow>,
     stash_notice: Option<String>,
+    mutation: Option<gg_engine::mutation::OperationState>,
+    mutation_notice: Option<String>,
+    mutation_error: Option<String>,
     refs_visible: bool,
     refs_query: String,
     state: state::State,
@@ -253,6 +270,9 @@ impl Browser {
             stash_dialog: None,
             stash_window: None,
             stash_notice: None,
+            mutation: None,
+            mutation_notice: None,
+            mutation_error: None,
             refs_visible: true,
             refs_query: String::new(),
             state: state::State::default(),
@@ -552,9 +572,96 @@ impl Browser {
         Ok(())
     }
 
+    fn refresh_mutation(&mut self) {
+        let Some(path) = self.stash_path() else {
+            return;
+        };
+        if let Ok(state) = gg_git::mutation::state(&path) {
+            self.mutation = state;
+        }
+    }
+
+    fn start_mutation(
+        &mut self,
+        ctx: &egui::Context,
+        operation: gg_engine::mutation::Operation,
+    ) -> Result<(), String> {
+        let path = self
+            .stash_path()
+            .ok_or("Open a repository before changing history.")?;
+        let commit = self
+            .state
+            .selected
+            .clone()
+            .ok_or("Select a commit before cherry-picking or reverting.")?;
+        let receipt = match operation {
+            gg_engine::mutation::Operation::CherryPick => {
+                gg_git::mutation::cherry_pick(&path, &commit)?
+            }
+            gg_engine::mutation::Operation::Revert => gg_git::mutation::revert(&path, &commit)?,
+        };
+        self.mutation_error = None;
+        self.mutation_notice = Some(match operation {
+            gg_engine::mutation::Operation::CherryPick => format!(
+                "Cherry-picked {}{}",
+                commit,
+                if receipt.conflicts.is_empty() {
+                    String::new()
+                } else {
+                    format!(" · {} conflict(s)", receipt.conflicts.len())
+                }
+            ),
+            gg_engine::mutation::Operation::Revert => format!(
+                "Reverted {}{}",
+                commit,
+                if receipt.conflicts.is_empty() {
+                    String::new()
+                } else {
+                    format!(" · {} conflict(s)", receipt.conflicts.len())
+                }
+            ),
+        });
+        self.refresh_mutation();
+        self.load(ctx);
+        Ok(())
+    }
+
+    fn recover_mutation(
+        &mut self,
+        ctx: &egui::Context,
+        operation: gg_engine::mutation::Operation,
+        action: MutationAction,
+    ) -> Result<(), String> {
+        let path = self
+            .stash_path()
+            .ok_or("Open a repository before recovering history.")?;
+        let receipt = match action {
+            MutationAction::Continue => gg_git::mutation::continue_operation(&path, operation)?,
+            MutationAction::Skip => gg_git::mutation::skip_operation(&path, operation)?,
+            MutationAction::Abort => gg_git::mutation::abort_operation(&path, operation)?,
+        };
+        self.mutation_error = None;
+        self.mutation_notice = Some(match action {
+            MutationAction::Continue => format!("Continued {}", operation.as_str()),
+            MutationAction::Skip => format!("Skipped {}", operation.as_str()),
+            MutationAction::Abort => format!("Aborted {}", operation.as_str()),
+        });
+        if !receipt.conflicts.is_empty() {
+            self.mutation_notice = Some(format!(
+                "{} · {} conflict(s)",
+                operation.as_str(),
+                receipt.conflicts.len()
+            ));
+        }
+        self.refresh_mutation();
+        self.load(ctx);
+        Ok(())
+    }
+
     fn load(&mut self, ctx: &egui::Context) {
         self.branch_error = None;
         self.network_error = None;
+        self.refresh_mutation();
         let path = PathBuf::from(&self.path);
         self.state.begin(path.clone());
         let request = stream::Request {
@@ -1124,6 +1231,44 @@ impl Browser {
                         ui.close();
                     }
                 });
+                let has_selection = self.state.selected.is_some();
+                let mutation_busy =
+                    self.mutation.is_some() || self.branch.is_some() || self.network.is_some();
+                let mut cherry_pick = false;
+                let mut revert = false;
+                ui.menu_button("Commit", |ui| {
+                    if ui
+                        .add_enabled(
+                            has_selection && !mutation_busy,
+                            egui::Button::new("Cherry-pick"),
+                        )
+                        .on_hover_text("Apply the selected commit to the current branch")
+                        .clicked()
+                    {
+                        cherry_pick = true;
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(has_selection && !mutation_busy, egui::Button::new("Revert"))
+                        .on_hover_text("Invert the selected commit on the current branch")
+                        .clicked()
+                    {
+                        revert = true;
+                        ui.close();
+                    }
+                });
+                if cherry_pick
+                    && let Err(error) =
+                        self.start_mutation(ctx, gg_engine::mutation::Operation::CherryPick)
+                {
+                    self.mutation_error = Some(error);
+                }
+                if revert
+                    && let Err(error) =
+                        self.start_mutation(ctx, gg_engine::mutation::Operation::Revert)
+                {
+                    self.mutation_error = Some(error);
+                }
                 ui.separator();
                 let trailing = if self.network.is_some() { 120.0 } else { 84.0 };
                 let identity_width = (ui.available_width() - trailing).max(80.0);
@@ -1191,6 +1336,34 @@ impl Browser {
                 }
             });
         });
+        let mut mutation_action = None;
+        if let Some(state) = &self.mutation {
+            egui::Panel::top("mutation")
+                .exact_size(30.0)
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(format!("{} in progress", state.operation.as_str()));
+                        if !state.conflicts.is_empty() {
+                            ui.label(format!("· {} conflict(s)", state.conflicts.len()));
+                        }
+                        if ui.button("Continue").clicked() {
+                            mutation_action = Some(MutationAction::Continue);
+                        }
+                        if ui.button("Skip").clicked() {
+                            mutation_action = Some(MutationAction::Skip);
+                        }
+                        if ui.button("Abort").clicked() {
+                            mutation_action = Some(MutationAction::Abort);
+                        }
+                    });
+                });
+        }
+        if let Some(action) = mutation_action
+            && let Some(operation) = self.mutation.as_ref().map(|state| state.operation)
+            && let Err(error) = self.recover_mutation(ctx, operation, action)
+        {
+            self.mutation_error = Some(error);
+        }
         if self.edit_path {
             egui::Panel::top("open-repository").show(ui, |ui| {
                 ui.horizontal(|ui| {
@@ -1554,6 +1727,8 @@ impl Browser {
                 (format!("{}{}", if self.state.history.is_some() { "Previous results · " } else { "" }, error), ui.visuals().error_fg_color)
             } else if let Some(error) = &self.branch_error {
                 (format!("Branch · {error}"), ui.visuals().error_fg_color)
+            } else if let Some(error) = &self.mutation_error {
+                (format!("History · {error}"), ui.visuals().error_fg_color)
             } else if let Some(worker) = &self.network {
                 if worker.is_cancelled() {
                     ("Cancelling network operation…".into(), ui.visuals().text_color())
@@ -1576,6 +1751,8 @@ impl Browser {
                 (label.clone(), ui.visuals().text_color())
             } else if let Some(notice) = &self.stash_notice {
                 (format!("Stash · {notice}"), ui.visuals().text_color())
+            } else if let Some(notice) = &self.mutation_notice {
+                (format!("History · {notice}"), ui.visuals().text_color())
             } else if self.pending.is_some() {
                 (format!("Reading {}{}", self.state.requested.as_deref().unwrap_or(std::path::Path::new(".")).display(), if self.state.history.is_some() { " · showing previous results" } else { "" }), ui.visuals().text_color())
             } else if !self.state.finished && self.worker.is_some() {
@@ -2093,6 +2270,40 @@ mod tests {
             assert!(text.iter().any(|line| line.contains("Apply")));
             assert!(text.iter().any(|line| line.contains("Pop")));
             assert!(text.iter().any(|line| line.contains("Drop")));
+        }
+    }
+
+    #[test]
+    fn mutation_banner_renders_at_supported_widths() {
+        for width in [720.0, 1120.0] {
+            let ctx = egui::Context::default();
+            let mut app = layout_fixture();
+            app.mutation = Some(gg_engine::mutation::OperationState {
+                operation: gg_engine::mutation::Operation::CherryPick,
+                commit: Some("abc123".into()),
+                conflicts: vec!["a".into()],
+            });
+            let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let output = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let text = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert!(
+                text.iter()
+                    .any(|line| line.contains("cherry-pick in progress"))
+            );
+            assert!(text.iter().any(|line| line.contains("Continue")));
+            assert!(text.iter().any(|line| line.contains("Skip")));
+            assert!(text.iter().any(|line| line.contains("Abort")));
         }
     }
 
