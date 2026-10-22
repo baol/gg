@@ -103,6 +103,16 @@ fn color(lane: u8) -> egui::Color32 {
     COLORS[lane as usize % COLORS.len()]
 }
 
+fn parent_color(row: &Row, parent: u8) -> egui::Color32 {
+    let lane_was_active = row.before & (1 << row.lane) != 0;
+    let parent_was_active = row.before & (1 << parent) != 0;
+    if !lane_was_active && parent_was_active {
+        color(row.lane)
+    } else {
+        color(parent)
+    }
+}
+
 pub fn paint(ui: &egui::Ui, rect: egui::Rect, row: &Row, selected: bool) {
     let painter = ui.painter().with_clip_rect(rect);
     let center = egui::pos2(x(rect, row.lane), rect.center().y);
@@ -125,6 +135,14 @@ pub fn paint(ui: &egui::Ui, rect: egui::Rect, row: &Row, selected: bool) {
                 ],
                 egui::Stroke::new(1.75, color(lane)),
             );
+        } else if after {
+            painter.line_segment(
+                [
+                    egui::pos2(x(rect, lane), center.y),
+                    egui::pos2(x(rect, lane), rect.bottom()),
+                ],
+                egui::Stroke::new(1.75, color(lane)),
+            );
         }
     }
     let join = center.y + (rect.bottom() - center.y) * 0.62;
@@ -142,7 +160,7 @@ pub fn paint(ui: &egui::Ui, rect: egui::Rect, row: &Row, selected: bool) {
             ],
             false,
             egui::Color32::TRANSPARENT,
-            egui::Stroke::new(1.75, color(*parent)),
+            egui::Stroke::new(1.75, parent_color(row, *parent)),
         ));
     }
     if selected {
@@ -195,5 +213,26 @@ mod tests {
         assert!(second.before & (1 << second.lane) != 0);
         assert_eq!(root.after, 0);
         assert!(first.lane <= 1);
+    }
+
+    #[test]
+    fn a_new_branch_tip_uses_its_own_color_until_it_joins_an_existing_lane() {
+        let mut graph = Graph::default();
+        let first = graph.push(&commit("first", &["root"]));
+        let second = graph.push(&commit("second", &["root"]));
+        assert_eq!(first.lane, 0);
+        assert_eq!(second.lane, 1);
+        assert!(second.before & (1 << first.lane) != 0);
+        assert_eq!(second.parents, vec![first.lane]);
+        assert_eq!(parent_color(&second, first.lane), color(second.lane));
+    }
+
+    #[test]
+    fn merge_parents_keep_the_color_of_the_lane_they_start() {
+        let mut graph = Graph::default();
+        let merge = graph.push(&commit("merge", &["first", "second"]));
+        let second = merge.parents[1];
+        assert_ne!(second, merge.lane);
+        assert_eq!(parent_color(&merge, second), color(second));
     }
 }
