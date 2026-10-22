@@ -28,7 +28,7 @@ Contracts: [history graph and refs](architecture.md#history-graph-and-refs--m3).
 | Ref labels | Branches, remotes, and tags prefix the matching commit; overflow is explicit | egui and native review |
 | Ref navigation | Sidebar and menu mark HEAD; selection clears filters and reveals deep commits | Worker and egui tests |
 | Ref sidebar | Grouped trees, filtering, HEAD check, and branch switch/jump actions work at wide widths; menu remains below 1120 px | egui and native review |
-| Ref pills | Current branch first, then tags and other refs; icons, overflow, and subject remain single-line | egui and native review |
+| Ref pills | Current branch first, then tags and other refs; icons, overflow, and subject remain single-line; click selects and double-click switches/jumps | egui and native review |
 | Read-only safety | Objects, refs, index, and working files unchanged | Byte/reference comparison |
 | Branch switch/create | Dirty trees, missing/colliding refs, and invalid names reject without moving HEAD; success refreshes refs/history | Git oracle, CLI, and native review |
 | Branch actions safety | Local branches only; tags/remotes remain read-only jumps; post-checkout failure is reported | Git fixtures and native review |

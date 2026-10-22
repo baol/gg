@@ -1001,13 +1001,14 @@ impl Browser {
                                             .collect::<Vec<_>>();
                                         history_view::sort_labels(&mut refs, head_name.as_deref());
                                         let graph = self.state.graphs.get(&row);
-                                        let response = ui
+                                        let (response, ref_action) = ui
                                             .push_id(&commit.id, |ui| {
                                                 history_view::row(
                                                     ui,
                                                     commit,
                                                     graph,
                                                     &refs,
+                                                    head_name.as_deref(),
                                                     Some(&commit.id)
                                                         == self.state.selected.as_ref(),
                                                     &mut self.avatars,
@@ -1015,16 +1016,46 @@ impl Browser {
                                             })
                                             .inner;
                                         self.row_rects.push((row, response.rect));
-                                        if response.clicked() {
+                                        if let Some(action) = ref_action {
                                             response.surrender_focus();
                                             self.state.select_row(row);
                                             if self.worker.is_none() {
                                                 self.state.details =
                                                     self.state.rows.get(&row).cloned();
                                             }
-                                        }
-                                        if response.double_clicked() && narrow {
-                                            self.narrow_details = true;
+                                            match action {
+                                                history_view::RefAction::Select => {}
+                                                history_view::RefAction::Switch {
+                                                    name,
+                                                    full_name,
+                                                } => {
+                                                    let current = self
+                                                        .state
+                                                        .refs
+                                                        .head
+                                                        .as_ref()
+                                                        .and_then(|head| head.name.as_deref())
+                                                        == Some(full_name.as_str());
+                                                    if !current && self.branch.is_none() {
+                                                        self.start_branch(ctx, name, false);
+                                                    }
+                                                }
+                                                history_view::RefAction::Jump(id) => {
+                                                    self.jump_to_ref(id)
+                                                }
+                                            }
+                                        } else {
+                                            if response.clicked() {
+                                                response.surrender_focus();
+                                                self.state.select_row(row);
+                                                if self.worker.is_none() {
+                                                    self.state.details =
+                                                        self.state.rows.get(&row).cloned();
+                                                }
+                                            }
+                                            if response.double_clicked() && narrow {
+                                                self.narrow_details = true;
+                                            }
                                         }
                                     } else {
                                         let (rect, _) = ui.allocate_exact_size(
