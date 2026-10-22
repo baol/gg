@@ -259,3 +259,4 @@ Linux x86_64 · Rust 1.99.1 · local Git fixtures.
 - Git oracle tests cover a clean cherry-pick and its parent, cherry-pick conflicts with abort and continue, a conflicting revert with skip, a clean revert, and option-shaped or missing revisions.
 - CLI tests verify JSON receipts for `cherry-pick` and `revert`, conflict reporting, `--abort`, `--continue`, and unknown-option stderr.
 - egui tests render the in-progress banner with Continue, Skip, and Abort at 720 and 1120 widths.
+- [Six native CI jobs](https://github.com/baol/gg/actions/runs/39828199511) pass tests, Clippy with `-D warnings`, release builds, CLI smoke checks, and packaging on Linux, macOS, and Windows on x86_64 and arm64 for `c7a582d`.
