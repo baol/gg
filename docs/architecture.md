@@ -223,3 +223,37 @@ Unstage file restores exactly one staged path from the observed HEAD, or removes
 Acquire the index lock before checking the observed HEAD and index fingerprint. Restore the entry, invalidate the tree cache, revalidate, and publish the index atomically. Conflicts, sparse indexes, file/directory collisions, stale observations, and an existing lock return actionable errors. Run UI mutations on a worker; disable duplicate actions and navigation while pending, then refresh status at an interaction-safe boundary. Whole-file unstaging remains the fallback for modes, types, symlinks, untracked additions, deletions, and conflict changes.
 
 Rationale: restoring one entry gives a reversible operation while preserving the user's working edits and other staging decisions.
+
+## Remote tracking and network mutations · M4
+
+### Tracking snapshot
+
+Read configured remotes and local-branch tracking alongside the ref snapshot. A remote carries its configured name and fetch URL, plus its push URL when distinct. Display URLs; never treat them as credentials. A local branch with an upstream carries the upstream's full ref name, remote name, remote branch name, and ahead/behind commit counts. Keep branches without a configured upstream explicit rather than inventing `origin` tracking. A configured upstream whose remote-tracking ref is absent remains visible with an unavailable count state.
+
+Compute ahead and behind from the local branch tip and its remote-tracking tip. Count commits reachable from one side after excluding the merge base; when the histories are unrelated, count each full side. Shallow repositories report counts limited to available history. Compute counts for local branches with resolved upstreams and keep the snapshot read-only. Preserve the previous snapshot while a refresh is loading or fails.
+
+`git good refs [PATH]` includes remotes and local-branch tracking in the same JSON snapshot as M3. The native refs sidebar shows the current branch's upstream and ahead/behind marker without hiding the ref tree. The status line names the upstream and counts when available. Long upstream labels truncate through the shared overflow view.
+
+### Network operations
+
+Clone, fetch, push, and remote-branch checkout are explicit mutations delegated to the Git executable for transport, credential helpers, SSH agents, hooks, configuration, and repository locking. This preserves Git-compatible authentication and protocol behavior while gix remains responsible for discovery and object reads. Locate Git through `PATH`; a missing executable returns installation guidance. Run with an explicit working directory, remove `GIT_DIR` and `GIT_WORK_TREE`, and never invoke a shell.
+
+Fetch selects one configured remote, or the sole configured remote when omitted, and never updates local branches or the worktree. Push selects one local branch and one remote without force; a push that would overwrite remote work is rejected by Git and reported. The default remote is `origin` when configured, otherwise the sole configured remote, otherwise an error. `--set-upstream` records the pushed branch's upstream only after Git reports success. Clone creates a new destination; an existing nonempty destination is rejected by Git and its error is preserved without deleting user files.
+
+After a successful fetch, reload refs and history while retaining the current selection where possible. After a successful push with upstream changes, reload tracking and refs. After clone, open the new repository only when Git succeeded. Failed or cancelled operations retain the previous displayed state and offer a retry path. Network mutations never run automatically during refresh, launch, or ref navigation.
+
+### Credentials
+
+Use Git's configured credential helpers, SSH agent, and protocol configuration. The native app runs network operations without an interactive terminal and reports a missing-credential failure with the remote name and a pointer to Git credential configuration. CLI operations may use the invoking terminal's normal Git credential prompt. Redact URL user information and never copy credentials, helper output, or raw environment values into receipts, logs, progress, or errors.
+
+### Progress and cancellation
+
+Parse Git's stderr progress as a bounded sequence of phases and percentages. Coalesce updates so the UI repaints at a steady rate, truncate long lines, and never buffer an unbounded transcript. CLI commands emit one final JSON receipt on stdout; progress belongs on stderr and may be suppressed when stderr is not a terminal. A native cancel request sends a kill to the Git child, reaps it on the worker, reports cancellation, and leaves the previous view usable. Network operations are serialized: duplicate Fetch, Push, Clone, or remote-branch checkout actions stay disabled until the worker finishes.
+
+Remote-branch checkout creates a local branch that tracks the selected remote branch. It uses the same clean-worktree, validation, `--track`, hook, and post-checkout failure rules as local branch switching; it never detaches HEAD silently.
+
+### CLI
+
+`git good fetch [REMOTE] [--prune] [--repo PATH]` updates remote-tracking refs and prints a JSON receipt with the repository, remote, and fetched state. `git good push [REMOTE] [BRANCH] [--set-upstream] [--repo PATH]` prints the pushed branch, remote, upstream, and any warning. `git good clone URL [PATH]` prints the cloned path and resolved repository state. Commands stream progress on stderr and keep stdout parseable. Failures use stderr and a nonzero status without a partial receipt.
+
+Rationale: Git owns protocol and credential compatibility, while gg owns explicit selection, bounded progress, cancellation, and a single refresh boundary.

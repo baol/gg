@@ -53,7 +53,8 @@ mod tests {
     #[test]
     fn navigation_and_change_labels_have_glyphs_in_bundled_fonts() {
         let ctx = egui::Context::default();
-        let _ = ctx.run(Default::default(), |ctx| {
+        let _ = crate::tests::run_ui(&ctx, Default::default(), |ui| {
+            let ctx = ui.ctx();
             for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
                 let font = egui::FontId::new(12.0, family);
                 for text in [
@@ -76,17 +77,17 @@ mod tests {
     fn focused_buttons_allow_navigation_and_text_editors_keep_keys() {
         let ctx = egui::Context::default();
         let mut text = String::new();
-        let _ = ctx.run(Default::default(), |ctx| {
-            egui::CentralPanel::default().show(ctx, |ui| {
+        let _ = crate::tests::run_ui(&ctx, Default::default(), |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
                 let button = ui.button("Action");
                 button.request_focus();
-                assert!(available(ctx));
-                assert!(!activation_available(ctx));
-                focus_content(ctx);
-                assert!(activation_available(ctx));
+                assert!(available(ui.ctx()));
+                assert!(!activation_available(ui.ctx()));
+                focus_content(ui.ctx());
+                assert!(activation_available(ui.ctx()));
                 let edit = ui.text_edit_singleline(&mut text);
                 edit.request_focus();
-                assert!(!available(ctx));
+                assert!(!available(ui.ctx()));
             });
         });
     }

@@ -123,3 +123,145 @@ fn duplicate_loose_and_packed_refs_are_reported_once() -> Result {
     assert_eq!(remotes[0].commit, new);
     Ok(())
 }
+
+#[test]
+fn reads_remotes_and_upstream_ahead_behind() -> Result {
+    let dir = tempfile::tempdir()?;
+    let p = dir.path();
+    git(p, &["init", "-b", "main"])?;
+    std::fs::write(p.join("a"), b"base\n")?;
+    git(p, &["add", "a"])?;
+    git(p, &["commit", "-qm", "base"])?;
+    let base = String::from_utf8(git(p, &["rev-parse", "HEAD"])?)?
+        .trim()
+        .to_string();
+
+    git(
+        p,
+        &["remote", "add", "origin", "https://example.org/gg.git"],
+    )?;
+    git(
+        p,
+        &[
+            "remote",
+            "add",
+            "secret",
+            "https://user:password@example.org/secret.git",
+        ],
+    )?;
+    git(p, &["switch", "-c", "remote-side", &base])?;
+    std::fs::write(p.join("remote"), b"remote\n")?;
+    git(p, &["add", "remote"])?;
+    git(p, &["commit", "-qm", "remote"])?;
+    let remote = String::from_utf8(git(p, &["rev-parse", "HEAD"])?)?
+        .trim()
+        .to_string();
+    git(p, &["switch", "main"])?;
+    std::fs::write(p.join("local"), b"local\n")?;
+    git(p, &["add", "local"])?;
+    git(p, &["commit", "-qm", "local"])?;
+    git(p, &["update-ref", "refs/remotes/origin/main", &remote])?;
+    git(p, &["config", "branch.main.remote", "origin"])?;
+    git(p, &["config", "branch.main.merge", "refs/heads/main"])?;
+
+    let snapshot = gg_git::refs::read(p)?;
+    let remote = snapshot
+        .remotes
+        .iter()
+        .find(|remote| remote.name == "origin")
+        .ok_or("missing origin remote")?;
+    assert_eq!(
+        remote.fetch_url.as_deref(),
+        Some("https://example.org/gg.git")
+    );
+    assert_eq!(remote.push_url, None);
+    let secret = snapshot
+        .remotes
+        .iter()
+        .find(|remote| remote.name == "secret")
+        .ok_or_else(|| format!("missing secret remote: {:?}", snapshot.remotes))?;
+    assert_eq!(
+        secret.fetch_url.as_deref(),
+        Some("https://user@example.org/secret.git")
+    );
+    assert!(
+        !secret
+            .fetch_url
+            .as_deref()
+            .unwrap_or_default()
+            .contains("password")
+    );
+    let tracking = snapshot
+        .tracking
+        .iter()
+        .find(|tracking| tracking.branch == "main")
+        .ok_or("missing main tracking")?;
+    assert_eq!(tracking.full_name, "refs/heads/main");
+    assert_eq!(tracking.upstream, "origin/main");
+    assert_eq!(tracking.upstream_full_name, "refs/remotes/origin/main");
+    assert_eq!(tracking.remote, "origin");
+    assert_eq!(tracking.remote_branch, "main");
+    assert_eq!((tracking.ahead, tracking.behind), (Some(1), Some(1)));
+    assert!(snapshot.current_tracking().is_some());
+    Ok(())
+}
+
+#[test]
+fn upstream_without_tracking_ref_has_no_counts() -> Result {
+    let dir = tempfile::tempdir()?;
+    let p = dir.path();
+    git(p, &["init", "-b", "main"])?;
+    std::fs::write(p.join("a"), b"base\n")?;
+    git(p, &["add", "a"])?;
+    git(p, &["commit", "-qm", "base"])?;
+    git(
+        p,
+        &["remote", "add", "origin", "https://example.org/gg.git"],
+    )?;
+    git(p, &["config", "branch.main.remote", "origin"])?;
+    git(p, &["config", "branch.main.merge", "refs/heads/main"])?;
+
+    let snapshot = gg_git::refs::read(p)?;
+    let tracking = snapshot
+        .tracking
+        .iter()
+        .find(|tracking| tracking.branch == "main")
+        .ok_or("missing main tracking")?;
+    assert_eq!(tracking.upstream, "origin/main");
+    assert_eq!((tracking.ahead, tracking.behind), (None, None));
+    Ok(())
+}
+
+#[test]
+fn unrelated_upstream_counts_each_full_history() -> Result {
+    let dir = tempfile::tempdir()?;
+    let p = dir.path();
+    git(p, &["init", "-b", "main"])?;
+    std::fs::write(p.join("a"), b"base\n")?;
+    git(p, &["add", "a"])?;
+    git(p, &["commit", "-qm", "base"])?;
+    std::fs::write(p.join("a"), b"local\n")?;
+    git(p, &["commit", "-qam", "local"])?;
+    git(
+        p,
+        &["remote", "add", "origin", "https://example.org/gg.git"],
+    )?;
+    let tree = String::from_utf8(git(p, &["write-tree"])?)?
+        .trim()
+        .to_string();
+    let unrelated = String::from_utf8(git(p, &["commit-tree", &tree, "-m", "unrelated"])?)?
+        .trim()
+        .to_string();
+    git(p, &["update-ref", "refs/remotes/origin/main", &unrelated])?;
+    git(p, &["config", "branch.main.remote", "origin"])?;
+    git(p, &["config", "branch.main.merge", "refs/heads/main"])?;
+
+    let snapshot = gg_git::refs::read(p)?;
+    let tracking = snapshot
+        .tracking
+        .iter()
+        .find(|tracking| tracking.branch == "main")
+        .ok_or("missing main tracking")?;
+    assert_eq!((tracking.ahead, tracking.behind), (Some(2), Some(1)));
+    Ok(())
+}

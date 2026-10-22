@@ -222,3 +222,17 @@ M1 is complete: commit review, selected-parent diffs, binary previews, exact exp
 - Captures: [sidebar and history](screenshots/m3-refs-sidebar-wide.png), [all-ref history](screenshots/m3-all-refs-wide.png), [branch color join](screenshots/m3-branch-color.png), [branch switched](screenshots/m3-refs-sidebar-switch.png), [new branch modal](screenshots/m3-refs-sidebar-new-branch.png), [narrow history](screenshots/m3-graph-narrow.png).
 
 M3 is complete. Branch deletion/rename, remote tracking, and tag creation remain future work.
+
+## M4 clone, fetch, push, tracking, and credentials · 2026-10-22
+
+Linux x86_64 · Rust 1.99.1 · debug and release builds · local bare remotes.
+
+- 206 workspace tests pass (3 ignored); formatting, Clippy with `-D warnings`, and the debug and release builds pass.
+- egui/eframe moved from 0.33 to 0.37 with wgpu 27 to 30 and the workspace MSRV from 1.94 to 1.95. The native app now uses `App::ui`, root-`Ui` panels, `clamped_offset`, `smooth_scroll_delta`, role-based widget info, `Context::request_screenshot`, and theme-specific styles. Tests run through `Context::run_ui` with a helper that clears unapplied texture deltas.
+- The `egui_phosphor_icons` dependency was removed because its latest release targets egui 0.36. The Phosphor regular font is vendored at `apps/git-good/assets/Phosphor.ttf` with its license; app-owned constants and a dedicated font family keep the tracking arrows and the cancel `X`. A test asserts all three glyphs resolve in the vendored family.
+- Tracking tests compare configured remotes, upstreams, and ahead/behind counts with Git for diverged, equal, unrelated, shallow, and missing remote-tracking refs. `git good refs` carries the same remote and tracking snapshot.
+- Local bare-remote tests cover clone, fetch, push, non-fast-forward rejection, `--set-upstream`, option injection, URL redaction, credential-failure detection, cancellation, and repository preservation. CLI tests verify JSON receipts, stderr, and exit status.
+- Native X11 review at 1120×740 and 720×480 confirms upstream and ahead/behind in the sidebar and status line, the Clone and Track remote branch dialogs, and Fetch progress with the cancel action. The first capture exposed the cancel button clipped at the right edge; the toolbar now reserves space while a network operation runs, and `network_cancel_button_stays_inside_the_toolbar` protects both widths.
+- The debug `GG_SCREENSHOT` path uses `Context::request_screenshot`; it produced these captures.
+- Captures: [tracking wide](screenshots/m4-tracking-wide.png), [tracking narrow](screenshots/m4-tracking-narrow.png), [clone dialog](screenshots/m4-clone-dialog.png), [track dialog](screenshots/m4-track-dialog.png), [fetch progress and cancel](screenshots/m4-fetch-progress.png).
+- Six-target CI evidence follows the M4 commit. The [release gates](#preview-acceptance-pending) remain unchanged.

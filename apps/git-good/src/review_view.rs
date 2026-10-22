@@ -142,13 +142,13 @@ impl Review {
         }
     }
     /// Return true when Back is explicitly requested.
-    pub fn draw(&mut self, ctx: &egui::Context) -> bool {
+    pub(crate) fn draw_ui(&mut self, ui: &mut egui::Ui) -> bool {
+        let ctx = ui.ctx().clone();
+        let ctx = &ctx;
         let (point, active, now) = ctx.input(|i| {
             (
                 i.pointer.hover_pos(),
-                i.pointer.any_down()
-                    || i.raw_scroll_delta != egui::Vec2::ZERO
-                    || i.smooth_scroll_delta != egui::Vec2::ZERO,
+                i.pointer.any_down() || i.smooth_scroll_delta != egui::Vec2::ZERO,
                 i.time,
             )
         });
@@ -282,9 +282,9 @@ impl Review {
                 ctx,
             );
         }
-        egui::TopBottomPanel::top("review-header")
-            .exact_height(42.0)
-            .show(ctx, |ui| {
+        egui::Panel::top("review-header")
+            .exact_size(42.0)
+            .show(ui, |ui| {
                 ui.horizontal_centered(|ui| {
                     if ui
                         .button(if self.show_diff {
@@ -347,9 +347,9 @@ impl Review {
                     }
                 });
             });
-        egui::TopBottomPanel::top("review-identity")
-            .exact_height(64.0)
-            .show(ctx, |ui| {
+        egui::Panel::top("review-identity")
+            .exact_size(64.0)
+            .show(ui, |ui| {
                 bounded_text::field(ui, &self.subject, egui::FontId::proportional(16.0), 26.0);
                 let base = self
                     .comparison
@@ -368,9 +368,9 @@ impl Review {
                     22.0,
                 );
             });
-        egui::TopBottomPanel::bottom("review-status")
-            .exact_height(26.0)
-            .show(ctx, |ui| {
+        egui::Panel::bottom("review-status")
+            .exact_size(26.0)
+            .show(ui, |ui| {
                 let pending = format!(
                     "Loading parent {} · showing previous comparison",
                     self.request.parent.unwrap_or(1)
@@ -399,21 +399,21 @@ impl Review {
                 bounded_text::field(ui, text, egui::FontId::proportional(12.0), 18.0);
             });
         if self.show_diff {
-            egui::CentralPanel::default().show(ctx, |ui| self.diff.draw_reading(ui));
+            egui::CentralPanel::default().show(ui, |ui| self.diff.draw_reading(ui));
             bounded_text::show_disclosure(ctx);
             return back;
         }
         if !narrow {
-            egui::SidePanel::right("review-file-diff")
-                .default_width(640.0)
-                .width_range(400.0..=(ctx.content_rect().width() - 320.0).max(400.0))
-                .show(ctx, |ui| self.diff.draw(ui));
+            egui::Panel::right("review-file-diff")
+                .default_size(640.0)
+                .size_range(400.0..=(ctx.content_rect().width() - 320.0).max(400.0))
+                .show(ui, |ui| self.diff.draw(ui));
         } else {
-            egui::TopBottomPanel::bottom("review-file-info-narrow")
-                .exact_height(170.0)
-                .show(ctx, |ui| self.metadata(ui));
+            egui::Panel::bottom("review-file-info-narrow")
+                .exact_size(170.0)
+                .show(ui, |ui| self.metadata(ui));
         }
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.add_sized([86.0, ROW], egui::Label::new("STATUS"));
                 ui.weak("PATH");
@@ -510,7 +510,7 @@ impl Review {
                     }
                 }
             });
-            self.offset = result.state.offset.y;
+            self.offset = result.state.clamped_offset().y;
             self.page = (result.inner_rect.height() / ROW).floor().max(1.0) as usize;
         });
         if (!narrow || self.show_diff)
@@ -590,9 +590,13 @@ mod tests {
             let ctx = egui::Context::default();
             let mut view = Review::fixture(&ctx);
             let frame = |view: &mut Review| {
-                let _ = ctx.run(crate::tests::frame_input(width, 740.0, vec![]), |ctx| {
-                    view.draw(ctx);
-                });
+                let _ = crate::tests::run_ui(
+                    &ctx,
+                    crate::tests::frame_input(width, 740.0, vec![]),
+                    |ctx| {
+                        view.draw_ui(ctx);
+                    },
+                );
             };
             frame(&mut view);
             view.selected = Some(20);
@@ -635,8 +639,8 @@ mod tests {
             let frame = |view: &mut Review, events, time| {
                 let mut input = crate::tests::frame_input(width, 740.0, events);
                 input.time = Some(time);
-                let _ = ctx.run(input, |ctx| {
-                    view.draw(ctx);
+                let _ = crate::tests::run_ui(&ctx, input, |ctx| {
+                    view.draw_ui(ctx);
                 });
             };
             frame(&mut view, vec![], 1.0);
@@ -726,9 +730,13 @@ mod tests {
                         modifiers: egui::Modifiers::NONE,
                     })
                     .collect();
-                let _ = ctx.run(crate::tests::frame_input(width, 480.0, events), |ctx| {
-                    view.draw(ctx);
-                });
+                let _ = crate::tests::run_ui(
+                    &ctx,
+                    crate::tests::frame_input(width, 480.0, events),
+                    |ctx| {
+                        view.draw_ui(ctx);
+                    },
+                );
             };
             frame(&mut view, None::<egui::Key>);
             let selected = view.selected;
@@ -744,9 +752,13 @@ mod tests {
         let ctx = egui::Context::default();
         let mut view = Review::fixture(&ctx);
         let frame = |view: &mut Review, events| {
-            let _ = ctx.run(crate::tests::frame_input(720.0, 480.0, events), |ctx| {
-                view.draw(ctx);
-            });
+            let _ = crate::tests::run_ui(
+                &ctx,
+                crate::tests::frame_input(720.0, 480.0, events),
+                |ctx| {
+                    view.draw_ui(ctx);
+                },
+            );
         };
         frame(&mut view, vec![]);
         view.selected = Some(20);
@@ -776,8 +788,8 @@ mod tests {
             let frame = |view: &mut Review, events, time| {
                 let mut input = crate::tests::frame_input(width, height, events);
                 input.time = Some(time);
-                ctx.run(input, |ctx| {
-                    view.draw(ctx);
+                crate::tests::run_ui(&ctx, input, |ctx| {
+                    view.draw_ui(ctx);
                 })
             };
             frame(&mut view, vec![], 1.0);
@@ -847,8 +859,8 @@ mod performance {
             let began = Instant::now();
             let mut input = crate::tests::frame_input(1120.0, 740.0, events);
             input.time = Some(start.elapsed().as_secs_f64());
-            let _ = ctx.run(input, |ctx| {
-                view.draw(ctx);
+            let _ = crate::tests::run_ui(&ctx, input, |ctx| {
+                view.draw_ui(ctx);
             });
             assert!(view.rows.len() <= 768);
             assert!(view.diff.rows.len() <= 768);

@@ -194,9 +194,7 @@ impl DiffView {
         let (point, active, now) = ctx.input(|i| {
             (
                 i.pointer.hover_pos(),
-                i.pointer.any_down()
-                    || i.raw_scroll_delta != egui::Vec2::ZERO
-                    || i.smooth_scroll_delta != egui::Vec2::ZERO,
+                i.pointer.any_down() || i.smooth_scroll_delta != egui::Vec2::ZERO,
                 i.time,
             )
         });
@@ -435,7 +433,7 @@ impl DiffView {
                 }
             }
         });
-        self.offset = result.state.offset.y;
+        self.offset = result.state.clamped_offset().y;
         self.send(&ctx);
     }
 }
@@ -553,9 +551,13 @@ mod tests {
         view.change = None; // Isolate rendered input from asynchronous repository reads.
 
         let frame = |view: &mut DiffView, events| {
-            let _ = ctx.run(crate::tests::frame_input(720.0, 480.0, events), |ctx| {
-                egui::CentralPanel::default().show(ctx, |ui| view.draw_reading(ui));
-            });
+            let _ = crate::tests::run_ui(
+                &ctx,
+                crate::tests::frame_input(720.0, 480.0, events),
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| view.draw_reading(ui));
+                },
+            );
         };
         frame(&mut view, vec![]);
         for key in [egui::Key::ArrowDown, egui::Key::J, egui::Key::PageDown] {
@@ -603,9 +605,13 @@ mod tests {
             info: Some(FileDiff::summary(DiffKind::Binary, 256, 268, "")),
             ..Default::default()
         };
-        let output = ctx.run(crate::tests::frame_input(720.0, 480.0, vec![]), |ctx| {
-            egui::CentralPanel::default().show(ctx, |ui| view.draw(ui));
-        });
+        let output = crate::tests::run_ui(
+            &ctx,
+            crate::tests::frame_input(720.0, 480.0, vec![]),
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| view.draw(ui));
+            },
+        );
         assert!(output.shapes.iter().any(|shape| {
             matches!(&shape.shape, egui::Shape::Text(text)
                 if text.galley.job.text == "Before: 256 bytes · After: 268 bytes")
@@ -685,9 +691,13 @@ mod performance {
         let mut frames = Vec::new();
         let frame = |view: &mut DiffView| {
             let start = Instant::now();
-            let _ = ctx.run(crate::tests::frame_input(1120.0, 740.0, vec![]), |ctx| {
-                egui::CentralPanel::default().show(ctx, |ui| view.draw(ui));
-            });
+            let _ = crate::tests::run_ui(
+                &ctx,
+                crate::tests::frame_input(1120.0, 740.0, vec![]),
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| view.draw(ui));
+                },
+            );
             assert!(view.rows.len() <= 768);
             start.elapsed()
         };

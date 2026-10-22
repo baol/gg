@@ -63,19 +63,22 @@ pub fn selection(visuals: &Visuals) -> Color32 {
 }
 
 pub fn apply(ctx: &eframe::egui::Context) {
-    let visuals = &ctx.style().visuals;
-    if visuals.dark_mode || visuals.weak_text_color == Some(Color32::from_gray(90)) {
-        return;
+    for theme in [eframe::egui::Theme::Dark, eframe::egui::Theme::Light] {
+        let style = ctx.style_of(theme);
+        let visuals = &style.visuals;
+        if visuals.dark_mode || visuals.weak_text_color == Some(Color32::from_gray(90)) {
+            continue;
+        }
+        ctx.style_mut_of(theme, |style| {
+            let v = &mut style.visuals;
+            v.weak_text_color = Some(Color32::from_gray(90));
+            v.hyperlink_color = Color32::from_rgb(25, 85, 135);
+            v.warn_fg_color = Color32::from_rgb(119, 76, 0);
+            v.error_fg_color = Color32::from_rgb(160, 35, 40);
+            v.selection.bg_fill = selection(v);
+            v.selection.stroke.color = Color32::from_rgb(25, 75, 120);
+        });
     }
-    ctx.style_mut(|style| {
-        let v = &mut style.visuals;
-        v.weak_text_color = Some(Color32::from_gray(90));
-        v.hyperlink_color = Color32::from_rgb(25, 85, 135);
-        v.warn_fg_color = Color32::from_rgb(119, 76, 0);
-        v.error_fg_color = Color32::from_rgb(160, 35, 40);
-        v.selection.bg_fill = selection(v);
-        v.selection.stroke.color = Color32::from_rgb(25, 75, 120);
-    });
 }
 
 #[cfg(test)]
@@ -124,13 +127,10 @@ mod tests {
     #[test]
     fn light_accents_are_readable_and_dark_visuals_are_preserved() {
         let ctx = eframe::egui::Context::default();
-        ctx.set_visuals(Visuals::dark());
-        let dark = ctx.style().visuals.clone();
+        let dark = ctx.style_of(eframe::egui::Theme::Dark).visuals.clone();
         apply(&ctx);
-        assert_eq!(ctx.style().visuals, dark);
-        ctx.set_visuals(Visuals::light());
-        apply(&ctx);
-        let light = &ctx.style().visuals;
+        assert_eq!(ctx.style_of(eframe::egui::Theme::Dark).visuals, dark);
+        let light = ctx.style_of(eframe::egui::Theme::Light).visuals.clone();
         for text in [
             light.weak_text_color(),
             light.hyperlink_color,
@@ -142,9 +142,8 @@ mod tests {
                 assert!(contrast(text, background) >= 4.5);
             }
         }
-        // Switching themes restores the established dark palette.
-        ctx.set_visuals(Visuals::dark());
+        // Re-applying preserves the established dark palette.
         apply(&ctx);
-        assert_eq!(ctx.style().visuals, dark);
+        assert_eq!(ctx.style_of(eframe::egui::Theme::Dark).visuals, dark);
     }
 }

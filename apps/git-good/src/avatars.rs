@@ -464,7 +464,7 @@ mod tests {
                 0,
             ),
         );
-        let output = ctx.run(egui::RawInput::default(), |ctx| {
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| {
                 for size in [18.0, 64.0] {
                     let response = avatars.show(ui, email, "Author", size);
@@ -476,13 +476,14 @@ mod tests {
         let sizes: Vec<_> = output
             .textures_delta
             .set
-            .iter()
-            .map(|(_, delta)| delta.image.size())
+            .values()
+            .flat_map(|deltas| deltas.iter().map(|delta| delta.image.size()))
             .collect();
         assert!(
             sizes.contains(&[18, 18]) && sizes.contains(&[64, 64]),
             "thumbnail sizes: {sizes:?}"
         );
+        output.textures_delta.clear();
         let portrait = avatars.entries[&key(email)]
             .0
             .as_ref()

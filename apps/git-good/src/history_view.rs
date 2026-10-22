@@ -140,14 +140,14 @@ fn paint_refs_and_subject(
         let response = ui
             .interact(
                 pill,
-                ui.id().with(("ref-pill", &item.full_name)),
+                ui.scope_id().with(("ref-pill", &item.full_name)),
                 egui::Sense::click(),
             )
             .on_hover_cursor(egui::CursorIcon::PointingHand)
             .on_hover_text(format!("{}\n{hint}", item.full_name));
         response.widget_info(|| {
             egui::WidgetInfo::labeled(
-                egui::WidgetType::Button,
+                egui::Role::Button,
                 true,
                 format!("{:?} {}", item.kind, item.name),
             )
@@ -258,7 +258,7 @@ pub fn row(
     );
     response.widget_info(|| {
         egui::WidgetInfo::selected(
-            egui::WidgetType::SelectableLabel,
+            egui::Role::ListItem,
             ui.is_enabled(),
             selected,
             commit.subject(),
@@ -367,7 +367,8 @@ mod tests {
             commit: commit.id.clone(),
         }];
         let mut avatars = Avatars::default();
-        let output = ctx.run(
+        let output = crate::tests::run_ui(
+            &ctx,
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(
                     egui::Pos2::ZERO,
@@ -411,7 +412,8 @@ mod tests {
         let mut run = |events: Vec<egui::Event>, time: f64| {
             let mut row_rect = egui::Rect::NOTHING;
             let mut action = None;
-            let _ = ctx.run(
+            let _ = crate::tests::run_ui(
+                &ctx,
                 egui::RawInput {
                     screen_rect: Some(egui::Rect::from_min_size(
                         egui::Pos2::ZERO,
@@ -541,7 +543,8 @@ mod tests {
             })
             .collect::<Vec<_>>();
         let mut avatars = Avatars::default();
-        let output = ctx.run(
+        let output = crate::tests::run_ui(
+            &ctx,
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(
                     egui::Pos2::ZERO,
@@ -604,7 +607,8 @@ mod tests {
                 message: "Long subject ".repeat(100),
             };
             let mut avatars = Avatars::default();
-            let output = ctx.run(
+            let output = crate::tests::run_ui(
+                &ctx,
                 egui::RawInput {
                     screen_rect: Some(egui::Rect::from_min_size(
                         egui::Pos2::ZERO,

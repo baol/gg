@@ -1,0 +1,50 @@
+//! Network-operation progress and receipts shared by CLI and native views.
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Operation {
+    Clone,
+    Fetch,
+    Push,
+}
+
+impl Operation {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Clone => "clone",
+            Self::Fetch => "fetch",
+            Self::Push => "push",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Progress {
+    pub operation: Operation,
+    pub phase: String,
+    pub percent: Option<u8>,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FetchReceipt {
+    pub remote: String,
+    pub pruned: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PushReceipt {
+    pub remote: String,
+    pub branch: String,
+    pub upstream: Option<String>,
+    pub set_upstream: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CloneReceipt {
+    pub path: PathBuf,
+    pub head: Option<String>,
+    pub branch: Option<String>,
+}

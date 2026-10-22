@@ -889,6 +889,33 @@ fn refs_cli_streams_branches_and_tags_without_mutating() -> Result {
     git(repo.path(), &["commit", "-qm", "base"])?;
     git(repo.path(), &["branch", "feature"])?;
     git(repo.path(), &["tag", "v1"])?;
+    git(
+        repo.path(),
+        &["remote", "add", "origin", "https://example.org/gg.git"],
+    )?;
+    git(
+        repo.path(),
+        &[
+            "remote",
+            "add",
+            "secret",
+            "https://user:password@example.org/secret.git",
+        ],
+    )?;
+    let head = git_output(repo.path(), &["rev-parse", "HEAD"])?;
+    git(
+        repo.path(),
+        &[
+            "update-ref",
+            "refs/remotes/origin/main",
+            String::from_utf8_lossy(&head).trim(),
+        ],
+    )?;
+    git(repo.path(), &["config", "branch.main.remote", "origin"])?;
+    git(
+        repo.path(),
+        &["config", "branch.main.merge", "refs/heads/main"],
+    )?;
     let before = git_output(repo.path(), &["rev-parse", "HEAD"])?;
     let output = Command::new(env!("CARGO_BIN_EXE_git-good"))
         .arg("refs")
@@ -910,6 +937,23 @@ fn refs_cli_streams_branches_and_tags_without_mutating() -> Result {
             "missing {name}"
         );
     }
+    assert_eq!(
+        snapshot["remotes"][0]["name"], "origin",
+        "missing remote snapshot"
+    );
+    assert_eq!(
+        snapshot["remotes"][0]["fetch_url"],
+        "https://example.org/gg.git"
+    );
+    let secret = snapshot["remotes"]
+        .as_array()
+        .and_then(|remotes| remotes.iter().find(|remote| remote["name"] == "secret"))
+        .ok_or("missing secret remote")?;
+    assert_eq!(secret["fetch_url"], "https://user@example.org/secret.git");
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("password"));
+    assert_eq!(snapshot["tracking"][0]["upstream"], "origin/main");
+    assert_eq!(snapshot["tracking"][0]["ahead"], 0);
+    assert_eq!(snapshot["tracking"][0]["behind"], 0);
     assert_eq!(git_output(repo.path(), &["rev-parse", "HEAD"])?, before);
     Ok(())
 }
@@ -973,5 +1017,182 @@ fn switch_cli_changes_branches_and_reports_dirty_worktrees() -> Result {
         git_output(repo.path(), &["symbolic-ref", "--short", "HEAD"])?,
         b"next\n"
     );
+    Ok(())
+}
+
+#[test]
+fn sync_cli_clones_fetches_pushes_and_reports_failures() -> Result {
+    let remote = tempfile::tempdir()?;
+    git(remote.path(), &["init", "--bare", "-b", "main"])?;
+    let source = tempfile::tempdir()?;
+    init(source.path(), &["-b", "main"])?;
+    std::fs::write(source.path().join("a"), b"base\n")?;
+    git(source.path(), &["add", "a"])?;
+    git(
+        source.path(),
+        &[
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.org",
+            "commit",
+            "-qm",
+            "base",
+        ],
+    )?;
+    let remote_path = remote.path().to_string_lossy().into_owned();
+    git(
+        source.path(),
+        &["remote", "add", "origin", remote_path.as_str()],
+    )?;
+    git(source.path(), &["push", "-q", "origin", "main"])?;
+
+    let destination = tempfile::tempdir()?;
+    let target = destination.path().join("cloned");
+    let binary = env!("CARGO_BIN_EXE_git-good");
+    let out = Command::new(binary)
+        .arg("clone")
+        .arg(remote.path())
+        .arg(&target)
+        .output()?;
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(out.stderr.is_empty());
+    let receipt: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(receipt["operation"], "clone");
+    assert_eq!(receipt["complete"], true);
+    assert_eq!(receipt["branch"], "main");
+    assert_eq!(
+        std::fs::canonicalize(receipt["path"].as_str().ok_or("missing clone path")?)?,
+        std::fs::canonicalize(&target)?
+    );
+    assert_eq!(std::fs::read(target.join("a"))?, b"base\n");
+
+    std::fs::write(source.path().join("a"), b"remote\n")?;
+    git(
+        source.path(),
+        &[
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.org",
+            "commit",
+            "-qam",
+            "remote",
+        ],
+    )?;
+    git(source.path(), &["push", "-q", "origin", "main"])?;
+    let remote_head = git_output(source.path(), &["rev-parse", "HEAD"])?;
+    let local_head = git_output(&target, &["rev-parse", "HEAD"])?;
+    let out = Command::new(binary)
+        .args(["fetch", "origin", "--prune", "--repo"])
+        .arg(&target)
+        .output()?;
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(out.stderr.is_empty());
+    let receipt: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(receipt["operation"], "fetch");
+    assert_eq!(receipt["remote"], "origin");
+    assert_eq!(receipt["pruned"], true);
+    assert_eq!(receipt["complete"], true);
+    assert_eq!(
+        git_output(&target, &["rev-parse", "refs/remotes/origin/main"])?,
+        remote_head
+    );
+    assert_eq!(git_output(&target, &["rev-parse", "HEAD"])?, local_head);
+
+    git(&target, &["merge", "--ff-only", "origin/main"])?;
+    std::fs::write(target.join("a"), b"pushed\n")?;
+    git(
+        &target,
+        &[
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.org",
+            "commit",
+            "-qam",
+            "pushed",
+        ],
+    )?;
+    let pushed_head = git_output(&target, &["rev-parse", "HEAD"])?;
+    let out = Command::new(binary)
+        .args(["push", "origin", "main", "--set-upstream", "--repo"])
+        .arg(&target)
+        .output()?;
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(out.stderr.is_empty());
+    let receipt: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(receipt["operation"], "push");
+    assert_eq!(receipt["remote"], "origin");
+    assert_eq!(receipt["branch"], "main");
+    assert_eq!(receipt["upstream"], "origin/main");
+    assert_eq!(receipt["set_upstream"], true);
+    assert_eq!(receipt["complete"], true);
+    assert_eq!(
+        git_output(remote.path(), &["rev-parse", "refs/heads/main"])?,
+        pushed_head
+    );
+
+    git(source.path(), &["fetch", "origin"])?;
+    git(source.path(), &["reset", "--hard", "FETCH_HEAD"])?;
+    std::fs::write(source.path().join("a"), b"source ahead\n")?;
+    git(
+        source.path(),
+        &[
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.org",
+            "commit",
+            "-qam",
+            "source ahead",
+        ],
+    )?;
+    git(source.path(), &["push", "-q", "origin", "main"])?;
+    std::fs::write(target.join("b"), b"local only\n")?;
+    git(&target, &["add", "b"])?;
+    git(
+        &target,
+        &[
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.org",
+            "commit",
+            "-qm",
+            "local only",
+        ],
+    )?;
+    let rejected = Command::new(binary)
+        .args(["push", "origin", "main", "--repo"])
+        .arg(&target)
+        .output()?;
+    assert!(!rejected.status.success());
+    assert!(rejected.stdout.is_empty());
+    let error = String::from_utf8_lossy(&rejected.stderr);
+    assert!(error.contains("failed"), "{error}");
+    assert_eq!(std::fs::read(target.join("b"))?, b"local only\n");
+
+    for args in [vec!["clone"], vec!["fetch", "--repo"]] {
+        let out = Command::new(binary)
+            .args(args)
+            .current_dir(&target)
+            .output()?;
+        assert!(!out.status.success());
+        assert!(out.stdout.is_empty());
+        assert!(!out.stderr.is_empty());
+    }
     Ok(())
 }

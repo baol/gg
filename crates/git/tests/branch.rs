@@ -160,3 +160,58 @@ fn post_checkout_failure_is_a_warning_after_the_switch() -> Result {
     assert_eq!(git(p, &["symbolic-ref", "--short", "HEAD"])?, b"feature\n");
     Ok(())
 }
+
+#[test]
+fn creates_a_tracking_branch_only_when_clean_and_absent() -> Result {
+    let upstream = repo()?;
+    git(upstream.path(), &["switch", "-c", "feature"])?;
+    std::fs::write(upstream.path().join("b"), b"feature\n")?;
+    git(upstream.path(), &["add", "b"])?;
+    git(upstream.path(), &["commit", "-qm", "feature"])?;
+
+    let local = repo()?;
+    git(
+        local.path(),
+        &[
+            "remote",
+            "add",
+            "origin",
+            upstream.path().to_string_lossy().as_ref(),
+        ],
+    )?;
+    git(local.path(), &["fetch", "-q", "origin"])?;
+
+    std::fs::write(local.path().join("dirty"), b"dirty\n")?;
+    let error = rejected(gg_git::branch::track_remote(local.path(), "origin/feature"))?;
+    assert!(error.contains("not clean"), "{error}");
+    assert_eq!(
+        git(local.path(), &["symbolic-ref", "--short", "HEAD"])?,
+        b"main\n"
+    );
+    std::fs::remove_file(local.path().join("dirty"))?;
+
+    git(local.path(), &["branch", "feature"])?;
+    let error = rejected(gg_git::branch::track_remote(local.path(), "origin/feature"))?;
+    assert!(error.contains("already exists"), "{error}");
+    git(local.path(), &["branch", "-D", "feature"])?;
+
+    let receipt = gg_git::branch::track_remote(local.path(), "origin/feature")?;
+    assert!(receipt.created);
+    assert_eq!(receipt.branch, "feature");
+    assert_eq!(
+        git(local.path(), &["symbolic-ref", "--short", "HEAD"])?,
+        b"feature\n"
+    );
+    assert_eq!(
+        git(local.path(), &["config", "branch.feature.remote"])?,
+        b"origin\n"
+    );
+    assert_eq!(
+        git(local.path(), &["config", "branch.feature.merge"])?,
+        b"refs/heads/feature\n"
+    );
+    assert_eq!(std::fs::read(local.path().join("b"))?, b"feature\n");
+    let error = rejected(gg_git::branch::track_remote(local.path(), "origin"))?;
+    assert!(error.contains("origin/main"), "{error}");
+    Ok(())
+}
