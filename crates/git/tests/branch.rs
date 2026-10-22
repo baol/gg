@@ -23,7 +23,7 @@ fn git(path: &Path, args: &[&str]) -> Result<Vec<u8>> {
     Ok(output.stdout)
 }
 
-fn rejected(result: std::result::Result<gg_git::branch::Receipt, String>) -> Result<String> {
+fn rejected<T>(result: std::result::Result<T, String>) -> Result<String> {
     match result {
         Err(error) => Ok(error),
         Ok(_) => Err("branch operation unexpectedly succeeded".into()),
@@ -280,5 +280,34 @@ fn creates_a_tracking_branch_only_when_clean_and_absent() -> Result {
     assert_eq!(std::fs::read(local.path().join("b"))?, b"feature\n");
     let error = rejected(gg_git::branch::track_remote(local.path(), "origin"))?;
     assert!(error.contains("origin/main"), "{error}");
+    Ok(())
+}
+
+#[test]
+fn deletes_other_branches_with_safe_or_forced_delete() -> Result {
+    let dir = repo()?;
+    let p = dir.path();
+    git(p, &["branch", "feature"])?;
+
+    let receipt = gg_git::branch::delete(p, "feature", false)?;
+    assert_eq!(receipt.branch, "feature");
+    assert!(!receipt.force);
+    let error = rejected(gg_git::branch::switch(p, "feature"))?;
+    assert!(error.contains("does not exist"), "{error}");
+
+    let error = rejected(gg_git::branch::delete(p, "main", false))?;
+    assert!(error.contains("current branch"), "{error}");
+    let error = rejected(gg_git::branch::delete(p, "missing", false))?;
+    assert!(error.contains("does not exist"), "{error}");
+
+    git(p, &["switch", "-qc", "unmerged"])?;
+    std::fs::write(p.join("c"), b"unmerged\n")?;
+    git(p, &["add", "c"])?;
+    git(p, &["commit", "-qm", "unmerged"])?;
+    git(p, &["switch", "-q", "main"])?;
+    let error = rejected(gg_git::branch::delete(p, "unmerged", false))?;
+    assert!(error.contains("failed"), "{error}");
+    let receipt = gg_git::branch::delete(p, "unmerged", true)?;
+    assert!(receipt.force);
     Ok(())
 }

@@ -12,6 +12,9 @@ pub enum Action {
     Jump(String),
     NewBranch,
     Track(String),
+    Merge(String),
+    DeleteBranch(String),
+    DeleteTag(String),
 }
 
 #[derive(Default)]
@@ -242,10 +245,55 @@ fn render_leaf(
             RefKind::Remote | RefKind::Tag => Action::Jump(item.commit.clone()),
         });
     }
-    if item.kind == RefKind::Remote && enabled {
+    if enabled {
         response.context_menu(|ui| {
-            if ui.button("Create tracking branch…").clicked() {
-                *action = Some(Action::Track(item.name.clone()));
+            match item.kind {
+                RefKind::Branch => {
+                    if ui.button("Switch to branch").clicked() {
+                        *action = Some(Action::Switch(item.name.clone()));
+                        ui.close();
+                    }
+                    if ui.button("Merge into current").clicked() {
+                        *action = Some(Action::Merge(item.name.clone()));
+                        ui.close();
+                    }
+                    if ui.button("Delete branch…").clicked() {
+                        *action = Some(Action::DeleteBranch(item.name.clone()));
+                        ui.close();
+                    }
+                }
+                RefKind::Remote => {
+                    if ui.button("Create tracking branch…").clicked() {
+                        *action = Some(Action::Track(item.name.clone()));
+                        ui.close();
+                    }
+                    if ui.button("Merge into current").clicked() {
+                        *action = Some(Action::Merge(item.name.clone()));
+                        ui.close();
+                    }
+                }
+                RefKind::Tag => {
+                    if ui.button("Jump to commit").clicked() {
+                        *action = Some(Action::Jump(item.commit.clone()));
+                        ui.close();
+                    }
+                    if ui.button("Merge into current").clicked() {
+                        *action = Some(Action::Merge(item.name.clone()));
+                        ui.close();
+                    }
+                    if ui.button("Delete tag…").clicked() {
+                        *action = Some(Action::DeleteTag(item.name.clone()));
+                        ui.close();
+                    }
+                }
+            }
+            ui.separator();
+            if ui.button("Copy name").clicked() {
+                ui.ctx().copy_text(item.name.clone());
+                ui.close();
+            }
+            if ui.button("Copy hash").clicked() {
+                ui.ctx().copy_text(item.commit.clone());
                 ui.close();
             }
         });

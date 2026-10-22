@@ -167,3 +167,10 @@ Native review: the refs sidebar and status line show the current branch upstream
 - Git oracle tests compare an arbitrary `against` base with the selected commit and assert the old/new sides.
 - CLI tests cover `git good show HEAD --against HEAD^`, the generated comparison subject, changed files, and the `--against`/`--parent` conflict.
 - The commit-row menu exposes **Compare to local**, which opens the review diff against the current branch tip.
+
+## Ref context menus
+
+- Git oracle tests cover safe and forced branch deletion, current/missing-branch rejection, and tag deletion with invalid names.
+- CLI tests cover `git good branch --delete BRANCH [--force]` and `git good tag --delete TAG` receipts and errors.
+- egui tests render the branch and tag delete confirmations at 720 and 1120 widths.
+- Branch, tag, and remote menus expose switch/jump, merge, track, delete, and copy actions.
