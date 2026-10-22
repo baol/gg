@@ -90,7 +90,10 @@ fn clone_fetch_push_upstream_and_non_fast_forward() -> Result {
         Some(head(source.path(), "HEAD")?.as_str())
     );
     assert_eq!(git(&target, &["show", "HEAD:a"])?, b"base\n");
+    git(&target, &["config", "core.autocrlf", "false"])?;
+    git(&target, &["reset", "--hard", "HEAD"])?;
     let working = std::fs::read(target.join("a"))?;
+    assert_eq!(working, b"base\n");
     assert!(!progress.is_empty(), "clone produced no progress");
     assert!(
         progress

@@ -418,7 +418,12 @@ fn tracking_row(ui: &mut egui::Ui, tracking: &gg_engine::refs::Tracking) {
 
 pub(crate) fn tracking_label(tracking: &gg_engine::refs::Tracking) -> String {
     match (tracking.ahead, tracking.behind) {
-        (Some(ahead), Some(behind)) => format!("{}  ↑{ahead} ↓{behind}", tracking.upstream),
+        (Some(ahead), Some(behind)) => format!(
+            "{}  {}{ahead} {}{behind}",
+            tracking.upstream,
+            crate::phosphor::ARROW_UP,
+            crate::phosphor::ARROW_DOWN
+        ),
         _ => format!("{} · upstream unavailable", tracking.upstream),
     }
 }

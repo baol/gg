@@ -29,6 +29,13 @@ pub fn install(ctx: &egui::Context) {
         FontFamily::Name(FAMILY.into()),
         vec!["phosphor-icons".to_owned()],
     );
+    for family in [FontFamily::Proportional, FontFamily::Monospace] {
+        fonts
+            .families
+            .entry(family)
+            .or_default()
+            .push("phosphor-icons".to_owned());
+    }
     ctx.set_fonts(fonts);
 }
 
@@ -48,5 +55,38 @@ mod tests {
                 "missing glyph {glyph:?}"
             );
         }
+    }
+
+    #[test]
+    fn default_families_fall_back_to_phosphor_icons() {
+        let ctx = egui::Context::default();
+        install(&ctx);
+        let _ = crate::tests::run_ui(&ctx, egui::RawInput::default(), |_ui| {});
+        for family in [FontFamily::Proportional, FontFamily::Monospace] {
+            let font = egui::FontId::new(11.0, family);
+            for glyph in [ARROW_UP, ARROW_DOWN] {
+                assert!(
+                    ctx.fonts_mut(|fonts| fonts.has_glyphs(&font, glyph)),
+                    "missing fallback glyph {glyph:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn tracking_label_uses_phosphor_arrows() {
+        let tracking = gg_engine::refs::Tracking {
+            branch: "main".into(),
+            full_name: "refs/heads/main".into(),
+            upstream: "origin/main".into(),
+            upstream_full_name: "refs/remotes/origin/main".into(),
+            remote: "origin".into(),
+            remote_branch: "main".into(),
+            ahead: Some(1),
+            behind: Some(2),
+        };
+        let label = crate::refs_view::tracking_label(&tracking);
+        assert!(label.contains(ARROW_UP), "{label:?}");
+        assert!(label.contains(ARROW_DOWN), "{label:?}");
     }
 }

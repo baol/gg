@@ -1070,6 +1070,8 @@ fn sync_cli_clones_fetches_pushes_and_reports_failures() -> Result {
         std::fs::canonicalize(&target)?
     );
     assert_eq!(git_output(&target, &["show", "HEAD:a"])?, b"base\n");
+    git(&target, &["config", "core.autocrlf", "false"])?;
+    git(&target, &["reset", "--hard", "HEAD"])?;
 
     std::fs::write(source.path().join("a"), b"remote\n")?;
     git(
