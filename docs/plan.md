@@ -1,6 +1,24 @@
 # Plan
 
-Purpose: sequence M6 delivery and acceptance.
+Purpose: sequence milestone delivery and acceptance.
+
+## UI-flow consolidation · pre-M7
+
+Goal: improve continuity, explicit decisions, and recovery feedback in the existing native workflows before adding M7 features.
+
+Contracts: [working status, committing, and amend](architecture.md#committing).
+
+### Increments
+
+1. **Commit drafts · complete.** Retain normal and amend commit text and the selected file when leaving Local Changes for history, review, or a refresh; restore them for the same canonical worktree, clear the submitted draft only after a successful commit, retain it on hook failure and conflict, and never transfer drafts between worktrees.
+
+### Acceptance
+
+| Scenario | Expected result | Method |
+| --- | --- | --- |
+| Commit drafts | A multiline draft and selected file survive history/review/refresh; hook failure and conflict retain the text; a successful commit clears only that draft; another worktree starts empty | egui interaction, Git fixture, and native review |
+
+Implementation and verification: [verification](verification.md#pre-m7-commit-draft-retention--2026-10-23).
 
 ## M6 · Rebase, reorder, squash, amend, and reflog recovery
 

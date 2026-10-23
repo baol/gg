@@ -12,6 +12,15 @@ enum Mutation {
     Stage,
     Unstage,
 }
+/// Session-level commit text and selection retained while the workspace is closed.
+#[derive(Clone, Default)]
+pub(crate) struct Draft {
+    pub normal: String,
+    pub amend: String,
+    pub amend_mode: bool,
+    pub amend_base: Option<String>,
+    pub selected: Option<(Vec<u8>, Area)>,
+}
 pub struct StatusView {
     path: PathBuf,
     identity: Option<gg_engine::status::StatusIdentity>,
@@ -24,8 +33,11 @@ pub struct StatusView {
     last_commit: Option<String>,
     commit_warning: Option<String>,
     message: String,
+    normal_draft: String,
+    amend_draft: String,
     amend: bool,
     amend_base: Option<String>,
+    pending_selection: Option<(Vec<u8>, Area)>,
     last_amended: bool,
     worker: Option<Worker>,
     pending: Option<Worker>,
@@ -58,8 +70,11 @@ impl StatusView {
             last_commit: None,
             commit_warning: None,
             message: String::new(),
+            normal_draft: String::new(),
+            amend_draft: String::new(),
             amend: false,
             amend_base: None,
+            pending_selection: None,
             last_amended: false,
             worker: None,
             pending: None,
@@ -156,6 +171,16 @@ impl StatusView {
         while self.rows.len() > 768 {
             self.rows.pop_last();
         }
+        if let Some((bytes, area)) = self.pending_selection.clone()
+            && let Some((row, _)) = self
+                .rows
+                .iter()
+                .find(|(_, entry)| entry.path_bytes == bytes && entry.area == area)
+        {
+            self.selected = Some(*row);
+            self.reveal = true;
+            self.pending_selection = None;
+        }
         if self.selected.is_none() && self.count > 0 {
             self.selected = Some(0);
         }
@@ -219,6 +244,65 @@ impl StatusView {
         self.commit_done.take()
     }
 
+    /// Canonical worktree identity used to keep drafts from crossing repositories.
+    pub(crate) fn repository_key(&self) -> PathBuf {
+        std::fs::canonicalize(&self.path).unwrap_or_else(|_| self.path.clone())
+    }
+
+    /// Capture the active draft before the workspace is dropped.
+    pub(crate) fn capture_draft(&self) -> Draft {
+        let (normal, amend) = if self.amend {
+            (self.normal_draft.clone(), self.message.clone())
+        } else {
+            (self.message.clone(), self.amend_draft.clone())
+        };
+        Draft {
+            normal,
+            amend,
+            amend_mode: self.amend,
+            amend_base: self.amend_base.clone(),
+            selected: self
+                .selected
+                .and_then(|row| self.rows.get(&row))
+                .map(|entry| (entry.path_bytes.clone(), entry.area)),
+        }
+    }
+
+    /// Restore a draft after reopening Local Changes for the same worktree.
+    pub(crate) fn restore_draft(&mut self, draft: Draft, ctx: &egui::Context) {
+        self.normal_draft = draft.normal;
+        self.amend_draft = draft.amend;
+        self.pending_selection = draft.selected;
+        self.message = self.normal_draft.clone();
+        let Some(base) = draft.amend_base else {
+            return;
+        };
+        if !draft.amend_mode
+            || gg_git::status::amend_base_tree(&self.path).ok().as_deref() != Some(base.as_str())
+        {
+            return;
+        }
+        self.amend = true;
+        self.amend_base = Some(base);
+        self.message = if self.amend_draft.is_empty() {
+            gg_git::commit::head_message(&self.path).unwrap_or_default()
+        } else {
+            self.amend_draft.clone()
+        };
+        self.amend_draft = self.message.clone();
+        self.restart(ctx);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn draft(&self) -> &str {
+        &self.message
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_draft(&mut self, message: String) {
+        self.message = message;
+    }
+
     /// Refresh the status scan without discarding the amend mode or message draft.
     pub fn refresh(&mut self, ctx: &egui::Context) {
         if self.amend {
@@ -243,9 +327,15 @@ impl StatusView {
         }
         let base = gg_git::status::amend_base_tree(&self.path)?;
         let message = gg_git::commit::head_message(&self.path)?;
-        if self.message.trim().is_empty() {
-            self.message = message;
+        if !self.amend {
+            self.normal_draft = self.message.clone();
         }
+        self.message = if self.amend_draft.trim().is_empty() {
+            message
+        } else {
+            self.amend_draft.clone()
+        };
+        self.amend_draft = self.message.clone();
         self.amend = true;
         self.amend_base = Some(base);
         self.error = None;
@@ -441,6 +531,11 @@ impl StatusView {
                 Ok(receipt) => {
                     self.last_commit = Some(receipt.id.get(..7).unwrap_or(&receipt.id).to_string());
                     self.last_amended = receipt.amended;
+                    if self.amend {
+                        self.amend_draft.clear();
+                    } else {
+                        self.normal_draft.clear();
+                    }
                     self.amend = false;
                     self.amend_base = None;
                     self.commit_done = Some(receipt.id.clone());
@@ -677,8 +772,12 @@ impl StatusView {
                                     self.action_error = Some(error);
                                 }
                             } else {
+                                if self.amend {
+                                    self.amend_draft = self.message.clone();
+                                }
                                 self.amend = false;
                                 self.amend_base = None;
+                                self.message = self.normal_draft.clone();
                                 self.restart(ctx);
                             }
                         }
@@ -954,8 +1053,11 @@ mod tests {
             last_commit: None,
             commit_warning: None,
             message: String::new(),
+            normal_draft: String::new(),
+            amend_draft: String::new(),
             amend: false,
             amend_base: None,
+            pending_selection: None,
             last_amended: false,
             worker: None,
             pending: None,
@@ -1671,6 +1773,61 @@ mod tests {
                     if text.galley.job.text.starts_with("Amended ")
             )),
             "missing amended status line"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn normal_and_amend_drafts_stay_separate() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        generated(dir.path())?;
+        let ctx = egui::Context::default();
+        let mut view = StatusView::new(dir.path().into(), &ctx);
+        settle(&ctx, &mut view, 1120.0);
+        view.message = "normal draft".into();
+        view.start_amend(&ctx)?;
+        assert!(view.amend);
+        assert_eq!(view.normal_draft, "normal draft");
+        assert_eq!(view.message, "base");
+        view.message = "amend draft".into();
+
+        let output = run(&ctx, &mut view, 1120.0, vec![]);
+        let checkbox = text_pos(&output, "Amend").ok_or("missing amend checkbox")?;
+        click(&ctx, &mut view, 1120.0, checkbox + egui::vec2(5.0, 0.0));
+        pump(&ctx, &mut view, 1120.0, |view| {
+            !view.busy() && view.complete && !view.replacing && !view.amend
+        });
+        assert_eq!(view.message, "normal draft");
+        assert_eq!(view.amend_draft, "amend draft");
+
+        let output = run(&ctx, &mut view, 1120.0, vec![]);
+        let checkbox = text_pos(&output, "Amend").ok_or("missing amend checkbox")?;
+        click(&ctx, &mut view, 1120.0, checkbox + egui::vec2(5.0, 0.0));
+        pump(&ctx, &mut view, 1120.0, |view| {
+            !view.busy() && view.complete && !view.replacing && view.amend
+        });
+        assert_eq!(view.message, "amend draft");
+        Ok(())
+    }
+
+    #[test]
+    fn draft_restores_the_selected_file() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        generated(dir.path())?;
+        let ctx = egui::Context::default();
+        let mut first = StatusView::new(dir.path().into(), &ctx);
+        settle(&ctx, &mut first, 1120.0);
+        select_path(&mut first, "a", Area::Unstaged);
+        let draft = first.capture_draft();
+        let mut second = StatusView::new(dir.path().into(), &ctx);
+        second.restore_draft(draft, &ctx);
+        settle(&ctx, &mut second, 1120.0);
+        assert_eq!(
+            second
+                .selected
+                .and_then(|row| second.rows.get(&row))
+                .map(|entry| entry.path.as_str()),
+            Some("a")
         );
         Ok(())
     }

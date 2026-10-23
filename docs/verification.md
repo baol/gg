@@ -352,3 +352,15 @@ Linux x86_64 · Rust 1.99.1 · local Git fixtures.
 - Backup tests verify `gg_git::backup::list` returns the private reference, kind, commit, subject, and commit time, while the refs snapshot continues to exclude `refs/gg/`.
 - egui tests render the **Reorder and squash** modal with ordered rows, up/down icon controls, Squash choices, autostash, and the private-backup warning at 720 and 1120 widths. A pending rewrite keeps the modal open with **Rewriting commits…** and ignores Escape; a pending refresh shows **Refreshing history…** and closes only after the replacement history generation is accepted. The Backups window renders the entry list, **Open commit**, **Reset branch here**, **Create branch here…**, **Copy hash**, and **Copy ref**. The in-progress banner exposes **Backups…** and names an in-progress rebase.
 - The native rewrite runs Git on a background worker. The modal disables its controls during the run, overrides the history hover-safety gate for the rewrite refresh, and stays open until the replacement history has loaded instead of exposing the previous commit list.
+
+## Pre-M7 commit draft retention · 2026-10-23
+
+Linux x86_64 · Rust 1.99.1 · local Git fixtures.
+
+- 300 workspace tests pass (3 ignored); formatting and Clippy with `-D warnings` pass.
+- A Browser-level regression reproduces the old loss: a multiline draft set in Local Changes, then navigation to history and back through All Commits restores the exact text.
+- Drafts are keyed by canonical worktree identity: a second worktree starts with an empty draft, and returning to the first worktree restores its draft.
+- Normal and amend drafts stay separate across an amend toggle round trip; enabling amend keeps the normal draft, and disabling it restores the normal text while retaining the amend text.
+- The selected path and area are captured with the draft and restored when the same entry is present in the refreshed status.
+- Hook-failure coverage verifies a failed commit keeps the submitted message; successful-commit coverage verifies the submitted draft clears.
+- Native wide/narrow interaction review remains pending for this increment.

@@ -307,6 +307,7 @@ struct Browser {
     path: String,
     review: Option<review_view::Review>,
     working: Option<status_view::StatusView>,
+    working_drafts: std::collections::HashMap<PathBuf, status_view::Draft>,
     pending_commit: Option<String>,
     branch: Option<std::sync::mpsc::Receiver<Result<gg_git::branch::Receipt, String>>>,
     branch_label: Option<String>,
@@ -368,6 +369,7 @@ impl Browser {
             path: path.to_string_lossy().into_owned(),
             review: None,
             working: None,
+            working_drafts: std::collections::HashMap::new(),
             pending_commit: None,
             branch: None,
             branch_label: None,
@@ -744,7 +746,11 @@ impl Browser {
             return;
         };
         self.review = None;
-        self.working = Some(status_view::StatusView::new(history.path.clone(), ctx));
+        let mut working = status_view::StatusView::new(history.path.clone(), ctx);
+        if let Some(draft) = self.working_drafts.get(&working.repository_key()).cloned() {
+            working.restore_draft(draft, ctx);
+        }
+        self.working = Some(working);
         ctx.request_repaint();
     }
 
@@ -753,6 +759,10 @@ impl Browser {
             && let Some(id) = working.take_commit()
         {
             self.pending_commit = Some(id);
+        }
+        if let Some(working) = &self.working {
+            self.working_drafts
+                .insert(working.repository_key(), working.capture_draft());
         }
         let had_working = self.working.take().is_some();
         let had_review = self.review.take().is_some();
