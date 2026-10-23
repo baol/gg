@@ -81,6 +81,7 @@ pub mod conflict;
 pub mod diff;
 pub mod merge;
 pub mod mutation;
+pub mod rebase;
 pub mod reflog;
 pub mod refs;
 pub mod reset;

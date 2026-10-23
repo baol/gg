@@ -327,3 +327,14 @@ Linux x86_64 · Rust 1.99.1 · local Git fixtures.
 - egui tests switch between Local Changes and All Commits from the sidebar and toolbar fallback, keep the toolbar and refs visible, and assert the old Status button is gone. They load the HEAD message into the amend toggle, show the commit's contents as staged, unstage and restage a working change through the unified view, rewrite the commit, clear the amend base, render the **Amended** status line, and render the reflog window and branch-creation dialog at 720 and 1120 widths.
 - Reflog read-only tests cover `HEAD` and branch selectors, newest-first entries, times, actions, details, stale-entry clearing, and missing or option-shaped references.
 - [Six native CI jobs](https://github.com/baol/gg/actions/runs/39938179241) pass tests, Clippy with `-D warnings`, release builds, CLI smoke checks, and packaging on Linux, macOS, and Windows on x86_64 and arm64 for `3761a1f`.
+
+## M6 rebase · 2026-10-23
+
+Linux x86_64 · Rust 1.99.1 · local Git fixtures.
+
+- 280 workspace tests pass (3 ignored); formatting, Clippy with `-D warnings`, and the debug build pass.
+- Git oracle tests rebase a diverged branch onto another local branch and verify the rewritten parent, preserved subject, single-parent history, and a private `refs/gg/backup/rebase/...` ref pointing at the previous tip. Local branches, tags, and remote-tracking refs all resolve.
+- Clean-worktree tests reject tracked changes, including with `rebase.autoStash=true`, unless autostash is explicitly enabled; `--no-autostash` keeps repository configuration from overriding the decision. Option-shaped and missing references are rejected without changing HEAD.
+- Conflict fixtures verify rebase state detection, `REBASE_HEAD`, conflict paths, abort restoring the original tip and worktree, continue after staging, and skip completing without the conflicting commit.
+- CLI tests cover `git good rebase REF [--autostash]`, receipt fields, backup refs, dirty failures, conflict abort/continue, and unknown-option errors.
+- egui tests render the **Rebase branch** dialog with the autostash choice and private-backup warning, plus the in-progress banner with **Continue**, **Skip**, and **Abort** at 720 and 1120 widths. The Refs menu and branch, remote, and tag context menus expose rebase actions.

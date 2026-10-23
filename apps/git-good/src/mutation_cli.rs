@@ -57,6 +57,9 @@ fn run(
                 Operation::CherryPick => gg_git::mutation::cherry_pick(&path, &commit)?,
                 Operation::Revert => gg_git::mutation::revert(&path, &commit)?,
                 Operation::Merge => return Err("Use git good merge for merge operations.".into()),
+                Operation::Rebase => {
+                    return Err("Use git good rebase for rebase operations.".into());
+                }
             }
         }
     };

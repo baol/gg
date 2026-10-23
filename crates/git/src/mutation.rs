@@ -7,6 +7,13 @@ use std::{
 
 pub fn state(path: &Path) -> Result<Option<OperationState>, String> {
     let conflicts = unmerged(path)?;
+    if rebase_in_progress(path)? {
+        return Ok(Some(OperationState {
+            operation: Operation::Rebase,
+            commit: head(path, "REBASE_HEAD")?,
+            conflicts,
+        }));
+    }
     if let Some(commit) = head(path, "CHERRY_PICK_HEAD")? {
         return Ok(Some(OperationState {
             operation: Operation::CherryPick,
@@ -62,10 +69,15 @@ fn start(path: &Path, operation: Operation, commit: &str) -> Result<MutationRece
         return Err("Commit must be a revision that does not start with '-'.".into());
     }
     let resolved = resolve(path, commit)?;
-    let flag = if operation == Operation::CherryPick {
-        "cherry-pick"
-    } else {
-        "revert"
+    let flag = match operation {
+        Operation::CherryPick => "cherry-pick",
+        Operation::Revert => "revert",
+        Operation::Merge | Operation::Rebase => {
+            return Err(format!(
+                "Use the {} action for this operation.",
+                label(operation)
+            ));
+        }
     };
     let output = run(
         path,
@@ -188,11 +200,17 @@ fn unmerged(path: &Path) -> Result<Vec<String>, String> {
         .collect())
 }
 
+fn rebase_in_progress(path: &Path) -> Result<bool, String> {
+    let repo = gix::discover(path).map_err(|e| format!("Read repository: {e}"))?;
+    Ok(repo.path().join("rebase-merge").is_dir() || repo.path().join("rebase-apply").is_dir())
+}
+
 fn label(operation: Operation) -> &'static str {
     match operation {
         Operation::CherryPick => "Cherry-pick",
         Operation::Revert => "Revert",
         Operation::Merge => "Merge",
+        Operation::Rebase => "Rebase",
     }
 }
 

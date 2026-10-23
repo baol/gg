@@ -296,6 +296,16 @@ Read reflog entries through `git reflog show --date=unix --format=%H%x00%gD%x00%
 
 The native **Repository → Reflog…** window lists entries newest first and defaults to `HEAD`, with a selector for `HEAD` and local branches. Selecting an entry shows its full ID, relative time, action, and detail, with **Reset branch here** (Soft, Mixed, or Hard), **Create branch here…**, and **Copy hash**. Reset reuses the existing reset path and confirmation, including the Hard warning that staged and working changes are discarded. Create branch resolves the selected commit, validates the name, rejects an existing branch, and creates it without switching; the current branch and worktree stay put. Successful reset and branch creation refresh refs, history, status, and an open reflog.
 
-### Rebase, reorder, and squash · planned
+### Rebase
 
-Run rebase, reorder, and squash through the Git executable with a generated todo and non-interactive sequence editor so commit order, conflicts, hooks, and continue/abort semantics match Git. Require a clean worktree unless an explicit autostash decision is accepted, create a backup ref before starting, surface conflicts and the in-progress rebase in the existing recovery banner, and refresh history and the pre-rewrite selection after completion or abort.
+`git good rebase REF [--autostash] [--repo PATH]` rebases the current branch onto one explicit local branch, remote-tracking ref, or tag. The reference is resolved to a commit before any mutation. A tracked working tree must be clean; `--autostash` is the explicit opt-in for working changes. The backend always passes `--autostash` or `--no-autostash`, so repository configuration cannot silently change the decision. Untracked files do not block the clean check; Git still refuses a rebase that would overwrite one. An operation already recorded by Git must be recovered before another rebase starts.
+
+Before Git runs, pin the current HEAD and create `refs/gg/backup/rebase/<unix-nanos>` pointing at it. A backup failure aborts the rewrite. The rebase itself runs through Git with non-interactive editors so commit order, hook behavior, and conflict semantics match the executable. The receipt carries `reference`, resolved `commit`, `previous`, `backup`, `applied`, `in_progress`, `conflicts`, and `warnings`.
+
+An in-progress rebase is detected through `rebase-merge` or `rebase-apply`, with the commit being applied read from `REBASE_HEAD`. The existing recovery banner names the rebase and exposes **Continue**, **Skip**, and **Abort**; the conflict window lists unmerged paths. Continued and aborted rebases refresh history, refs, status, and an open reflog, and restore the pre-rewrite history row. `git good rebase --continue|--skip|--abort [--repo PATH]` prints the same receipt shape with null reference, commit, previous, and backup fields.
+
+The native **Refs → Rebase branch…** action and each branch, remote, and tag context menu open a confirmed **Rebase branch** dialog with a reference field and an **Automatically stash working changes** option. The dialog states that the rewrite creates a private backup ref. Ref actions are disabled while a mutation is in progress.
+
+### Reorder and squash · planned
+
+Run reorder and squash through the Git executable with a generated todo and non-interactive sequence editor so commit order, conflicts, hooks, and continue/abort semantics match Git. Require a clean worktree unless an explicit autostash decision is accepted, create a backup ref before starting, surface conflicts and the in-progress rebase in the existing recovery banner, and refresh history and the pre-rewrite selection after completion or abort.

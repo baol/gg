@@ -13,6 +13,7 @@ pub enum Action {
     NewBranch,
     Track(String),
     Merge(String),
+    Rebase(String),
     DeleteBranch(String),
     DeleteTag(String),
 }
@@ -225,7 +226,7 @@ fn render_leaf(
     let response = row(ui, label, item.kind, current, enabled).on_hover_text(if current {
         format!("{} · current branch", item.full_name)
     } else if busy {
-        format!("{} · branch operation in progress", item.full_name)
+        format!("{} · operation in progress", item.full_name)
     } else if item.kind == RefKind::Branch {
         format!("Switch to {}\n{}", item.full_name, short(&item.commit))
     } else if item.kind == RefKind::Remote {
@@ -257,6 +258,10 @@ fn render_leaf(
                         *action = Some(Action::Merge(item.name.clone()));
                         ui.close();
                     }
+                    if ui.button("Rebase current onto this").clicked() {
+                        *action = Some(Action::Rebase(item.name.clone()));
+                        ui.close();
+                    }
                     if ui.button("Delete branch…").clicked() {
                         *action = Some(Action::DeleteBranch(item.name.clone()));
                         ui.close();
@@ -271,6 +276,10 @@ fn render_leaf(
                         *action = Some(Action::Merge(item.name.clone()));
                         ui.close();
                     }
+                    if ui.button("Rebase current onto this").clicked() {
+                        *action = Some(Action::Rebase(item.name.clone()));
+                        ui.close();
+                    }
                 }
                 RefKind::Tag => {
                     if ui.button("Jump to commit").clicked() {
@@ -279,6 +288,10 @@ fn render_leaf(
                     }
                     if ui.button("Merge into current").clicked() {
                         *action = Some(Action::Merge(item.name.clone()));
+                        ui.close();
+                    }
+                    if ui.button("Rebase current onto this").clicked() {
+                        *action = Some(Action::Rebase(item.name.clone()));
                         ui.close();
                     }
                     if ui.button("Delete tag…").clicked() {

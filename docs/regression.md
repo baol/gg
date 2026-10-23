@@ -173,7 +173,7 @@ Native review: the refs sidebar and status line show the current branch upstream
 - Git oracle tests cover safe and forced branch deletion, current/missing-branch rejection, and tag deletion with invalid names.
 - CLI tests cover `git good branch --delete BRANCH [--force]` and `git good tag --delete TAG` receipts and errors.
 - egui tests render the branch and tag delete confirmations at 720 and 1120 widths.
-- Branch, tag, and remote menus expose switch/jump, merge, track, delete, and copy actions.
+- Branch, tag, and remote menus expose switch/jump, merge, rebase, track, delete, and copy actions.
 
 ## M6 amend and navigation
 
@@ -190,3 +190,11 @@ Native review: the refs sidebar and status line show the current branch upstream
 - CLI tests verify `git good reflog [REF]` JSON, the default `HEAD`, entries after an amend, and missing-reference errors.
 - Reflog tests verify read-only loading, cleared stale entries on failure, and the native window at 720 and 1120 widths with the reference selector, entry list, reset actions, branch creation, and copy.
 - Branch creation at a reflog commit resolves the revision, rejects an existing branch, and does not switch the current branch. The reflog branch-creation dialog renders at both supported widths.
+
+## M6 rebase
+
+- Git oracle tests rebase a diverged local branch, verify the rewritten parent, preserved subject, and backup ref pointing at the previous tip, and accept local branch, tag, and remote-tracking references.
+- Conflict fixtures verify `rebase-merge`/`rebase-apply` detection, `REBASE_HEAD` operation state, conflict paths, abort restoring the original tip and worktree, continue after staging, and skip completing without the conflicting commit.
+- Dirty tracked worktrees are rejected unless autostash is explicitly enabled; `rebase.autoStash=true` does not override the backend's `--no-autostash` decision. Option-shaped and missing references are rejected.
+- CLI tests cover `git good rebase REF [--autostash]`, receipt fields, the backup ref, dirty/autostash behavior, conflict abort/continue, and unknown-option errors.
+- egui tests render the **Rebase branch** dialog with the autostash choice and backup warning, plus the in-progress banner with Continue, Skip, and Abort at 720 and 1120 widths.

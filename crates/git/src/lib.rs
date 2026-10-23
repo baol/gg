@@ -180,6 +180,7 @@ pub mod drop;
 pub mod merge;
 pub mod mutation;
 pub mod patch;
+pub mod rebase;
 pub mod reflog;
 pub mod refs;
 pub mod reset;

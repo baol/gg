@@ -19,6 +19,7 @@ mod mutation_cli;
 mod navigation;
 mod network;
 mod phosphor;
+mod rebase_cli;
 mod records;
 mod reflog_cli;
 mod reflog_view;
@@ -53,7 +54,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("--help")) {
         println!(
-            "gg · good git\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good refs [PATH]      Print branches, remotes, tags, and HEAD as JSON\ngit-good status [PATH] [--file PATH --area AREA]   Print working status or diff as JSON\ngit-good stage --file PATH [--hunk HEADER]... [--repo PATH]   Stage one file or selected hunks\ngit-good unstage --file PATH [--repo PATH]   Unstage one file\ngit-good commit [--amend] -m MESSAGE [--repo PATH]   Commit the index or amend HEAD after Git hooks\ngit-good reflog [REF] [--repo PATH]   Print reflog entries as JSON\ngit-good switch [--create] BRANCH [--repo PATH]   Switch to or create a local branch\ngit-good fetch [REMOTE] [--prune] [--repo PATH]   Fetch and update remote-tracking refs\ngit-good push [REMOTE] [BRANCH] [--set-upstream] [--repo PATH]   Push a local branch without force\ngit-good clone URL [PATH]   Clone a repository and open it\ngit-good stash <list|push|apply|pop|drop> [OPTIONS] [--repo PATH]   List or mutate stashes\ngit-good cherry-pick COMMIT [--repo PATH]   Apply a commit\ngit-good revert COMMIT [--repo PATH]   Invert a commit\ngit-good merge REF [--no-ff] [--repo PATH]   Merge a branch, remote, or tag\ngit-good conflicts [--repo PATH]   List unmerged paths\ngit-good conflict --file PATH [--use ours|theirs|--stage] [--repo PATH]   Read or resolve a conflict\ngit-good reset --soft|--mixed|--hard COMMIT [--repo PATH]   Reset the current branch\ngit-good branch --delete BRANCH [--force] [--repo PATH]   Delete a local branch\ngit-good branch --create NAME [--at REF] [--repo PATH]   Create a local branch without switching\ngit-good tag --delete TAG [--repo PATH]   Delete a local tag\ngit-good show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]   Review or export\n\nBrowse commits reachable from HEAD and all local, remote, and tag refs."
+            "gg · good git\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good refs [PATH]      Print branches, remotes, tags, and HEAD as JSON\ngit-good status [PATH] [--file PATH --area AREA]   Print working status or diff as JSON\ngit-good stage --file PATH [--hunk HEADER]... [--repo PATH]   Stage one file or selected hunks\ngit-good unstage --file PATH [--repo PATH]   Unstage one file\ngit-good commit [--amend] -m MESSAGE [--repo PATH]   Commit the index or amend HEAD after Git hooks\ngit-good reflog [REF] [--repo PATH]   Print reflog entries as JSON\ngit-good switch [--create] BRANCH [--repo PATH]   Switch to or create a local branch\ngit-good fetch [REMOTE] [--prune] [--repo PATH]   Fetch and update remote-tracking refs\ngit-good push [REMOTE] [BRANCH] [--set-upstream] [--repo PATH]   Push a local branch without force\ngit-good clone URL [PATH]   Clone a repository and open it\ngit-good stash <list|push|apply|pop|drop> [OPTIONS] [--repo PATH]   List or mutate stashes\ngit-good cherry-pick COMMIT [--repo PATH]   Apply a commit\ngit-good revert COMMIT [--repo PATH]   Invert a commit\ngit-good merge REF [--no-ff] [--repo PATH]   Merge a branch, remote, or tag\ngit-good rebase REF [--autostash] [--repo PATH]   Rebase the current branch onto a branch, remote, or tag\ngit-good rebase --continue|--skip|--abort [--repo PATH]   Recover an in-progress rebase\ngit-good conflicts [--repo PATH]   List unmerged paths\ngit-good conflict --file PATH [--use ours|theirs|--stage] [--repo PATH]   Read or resolve a conflict\ngit-good reset --soft|--mixed|--hard COMMIT [--repo PATH]   Reset the current branch\ngit-good branch --delete BRANCH [--force] [--repo PATH]   Delete a local branch\ngit-good branch --create NAME [--at REF] [--repo PATH]   Create a local branch without switching\ngit-good tag --delete TAG [--repo PATH]   Delete a local tag\ngit-good show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]   Review or export\n\nBrowse commits reachable from HEAD and all local, remote, and tag refs."
         );
         return Ok(());
     }
@@ -92,6 +93,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("merge")) {
         return merge_cli::run(args);
+    }
+    if first.as_deref() == Some(std::ffi::OsStr::new("rebase")) {
+        return rebase_cli::run(args);
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("conflicts")) {
         return conflict_cli::list(args);
@@ -222,6 +226,12 @@ struct MergeDialog {
     error: Option<String>,
 }
 
+struct RebaseDialog {
+    reference: String,
+    autostash: bool,
+    error: Option<String>,
+}
+
 struct BranchDeleteDialog {
     name: String,
     error: Option<String>,
@@ -292,6 +302,7 @@ struct Browser {
     mutation_notice: Option<String>,
     mutation_error: Option<String>,
     merge_dialog: Option<MergeDialog>,
+    rebase_dialog: Option<RebaseDialog>,
     conflict_view: Option<ConflictView>,
     reset_confirm: Option<(String, gg_engine::reset::Mode)>,
     branch_delete: Option<BranchDeleteDialog>,
@@ -312,6 +323,7 @@ struct Browser {
     row_rects: Vec<(usize, egui::Rect)>,
     deferred_input: Vec<egui::Event>,
     scroll_to_selection: bool,
+    restore_row: Option<usize>,
     avatars: avatars::Avatars,
     history_rect: egui::Rect,
     details_rect: egui::Rect,
@@ -347,6 +359,7 @@ impl Browser {
             mutation_notice: None,
             mutation_error: None,
             merge_dialog: None,
+            rebase_dialog: None,
             conflict_view: None,
             reset_confirm: None,
             branch_delete: None,
@@ -367,6 +380,7 @@ impl Browser {
             row_rects: Vec::new(),
             deferred_input: Vec::new(),
             scroll_to_selection: false,
+            restore_row: None,
             avatars: avatars::Avatars::default(),
             history_rect: egui::Rect::NOTHING,
             details_rect: egui::Rect::NOTHING,
@@ -740,6 +754,7 @@ impl Browser {
             .selected
             .clone()
             .ok_or("Select a commit before cherry-picking or reverting.")?;
+        let restore_row = self.state.selected_row;
         let receipt = match operation {
             gg_engine::mutation::Operation::CherryPick => {
                 gg_git::mutation::cherry_pick(&path, &commit)?
@@ -747,6 +762,9 @@ impl Browser {
             gg_engine::mutation::Operation::Revert => gg_git::mutation::revert(&path, &commit)?,
             gg_engine::mutation::Operation::Merge => {
                 return Err("Use the Merge action for merge operations.".into());
+            }
+            gg_engine::mutation::Operation::Rebase => {
+                return Err("Use the Rebase action for rebase operations.".into());
             }
         };
         self.mutation_error = None;
@@ -770,8 +788,10 @@ impl Browser {
                 }
             ),
             gg_engine::mutation::Operation::Merge => String::new(),
+            gg_engine::mutation::Operation::Rebase => String::new(),
         });
         self.conflict_view = None;
+        self.restore_row = restore_row;
         self.refresh_mutation();
         self.load(ctx);
         self.refresh_reflog();
@@ -842,6 +862,7 @@ impl Browser {
         let path = self
             .stash_path()
             .ok_or("Open a repository before recovering history.")?;
+        let restore_row = self.state.selected_row;
         let receipt = match action {
             MutationAction::Continue => gg_git::mutation::continue_operation(&path, operation)?,
             MutationAction::Skip => gg_git::mutation::skip_operation(&path, operation)?,
@@ -864,6 +885,7 @@ impl Browser {
         if self.mutation.is_none() {
             self.conflict_view = None;
         }
+        self.restore_row = restore_row;
         self.load(ctx);
         self.refresh_working(ctx);
         Ok(())
@@ -878,6 +900,7 @@ impl Browser {
         let path = self
             .stash_path()
             .ok_or("Open a repository before merging.")?;
+        let restore_row = self.state.selected_row;
         let receipt = gg_git::merge::merge(&path, reference, no_ff)?;
         self.mutation_error = None;
         self.mutation_notice = Some(match receipt.kind {
@@ -898,8 +921,42 @@ impl Browser {
             ),
         });
         self.conflict_view = None;
+        self.restore_row = restore_row;
         self.refresh_mutation();
         self.load(ctx);
+        self.refresh_working(ctx);
+        Ok(())
+    }
+
+    fn start_rebase(
+        &mut self,
+        ctx: &egui::Context,
+        reference: &str,
+        autostash: bool,
+    ) -> Result<(), String> {
+        let path = self
+            .stash_path()
+            .ok_or("Open a repository before rebasing.")?;
+        let restore_row = self.state.selected_row;
+        let receipt = gg_git::rebase::rebase(&path, reference, autostash)?;
+        self.mutation_error = None;
+        self.mutation_notice = Some(if receipt.in_progress {
+            format!(
+                "Rebasing onto {reference}{}",
+                if receipt.conflicts.is_empty() {
+                    String::new()
+                } else {
+                    format!(" · {} conflict(s)", receipt.conflicts.len())
+                }
+            )
+        } else {
+            format!("Rebased onto {reference}")
+        });
+        self.conflict_view = None;
+        self.restore_row = restore_row;
+        self.refresh_mutation();
+        self.load(ctx);
+        self.refresh_reflog();
         self.refresh_working(ctx);
         Ok(())
     }
@@ -987,6 +1044,7 @@ impl Browser {
             revision: self.state.filter_revision,
             query: self.state.query.clone(),
             selected_id: self.state.selected.clone(),
+            selected_row: self.restore_row.take(),
             anchor_id: self
                 .state
                 .rows
@@ -1417,6 +1475,7 @@ impl Browser {
                 let mut new_branch = false;
                 let mut track_branch = false;
                 let mut merge = false;
+                let mut rebase = false;
                 let mut section = |ui: &mut egui::Ui, title: &str, kind| {
                     let filtered = refs
                         .items
@@ -1476,6 +1535,17 @@ impl Browser {
                         merge = true;
                         ui.close();
                     }
+                    if ui
+                        .add_enabled(
+                            !branch_pending && self.mutation.is_none() && self.network.is_none(),
+                            egui::Button::new("Rebase branch…"),
+                        )
+                        .on_hover_text("Rebase the current branch onto a branch, remote, or tag")
+                        .clicked()
+                    {
+                        rebase = true;
+                        ui.close();
+                    }
                     let branches = refs
                         .items
                         .iter()
@@ -1527,6 +1597,13 @@ impl Browser {
                     self.merge_dialog = Some(MergeDialog {
                         reference: String::new(),
                         no_ff: false,
+                        error: None,
+                    });
+                }
+                if rebase {
+                    self.rebase_dialog = Some(RebaseDialog {
+                        reference: String::new(),
+                        autostash: false,
                         error: None,
                     });
                 }
@@ -1730,7 +1807,7 @@ impl Browser {
         }
         if wide_refs {
             let refs = self.state.refs.clone();
-            let busy = self.branch.is_some() || self.network.is_some();
+            let busy = self.branch.is_some() || self.network.is_some() || self.mutation.is_some();
             let has_repo = self.state.history.is_some();
             let local_selected = self.working.is_some();
             let mut action = None;
@@ -1771,6 +1848,13 @@ impl Browser {
                     self.merge_dialog = Some(MergeDialog {
                         reference: name,
                         no_ff: false,
+                        error: None,
+                    });
+                }
+                Some(refs_view::Action::Rebase(name)) => {
+                    self.rebase_dialog = Some(RebaseDialog {
+                        reference: name,
+                        autostash: false,
                         error: None,
                     });
                 }
@@ -2306,6 +2390,71 @@ impl Browser {
             }
         } else if self.merge_dialog.is_some() && !merge_open {
             self.merge_dialog = None;
+        }
+
+        let mut rebase_submit = None;
+        let mut rebase_open = true;
+        if let Some(dialog) = &mut self.rebase_dialog {
+            let mut cancelled = false;
+            egui::Window::new("Rebase branch")
+                .id(egui::Id::unique("rebase-branch"))
+                .open(&mut rebase_open)
+                .collapsible(false)
+                .resizable(false)
+                .default_width(430.0)
+                .default_pos(ctx.content_rect().center())
+                .pivot(egui::Align2::CENTER_CENTER)
+                .show(ctx, |ui| {
+                    ui.label(
+                        "Rebase the current branch onto a local branch, remote-tracking ref, or tag.",
+                    );
+                    ui.add(
+                        egui::TextEdit::singleline(&mut dialog.reference)
+                            .hint_text("origin/main, main, or v1.0")
+                            .desired_width(f32::INFINITY),
+                    );
+                    ui.checkbox(
+                        &mut dialog.autostash,
+                        "Automatically stash working changes",
+                    );
+                    ui.colored_label(
+                        ui.visuals().warn_fg_color,
+                        "Rebase rewrites commits. A private backup ref is created before Git starts.",
+                    );
+                    if let Some(error) = &dialog.error {
+                        ui.colored_label(ui.visuals().error_fg_color, error);
+                    }
+                    ui.horizontal(|ui| {
+                        if ui
+                            .add_enabled(
+                                !dialog.reference.trim().is_empty(),
+                                egui::Button::new("Rebase"),
+                            )
+                            .clicked()
+                        {
+                            rebase_submit =
+                                Some((dialog.reference.trim().to_string(), dialog.autostash));
+                        }
+                        if ui.button("Cancel").clicked() {
+                            cancelled = true;
+                        }
+                    });
+                });
+            if cancelled {
+                rebase_open = false;
+            }
+        }
+        if let Some((reference, autostash)) = rebase_submit {
+            match self.start_rebase(ctx, &reference, autostash) {
+                Ok(()) => self.rebase_dialog = None,
+                Err(error) => {
+                    if let Some(dialog) = &mut self.rebase_dialog {
+                        dialog.error = Some(error);
+                    }
+                }
+            }
+        } else if self.rebase_dialog.is_some() && !rebase_open {
+            self.rebase_dialog = None;
         }
 
         let mut stash_submit = None;
@@ -3280,6 +3429,66 @@ mod tests {
             assert!(text.iter().any(|line| line.contains("Continue")));
             assert!(text.iter().any(|line| line.contains("Abort")));
             assert!(!text.iter().any(|line| line == &"Skip"), "{text:?}");
+        }
+    }
+
+    #[test]
+    fn rebase_dialog_and_banner_render_at_supported_widths() {
+        for width in [720.0, 1120.0] {
+            let ctx = egui::Context::default();
+            let mut app = layout_fixture();
+            app.rebase_dialog = Some(RebaseDialog {
+                reference: "origin/main".into(),
+                autostash: true,
+                error: None,
+            });
+            let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let output = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let text = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert!(text.iter().any(|line| line.contains("Rebase branch")));
+            assert!(
+                text.iter()
+                    .any(|line| line.contains("Automatically stash working changes"))
+            );
+            assert!(text.iter().any(|line| line.contains("private backup ref")));
+            assert!(text.iter().any(|line| line.contains("origin/main")));
+            assert!(text.iter().any(|line| line.contains("Rebase")));
+
+            app.rebase_dialog = None;
+            app.mutation = Some(gg_engine::mutation::OperationState {
+                operation: gg_engine::mutation::Operation::Rebase,
+                commit: Some("abc123".into()),
+                conflicts: vec!["a".into()],
+            });
+            let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let output = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let text = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert!(text.iter().any(|line| line.contains("rebase in progress")));
+            assert!(text.iter().any(|line| line.contains("Continue")));
+            assert!(text.iter().any(|line| line.contains("Skip")));
+            assert!(text.iter().any(|line| line.contains("Abort")));
         }
     }
 
