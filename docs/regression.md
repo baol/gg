@@ -197,4 +197,13 @@ Native review: the refs sidebar and status line show the current branch upstream
 - Conflict fixtures verify `rebase-merge`/`rebase-apply` detection, `REBASE_HEAD` operation state, conflict paths, abort restoring the original tip and worktree, continue after staging, and skip completing without the conflicting commit.
 - Dirty tracked worktrees are rejected unless autostash is explicitly enabled; `rebase.autoStash=true` does not override the backend's `--no-autostash` decision. Option-shaped and missing references are rejected.
 - CLI tests cover `git good rebase REF [--autostash]`, receipt fields, the backup ref, dirty/autostash behavior, conflict abort/continue, and unknown-option errors.
-- egui tests render the **Rebase branch** dialog with the autostash choice and backup warning, plus the in-progress banner with Continue, Skip, and Abort at 720 and 1120 widths.
+- egui tests render the **Rebase branch** dialog with the autostash choice and backup warning, plus the in-progress banner with Continue, Skip, Abort, and Backups… at 720 and 1120 widths.
+
+## M6 reorder, squash, and backups
+
+- Git oracle tests list a linear range oldest first, reorder commits, squash a commit into the previous row while preserving the combined message, rewrite a root range through `--root`, and point a private `refs/gg/backup/rewrite/...` ref at the previous tip.
+- Rewrite validation rejects an empty plan, a squash-first plan, duplicate commits, missing commits, commits outside the range, non-ancestor starts, option-shaped starts, and ranges containing merge commits. Merge ranges are rejected rather than flattened, and a shallow boundary is rejected instead of being rewritten as a root.
+- Conflict fixtures verify the rewrite leaves Git rebase state, lists unmerged paths, aborts back to the previous tip and worktree, and skips the conflicting commit to complete the remaining range. Dirty tracked worktrees are rejected unless autostash is explicit, even with `rebase.autoStash=true`; autostash restores the working change afterward.
+- CLI tests cover `git good rewrite --from COMMIT --pick COMMIT... --squash COMMIT...`, reorder and squash receipts, the backup ref, conflict abort, skip, and unknown-option errors. `git good rewrite --continue|--skip|--abort` targets the same Git rebase state.
+- Backup tests assert `gg_git::backup::list` returns the private reference, kind, commit, subject, and commit time while the refs snapshot continues to exclude `refs/gg/`.
+- egui tests render the **Reorder and squash** dialog with up/down controls, Squash choices, autostash, and the backup warning at 720 and 1120 widths. The Backups window renders the entry list, Open commit, Reset branch here, Create branch here…, Copy hash, and Copy ref at 1120 width. The in-progress banner exposes Backups… and names an in-progress rebase.

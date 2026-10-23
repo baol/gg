@@ -1,4 +1,5 @@
-//! Save the pre-rewrite tip under a private reference.
+//! Save and list pre-rewrite tips under private references.
+use gg_engine::recovery::Backup;
 use std::{
     path::Path,
     process::{Command, Stdio},
@@ -34,6 +35,60 @@ pub fn create(path: &Path, label: &str, target: &str) -> Result<String, String> 
         return Err(failure("Create backup reference", &output));
     }
     Ok(name)
+}
+
+pub fn list(path: &Path) -> Result<Vec<Backup>, String> {
+    let output = run(
+        path,
+        &[
+            "for-each-ref".into(),
+            "--format=%(refname)%00%(objectname)%00%(committerdate:iso8601)%00%(subject)".into(),
+            "refs/gg/backup".into(),
+        ],
+    )?;
+    if !output.status.success() {
+        return Err(failure("List backups", &output));
+    }
+    let mut backups = Vec::new();
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        let line = line.trim_end_matches('\r');
+        if line.is_empty() {
+            continue;
+        }
+        let mut fields = line.splitn(4, '\0');
+        let reference = fields.next().unwrap_or_default();
+        let commit = fields.next().unwrap_or_default();
+        let time = fields.next().unwrap_or_default();
+        let subject = fields.next().unwrap_or_default();
+        let label = reference
+            .strip_prefix("refs/gg/backup/")
+            .and_then(|rest| rest.split('/').next())
+            .unwrap_or_default();
+        if reference.is_empty() || commit.is_empty() || label.is_empty() {
+            continue;
+        }
+        backups.push(Backup {
+            reference: reference.to_string(),
+            label: label.to_string(),
+            commit: commit.to_string(),
+            time: time.to_string(),
+            subject: subject.to_string(),
+        });
+    }
+    backups.sort_by(|left, right| {
+        let left = backup_nanos(&left.reference);
+        let right = backup_nanos(&right.reference);
+        right.cmp(&left)
+    });
+    Ok(backups)
+}
+
+fn backup_nanos(reference: &str) -> u128 {
+    reference
+        .rsplit('/')
+        .next()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or_default()
 }
 
 fn sanitize(label: &str) -> String {

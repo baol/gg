@@ -86,7 +86,7 @@ fn head(path: &Path) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-fn ensure_clean(path: &Path) -> Result<(), String> {
+pub(crate) fn ensure_clean(path: &Path) -> Result<(), String> {
     let session = crate::status::Session::open(path)?;
     let stop = AtomicBool::new(false);
     let mut dirty = None;

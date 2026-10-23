@@ -185,6 +185,7 @@ pub mod reflog;
 pub mod refs;
 pub mod reset;
 pub mod review;
+pub mod rewrite;
 pub mod stash;
 pub mod status;
 pub mod sync;

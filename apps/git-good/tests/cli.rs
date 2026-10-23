@@ -1643,6 +1643,164 @@ fn rebase_cli_rewrites_records_backup_and_recovers() -> Result {
 }
 
 #[test]
+fn rewrite_cli_reorders_squashes_and_recovers() -> Result {
+    let repo = tempfile::tempdir()?;
+    init(repo.path(), &["-b", "main"])?;
+    git(repo.path(), &["config", "user.name", "Test"])?;
+    git(repo.path(), &["config", "user.email", "test@example.org"])?;
+    std::fs::write(repo.path().join("base"), b"base\n")?;
+    git(repo.path(), &["add", "base"])?;
+    git(repo.path(), &["commit", "-qm", "base"])?;
+    for (file, message) in [("one", "one"), ("two", "two"), ("three", "three")] {
+        std::fs::write(repo.path().join(file), format!("{message}\n"))?;
+        git(repo.path(), &["add", file])?;
+        git(repo.path(), &["commit", "-qm", message])?;
+    }
+    let text = |args: &[&str]| -> Result<String> {
+        Ok(String::from_utf8(git_output(repo.path(), args)?)?
+            .trim()
+            .to_string())
+    };
+    let first = text(&["rev-parse", "HEAD~2"])?;
+    let second = text(&["rev-parse", "HEAD~1"])?;
+    let third = text(&["rev-parse", "HEAD"])?;
+    let previous = third.clone();
+    let binary = env!("CARGO_BIN_EXE_git-good");
+
+    let out = Command::new(binary)
+        .args([
+            "rewrite", "--from", &first, "--pick", &second, "--pick", &first, "--pick", &third,
+            "--repo",
+        ])
+        .arg(repo.path())
+        .output()?;
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let receipt: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(receipt["operation"], "rewrite");
+    assert_eq!(receipt["from"], first);
+    assert_eq!(receipt["previous"], previous);
+    assert_eq!(receipt["applied"], true);
+    assert_eq!(receipt["in_progress"], false);
+    assert_eq!(receipt["steps"], 3);
+    let backup = receipt["backup"].as_str().ok_or("missing backup")?;
+    assert!(backup.starts_with("refs/gg/backup/rewrite/"));
+    assert_eq!(
+        text(&["log", "--reverse", "--format=%s"])?,
+        "base\ntwo\none\nthree"
+    );
+
+    let squashed_first = text(&["rev-parse", "HEAD~2"])?;
+    let squashed_second = text(&["rev-parse", "HEAD~1"])?;
+    let squashed_third = text(&["rev-parse", "HEAD"])?;
+    let out = Command::new(binary)
+        .args([
+            "rewrite",
+            "--from",
+            &squashed_first,
+            "--pick",
+            &squashed_first,
+            "--squash",
+            &squashed_second,
+            "--pick",
+            &squashed_third,
+            "--repo",
+        ])
+        .arg(repo.path())
+        .output()?;
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let receipt: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(receipt["applied"], true);
+    assert_eq!(receipt["steps"], 3);
+    assert_eq!(
+        text(&["log", "--reverse", "--format=%s"])?,
+        "base\ntwo\nthree"
+    );
+    assert_eq!(std::fs::read(repo.path().join("one"))?, b"one\n");
+    assert_eq!(std::fs::read(repo.path().join("two"))?, b"two\n");
+
+    git(repo.path(), &["switch", "-qc", "line"])?;
+    std::fs::write(repo.path().join("x"), b"base\n")?;
+    git(repo.path(), &["add", "x"])?;
+    git(repo.path(), &["commit", "-qm", "x base"])?;
+    std::fs::write(repo.path().join("x"), b"one\n")?;
+    git(repo.path(), &["commit", "-qam", "one"])?;
+    let line_first = text(&["rev-parse", "HEAD"])?;
+    std::fs::write(repo.path().join("x"), b"two\n")?;
+    git(repo.path(), &["commit", "-qam", "two"])?;
+    let line_second = text(&["rev-parse", "HEAD"])?;
+
+    let out = Command::new(binary)
+        .args([
+            "rewrite",
+            "--from",
+            &line_first,
+            "--pick",
+            &line_second,
+            "--pick",
+            &line_first,
+            "--repo",
+        ])
+        .arg(repo.path())
+        .output()?;
+    assert!(out.status.success());
+    let receipt: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(receipt["applied"], false);
+    assert_eq!(receipt["in_progress"], true);
+    assert_eq!(receipt["conflicts"], serde_json::json!(["x"]));
+
+    let out = Command::new(binary)
+        .args(["rewrite", "--abort", "--repo"])
+        .arg(repo.path())
+        .output()?;
+    assert!(out.status.success());
+    let receipt: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(receipt["action"], "abort");
+    assert_eq!(receipt["in_progress"], false);
+    assert_eq!(text(&["rev-parse", "HEAD"])?, line_second);
+    assert_eq!(std::fs::read(repo.path().join("x"))?, b"two\n");
+
+    Command::new(binary)
+        .args([
+            "rewrite",
+            "--from",
+            &line_first,
+            "--pick",
+            &line_second,
+            "--pick",
+            &line_first,
+            "--repo",
+        ])
+        .arg(repo.path())
+        .output()?;
+    let out = Command::new(binary)
+        .args(["rewrite", "--skip", "--repo"])
+        .arg(repo.path())
+        .output()?;
+    assert!(out.status.success());
+    let receipt: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(receipt["applied"], true);
+    assert_eq!(receipt["in_progress"], false);
+    assert_eq!(std::fs::read(repo.path().join("x"))?, b"one\n");
+
+    let out = Command::new(binary)
+        .args(["rewrite", "--bad", "--repo"])
+        .arg(repo.path())
+        .output()?;
+    assert!(!out.status.success());
+    assert!(out.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("Unknown rewrite option"));
+    Ok(())
+}
+
+#[test]
 fn merge_cli_no_ff_creates_a_merge_commit() -> Result {
     let repo = tempfile::tempdir()?;
     init(repo.path(), &["-b", "main"])?;

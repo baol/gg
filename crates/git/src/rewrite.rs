@@ -1,0 +1,379 @@
+//! Reorder and squash a linear range through an interactive rebase todo.
+use gg_engine::rewrite::{Action, RangeCommit, Receipt, Step};
+use std::{
+    collections::BTreeSet,
+    path::Path,
+    process::{Command, Output, Stdio},
+};
+
+struct Range {
+    commits: Vec<RangeCommit>,
+    root: bool,
+    base: Option<String>,
+}
+
+/// List the commits from `from` through HEAD, oldest first.
+pub fn commits(path: &Path, from: &str) -> Result<Vec<RangeCommit>, String> {
+    Ok(range(path, from)?.commits)
+}
+
+pub fn rewrite(
+    path: &Path,
+    from: &str,
+    steps: &[Step],
+    autostash: bool,
+) -> Result<Receipt, String> {
+    if let Some(state) = crate::mutation::state(path)? {
+        return Err(format!(
+            "{} is already in progress. Continue, skip, or abort it first.",
+            state.operation.as_str()
+        ));
+    }
+    if !autostash {
+        crate::rebase::ensure_clean(path)?;
+    }
+    let range = range(path, from)?;
+    let steps = resolve_steps(path, &range, steps)?;
+    let previous = head(path)?;
+    let backup = crate::backup::create(path, "rewrite", &previous)?;
+    let mut args = vec!["rebase".to_string(), "-i".to_string()];
+    args.push(if autostash {
+        "--autostash".into()
+    } else {
+        "--no-autostash".into()
+    });
+    args.push("--no-autosquash".into());
+    args.push("--no-rebase-merges".into());
+    if range.root {
+        args.push("--root".into());
+    } else {
+        args.push(
+            range
+                .base
+                .clone()
+                .ok_or("Rewrite base is missing for a non-root range.")?,
+        );
+    }
+    let editor = sequence_editor(&steps);
+    let output = run(path, &args, Some(&editor))?;
+    let conflicts = unmerged(path)?;
+    let state = crate::mutation::state(path)?;
+    if !output.status.success() && state.is_none() && conflicts.is_empty() {
+        return Err(failure("Rewrite", &output));
+    }
+    let in_progress = state.is_some() || !conflicts.is_empty();
+    let mut warnings = Vec::new();
+    if !conflicts.is_empty() {
+        warnings.push(
+            "Resolve the listed conflicts, stage each path, then continue or abort the rewrite."
+                .into(),
+        );
+    }
+    if autostash && !output.status.success() {
+        warnings.push(
+            "Working changes were autostashed. Git reapplies them when the rewrite continues."
+                .into(),
+        );
+    }
+    Ok(Receipt {
+        from: range
+            .commits
+            .first()
+            .map(|commit| commit.id.clone())
+            .unwrap_or_default(),
+        previous: Some(previous),
+        backup: Some(backup),
+        applied: output.status.success() && !in_progress,
+        in_progress,
+        conflicts,
+        warnings,
+        steps: steps.len(),
+    })
+}
+
+fn range(path: &Path, from: &str) -> Result<Range, String> {
+    let from = from.trim();
+    if from.is_empty() || from.starts_with('-') || from.contains('\0') {
+        return Err("Rewrite start commit must not start with '-'.".into());
+    }
+    let from_id = resolve(path, from)?;
+    let head = head(path)?;
+    let ancestor = run(
+        path,
+        &[
+            "merge-base".into(),
+            "--is-ancestor".into(),
+            from_id.clone(),
+            head.clone(),
+        ],
+        None,
+    )?;
+    if !ancestor.status.success() {
+        if ancestor.status.code() == Some(1) {
+            return Err(format!(
+                "Rewrite start commit {from} is not an ancestor of HEAD."
+            ));
+        }
+        return Err(failure("Check the rewrite range", &ancestor));
+    }
+    let parent = run(
+        path,
+        &[
+            "rev-parse".into(),
+            "--verify".into(),
+            "--quiet".into(),
+            format!("{from_id}^"),
+        ],
+        None,
+    )?;
+    let root = !parent.status.success();
+    if root && raw_has_parent(path, &from_id)? {
+        return Err(
+            "Rewrite cannot start at a shallow boundary. Deepen the repository first.".into(),
+        );
+    }
+    let base = if root {
+        None
+    } else {
+        Some(String::from_utf8_lossy(&parent.stdout).trim().to_string())
+    };
+    let log_range = match &base {
+        Some(base) => format!("{base}..{head}"),
+        None => head.clone(),
+    };
+    let output = run(
+        path,
+        &[
+            "log".into(),
+            "--reverse".into(),
+            "--topo-order".into(),
+            "--format=%H%x00%P%x00%s".into(),
+            log_range,
+        ],
+        None,
+    )?;
+    if !output.status.success() {
+        return Err(failure("List rewrite commits", &output));
+    }
+    let mut commits = Vec::new();
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        let line = line.trim_end_matches('\r');
+        if line.is_empty() {
+            continue;
+        }
+        let mut fields = line.split('\0');
+        let id = fields.next().unwrap_or_default().to_string();
+        let parents = fields
+            .next()
+            .unwrap_or_default()
+            .split_whitespace()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        let subject = fields.next().unwrap_or_default().to_string();
+        if id.is_empty() {
+            return Err("Git returned an incomplete rewrite range.".into());
+        }
+        if parents.len() > 1 {
+            return Err(
+                "Reorder and squash require a linear range without merge commits. Select a start commit after the last merge."
+                    .into(),
+            );
+        }
+        commits.push((id, parents, subject));
+    }
+    if commits.is_empty() {
+        return Err("The rewrite range is empty.".into());
+    }
+    if commits[0].0 != from_id {
+        return Err(format!(
+            "Rewrite start commit {from} is not the first commit in the range."
+        ));
+    }
+    if commits.last().map(|commit| commit.0.as_str()) != Some(head.as_str()) {
+        return Err("The rewrite range does not end at HEAD.".into());
+    }
+    for (index, (id, parents, _)) in commits.iter().enumerate() {
+        if index == 0 {
+            let expected = base.iter().cloned().collect::<Vec<_>>();
+            if *parents != expected {
+                return Err(format!("Rewrite range is not linear at {id}."));
+            }
+        } else if parents.as_slice() != [commits[index - 1].0.clone()] {
+            return Err(format!("Rewrite range is not linear at {id}."));
+        }
+    }
+    Ok(Range {
+        commits: commits
+            .into_iter()
+            .map(|(id, _, subject)| RangeCommit { id, subject })
+            .collect(),
+        root,
+        base,
+    })
+}
+
+fn resolve_steps(path: &Path, range: &Range, steps: &[Step]) -> Result<Vec<Step>, String> {
+    if steps.is_empty() {
+        return Err("Rewrite requires at least one step.".into());
+    }
+    if steps[0].action != Action::Pick {
+        return Err("The first rewrite step must be pick.".into());
+    }
+    let allowed = range
+        .commits
+        .iter()
+        .map(|commit| commit.id.clone())
+        .collect::<BTreeSet<_>>();
+    let mut seen = BTreeSet::new();
+    let mut resolved = Vec::with_capacity(steps.len());
+    for step in steps {
+        let id = resolve(path, &step.commit)?;
+        if !allowed.contains(&id) {
+            return Err(format!(
+                "Rewrite step {} is outside the selected range.",
+                step.commit
+            ));
+        }
+        if !seen.insert(id.clone()) {
+            return Err(format!(
+                "Rewrite commit {} appears more than once.",
+                step.commit
+            ));
+        }
+        resolved.push(Step {
+            action: step.action,
+            commit: id,
+        });
+    }
+    if seen.len() != allowed.len() {
+        let missing = allowed
+            .difference(&seen)
+            .next()
+            .cloned()
+            .unwrap_or_default();
+        return Err(format!(
+            "Every commit in the selected range must appear exactly once; {missing} is missing."
+        ));
+    }
+    Ok(resolved)
+}
+
+fn sequence_editor(steps: &[Step]) -> String {
+    let mut command = String::from("printf '%s\\n'");
+    for step in steps {
+        command.push_str(" '");
+        command.push_str(step.action.as_str());
+        command.push(' ');
+        command.push_str(&step.commit);
+        command.push('\'');
+    }
+    command.push_str(" >");
+    command
+}
+
+fn raw_has_parent(path: &Path, commit: &str) -> Result<bool, String> {
+    let output = run(
+        path,
+        &["cat-file".into(), "commit".into(), commit.to_string()],
+        None,
+    )?;
+    if !output.status.success() {
+        return Err(failure("Inspect the rewrite start commit", &output));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .take_while(|line| !line.is_empty())
+        .any(|line| line.starts_with("parent ")))
+}
+
+fn resolve(path: &Path, value: &str) -> Result<String, String> {
+    let value = value.trim();
+    if value.is_empty() || value.starts_with('-') || value.contains('\0') {
+        return Err("Rewrite commit must not start with '-'.".into());
+    }
+    let output = run(
+        path,
+        &[
+            "rev-parse".into(),
+            "--verify".into(),
+            "--quiet".into(),
+            format!("{value}^{{commit}}"),
+        ],
+        None,
+    )?;
+    if !output.status.success() {
+        return Err(format!("Commit {value} was not found."));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn head(path: &Path) -> Result<String, String> {
+    let output = run(path, &["rev-parse".into(), "HEAD".into()], None)?;
+    if !output.status.success() {
+        return Err(failure("Read HEAD for the rewrite", &output));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn unmerged(path: &Path) -> Result<Vec<String>, String> {
+    let output = run(
+        path,
+        &[
+            "diff".into(),
+            "--name-only".into(),
+            "-z".into(),
+            "--diff-filter=U".into(),
+        ],
+        None,
+    )?;
+    if !output.status.success() {
+        return Err(failure("Read rewrite conflicts", &output));
+    }
+    Ok(output
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|field| !field.is_empty())
+        .map(|field| String::from_utf8_lossy(field).into_owned())
+        .collect())
+}
+
+fn run(path: &Path, args: &[String], sequence_editor: Option<&str>) -> Result<Output, String> {
+    let mut command = Command::new("git");
+    command
+        .current_dir(path)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .env("GIT_EDITOR", "true")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE");
+    if let Some(editor) = sequence_editor {
+        command.env("GIT_SEQUENCE_EDITOR", editor);
+    } else {
+        command.env("GIT_SEQUENCE_EDITOR", "true");
+    }
+    command
+        .output()
+        .map_err(|error| format!("Could not run Git rewrite. Install Git and retry: {error}"))
+}
+
+fn combined(output: &Output) -> String {
+    let mut detail = String::from_utf8_lossy(&output.stdout).into_owned();
+    if !output.stderr.is_empty() {
+        if !detail.is_empty() && !detail.ends_with('\n') {
+            detail.push('\n');
+        }
+        detail.push_str(&String::from_utf8_lossy(&output.stderr));
+    }
+    detail.trim().to_string()
+}
+
+fn failure(label: &str, output: &Output) -> String {
+    let detail = combined(output);
+    if detail.is_empty() {
+        format!("{label} failed ({}).", output.status)
+    } else {
+        format!("{label} failed ({}).\n{detail}", output.status)
+    }
+}
