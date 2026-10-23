@@ -156,6 +156,7 @@ Native review: the refs sidebar and status line show the current branch upstream
 - The native in-progress banner exposes Continue, Skip, and Abort, hides Skip for merges, and shows the conflict count.
 - Recovery refreshes history, refs, and an open Local Changes view at a safe boundary; the conflict window closes once no operation remains.
 - Merge, rebase, and recovery use one background operation worker. The UI test blocks the worker behind a channel gate, proves the start call returns and a frame still renders and names the pending operation, rejects a duplicate submission, then releases the gate and accepts one result. Mutation actions are disabled while the worker is pending, and a failure or disconnection reports an actionable error.
+- Operation outcomes render a severity-colored summary with **Details…** and one recovery button such as **Resolve conflicts…** or **Backups…** at 720 and 1120 widths. The details window shows selectable full text, and the recovery button opens the matching surface.
 
 ## Commit-row context menu and reset
 

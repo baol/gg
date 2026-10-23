@@ -428,3 +428,13 @@ Linux x86_64 · Rust 1.99.1 · local Git fixtures.
 - Alt+A toggles the commit-actions window. The **Help** menu opens a keyboard-shortcut window that names navigation, repository, and action bindings.
 - Tests render the grouped window at 720 and 1120 widths, exercise the Alt+A shortcut, verify the shared menu returns the clicked command, and render the Help window.
 - Native wide/narrow interaction review remains pending for this increment.
+
+## Pre-M7 readable operation outcomes · 2026-10-23
+
+Linux x86_64 · Rust 1.99.1 · local Git fixtures.
+
+- 316 workspace tests pass (3 ignored); formatting and Clippy with `-D warnings` pass.
+- Merge, rebase, recovery, rewrite, push, fetch, and stash results populate a severity, summary, optional full details, and at most one recovery action. Errors outrank success notices in the status line.
+- Tests render a conflict outcome summary with **Details…** and **Resolve conflicts…** at 720 and 1120 widths, open the selectable **Operation details** window, and click **Backups…** to open the recovery surface.
+- Rewrite outcomes include the saved backup ref and conflict paths in the details text.
+- Native wide/narrow interaction review remains pending for this increment.

@@ -387,6 +387,39 @@ enum CommitCommand {
     OpenBackups,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum OutcomeSeverity {
+    Info,
+    Warning,
+    Error,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RecoveryAction {
+    Backups,
+    ResolveConflicts,
+    RetryFetch,
+    RetryPush,
+    ManageStashes,
+}
+
+struct Outcome {
+    severity: OutcomeSeverity,
+    summary: String,
+    details: Option<String>,
+    recovery: Option<RecoveryAction>,
+}
+
+fn recovery_label(action: RecoveryAction) -> &'static str {
+    match action {
+        RecoveryAction::Backups => "Backups…",
+        RecoveryAction::ResolveConflicts => "Resolve conflicts…",
+        RecoveryAction::RetryFetch => "Retry fetch",
+        RecoveryAction::RetryPush => "Retry push",
+        RecoveryAction::ManageStashes => "Manage stashes…",
+    }
+}
+
 fn commit_action_menu(
     ui: &mut egui::Ui,
     id: &str,
@@ -486,6 +519,8 @@ struct Browser {
     mutation: Option<gg_engine::mutation::OperationState>,
     mutation_notice: Option<String>,
     mutation_error: Option<String>,
+    outcome: Option<Outcome>,
+    outcome_details_open: bool,
     operation_worker: Option<std::sync::mpsc::Receiver<Result<OperationOutcome, String>>>,
     operation_restore_row: Option<usize>,
     merge_dialog: Option<MergeDialog>,
@@ -552,6 +587,8 @@ impl Browser {
             mutation: None,
             mutation_notice: None,
             mutation_error: None,
+            outcome: None,
+            outcome_details_open: false,
             operation_worker: None,
             operation_restore_row: None,
             merge_dialog: None,
@@ -741,7 +778,12 @@ impl Browser {
             .unwrap_or_default()
     }
 
-    fn finish_network(&mut self, ctx: &egui::Context, result: Result<network::Outcome, String>) {
+    fn finish_network(
+        &mut self,
+        ctx: &egui::Context,
+        result: Result<network::Outcome, String>,
+        operation: Option<gg_engine::sync::Operation>,
+    ) {
         self.network = None;
         self.network_progress = None;
         match result {
@@ -778,7 +820,13 @@ impl Browser {
                 self.load(ctx);
             }
             Err(error) => {
-                self.network_error = Some(error);
+                let recovery = match operation {
+                    Some(gg_engine::sync::Operation::Push) => Some(RecoveryAction::RetryPush),
+                    Some(gg_engine::sync::Operation::Fetch) => Some(RecoveryAction::RetryFetch),
+                    _ => None,
+                };
+                self.set_outcome(OutcomeSeverity::Error, error.clone(), None, recovery);
+                self.network_error = None;
             }
         }
     }
@@ -847,14 +895,26 @@ impl Browser {
             gg_git::stash::apply(&path, Some(reference), false)?
         };
         let action = if remove { "Popped" } else { "Applied" };
-        self.stash_notice = Some(if receipt.conflicts.is_empty() {
+        let summary = if receipt.conflicts.is_empty() {
             format!("{action} {reference}")
         } else {
             format!(
                 "{action} {reference} · {} conflict(s)",
                 receipt.conflicts.len()
             )
-        });
+        };
+        self.stash_notice = Some(summary.clone());
+        let conflicts = !receipt.conflicts.is_empty();
+        self.set_outcome(
+            if conflicts {
+                OutcomeSeverity::Warning
+            } else {
+                OutcomeSeverity::Info
+            },
+            summary,
+            conflicts.then(|| receipt.conflicts.join("\n")),
+            conflicts.then_some(RecoveryAction::ManageStashes),
+        );
         self.refresh_stashes();
         self.load(ctx);
         self.refresh_working(ctx);
@@ -1078,6 +1138,43 @@ impl Browser {
         self.operation_worker.is_some()
     }
 
+    fn set_outcome(
+        &mut self,
+        severity: OutcomeSeverity,
+        summary: String,
+        details: Option<String>,
+        recovery: Option<RecoveryAction>,
+    ) {
+        self.outcome = Some(Outcome {
+            severity,
+            summary,
+            details,
+            recovery,
+        });
+    }
+
+    fn run_recovery_action(&mut self, ctx: &egui::Context, action: RecoveryAction) {
+        match action {
+            RecoveryAction::Backups => {
+                if let Some(history) = &self.state.history {
+                    self.backups = Some(backups_view::BackupsView::new(history.path.clone()));
+                }
+            }
+            RecoveryAction::ResolveConflicts => self.open_conflict_view(ctx),
+            RecoveryAction::RetryFetch => self.start_fetch(ctx, None, false),
+            RecoveryAction::RetryPush => self.start_push(ctx),
+            RecoveryAction::ManageStashes => {
+                self.stash_window = Some(StashWindow {
+                    entries: Vec::new(),
+                    error: None,
+                    notice: None,
+                    confirm_drop: None,
+                });
+                self.refresh_stashes();
+            }
+        }
+    }
+
     fn mutation_ready(&self) -> bool {
         self.mutation.is_none()
             && !self.operation_busy()
@@ -1155,7 +1252,7 @@ impl Browser {
         let restore_row = self.operation_restore_row.take();
         match outcome {
             OperationOutcome::Merge(receipt) => {
-                self.mutation_notice = Some(match receipt.kind {
+                let summary = match receipt.kind {
                     Some(gg_engine::merge::Kind::UpToDate) => {
                         format!("Merge {} · already up to date", receipt.reference)
                     }
@@ -1174,7 +1271,19 @@ impl Browser {
                             format!(" · {} conflict(s)", receipt.conflicts.len())
                         }
                     ),
-                });
+                };
+                self.mutation_notice = Some(summary.clone());
+                let conflicts = !receipt.conflicts.is_empty();
+                self.set_outcome(
+                    if conflicts {
+                        OutcomeSeverity::Warning
+                    } else {
+                        OutcomeSeverity::Info
+                    },
+                    summary,
+                    conflicts.then(|| receipt.conflicts.join("\n")),
+                    conflicts.then_some(RecoveryAction::ResolveConflicts),
+                );
                 self.conflict_view = None;
                 self.restore_row = restore_row;
                 self.refresh_mutation();
@@ -1182,7 +1291,7 @@ impl Browser {
                 self.refresh_working(ctx);
             }
             OperationOutcome::Rebase(receipt) => {
-                self.mutation_notice = Some(if receipt.in_progress {
+                let summary = if receipt.in_progress {
                     format!(
                         "Rebasing onto {}{}",
                         receipt.reference,
@@ -1194,7 +1303,19 @@ impl Browser {
                     )
                 } else {
                     format!("Rebased onto {}", receipt.reference)
-                });
+                };
+                self.mutation_notice = Some(summary.clone());
+                let conflicts = !receipt.conflicts.is_empty();
+                self.set_outcome(
+                    if conflicts {
+                        OutcomeSeverity::Warning
+                    } else {
+                        OutcomeSeverity::Info
+                    },
+                    summary,
+                    conflicts.then(|| receipt.conflicts.join("\n")),
+                    conflicts.then_some(RecoveryAction::ResolveConflicts),
+                );
                 self.conflict_view = None;
                 self.restore_row = restore_row;
                 self.refresh_mutation();
@@ -1204,7 +1325,9 @@ impl Browser {
                 self.refresh_working(ctx);
             }
             OperationOutcome::Conflict { file } => {
-                self.mutation_notice = Some(format!("Resolved {file}"));
+                let summary = format!("Resolved {file}");
+                self.mutation_notice = Some(summary.clone());
+                self.set_outcome(OutcomeSeverity::Info, summary, None, None);
                 self.refresh_mutation();
                 self.refresh_conflict_view(ctx, Some(&file));
                 self.load(ctx);
@@ -1215,18 +1338,31 @@ impl Browser {
                 action,
                 receipt,
             } => {
-                self.mutation_notice = Some(match action {
-                    MutationAction::Continue => format!("Continued {}", operation.as_str()),
-                    MutationAction::Skip => format!("Skipped {}", operation.as_str()),
-                    MutationAction::Abort => format!("Aborted {}", operation.as_str()),
-                });
-                if !receipt.conflicts.is_empty() {
-                    self.mutation_notice = Some(format!(
+                let summary = if receipt.conflicts.is_empty() {
+                    match action {
+                        MutationAction::Continue => format!("Continued {}", operation.as_str()),
+                        MutationAction::Skip => format!("Skipped {}", operation.as_str()),
+                        MutationAction::Abort => format!("Aborted {}", operation.as_str()),
+                    }
+                } else {
+                    format!(
                         "{} · {} conflict(s)",
                         operation.as_str(),
                         receipt.conflicts.len()
-                    ));
-                }
+                    )
+                };
+                self.mutation_notice = Some(summary.clone());
+                let conflicts = !receipt.conflicts.is_empty();
+                self.set_outcome(
+                    if conflicts {
+                        OutcomeSeverity::Warning
+                    } else {
+                        OutcomeSeverity::Info
+                    },
+                    summary,
+                    conflicts.then(|| receipt.conflicts.join("\n")),
+                    conflicts.then_some(RecoveryAction::ResolveConflicts),
+                );
                 self.refresh_mutation();
                 if self.mutation.is_none() {
                     self.conflict_view = None;
@@ -1368,7 +1504,8 @@ impl Browser {
         restore_row: Option<usize>,
     ) -> u64 {
         self.mutation_error = None;
-        self.mutation_notice = Some(if receipt.in_progress {
+        let conflicts = receipt.in_progress || !receipt.conflicts.is_empty();
+        let summary = if receipt.in_progress {
             format!(
                 "Rewriting {} commit(s){}",
                 receipt.steps,
@@ -1380,7 +1517,29 @@ impl Browser {
             )
         } else {
             format!("Rewrote {} commit(s)", receipt.steps)
-        });
+        };
+        self.mutation_notice = Some(summary.clone());
+        let mut details = Vec::new();
+        if let Some(backup) = &receipt.backup {
+            details.push(format!("Backup: {backup}"));
+        }
+        if !receipt.conflicts.is_empty() {
+            details.push(format!("Conflicts: {}", receipt.conflicts.join(", ")));
+        }
+        self.set_outcome(
+            if conflicts {
+                OutcomeSeverity::Warning
+            } else {
+                OutcomeSeverity::Info
+            },
+            summary,
+            (!details.is_empty()).then(|| details.join("\n")),
+            Some(if conflicts {
+                RecoveryAction::ResolveConflicts
+            } else {
+                RecoveryAction::Backups
+            }),
+        );
         self.conflict_view = None;
         self.restore_row = restore_row;
         self.refresh_mutation();
@@ -1694,6 +1853,7 @@ impl Browser {
             }
         }
         let mut network_done = None;
+        let network_operation = self.network.as_ref().map(|worker| worker.operation);
         if let Some(worker) = self.network.as_ref() {
             loop {
                 match worker.try_recv() {
@@ -1714,7 +1874,7 @@ impl Browser {
             }
         }
         if let Some(result) = network_done {
-            self.finish_network(ctx, result);
+            self.finish_network(ctx, result, network_operation);
         }
         let rewrite_done = match self.rewrite_job.as_ref().map(|job| job.receiver.try_recv()) {
             None | Some(Err(std::sync::mpsc::TryRecvError::Empty)) => None,
@@ -1752,6 +1912,7 @@ impl Browser {
                 Err(error) => {
                     self.operation_restore_row = None;
                     self.mutation_notice = None;
+                    self.set_outcome(OutcomeSeverity::Error, error.clone(), None, None);
                     self.mutation_error = Some(error);
                     self.refresh_mutation();
                 }
@@ -3715,6 +3876,13 @@ impl Browser {
                 (format!("Branch · {error}"), ui.visuals().error_fg_color)
             } else if let Some(error) = &self.mutation_error {
                 (format!("All Commits · {error}"), ui.visuals().error_fg_color)
+            } else if let Some(outcome) = &self.outcome {
+                let color = match outcome.severity {
+                    OutcomeSeverity::Info => ui.visuals().text_color(),
+                    OutcomeSeverity::Warning => ui.visuals().warn_fg_color,
+                    OutcomeSeverity::Error => ui.visuals().error_fg_color,
+                };
+                (format!("All Commits · {}", outcome.summary), color)
             } else if let Some(worker) = &self.network {
                 if worker.is_cancelled() {
                     ("Cancelling network operation…".into(), ui.visuals().text_color())
@@ -3752,9 +3920,80 @@ impl Browser {
                     .unwrap_or_default();
                 (format!("{tracking}Up/Down / j k: select   ·   PgUp/PgDn: page   ·   Enter: review   ·   Space: details   ·   Esc: history   ·   Ctrl/Cmd+F: filter   ·   Ctrl/Cmd+C: copy ID"), ui.visuals().weak_text_color())
             };
-            let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 18.0), egui::Sense::hover());
-            bounded_text::paint(ui, rect, &message, egui::FontId::proportional(11.0), color);
+            let outcome_active = self.network_error.is_none()
+                && self.state.error.is_none()
+                && self.branch_error.is_none()
+                && self.mutation_error.is_none()
+                && self.outcome.is_some();
+            let details = outcome_active
+                .then(|| self.outcome.as_ref().and_then(|outcome| outcome.details.clone()))
+                .flatten();
+            let recovery = outcome_active
+                .then(|| self.outcome.as_ref().and_then(|outcome| outcome.recovery))
+                .flatten();
+            let mut details_clicked = false;
+            let mut recovery_clicked = None;
+            ui.horizontal(|ui| {
+                let reserved = if recovery.is_some() {
+                    150.0
+                } else if details.is_some() {
+                    76.0
+                } else {
+                    0.0
+                };
+                let width = (ui.available_width() - reserved).max(100.0);
+                let (rect, _) = ui.allocate_exact_size(
+                    egui::vec2(width, 18.0),
+                    egui::Sense::hover(),
+                );
+                bounded_text::paint(ui, rect, &message, egui::FontId::proportional(11.0), color);
+                if details.is_some() && ui.small_button("Details…").clicked() {
+                    details_clicked = true;
+                }
+                if let Some(action) = recovery
+                    && ui.small_button(recovery_label(action)).clicked()
+                {
+                    recovery_clicked = Some(action);
+                }
+            });
+            if details_clicked {
+                self.outcome_details_open = true;
+            }
+            if let Some(action) = recovery_clicked {
+                self.run_recovery_action(ctx, action);
+            }
         });
+        if self.outcome_details_open {
+            let details = self
+                .outcome
+                .as_ref()
+                .and_then(|outcome| outcome.details.clone());
+            if let Some(details) = details {
+                let mut open = true;
+                egui::Window::new("Operation details")
+                    .id(egui::Id::unique("operation-details"))
+                    .open(&mut open)
+                    .collapsible(false)
+                    .resizable(true)
+                    .default_width(560.0)
+                    .default_height(240.0)
+                    .default_pos(ctx.content_rect().center())
+                    .pivot(egui::Align2::CENTER_CENTER)
+                    .show(ctx, |ui| {
+                        if ui.button("Copy details").clicked() {
+                            ui.ctx().copy_text(details.clone());
+                        }
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            ui.add(egui::Label::new(&details).wrap().selectable(true));
+                        });
+                    });
+                if !open {
+                    self.outcome_details_open = false;
+                }
+            } else {
+                self.outcome_details_open = false;
+            }
+        }
         if !narrow || !self.narrow_details {
             egui::Panel::top("filter").exact_size(40.0).show(ui, |ui| {
                 ui.add_space(5.0);
@@ -5045,6 +5284,117 @@ mod tests {
     }
 
     #[test]
+    fn operation_outcome_shows_details_and_recovery() {
+        for width in [720.0, 1120.0] {
+            let ctx = egui::Context::default();
+            let mut app = layout_fixture();
+            app.outcome = Some(Outcome {
+                severity: OutcomeSeverity::Warning,
+                summary: "Rebased onto feature · 1 conflict(s)".into(),
+                details: Some("Conflicts: a.txt".into()),
+                recovery: Some(RecoveryAction::ResolveConflicts),
+            });
+            let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let output = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let text = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert!(
+                text.iter()
+                    .any(|line| line.contains("Rebased onto feature")),
+                "missing outcome summary at {width}"
+            );
+            assert!(text.contains(&"Details…"), "missing details at {width}");
+            assert!(
+                text.contains(&"Resolve conflicts…"),
+                "missing recovery at {width}"
+            );
+        }
+    }
+
+    #[test]
+    fn operation_details_window_lists_full_text() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        app.outcome = Some(Outcome {
+            severity: OutcomeSeverity::Warning,
+            summary: "Rewrote 2 commit(s)".into(),
+            details: Some("Backup: refs/gg/backup/rewrite/1".into()),
+            recovery: Some(RecoveryAction::Backups),
+        });
+        app.outcome_details_open = true;
+        let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        let text = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(text.contains(&"Operation details"));
+        assert!(text.contains(&"Backup: refs/gg/backup/rewrite/1"));
+    }
+
+    #[test]
+    fn outcome_recovery_button_opens_backups() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        app.outcome = Some(Outcome {
+            severity: OutcomeSeverity::Info,
+            summary: "Rewrote 1 commit(s)".into(),
+            details: None,
+            recovery: Some(RecoveryAction::Backups),
+        });
+        let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        let backups = output.shapes.iter().find_map(|shape| match &shape.shape {
+            egui::epaint::Shape::Text(text) if text.galley.job.text == "Backups…" => {
+                Some(text.pos)
+            }
+            _ => None,
+        });
+        assert!(backups.is_some(), "missing backups button");
+        let pos = backups.unwrap_or_default();
+        let press = egui::Event::PointerButton {
+            pos: pos + egui::vec2(5.0, 0.0),
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let release = egui::Event::PointerButton {
+            pos: pos + egui::vec2(5.0, 0.0),
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let _ = crate::tests::run_ui(
+            &ctx,
+            frame_input(1120.0, 740.0, vec![egui::Event::PointerMoved(pos), press]),
+            |ctx| app.draw_ui(ctx),
+        );
+        let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![release]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        assert!(app.backups.is_some());
+    }
+
+    #[test]
     fn mutation_banner_renders_at_supported_widths() {
         for width in [720.0, 1120.0] {
             let ctx = egui::Context::default();
@@ -5142,6 +5492,7 @@ mod tests {
                 head: None,
                 branch: Some("main".into()),
             })),
+            None,
         );
         assert_eq!(app.path, path.to_string_lossy());
         assert!(app.network.is_none());

@@ -74,6 +74,8 @@ Emacs bindings use physical Control. Ctrl+V retains native paste. Escape leaves 
 
 The **Actions** menu and the **Commit actions** window use the same grouped command definition as the commit-row context menu: Inspect, Integrate, Rewrite and destructive, and Recovery. Labels include the selected short commit, for example **Cherry-pick a1b2c3d** or **Compare a1b2c3d with current HEAD**. Mutation commands are disabled with an explanation while a mutation, operation worker, branch switch, or network operation is active. The **Help** menu opens a concise keyboard-shortcut window; the visible control and the context menu invoke the same command for the same target.
 
+Operation outcomes carry a severity, a concise summary, optional full details, and at most one recovery action. The status line keeps a fixed-height summary and exposes **Details…** when full text exists and a recovery button when one applies, such as **Resolve conflicts…**, **Backups…**, **Retry push**, **Retry fetch**, or **Manage stashes…**. Merge, rebase, recovery, rewrite, push, fetch, and stash results populate the same outcome shape; errors outrank success notices, and a remaining conflict or failed worker keeps its own visible surface. The details window keeps selectable, copyable full text.
+
 Follow [bounded-reveal rules](design.md). Page by the rendered viewport with one row of overlap, clamp at history boundaries, and stream uncached destinations. Show cached selected metadata immediately; reserve the full-message slot while loading. Narrow details preserve hidden history selection and pixel offset.
 
 Rationale: one bounded reveal preserves spatial context; overlapping pages retain reading context; fixed details slots keep loading visually stable.
