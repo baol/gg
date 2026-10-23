@@ -7,6 +7,7 @@ pub enum Operation {
     CherryPick,
     Revert,
     Merge,
+    Rebase,
 }
 
 impl Operation {
@@ -15,6 +16,7 @@ impl Operation {
             Self::CherryPick => "cherry-pick",
             Self::Revert => "revert",
             Self::Merge => "merge",
+            Self::Rebase => "rebase",
         }
     }
 }

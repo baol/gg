@@ -12,7 +12,7 @@ Each milestone delivers CLI and native views of shared engine behavior. Current 
 | M3 · Complete | Graph, refs, tags, branch navigation and creation |
 | M4 · Complete | Clone, fetch, push, tracking, credentials, progress; [evidence](docs/verification.md#m4-clone-fetch-push-tracking-and-credentials--2026-10-22) |
 | M5 · Complete | Merge, conflicts, cherry-pick, revert, stash, recovery; [plan](docs/plan.md) |
-| M6 | Rebase, reorder, squash, amend, reflog recovery |
+| M6 · Complete | Rebase, reorder, squash, amend, reflog, and backup recovery; [evidence](docs/verification.md#m6-reorder-squash-and-rewrite-recovery--2026-10-23) |
 | M7 | Worktrees, submodules, LFS, signing, file history, blame, image diffs |
 
 Target Linux (Wayland/X11), macOS, and Windows on x86_64 and arm64, supported by native builds and hardware checks.

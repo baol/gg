@@ -46,6 +46,13 @@ fn backup_refs_point_at_the_previous_tip_and_stay_out_of_refs() -> Result {
         String::from_utf8(git(p, &["rev-parse", &name])?)?.trim(),
         head
     );
+    let backups = gg_git::backup::list(p)?;
+    assert_eq!(backups.len(), 1);
+    assert_eq!(backups[0].reference, name);
+    assert_eq!(backups[0].label, "amend");
+    assert_eq!(backups[0].commit, head);
+    assert_eq!(backups[0].subject, "base");
+    assert!(!backups[0].time.is_empty());
     let refs = gg_git::refs::read(p)?;
     assert!(
         refs.items

@@ -21,6 +21,8 @@ pub struct State {
     pub error: Option<String>,
     pub requested: Option<PathBuf>,
     pub generation: u64,
+    /// Generation whose replacement history has been accepted into the browser.
+    pub loaded_generation: u64,
 }
 
 impl State {
@@ -54,6 +56,7 @@ impl State {
                 self.reconcile_selection();
                 self.requested = None;
                 self.error = None;
+                self.loaded_generation = generation;
             }
             Err(error) => self.error = Some(error),
         }
@@ -92,6 +95,7 @@ impl State {
             self.selected_row = None;
             self.details = None;
             self.requested = None;
+            self.loaded_generation = self.generation;
         }
         if safe || replace {
             self.count = update.count;

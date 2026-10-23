@@ -1,4 +1,5 @@
 mod avatars;
+mod backups_view;
 mod binary_preview;
 mod bounded_text;
 mod branch_cli;
@@ -19,6 +20,7 @@ mod mutation_cli;
 mod navigation;
 mod network;
 mod phosphor;
+mod rebase_cli;
 mod records;
 mod reflog_cli;
 mod reflog_view;
@@ -28,6 +30,7 @@ mod reset_cli;
 mod review_cli;
 mod review_view;
 mod review_worker;
+mod rewrite_cli;
 mod stage_view;
 mod stash_cli;
 mod state;
@@ -53,7 +56,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("--help")) {
         println!(
-            "gg · good git\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good refs [PATH]      Print branches, remotes, tags, and HEAD as JSON\ngit-good status [PATH] [--file PATH --area AREA]   Print working status or diff as JSON\ngit-good stage --file PATH [--hunk HEADER]... [--repo PATH]   Stage one file or selected hunks\ngit-good unstage --file PATH [--repo PATH]   Unstage one file\ngit-good commit [--amend] -m MESSAGE [--repo PATH]   Commit the index or amend HEAD after Git hooks\ngit-good reflog [REF] [--repo PATH]   Print reflog entries as JSON\ngit-good switch [--create] BRANCH [--repo PATH]   Switch to or create a local branch\ngit-good fetch [REMOTE] [--prune] [--repo PATH]   Fetch and update remote-tracking refs\ngit-good push [REMOTE] [BRANCH] [--set-upstream] [--repo PATH]   Push a local branch without force\ngit-good clone URL [PATH]   Clone a repository and open it\ngit-good stash <list|push|apply|pop|drop> [OPTIONS] [--repo PATH]   List or mutate stashes\ngit-good cherry-pick COMMIT [--repo PATH]   Apply a commit\ngit-good revert COMMIT [--repo PATH]   Invert a commit\ngit-good merge REF [--no-ff] [--repo PATH]   Merge a branch, remote, or tag\ngit-good conflicts [--repo PATH]   List unmerged paths\ngit-good conflict --file PATH [--use ours|theirs|--stage] [--repo PATH]   Read or resolve a conflict\ngit-good reset --soft|--mixed|--hard COMMIT [--repo PATH]   Reset the current branch\ngit-good branch --delete BRANCH [--force] [--repo PATH]   Delete a local branch\ngit-good branch --create NAME [--at REF] [--repo PATH]   Create a local branch without switching\ngit-good tag --delete TAG [--repo PATH]   Delete a local tag\ngit-good show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]   Review or export\n\nBrowse commits reachable from HEAD and all local, remote, and tag refs."
+            "gg · good git\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good refs [PATH]      Print branches, remotes, tags, and HEAD as JSON\ngit-good status [PATH] [--file PATH --area AREA]   Print working status or diff as JSON\ngit-good stage --file PATH [--hunk HEADER]... [--repo PATH]   Stage one file or selected hunks\ngit-good unstage --file PATH [--repo PATH]   Unstage one file\ngit-good commit [--amend] -m MESSAGE [--repo PATH]   Commit the index or amend HEAD after Git hooks\ngit-good reflog [REF] [--repo PATH]   Print reflog entries as JSON\ngit-good switch [--create] BRANCH [--repo PATH]   Switch to or create a local branch\ngit-good fetch [REMOTE] [--prune] [--repo PATH]   Fetch and update remote-tracking refs\ngit-good push [REMOTE] [BRANCH] [--set-upstream] [--repo PATH]   Push a local branch without force\ngit-good clone URL [PATH]   Clone a repository and open it\ngit-good stash <list|push|apply|pop|drop> [OPTIONS] [--repo PATH]   List or mutate stashes\ngit-good cherry-pick COMMIT [--repo PATH]   Apply a commit\ngit-good revert COMMIT [--repo PATH]   Invert a commit\ngit-good merge REF [--no-ff] [--repo PATH]   Merge a branch, remote, or tag\ngit-good rebase REF [--autostash] [--repo PATH]   Rebase the current branch onto a branch, remote, or tag\ngit-good rebase --continue|--skip|--abort [--repo PATH]   Recover an in-progress rebase\ngit-good rewrite --from COMMIT --pick COMMIT... --squash COMMIT... [--autostash] [--repo PATH]   Reorder or squash a linear range\ngit-good rewrite --continue|--skip|--abort [--repo PATH]   Recover an in-progress rewrite\ngit-good conflicts [--repo PATH]   List unmerged paths\ngit-good conflict --file PATH [--use ours|theirs|--stage] [--repo PATH]   Read or resolve a conflict\ngit-good reset --soft|--mixed|--hard COMMIT [--repo PATH]   Reset the current branch\ngit-good branch --delete BRANCH [--force] [--repo PATH]   Delete a local branch\ngit-good branch --create NAME [--at REF] [--repo PATH]   Create a local branch without switching\ngit-good tag --delete TAG [--repo PATH]   Delete a local tag\ngit-good show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]   Review or export\n\nBrowse commits reachable from HEAD and all local, remote, and tag refs."
         );
         return Ok(());
     }
@@ -92,6 +95,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("merge")) {
         return merge_cli::run(args);
+    }
+    if first.as_deref() == Some(std::ffi::OsStr::new("rebase")) {
+        return rebase_cli::run(args);
+    }
+    if first.as_deref() == Some(std::ffi::OsStr::new("rewrite")) {
+        return rewrite_cli::run(args);
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("conflicts")) {
         return conflict_cli::list(args);
@@ -222,6 +231,30 @@ struct MergeDialog {
     error: Option<String>,
 }
 
+struct RebaseDialog {
+    reference: String,
+    autostash: bool,
+    error: Option<String>,
+}
+
+struct RewriteRow {
+    id: String,
+    subject: String,
+    action: gg_engine::rewrite::Action,
+}
+
+struct RewriteDialog {
+    from: String,
+    rows: Vec<RewriteRow>,
+    autostash: bool,
+    error: Option<String>,
+}
+
+struct RewriteJob {
+    receiver: std::sync::mpsc::Receiver<Result<gg_engine::rewrite::Receipt, String>>,
+    restore_row: Option<usize>,
+}
+
 struct BranchDeleteDialog {
     name: String,
     error: Option<String>,
@@ -265,6 +298,7 @@ enum CommitAction {
     CherryPick,
     Revert,
     Reset(gg_engine::reset::Mode),
+    Rewrite,
     Compare,
 }
 
@@ -292,12 +326,17 @@ struct Browser {
     mutation_notice: Option<String>,
     mutation_error: Option<String>,
     merge_dialog: Option<MergeDialog>,
+    rebase_dialog: Option<RebaseDialog>,
+    rewrite_dialog: Option<RewriteDialog>,
+    rewrite_job: Option<RewriteJob>,
+    rewrite_refresh: Option<u64>,
     conflict_view: Option<ConflictView>,
     reset_confirm: Option<(String, gg_engine::reset::Mode)>,
     branch_delete: Option<BranchDeleteDialog>,
     tag_delete: Option<TagDeleteDialog>,
     create_branch: Option<CreateBranchDialog>,
     reflog: Option<reflog_view::ReflogView>,
+    backups: Option<backups_view::BackupsView>,
     refs_visible: bool,
     refs_query: String,
     state: state::State,
@@ -312,6 +351,7 @@ struct Browser {
     row_rects: Vec<(usize, egui::Rect)>,
     deferred_input: Vec<egui::Event>,
     scroll_to_selection: bool,
+    restore_row: Option<usize>,
     avatars: avatars::Avatars,
     history_rect: egui::Rect,
     details_rect: egui::Rect,
@@ -347,12 +387,17 @@ impl Browser {
             mutation_notice: None,
             mutation_error: None,
             merge_dialog: None,
+            rebase_dialog: None,
+            rewrite_dialog: None,
+            rewrite_job: None,
+            rewrite_refresh: None,
             conflict_view: None,
             reset_confirm: None,
             branch_delete: None,
             tag_delete: None,
             create_branch: None,
             reflog: None,
+            backups: None,
             refs_visible: true,
             refs_query: String::new(),
             state: state::State::default(),
@@ -367,6 +412,7 @@ impl Browser {
             row_rects: Vec::new(),
             deferred_input: Vec::new(),
             scroll_to_selection: false,
+            restore_row: None,
             avatars: avatars::Avatars::default(),
             history_rect: egui::Rect::NOTHING,
             details_rect: egui::Rect::NOTHING,
@@ -558,6 +604,7 @@ impl Browser {
                 self.state.refs = Default::default();
                 self.refs_query.clear();
                 self.reflog = None;
+                self.backups = None;
                 self.load(ctx);
             }
             Err(error) => {
@@ -677,6 +724,12 @@ impl Browser {
         }
     }
 
+    fn refresh_backups(&mut self) {
+        if let Some(view) = &mut self.backups {
+            view.load();
+        }
+    }
+
     fn refresh_working(&mut self, ctx: &egui::Context) {
         if let Some(working) = &mut self.working {
             working.refresh(ctx);
@@ -712,6 +765,8 @@ impl Browser {
             self.restore_offset = None;
             self.scroll_to_selection = true;
             self.load(ctx);
+            self.refresh_reflog();
+            self.refresh_backups();
         } else {
             self.restore_offset = Some(self.scroll_offset);
         }
@@ -740,6 +795,7 @@ impl Browser {
             .selected
             .clone()
             .ok_or("Select a commit before cherry-picking or reverting.")?;
+        let restore_row = self.state.selected_row;
         let receipt = match operation {
             gg_engine::mutation::Operation::CherryPick => {
                 gg_git::mutation::cherry_pick(&path, &commit)?
@@ -747,6 +803,9 @@ impl Browser {
             gg_engine::mutation::Operation::Revert => gg_git::mutation::revert(&path, &commit)?,
             gg_engine::mutation::Operation::Merge => {
                 return Err("Use the Merge action for merge operations.".into());
+            }
+            gg_engine::mutation::Operation::Rebase => {
+                return Err("Use the Rebase action for rebase operations.".into());
             }
         };
         self.mutation_error = None;
@@ -770,11 +829,14 @@ impl Browser {
                 }
             ),
             gg_engine::mutation::Operation::Merge => String::new(),
+            gg_engine::mutation::Operation::Rebase => String::new(),
         });
         self.conflict_view = None;
+        self.restore_row = restore_row;
         self.refresh_mutation();
         self.load(ctx);
         self.refresh_reflog();
+        self.refresh_backups();
         self.refresh_working(ctx);
         Ok(())
     }
@@ -829,6 +891,7 @@ impl Browser {
         self.refresh_mutation();
         self.load(ctx);
         self.refresh_reflog();
+        self.refresh_backups();
         self.refresh_working(ctx);
         Ok(())
     }
@@ -842,6 +905,7 @@ impl Browser {
         let path = self
             .stash_path()
             .ok_or("Open a repository before recovering history.")?;
+        let restore_row = self.state.selected_row;
         let receipt = match action {
             MutationAction::Continue => gg_git::mutation::continue_operation(&path, operation)?,
             MutationAction::Skip => gg_git::mutation::skip_operation(&path, operation)?,
@@ -864,6 +928,7 @@ impl Browser {
         if self.mutation.is_none() {
             self.conflict_view = None;
         }
+        self.restore_row = restore_row;
         self.load(ctx);
         self.refresh_working(ctx);
         Ok(())
@@ -878,6 +943,7 @@ impl Browser {
         let path = self
             .stash_path()
             .ok_or("Open a repository before merging.")?;
+        let restore_row = self.state.selected_row;
         let receipt = gg_git::merge::merge(&path, reference, no_ff)?;
         self.mutation_error = None;
         self.mutation_notice = Some(match receipt.kind {
@@ -898,10 +964,138 @@ impl Browser {
             ),
         });
         self.conflict_view = None;
+        self.restore_row = restore_row;
         self.refresh_mutation();
         self.load(ctx);
         self.refresh_working(ctx);
         Ok(())
+    }
+
+    fn start_rebase(
+        &mut self,
+        ctx: &egui::Context,
+        reference: &str,
+        autostash: bool,
+    ) -> Result<(), String> {
+        let path = self
+            .stash_path()
+            .ok_or("Open a repository before rebasing.")?;
+        let restore_row = self.state.selected_row;
+        let receipt = gg_git::rebase::rebase(&path, reference, autostash)?;
+        self.mutation_error = None;
+        self.mutation_notice = Some(if receipt.in_progress {
+            format!(
+                "Rebasing onto {reference}{}",
+                if receipt.conflicts.is_empty() {
+                    String::new()
+                } else {
+                    format!(" · {} conflict(s)", receipt.conflicts.len())
+                }
+            )
+        } else {
+            format!("Rebased onto {reference}")
+        });
+        self.conflict_view = None;
+        self.restore_row = restore_row;
+        self.refresh_mutation();
+        self.load(ctx);
+        self.refresh_reflog();
+        self.refresh_backups();
+        self.refresh_working(ctx);
+        Ok(())
+    }
+
+    fn open_rewrite_dialog(&mut self, from: &str) -> Result<(), String> {
+        let path = self
+            .stash_path()
+            .ok_or("Open a repository before rewriting history.")?;
+        if self.mutation.is_some() {
+            return Err("Recover the operation in progress before rewriting history.".into());
+        }
+        let commits = gg_git::rewrite::commits(&path, from)?;
+        let first = commits
+            .first()
+            .ok_or("The rewrite range is empty.")?
+            .id
+            .clone();
+        self.rewrite_dialog = Some(RewriteDialog {
+            from: first,
+            rows: commits
+                .into_iter()
+                .map(|commit| RewriteRow {
+                    id: commit.id,
+                    subject: commit.subject,
+                    action: gg_engine::rewrite::Action::Pick,
+                })
+                .collect(),
+            autostash: false,
+            error: None,
+        });
+        Ok(())
+    }
+
+    fn begin_rewrite(
+        &mut self,
+        ctx: &egui::Context,
+        from: String,
+        steps: Vec<gg_engine::rewrite::Step>,
+        autostash: bool,
+    ) -> Result<(), String> {
+        if self.rewrite_job.is_some() || self.rewrite_refresh.is_some() {
+            return Err("A rewrite is already running.".into());
+        }
+        if self.mutation.is_some() {
+            return Err("Recover the operation in progress before rewriting history.".into());
+        }
+        let path = self
+            .stash_path()
+            .ok_or("Open a repository before rewriting history.")?;
+        let restore_row = self.state.selected_row;
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let repaint = ctx.clone();
+        std::thread::Builder::new()
+            .name("gg-rewrite".into())
+            .spawn(move || {
+                let result = gg_git::rewrite::rewrite(&path, &from, &steps, autostash);
+                let _ = sender.send(result);
+                repaint.request_repaint();
+            })
+            .map_err(|error| format!("Start rewrite: {error}"))?;
+        self.rewrite_job = Some(RewriteJob {
+            receiver,
+            restore_row,
+        });
+        Ok(())
+    }
+
+    fn finish_rewrite(
+        &mut self,
+        ctx: &egui::Context,
+        receipt: gg_engine::rewrite::Receipt,
+        restore_row: Option<usize>,
+    ) -> u64 {
+        self.mutation_error = None;
+        self.mutation_notice = Some(if receipt.in_progress {
+            format!(
+                "Rewriting {} commit(s){}",
+                receipt.steps,
+                if receipt.conflicts.is_empty() {
+                    String::new()
+                } else {
+                    format!(" · {} conflict(s)", receipt.conflicts.len())
+                }
+            )
+        } else {
+            format!("Rewrote {} commit(s)", receipt.steps)
+        });
+        self.conflict_view = None;
+        self.restore_row = restore_row;
+        self.refresh_mutation();
+        self.load(ctx);
+        self.refresh_reflog();
+        self.refresh_backups();
+        self.refresh_working(ctx);
+        self.state.generation
     }
 
     fn open_conflict_view(&mut self) {
@@ -987,6 +1181,7 @@ impl Browser {
             revision: self.state.filter_revision,
             query: self.state.query.clone(),
             selected_id: self.state.selected.clone(),
+            selected_row: self.restore_row.take(),
             anchor_id: self
                 .state
                 .rows
@@ -1036,6 +1231,22 @@ impl Browser {
                 ctx,
             ));
         }
+    }
+
+    fn open_backup_review(&mut self, ctx: &egui::Context, commit: String, subject: String) {
+        let Some(history) = &self.state.history else {
+            return;
+        };
+        self.review = Some(review_view::Review::new(
+            gg_engine::review::ReviewRequest {
+                path: history.path.clone(),
+                revision: commit,
+                parent: None,
+                against: None,
+            },
+            subject,
+            ctx,
+        ));
     }
 
     fn open_compare(&mut self, ctx: &egui::Context, id: String) {
@@ -1143,6 +1354,28 @@ impl Browser {
         if let Some(result) = network_done {
             self.finish_network(ctx, result);
         }
+        let rewrite_done = match self.rewrite_job.as_ref().map(|job| job.receiver.try_recv()) {
+            None | Some(Err(std::sync::mpsc::TryRecvError::Empty)) => None,
+            Some(Ok(result)) => Some(result),
+            Some(Err(std::sync::mpsc::TryRecvError::Disconnected)) => {
+                Some(Err("Rewrite worker stopped. Refresh and retry.".into()))
+            }
+        };
+        if let Some(result) = rewrite_done {
+            let restore_row = self.rewrite_job.take().and_then(|job| job.restore_row);
+            match result {
+                Ok(receipt) => {
+                    let generation = self.finish_rewrite(ctx, receipt, restore_row);
+                    self.rewrite_refresh = Some(generation);
+                }
+                Err(error) => {
+                    self.refresh_mutation();
+                    if let Some(dialog) = &mut self.rewrite_dialog {
+                        dialog.error = Some(error);
+                    }
+                }
+            }
+        }
         let narrow = ctx.content_rect().width() < 1040.0;
         let wide_refs = !narrow && self.refs_visible && ctx.content_rect().width() >= 1120.0;
         let filter_id = egui::Id::unique("history-filter");
@@ -1163,7 +1396,9 @@ impl Browser {
             if now - self.last_scroll <= 0.2 {
                 ctx.request_repaint_after(std::time::Duration::from_millis(200));
             }
-            let safe = !hovering_history && !interacting && now - self.last_scroll > 0.2;
+            // A rewrite dialog covers the list, so the refresh can replace rows immediately.
+            let safe = self.rewrite_refresh.is_some()
+                || (!hovering_history && !interacting && now - self.last_scroll > 0.2);
             let hovering_scrollbar = ctx.input(|i| i.pointer.hover_pos()).is_some_and(|p| {
                 self.history_rect.contains(p) && p.x >= self.history_rect.right() - 18.0
             });
@@ -1187,12 +1422,13 @@ impl Browser {
             }
             if self.pending.is_some()
                 && (safe || self.state.history.is_none())
-                && self.staged.as_ref().is_some_and(|u| {
-                    u.request.anchor_id.is_none()
-                        || u.anchor_row.is_some()
-                        || u.complete
-                        || u.error.is_some()
-                })
+                && (self.rewrite_refresh.is_some()
+                    || self.staged.as_ref().is_some_and(|u| {
+                        u.request.anchor_id.is_none()
+                            || u.anchor_row.is_some()
+                            || u.complete
+                            || u.error.is_some()
+                    }))
                 && let Some(update) = self.staged.take()
             {
                 self.restore_offset = Some(
@@ -1364,6 +1600,17 @@ impl Browser {
                         }
                         ui.close();
                     }
+                    if ui
+                        .add_enabled(self.state.history.is_some(), egui::Button::new("Backups…"))
+                        .on_hover_text("Recover a tip saved before a history rewrite")
+                        .clicked()
+                    {
+                        if let Some(history) = &self.state.history {
+                            self.backups =
+                                Some(backups_view::BackupsView::new(history.path.clone()));
+                        }
+                        ui.close();
+                    }
                     ui.separator();
                     let network_idle = self.network.is_none() && self.branch.is_none();
                     let has_repo = self.state.history.is_some();
@@ -1417,6 +1664,7 @@ impl Browser {
                 let mut new_branch = false;
                 let mut track_branch = false;
                 let mut merge = false;
+                let mut rebase = false;
                 let mut section = |ui: &mut egui::Ui, title: &str, kind| {
                     let filtered = refs
                         .items
@@ -1476,6 +1724,17 @@ impl Browser {
                         merge = true;
                         ui.close();
                     }
+                    if ui
+                        .add_enabled(
+                            !branch_pending && self.mutation.is_none() && self.network.is_none(),
+                            egui::Button::new("Rebase branch…"),
+                        )
+                        .on_hover_text("Rebase the current branch onto a branch, remote, or tag")
+                        .clicked()
+                    {
+                        rebase = true;
+                        ui.close();
+                    }
                     let branches = refs
                         .items
                         .iter()
@@ -1527,6 +1786,13 @@ impl Browser {
                     self.merge_dialog = Some(MergeDialog {
                         reference: String::new(),
                         no_ff: false,
+                        error: None,
+                    });
+                }
+                if rebase {
+                    self.rebase_dialog = Some(RebaseDialog {
+                        reference: String::new(),
+                        autostash: false,
                         error: None,
                     });
                 }
@@ -1666,6 +1932,7 @@ impl Browser {
         });
         let mut mutation_action = None;
         let mut resolve_conflicts = false;
+        let mut open_backups = false;
         if let Some(state) = &self.mutation {
             egui::Panel::top("mutation")
                 .exact_size(30.0)
@@ -1689,11 +1956,17 @@ impl Browser {
                         if ui.button("Abort").clicked() {
                             mutation_action = Some(MutationAction::Abort);
                         }
+                        if ui.button("Backups…").clicked() {
+                            open_backups = true;
+                        }
                     });
                 });
         }
         if resolve_conflicts {
             self.open_conflict_view();
+        }
+        if open_backups && let Some(history) = &self.state.history {
+            self.backups = Some(backups_view::BackupsView::new(history.path.clone()));
         }
         if let Some(action) = mutation_action
             && let Some(operation) = self.mutation.as_ref().map(|state| state.operation)
@@ -1722,6 +1995,7 @@ impl Browser {
                         || enter
                     {
                         self.reflog = None;
+                        self.backups = None;
                         self.load(ctx);
                         self.edit_path = false;
                     }
@@ -1730,7 +2004,7 @@ impl Browser {
         }
         if wide_refs {
             let refs = self.state.refs.clone();
-            let busy = self.branch.is_some() || self.network.is_some();
+            let busy = self.branch.is_some() || self.network.is_some() || self.mutation.is_some();
             let has_repo = self.state.history.is_some();
             let local_selected = self.working.is_some();
             let mut action = None;
@@ -1771,6 +2045,13 @@ impl Browser {
                     self.merge_dialog = Some(MergeDialog {
                         reference: name,
                         no_ff: false,
+                        error: None,
+                    });
+                }
+                Some(refs_view::Action::Rebase(name)) => {
+                    self.rebase_dialog = Some(RebaseDialog {
+                        reference: name,
+                        autostash: false,
                         error: None,
                     });
                 }
@@ -1967,6 +2248,33 @@ impl Browser {
                     self.reset_confirm = Some((commit, mode));
                 }
                 reflog_view::Action::CreateBranch { commit, selector } => {
+                    self.create_branch = Some(CreateBranchDialog {
+                        name: String::new(),
+                        commit,
+                        selector,
+                        error: None,
+                    });
+                }
+            }
+        }
+
+        let mut backups_open = true;
+        let mut backups_action = None;
+        if let Some(view) = &mut self.backups {
+            backups_action = view.draw(ctx, &mut backups_open);
+        }
+        if !backups_open {
+            self.backups = None;
+        }
+        if let Some(action) = backups_action {
+            match action {
+                backups_view::Action::Open { commit, subject } => {
+                    self.open_backup_review(ctx, commit, subject);
+                }
+                backups_view::Action::Reset { commit, mode } => {
+                    self.reset_confirm = Some((commit, mode));
+                }
+                backups_view::Action::CreateBranch { commit, selector } => {
                     self.create_branch = Some(CreateBranchDialog {
                         name: String::new(),
                         commit,
@@ -2306,6 +2614,232 @@ impl Browser {
             }
         } else if self.merge_dialog.is_some() && !merge_open {
             self.merge_dialog = None;
+        }
+
+        let mut rebase_submit = None;
+        let mut rebase_open = true;
+        if let Some(dialog) = &mut self.rebase_dialog {
+            let mut cancelled = false;
+            egui::Window::new("Rebase branch")
+                .id(egui::Id::unique("rebase-branch"))
+                .open(&mut rebase_open)
+                .collapsible(false)
+                .resizable(false)
+                .default_width(430.0)
+                .default_pos(ctx.content_rect().center())
+                .pivot(egui::Align2::CENTER_CENTER)
+                .show(ctx, |ui| {
+                    ui.label(
+                        "Rebase the current branch onto a local branch, remote-tracking ref, or tag.",
+                    );
+                    ui.add(
+                        egui::TextEdit::singleline(&mut dialog.reference)
+                            .hint_text("origin/main, main, or v1.0")
+                            .desired_width(f32::INFINITY),
+                    );
+                    ui.checkbox(
+                        &mut dialog.autostash,
+                        "Automatically stash working changes",
+                    );
+                    ui.colored_label(
+                        ui.visuals().warn_fg_color,
+                        "Rebase rewrites commits. A private backup ref is created before Git starts.",
+                    );
+                    if let Some(error) = &dialog.error {
+                        ui.colored_label(ui.visuals().error_fg_color, error);
+                    }
+                    ui.horizontal(|ui| {
+                        if ui
+                            .add_enabled(
+                                !dialog.reference.trim().is_empty(),
+                                egui::Button::new("Rebase"),
+                            )
+                            .clicked()
+                        {
+                            rebase_submit =
+                                Some((dialog.reference.trim().to_string(), dialog.autostash));
+                        }
+                        if ui.button("Cancel").clicked() {
+                            cancelled = true;
+                        }
+                    });
+                });
+            if cancelled {
+                rebase_open = false;
+            }
+        }
+        if let Some((reference, autostash)) = rebase_submit {
+            match self.start_rebase(ctx, &reference, autostash) {
+                Ok(()) => self.rebase_dialog = None,
+                Err(error) => {
+                    if let Some(dialog) = &mut self.rebase_dialog {
+                        dialog.error = Some(error);
+                    }
+                }
+            }
+        } else if self.rebase_dialog.is_some() && !rebase_open {
+            self.rebase_dialog = None;
+        }
+
+        if let Some(generation) = self.rewrite_refresh {
+            if self.state.loaded_generation >= generation {
+                self.rewrite_refresh = None;
+                self.rewrite_dialog = None;
+            } else if let Some(error) = self.state.error.clone() {
+                self.rewrite_refresh = None;
+                self.rewrite_dialog = None;
+                self.mutation_error = Some(format!("History refresh failed: {error}"));
+            }
+        }
+        let rewrite_busy = self.rewrite_job.is_some();
+        let rewrite_refreshing = self.rewrite_refresh.is_some();
+        let mut rewrite_submit = None;
+        let mut rewrite_cancel = false;
+        if let Some(dialog) = &mut self.rewrite_dialog {
+            let mut move_up = None;
+            let mut move_down = None;
+            let modal = egui::Modal::new(egui::Id::unique("reorder-squash")).show(ctx, |ui| {
+                let width = (ctx.content_rect().width() - 64.0).clamp(360.0, 620.0);
+                ui.set_width(width);
+                ui.heading("Reorder and squash");
+                ui.add_space(4.0);
+                if rewrite_busy || rewrite_refreshing {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label(if rewrite_busy {
+                            "Rewriting commits…"
+                        } else {
+                            "Refreshing history…"
+                        });
+                    });
+                    ui.weak("This dialog closes when the refreshed history is ready.");
+                    ui.add_space(8.0);
+                }
+                ui.add_enabled_ui(!(rewrite_busy || rewrite_refreshing), |ui| {
+                    ui.label(
+                        "Reorder commits from the selected commit through HEAD. Squash combines a commit into the row above. Merge commits are not supported.",
+                    );
+                    ui.add_space(4.0);
+                    egui::ScrollArea::vertical()
+                        .max_height(300.0)
+                        .show(ui, |ui| {
+                            for index in 0..dialog.rows.len() {
+                                let id = dialog.rows[index].id.clone();
+                                let subject = dialog.rows[index].subject.clone();
+                                let mut action = dialog.rows[index].action;
+                                ui.horizontal(|ui| {
+                                    ui.add_sized(
+                                        [22.0, 24.0],
+                                        egui::Label::new(
+                                            egui::RichText::new(format!("{}", index + 1))
+                                                .monospace()
+                                                .weak(),
+                                        ),
+                                    );
+                                    let up = egui::Button::new(
+                                        phosphor::icon(phosphor::ARROW_UP).size(12.0),
+                                    )
+                                    .min_size(egui::vec2(24.0, 24.0));
+                                    if ui
+                                        .add_enabled(index > 0, up)
+                                        .on_hover_text("Move up")
+                                        .clicked()
+                                    {
+                                        move_up = Some(index);
+                                    }
+                                    let down = egui::Button::new(
+                                        phosphor::icon(phosphor::ARROW_DOWN).size(12.0),
+                                    )
+                                    .min_size(egui::vec2(24.0, 24.0));
+                                    if ui
+                                        .add_enabled(index + 1 < dialog.rows.len(), down)
+                                        .on_hover_text("Move down")
+                                        .clicked()
+                                    {
+                                        move_down = Some(index);
+                                    }
+                                    let mut squash =
+                                        action == gg_engine::rewrite::Action::Squash;
+                                    if ui
+                                        .add_enabled(
+                                            index > 0,
+                                            egui::Checkbox::new(&mut squash, "Squash"),
+                                        )
+                                        .on_hover_text("Combine this commit into the row above")
+                                        .changed()
+                                    {
+                                        action = if squash {
+                                            gg_engine::rewrite::Action::Squash
+                                        } else {
+                                            gg_engine::rewrite::Action::Pick
+                                        };
+                                    }
+                                    let short = id.chars().take(7).collect::<String>();
+                                    ui.label(egui::RichText::new(short).monospace().weak());
+                                    let remaining = ui.available_width().max(80.0);
+                                    ui.add_sized(
+                                        [remaining, 24.0],
+                                        egui::Label::new(subject.clone()).truncate(),
+                                    )
+                                    .on_hover_text(subject);
+                                });
+                                dialog.rows[index].action = action;
+                            }
+                        });
+                    if let Some(index) = move_up {
+                        dialog.rows.swap(index, index - 1);
+                    }
+                    if let Some(index) = move_down {
+                        dialog.rows.swap(index, index + 1);
+                    }
+                    if let Some(first) = dialog.rows.first_mut() {
+                        first.action = gg_engine::rewrite::Action::Pick;
+                    }
+                    ui.add_space(4.0);
+                    ui.checkbox(
+                        &mut dialog.autostash,
+                        "Automatically stash working changes",
+                    );
+                    ui.colored_label(
+                        ui.visuals().warn_fg_color,
+                        "Reordering rewrites commits. A private backup ref is created before Git starts.",
+                    );
+                    if let Some(error) = &dialog.error {
+                        ui.colored_label(ui.visuals().error_fg_color, error);
+                    }
+                    ui.horizontal(|ui| {
+                        if ui.button("Rewrite commits").clicked() {
+                            rewrite_submit = Some((
+                                dialog.from.clone(),
+                                dialog
+                                    .rows
+                                    .iter()
+                                    .map(|row| gg_engine::rewrite::Step {
+                                        action: row.action,
+                                        commit: row.id.clone(),
+                                    })
+                                    .collect::<Vec<_>>(),
+                                dialog.autostash,
+                            ));
+                        }
+                        if ui.button("Cancel").clicked() {
+                            rewrite_cancel = true;
+                        }
+                    });
+                });
+            });
+            if !(rewrite_busy || rewrite_refreshing) && modal.should_close() {
+                rewrite_cancel = true;
+            }
+        }
+        if let Some((from, steps, autostash)) = rewrite_submit
+            && let Err(error) = self.begin_rewrite(ctx, from, steps, autostash)
+            && let Some(dialog) = &mut self.rewrite_dialog
+        {
+            dialog.error = Some(error);
+        }
+        if rewrite_cancel {
+            self.rewrite_dialog = None;
         }
 
         let mut stash_submit = None;
@@ -2717,6 +3251,22 @@ impl Browser {
                                                     }
                                                 }
                                             });
+                                            if ui
+                                                .add_enabled(
+                                                    self.mutation.is_none(),
+                                                    egui::Button::new(
+                                                        "Reorder and squash to HEAD…",
+                                                    ),
+                                                )
+                                                .on_hover_text(
+                                                    "Rewrite commits from this commit through HEAD",
+                                                )
+                                                .clicked()
+                                            {
+                                                pending_commit_action =
+                                                    Some((id.clone(), CommitAction::Rewrite));
+                                                ui.close();
+                                            }
                                             if ui.button("Compare to local").clicked() {
                                                 pending_commit_action =
                                                     Some((id.clone(), CommitAction::Compare));
@@ -2826,6 +3376,11 @@ impl Browser {
                 }
                 CommitAction::Reset(mode) => {
                     self.reset_confirm = Some((id, mode));
+                }
+                CommitAction::Rewrite => {
+                    if let Err(error) = self.open_rewrite_dialog(&id) {
+                        self.mutation_error = Some(error);
+                    }
                 }
                 CommitAction::Compare => {
                     self.open_compare(ctx, id);
@@ -3284,6 +3839,191 @@ mod tests {
     }
 
     #[test]
+    fn rebase_dialog_and_banner_render_at_supported_widths() {
+        for width in [720.0, 1120.0] {
+            let ctx = egui::Context::default();
+            let mut app = layout_fixture();
+            app.rebase_dialog = Some(RebaseDialog {
+                reference: "origin/main".into(),
+                autostash: true,
+                error: None,
+            });
+            let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let output = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let text = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert!(text.iter().any(|line| line.contains("Rebase branch")));
+            assert!(
+                text.iter()
+                    .any(|line| line.contains("Automatically stash working changes"))
+            );
+            assert!(text.iter().any(|line| line.contains("private backup ref")));
+            assert!(text.iter().any(|line| line.contains("origin/main")));
+            assert!(text.iter().any(|line| line.contains("Rebase")));
+
+            app.rebase_dialog = None;
+            app.mutation = Some(gg_engine::mutation::OperationState {
+                operation: gg_engine::mutation::Operation::Rebase,
+                commit: Some("abc123".into()),
+                conflicts: vec!["a".into()],
+            });
+            let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let output = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let text = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert!(text.iter().any(|line| line.contains("rebase in progress")));
+            assert!(text.iter().any(|line| line.contains("Continue")));
+            assert!(text.iter().any(|line| line.contains("Skip")));
+            assert!(text.iter().any(|line| line.contains("Abort")));
+        }
+    }
+
+    #[test]
+    fn rewrite_dialog_renders_at_supported_widths() {
+        for width in [720.0, 1120.0] {
+            let ctx = egui::Context::default();
+            let mut app = layout_fixture();
+            app.rewrite_dialog = Some(RewriteDialog {
+                from: "a".repeat(40),
+                rows: vec![
+                    RewriteRow {
+                        id: "a".repeat(40),
+                        subject: "first change".into(),
+                        action: gg_engine::rewrite::Action::Pick,
+                    },
+                    RewriteRow {
+                        id: "b".repeat(40),
+                        subject: "second change".into(),
+                        action: gg_engine::rewrite::Action::Squash,
+                    },
+                ],
+                autostash: true,
+                error: None,
+            });
+            let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let output = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let text = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert!(text.iter().any(|line| line.contains("Reorder and squash")));
+            assert!(text.iter().any(|line| line.contains("Squash")));
+            assert!(text.iter().any(|line| line.contains("Rewrite commits")));
+            assert!(text.iter().any(|line| line.contains("private backup ref")));
+            assert!(text.iter().any(|line| line.contains("first change")));
+            assert!(text.iter().any(|line| line.contains("second change")));
+        }
+    }
+
+    #[test]
+    fn rewrite_dialog_stays_open_while_rewriting() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        app.rewrite_dialog = Some(RewriteDialog {
+            from: "a".repeat(40),
+            rows: vec![RewriteRow {
+                id: "a".repeat(40),
+                subject: "first change".into(),
+                action: gg_engine::rewrite::Action::Pick,
+            }],
+            autostash: false,
+            error: None,
+        });
+        let (_sender, receiver) = std::sync::mpsc::channel();
+        app.rewrite_job = Some(RewriteJob {
+            receiver,
+            restore_row: None,
+        });
+        let _ = crate::tests::run_ui(
+            &ctx,
+            frame_input(
+                1120.0,
+                740.0,
+                vec![key(egui::Key::Escape, egui::Modifiers::NONE)],
+            ),
+            |ctx| app.draw_ui(ctx),
+        );
+        let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        assert!(app.rewrite_dialog.is_some());
+        let text = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(text.iter().any(|line| line.contains("Rewriting commits")));
+    }
+
+    #[test]
+    fn rewrite_dialog_closes_after_history_refresh_is_loaded() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        app.rewrite_dialog = Some(RewriteDialog {
+            from: "a".repeat(40),
+            rows: vec![RewriteRow {
+                id: "a".repeat(40),
+                subject: "first change".into(),
+                action: gg_engine::rewrite::Action::Pick,
+            }],
+            autostash: false,
+            error: None,
+        });
+        app.rewrite_refresh = Some(app.state.loaded_generation + 1);
+        let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        assert!(app.rewrite_dialog.is_some());
+        let text = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(text.iter().any(|line| line.contains("Refreshing history")));
+
+        app.state.loaded_generation = app.rewrite_refresh.unwrap_or_default();
+        let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        assert!(app.rewrite_dialog.is_none());
+        assert!(app.rewrite_refresh.is_none());
+    }
+
+    #[test]
     fn mutation_banner_renders_at_supported_widths() {
         for width in [720.0, 1120.0] {
             let ctx = egui::Context::default();
@@ -3314,7 +4054,35 @@ mod tests {
             assert!(text.iter().any(|line| line.contains("Continue")));
             assert!(text.iter().any(|line| line.contains("Skip")));
             assert!(text.iter().any(|line| line.contains("Abort")));
+            assert!(text.iter().any(|line| line.contains("Backups…")));
         }
+    }
+
+    #[test]
+    fn rebase_banner_surfaces_backups() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        app.mutation = Some(gg_engine::mutation::OperationState {
+            operation: gg_engine::mutation::Operation::Rebase,
+            commit: Some("abc123".into()),
+            conflicts: vec!["a".into()],
+        });
+        let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        let text = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(text.iter().any(|line| line.contains("rebase in progress")));
+        assert!(text.iter().any(|line| line.contains("Backups…")));
     }
 
     #[test]

@@ -327,3 +327,28 @@ Linux x86_64 · Rust 1.99.1 · local Git fixtures.
 - egui tests switch between Local Changes and All Commits from the sidebar and toolbar fallback, keep the toolbar and refs visible, and assert the old Status button is gone. They load the HEAD message into the amend toggle, show the commit's contents as staged, unstage and restage a working change through the unified view, rewrite the commit, clear the amend base, render the **Amended** status line, and render the reflog window and branch-creation dialog at 720 and 1120 widths.
 - Reflog read-only tests cover `HEAD` and branch selectors, newest-first entries, times, actions, details, stale-entry clearing, and missing or option-shaped references.
 - [Six native CI jobs](https://github.com/baol/gg/actions/runs/39938179241) pass tests, Clippy with `-D warnings`, release builds, CLI smoke checks, and packaging on Linux, macOS, and Windows on x86_64 and arm64 for `3761a1f`.
+
+## M6 rebase · 2026-10-23
+
+Linux x86_64 · Rust 1.99.1 · local Git fixtures.
+
+- 280 workspace tests pass (3 ignored); formatting, Clippy with `-D warnings`, and the debug build pass.
+- Git oracle tests rebase a diverged branch onto another local branch and verify the rewritten parent, preserved subject, single-parent history, and a private `refs/gg/backup/rebase/...` ref pointing at the previous tip. Local branches, tags, and remote-tracking refs all resolve.
+- Clean-worktree tests reject tracked changes, including with `rebase.autoStash=true`, unless autostash is explicitly enabled; `--no-autostash` keeps repository configuration from overriding the decision. Option-shaped and missing references are rejected without changing HEAD.
+- Conflict fixtures verify rebase state detection, `REBASE_HEAD`, conflict paths, abort restoring the original tip and worktree, continue after staging, and skip completing without the conflicting commit.
+- CLI tests cover `git good rebase REF [--autostash]`, receipt fields, backup refs, dirty failures, conflict abort/continue, and unknown-option errors.
+- egui tests render the **Rebase branch** dialog with the autostash choice and private-backup warning, plus the in-progress banner with **Continue**, **Skip**, **Abort**, and **Backups…** at 720 and 1120 widths. The Refs menu and branch, remote, and tag context menus expose rebase actions.
+
+## M6 reorder, squash, and rewrite recovery · 2026-10-23
+
+Linux x86_64 · Rust 1.99.1 · local Git fixtures.
+
+- 296 workspace tests pass (3 ignored); formatting, Clippy with `-D warnings`, and the debug build pass.
+- [Six native CI jobs](https://github.com/baol/gg/actions/runs/39957559424) pass tests, Clippy with `-D warnings`, release builds, CLI smoke checks, and packaging on Linux, macOS, and Windows on x86_64 and arm64 for `171d2f8`.
+- Git oracle tests list a linear range oldest first, reorder commits, squash a commit into the previous row with both messages preserved, rewrite a root range through `--root`, and verify a private `refs/gg/backup/rewrite/...` ref points at the previous tip.
+- Rewrite validation rejects empty, squash-first, duplicate, missing, and out-of-range steps; non-ancestor and option-shaped starts; and ranges containing merge commits. Merge commits are rejected rather than flattened, and a shallow boundary is rejected instead of being rewritten as a root.
+- Conflict fixtures verify the rewrite leaves Git rebase state, lists unmerged paths, aborts to the previous tip and worktree, and skips the conflicting commit to finish the remaining range. Dirty tracked worktrees are rejected unless autostash is explicit, even with `rebase.autoStash=true`; autostash restores the working change.
+- CLI tests cover `git good rewrite --from COMMIT --pick COMMIT... --squash COMMIT...`, reorder and squash receipts, backup refs, conflict abort, skip, and unknown-option errors. `git good rewrite --continue|--skip|--abort` targets the same Git rebase state.
+- Backup tests verify `gg_git::backup::list` returns the private reference, kind, commit, subject, and commit time, while the refs snapshot continues to exclude `refs/gg/`.
+- egui tests render the **Reorder and squash** modal with ordered rows, up/down icon controls, Squash choices, autostash, and the private-backup warning at 720 and 1120 widths. A pending rewrite keeps the modal open with **Rewriting commits…** and ignores Escape; a pending refresh shows **Refreshing history…** and closes only after the replacement history generation is accepted. The Backups window renders the entry list, **Open commit**, **Reset branch here**, **Create branch here…**, **Copy hash**, and **Copy ref**. The in-progress banner exposes **Backups…** and names an in-progress rebase.
+- The native rewrite runs Git on a background worker. The modal disables its controls during the run, overrides the history hover-safety gate for the rewrite refresh, and stays open until the replacement history has loaded instead of exposing the previous commit list.
