@@ -34,6 +34,7 @@ mod status_view;
 mod status_worker;
 mod stream;
 mod sync_cli;
+mod tag_cli;
 mod thumbnails;
 use eframe::egui;
 #[cfg(test)]
@@ -50,7 +51,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("--help")) {
         println!(
-            "gg · good git\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good refs [PATH]      Print branches, remotes, tags, and HEAD as JSON\ngit-good status [PATH] [--file PATH --area AREA]   Print working status or diff as JSON\ngit-good stage --file PATH [--hunk HEADER]... [--repo PATH]   Stage one file or selected hunks\ngit-good unstage --file PATH [--repo PATH]   Unstage one file\ngit-good commit -m MESSAGE [--repo PATH]   Commit the index after Git hooks\ngit-good switch [--create] BRANCH [--repo PATH]   Switch to or create a local branch\ngit-good fetch [REMOTE] [--prune] [--repo PATH]   Fetch and update remote-tracking refs\ngit-good push [REMOTE] [BRANCH] [--set-upstream] [--repo PATH]   Push a local branch without force\ngit-good clone URL [PATH]   Clone a repository and open it\ngit-good stash <list|push|apply|pop|drop> [OPTIONS] [--repo PATH]   List or mutate stashes\ngit-good cherry-pick COMMIT [--repo PATH]   Apply a commit\ngit-good revert COMMIT [--repo PATH]   Invert a commit\ngit-good merge REF [--no-ff] [--repo PATH]   Merge a branch, remote, or tag\ngit-good conflicts [--repo PATH]   List unmerged paths\ngit-good conflict --file PATH [--use ours|theirs|--stage] [--repo PATH]   Read or resolve a conflict\ngit-good reset --soft|--mixed|--hard COMMIT [--repo PATH]   Reset the current branch\ngit-good show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]   Review or export\n\nBrowse commits reachable from HEAD and all local, remote, and tag refs."
+            "gg · good git\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good refs [PATH]      Print branches, remotes, tags, and HEAD as JSON\ngit-good status [PATH] [--file PATH --area AREA]   Print working status or diff as JSON\ngit-good stage --file PATH [--hunk HEADER]... [--repo PATH]   Stage one file or selected hunks\ngit-good unstage --file PATH [--repo PATH]   Unstage one file\ngit-good commit -m MESSAGE [--repo PATH]   Commit the index after Git hooks\ngit-good switch [--create] BRANCH [--repo PATH]   Switch to or create a local branch\ngit-good fetch [REMOTE] [--prune] [--repo PATH]   Fetch and update remote-tracking refs\ngit-good push [REMOTE] [BRANCH] [--set-upstream] [--repo PATH]   Push a local branch without force\ngit-good clone URL [PATH]   Clone a repository and open it\ngit-good stash <list|push|apply|pop|drop> [OPTIONS] [--repo PATH]   List or mutate stashes\ngit-good cherry-pick COMMIT [--repo PATH]   Apply a commit\ngit-good revert COMMIT [--repo PATH]   Invert a commit\ngit-good merge REF [--no-ff] [--repo PATH]   Merge a branch, remote, or tag\ngit-good conflicts [--repo PATH]   List unmerged paths\ngit-good conflict --file PATH [--use ours|theirs|--stage] [--repo PATH]   Read or resolve a conflict\ngit-good reset --soft|--mixed|--hard COMMIT [--repo PATH]   Reset the current branch\ngit-good branch --delete BRANCH [--force] [--repo PATH]   Delete a local branch\ngit-good tag --delete TAG [--repo PATH]   Delete a local tag\ngit-good show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]   Review or export\n\nBrowse commits reachable from HEAD and all local, remote, and tag refs."
         );
         return Ok(());
     }
@@ -95,6 +96,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("reset")) {
         return reset_cli::run(args);
+    }
+    if first.as_deref() == Some(std::ffi::OsStr::new("branch")) {
+        return branch_cli::delete(args);
+    }
+    if first.as_deref() == Some(std::ffi::OsStr::new("tag")) {
+        return tag_cli::run(args);
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("fetch")) {
         return sync_cli::fetch(args);
@@ -210,6 +217,16 @@ struct MergeDialog {
     error: Option<String>,
 }
 
+struct BranchDeleteDialog {
+    name: String,
+    error: Option<String>,
+}
+
+struct TagDeleteDialog {
+    name: String,
+    error: Option<String>,
+}
+
 struct ConflictView {
     paths: Vec<String>,
     selected: usize,
@@ -264,6 +281,8 @@ struct Browser {
     merge_dialog: Option<MergeDialog>,
     conflict_view: Option<ConflictView>,
     reset_confirm: Option<(String, gg_engine::reset::Mode)>,
+    branch_delete: Option<BranchDeleteDialog>,
+    tag_delete: Option<TagDeleteDialog>,
     refs_visible: bool,
     refs_query: String,
     state: state::State,
@@ -315,6 +334,8 @@ impl Browser {
             merge_dialog: None,
             conflict_view: None,
             reset_confirm: None,
+            branch_delete: None,
+            tag_delete: None,
             refs_visible: true,
             refs_query: String::new(),
             state: state::State::default(),
@@ -682,6 +703,33 @@ impl Browser {
         self.refresh_mutation();
         self.load(ctx);
         self.refresh_working(ctx);
+        Ok(())
+    }
+
+    fn delete_branch(
+        &mut self,
+        ctx: &egui::Context,
+        name: &str,
+        force: bool,
+    ) -> Result<(), String> {
+        let path = self
+            .stash_path()
+            .ok_or("Open a repository before deleting a branch.")?;
+        gg_git::branch::delete(&path, name, force)?;
+        self.mutation_notice = Some(format!("Deleted branch {name}"));
+        self.branch_delete = None;
+        self.load(ctx);
+        Ok(())
+    }
+
+    fn delete_tag(&mut self, ctx: &egui::Context, name: &str) -> Result<(), String> {
+        let path = self
+            .stash_path()
+            .ok_or("Open a repository before deleting a tag.")?;
+        gg_git::tag::delete(&path, name)?;
+        self.mutation_notice = Some(format!("Deleted tag {name}"));
+        self.tag_delete = None;
+        self.load(ctx);
         Ok(())
     }
 
@@ -1662,6 +1710,19 @@ impl Browser {
                 Some(refs_view::Action::Track(name)) => {
                     self.track_dialog = Some(name);
                 }
+                Some(refs_view::Action::Merge(name)) => {
+                    self.merge_dialog = Some(MergeDialog {
+                        reference: name,
+                        no_ff: false,
+                        error: None,
+                    });
+                }
+                Some(refs_view::Action::DeleteBranch(name)) => {
+                    self.branch_delete = Some(BranchDeleteDialog { name, error: None });
+                }
+                Some(refs_view::Action::DeleteTag(name)) => {
+                    self.tag_delete = Some(TagDeleteDialog { name, error: None });
+                }
                 None => {}
             }
         }
@@ -1828,6 +1889,87 @@ impl Browser {
                 self.track_dialog = None;
             }
         }
+        let mut branch_delete_action = None;
+        let mut branch_delete_open = true;
+        if let Some(dialog) = &mut self.branch_delete {
+            let mut cancelled = false;
+            egui::Window::new("Delete branch")
+                .id(egui::Id::unique("delete-branch"))
+                .open(&mut branch_delete_open)
+                .collapsible(false)
+                .resizable(false)
+                .default_pos(ctx.content_rect().center())
+                .pivot(egui::Align2::CENTER_CENTER)
+                .show(ctx, |ui| {
+                    ui.label(format!("Delete local branch {}?", dialog.name));
+                    if let Some(error) = &dialog.error {
+                        ui.colored_label(ui.visuals().error_fg_color, error);
+                    }
+                    ui.horizontal(|ui| {
+                        if ui.button("Delete").clicked() {
+                            branch_delete_action = Some((dialog.name.clone(), false));
+                        }
+                        if ui.button("Force delete").clicked() {
+                            branch_delete_action = Some((dialog.name.clone(), true));
+                        }
+                        if ui.button("Cancel").clicked() {
+                            cancelled = true;
+                        }
+                    });
+                });
+            if cancelled {
+                branch_delete_open = false;
+            }
+        }
+        if let Some((name, force)) = branch_delete_action {
+            if let Err(error) = self.delete_branch(ctx, &name, force)
+                && let Some(dialog) = &mut self.branch_delete
+            {
+                dialog.error = Some(error);
+            }
+        } else if self.branch_delete.is_some() && !branch_delete_open {
+            self.branch_delete = None;
+        }
+
+        let mut tag_delete_action = None;
+        let mut tag_delete_open = true;
+        if let Some(dialog) = &mut self.tag_delete {
+            let mut cancelled = false;
+            egui::Window::new("Delete tag")
+                .id(egui::Id::unique("delete-tag"))
+                .open(&mut tag_delete_open)
+                .collapsible(false)
+                .resizable(false)
+                .default_pos(ctx.content_rect().center())
+                .pivot(egui::Align2::CENTER_CENTER)
+                .show(ctx, |ui| {
+                    ui.label(format!("Delete local tag {}?", dialog.name));
+                    if let Some(error) = &dialog.error {
+                        ui.colored_label(ui.visuals().error_fg_color, error);
+                    }
+                    ui.horizontal(|ui| {
+                        if ui.button("Delete").clicked() {
+                            tag_delete_action = Some(dialog.name.clone());
+                        }
+                        if ui.button("Cancel").clicked() {
+                            cancelled = true;
+                        }
+                    });
+                });
+            if cancelled {
+                tag_delete_open = false;
+            }
+        }
+        if let Some(name) = tag_delete_action {
+            if let Err(error) = self.delete_tag(ctx, &name)
+                && let Some(dialog) = &mut self.tag_delete
+            {
+                dialog.error = Some(error);
+            }
+        } else if self.tag_delete.is_some() && !tag_delete_open {
+            self.tag_delete = None;
+        }
+
         let mut reset_submit = None;
         let mut reset_cancel = false;
         if let Some((commit, mode)) = self.reset_confirm.clone() {
@@ -2770,6 +2912,57 @@ mod tests {
             assert!(text.iter().any(|line| line.contains("Apply")));
             assert!(text.iter().any(|line| line.contains("Pop")));
             assert!(text.iter().any(|line| line.contains("Drop")));
+        }
+    }
+
+    #[test]
+    fn branch_and_tag_delete_dialogs_render_at_supported_widths() {
+        for width in [720.0, 1120.0] {
+            let ctx = egui::Context::default();
+            let mut app = layout_fixture();
+            app.branch_delete = Some(BranchDeleteDialog {
+                name: "feature".into(),
+                error: None,
+            });
+            let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let output = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let text = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert!(text.iter().any(|line| line.contains("Delete branch")));
+            assert!(text.iter().any(|line| line.contains("feature")));
+            assert!(text.iter().any(|line| line.contains("Force delete")));
+
+            app.branch_delete = None;
+            app.tag_delete = Some(TagDeleteDialog {
+                name: "v1".into(),
+                error: None,
+            });
+            let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let output = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let text = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert!(text.iter().any(|line| line.contains("Delete tag")));
+            assert!(text.iter().any(|line| line.contains("v1")));
         }
     }
 

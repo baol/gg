@@ -14,8 +14,71 @@ pub struct Receipt {
     pub warnings: Vec<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DeleteReceipt {
+    pub branch: String,
+    pub force: bool,
+}
+
 pub fn switch(path: &Path, branch: &str) -> Result<Receipt, String> {
     run(path, branch, false)
+}
+
+pub fn delete(path: &Path, branch: &str, force: bool) -> Result<DeleteReceipt, String> {
+    let branch = branch.trim();
+    validate_name(branch)?;
+    let session = crate::status::Session::open(path)?;
+    crate::status::validate(&session.identity)?;
+    if session.identity.head.is_none() {
+        return Err("Repository has no commits yet. There are no branches to delete.".into());
+    }
+    let repo = gix::discover(path).map_err(|e| format!("Read repository: {e}"))?;
+    let full = format!("refs/heads/{branch}");
+    let head = repo
+        .head()
+        .map_err(|e| format!("Read HEAD: {e}"))?
+        .referent_name()
+        .map(ToString::to_string);
+    if head.as_deref() == Some(full.as_str()) {
+        return Err(format!("Cannot delete the current branch {branch}."));
+    }
+    if repo
+        .try_find_reference(full.as_str())
+        .map_err(|e| format!("Read branch {branch}: {e}"))?
+        .is_none()
+    {
+        return Err(format!("Local branch {branch} does not exist."));
+    }
+    let mut command = Command::new("git");
+    command
+        .current_dir(&session.identity.path)
+        .arg("branch")
+        .arg(if force { "-D" } else { "-d" })
+        .arg(branch)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE");
+    let output = command.output().map_err(|e| {
+        format!("Could not run branch deletion using Git: {e}. Install Git and retry.")
+    })?;
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(format!(
+            "Delete branch {branch} failed ({}).{}",
+            output.status,
+            if detail.is_empty() {
+                String::new()
+            } else {
+                format!("\n{detail}")
+            }
+        ));
+    }
+    Ok(DeleteReceipt {
+        branch: branch.to_string(),
+        force,
+    })
 }
 
 pub fn create(path: &Path, branch: &str) -> Result<Receipt, String> {

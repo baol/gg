@@ -306,3 +306,13 @@ Linux x86_64 · Rust 1.99.1 · local Git fixtures.
 - Git oracle tests compare an arbitrary `against` base with the selected commit and assert the old/new sides.
 - CLI tests cover `git good show HEAD --against HEAD^`, the generated comparison subject, changed files, and the `--against`/`--parent` conflict.
 - The commit-row menu adds **Compare to local**, opening the review diff against the current branch tip.
+
+## Ref context menus · 2026-10-22
+
+Linux x86_64 · Rust 1.99.1 · local Git fixtures.
+
+- 253 workspace tests pass (3 ignored); formatting, Clippy with `-D warnings`, and the debug build pass.
+- Git oracle tests cover safe and forced branch deletion, current/missing-branch rejection, and tag deletion with invalid names.
+- CLI tests cover `git good branch --delete BRANCH [--force]` and `git good tag --delete TAG` receipts and errors.
+- egui tests render the branch and tag delete confirmations at 720 and 1120 widths.
+- Branch, tag, and remote menus expose switch/jump, merge, track, delete, and copy actions.

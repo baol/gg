@@ -1711,3 +1711,54 @@ fn show_against_compares_with_an_arbitrary_base() -> Result {
     assert!(String::from_utf8_lossy(&out.stderr).contains("cannot be combined"));
     Ok(())
 }
+
+#[test]
+fn branch_and_tag_delete_cli() -> Result {
+    let repo = tempfile::tempdir()?;
+    init(repo.path(), &["-b", "main"])?;
+    git(repo.path(), &["config", "user.name", "Test"])?;
+    git(repo.path(), &["config", "user.email", "test@example.org"])?;
+    std::fs::write(repo.path().join("a"), b"base\n")?;
+    git(repo.path(), &["add", "a"])?;
+    git(repo.path(), &["commit", "-qm", "base"])?;
+    git(repo.path(), &["branch", "feature"])?;
+    git(repo.path(), &["tag", "v1"])?;
+
+    let binary = env!("CARGO_BIN_EXE_git-good");
+    let out = Command::new(binary)
+        .args(["branch", "--delete", "feature", "--repo"])
+        .arg(repo.path())
+        .output()?;
+    assert!(out.status.success());
+    let receipt: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(receipt["operation"], "branch-delete");
+    assert_eq!(receipt["branch"], "feature");
+    assert!(
+        !git_output(repo.path(), &["branch", "--list", "feature"])?
+            .windows(7)
+            .any(|window| window == b"feature")
+    );
+
+    let out = Command::new(binary)
+        .args(["branch", "--delete", "main", "--repo"])
+        .arg(repo.path())
+        .output()?;
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("current branch"));
+
+    let out = Command::new(binary)
+        .args(["tag", "--delete", "v1", "--repo"])
+        .arg(repo.path())
+        .output()?;
+    assert!(out.status.success());
+    let receipt: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(receipt["operation"], "tag-delete");
+    assert_eq!(receipt["tag"], "v1");
+
+    let out = Command::new(binary)
+        .args(["tag", "--delete", "missing", "--repo"])
+        .arg(repo.path())
+        .output()?;
+    assert!(!out.status.success());
+    Ok(())
+}

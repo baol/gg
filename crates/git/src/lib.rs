@@ -185,6 +185,7 @@ pub mod review;
 pub mod stash;
 pub mod status;
 pub mod sync;
+pub mod tag;
 pub mod working_diff;
 
 pub mod unstage;
