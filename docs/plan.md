@@ -12,6 +12,7 @@ Contracts: [working status, committing, and amend](architecture.md#committing).
 
 1. **Commit drafts · complete.** Retain normal and amend commit text and the selected file when leaving Local Changes for history, review, or a refresh; restore them for the same canonical worktree, clear the submitted draft only after a successful commit, retain it on hook failure and conflict, and never transfer drafts between worktrees.
 2. **Merge, rebase, and recovery workers · complete.** Run merge, rebase, and continue/skip/abort on one background operation worker; close the dialog immediately, name the pending operation in the status line, disable duplicate or incompatible mutation actions, and refresh mutation state, history, refs, status, reflog, and backups once the result is accepted.
+3. **Conflict workflow · complete.** Name the operation, unresolved count, and operation commit above the conflict content; explain Ours/Theirs per operation, especially rebase; state that whole-file choices replace and stage while **Stage resolved** stages external edits; disable Continue while unresolved paths remain; run conflict listing, content reads, and side resolution on workers; select the next unresolved path after resolution; and use side tabs with bounded scrolling at narrow widths.
 
 ### Acceptance
 
@@ -19,6 +20,7 @@ Contracts: [working status, committing, and amend](architecture.md#committing).
 | --- | --- | --- |
 | Commit drafts | A multiline draft and selected file survive history/review/refresh; hook failure and conflict retain the text; a successful commit clears only that draft; another worktree starts empty | egui interaction, Git fixture, and native review |
 | Operation responsiveness | Merge, rebase, and recovery start without blocking frames or navigation; duplicate submission starts one operation; success, failure, conflict, and worker disconnection leave actionable state and refresh affected views once | egui interaction, Git fixture, and native review |
+| Conflict workflow | Operation-aware side identities and staging consequences are explicit; Continue waits for zero unresolved paths; conflict listing, content, and resolution are worker-backed; the next unresolved path is selected after resolution; narrow widths use side tabs and bounded scrolling | egui interaction, Git fixture, and native review |
 
 Implementation and verification: [commit drafts](verification.md#pre-m7-commit-draft-retention--2026-10-23), [operation workers](verification.md#pre-m7-operation-workers--2026-10-23).
 

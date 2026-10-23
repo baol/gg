@@ -375,3 +375,15 @@ Linux x86_64 · Rust 1.99.1 · local Git fixtures.
 - A fixture `pre-rebase` hook blocks on a marker file. The rebase start returns immediately, a frame renders and names **Rebasing onto feature…** while the hook waits, and releasing the marker completes the rebase with the accepted notice.
 - Worker failure or disconnection clears the pending label and reports an actionable error while preserving Git's recovery state.
 - Native wide/narrow interaction review remains pending for this increment.
+
+## Pre-M7 conflict workflow · 2026-10-23
+
+Linux x86_64 · Rust 1.99.1 · local Git fixtures.
+
+- 305 workspace tests pass (3 ignored); formatting and Clippy with `-D warnings` pass.
+- The conflict window names the operation, unresolved count, and operation commit; explains Ours/Theirs for merge, rebase, cherry-pick, and revert; states that side choices replace and stage the whole file; and states that **Stage resolved** stages external or manually edited content.
+- Continue is disabled while unresolved paths remain and explains why. Skip and Abort remain deliberate actions with explicit consequences.
+- Conflict listing, content reads, and side resolution run on workers. The content test tolerates a blocked reader while frames render and adopts content when it arrives; side resolution starts and completes through the shared operation worker.
+- Resolving a path reloads the list and selects the next unresolved path predictably; a pure selection test covers keep-found, keep-missing, and empty lists.
+- At narrow widths the Base/Ours/Theirs panes become side tabs with one bounded scroll region; the path list keeps its own bounded scroll.
+- Native wide/narrow interaction review remains pending for this increment.

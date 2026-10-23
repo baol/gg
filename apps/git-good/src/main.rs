@@ -273,11 +273,75 @@ struct CreateBranchDialog {
     error: Option<String>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ConflictSide {
+    Base,
+    Ours,
+    Theirs,
+}
+
+enum ConflictUpdate {
+    Paths(Vec<String>),
+    Content(gg_engine::conflict::Content),
+}
+
 struct ConflictView {
     paths: Vec<String>,
     selected: usize,
+    previous_selected: usize,
+    keep: Option<String>,
     content: Option<gg_engine::conflict::Content>,
     error: Option<String>,
+    loading: bool,
+    worker: Option<std::sync::mpsc::Receiver<Result<ConflictUpdate, String>>>,
+    tab: ConflictSide,
+}
+
+fn next_conflict_selection(paths: &[String], keep: Option<&str>, previous: usize) -> usize {
+    keep.and_then(|path| paths.iter().position(|candidate| candidate == path))
+        .unwrap_or(previous)
+        .min(paths.len().saturating_sub(1))
+}
+
+fn conflict_side_hint(operation: Option<gg_engine::mutation::Operation>) -> &'static str {
+    match operation {
+        Some(gg_engine::mutation::Operation::Merge) => {
+            "Ours is the current branch. Theirs is the branch being merged."
+        }
+        Some(gg_engine::mutation::Operation::Rebase) => {
+            "Ours is the base being rebased onto. Theirs is the commit being replayed."
+        }
+        Some(gg_engine::mutation::Operation::CherryPick) => {
+            "Ours is the current branch. Theirs is the cherry-picked commit."
+        }
+        Some(gg_engine::mutation::Operation::Revert) => {
+            "Ours is the current branch. Theirs is the reverted change."
+        }
+        None => "Ours is stage 2. Theirs is stage 3.",
+    }
+}
+
+fn conflict_side_label(
+    operation: Option<gg_engine::mutation::Operation>,
+    side: ConflictSide,
+) -> &'static str {
+    match (operation, side) {
+        (_, ConflictSide::Base) => "Base",
+        (Some(gg_engine::mutation::Operation::Rebase), ConflictSide::Ours) => {
+            "Ours · base being rebased onto (stage 2)"
+        }
+        (Some(gg_engine::mutation::Operation::Rebase), ConflictSide::Theirs) => {
+            "Theirs · replayed commit (stage 3)"
+        }
+        (Some(gg_engine::mutation::Operation::Merge), ConflictSide::Ours) => {
+            "Ours · current branch (stage 2)"
+        }
+        (Some(gg_engine::mutation::Operation::Merge), ConflictSide::Theirs) => {
+            "Theirs · incoming branch (stage 3)"
+        }
+        (_, ConflictSide::Ours) => "Ours · current branch (stage 2)",
+        (_, ConflictSide::Theirs) => "Theirs · incoming change (stage 3)",
+    }
 }
 
 enum StashAction {
@@ -300,6 +364,9 @@ enum OperationOutcome {
         operation: gg_engine::mutation::Operation,
         action: MutationAction,
         receipt: gg_engine::mutation::MutationReceipt,
+    },
+    Conflict {
+        file: String,
     },
 }
 
@@ -1002,6 +1069,13 @@ impl Browser {
                 self.refresh_backups();
                 self.refresh_working(ctx);
             }
+            OperationOutcome::Conflict { file } => {
+                self.mutation_notice = Some(format!("Resolved {file}"));
+                self.refresh_mutation();
+                self.refresh_conflict_view(ctx, Some(&file));
+                self.load(ctx);
+                self.refresh_working(ctx);
+            }
             OperationOutcome::Recovery {
                 operation,
                 action,
@@ -1183,32 +1257,90 @@ impl Browser {
         self.state.generation
     }
 
-    fn open_conflict_view(&mut self) {
+    fn open_conflict_view(&mut self, ctx: &egui::Context) {
+        self.refresh_conflict_view(ctx, None);
+    }
+
+    fn refresh_conflict_view(&mut self, ctx: &egui::Context, keep: Option<&str>) {
         let Some(path) = self.stash_path() else {
             return;
         };
-        match gg_git::conflict::unmerged(&path) {
-            Ok(paths) => {
-                self.conflict_view = Some(ConflictView {
-                    paths,
-                    selected: 0,
-                    content: None,
-                    error: None,
-                });
-                self.load_conflict_content();
+        let view = self.conflict_view.get_or_insert_with(|| ConflictView {
+            paths: Vec::new(),
+            selected: 0,
+            previous_selected: 0,
+            keep: None,
+            content: None,
+            error: None,
+            loading: false,
+            worker: None,
+            tab: ConflictSide::Ours,
+        });
+        view.keep = keep.map(str::to_string);
+        view.previous_selected = view.selected;
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        let repaint = ctx.clone();
+        if std::thread::Builder::new()
+            .name("gg-conflicts".into())
+            .spawn(move || {
+                let result = gg_git::conflict::unmerged(&path).map(ConflictUpdate::Paths);
+                let _ = tx.send(result);
+                repaint.request_repaint();
+            })
+            .is_err()
+        {
+            view.error = Some("Could not start the conflict reader.".into());
+            view.loading = false;
+            return;
+        }
+        view.loading = true;
+        view.error = None;
+        view.worker = Some(rx);
+    }
+
+    fn poll_conflict_view(&mut self, ctx: &egui::Context) {
+        let message = match self
+            .conflict_view
+            .as_ref()
+            .and_then(|view| view.worker.as_ref())
+            .map(|rx| rx.try_recv())
+        {
+            None | Some(Err(std::sync::mpsc::TryRecvError::Empty)) => return,
+            Some(Ok(result)) => result,
+            Some(Err(std::sync::mpsc::TryRecvError::Disconnected)) => {
+                Err("Conflict reader stopped. Reopen conflicts and retry.".into())
             }
-            Err(error) => {
-                self.conflict_view = Some(ConflictView {
-                    paths: Vec::new(),
-                    selected: 0,
-                    content: None,
-                    error: Some(error),
-                });
+        };
+        let mut load_content = false;
+        if let Some(view) = &mut self.conflict_view {
+            view.worker = None;
+            view.loading = false;
+            match message {
+                Ok(ConflictUpdate::Paths(paths)) => {
+                    let keep = view.keep.take();
+                    view.selected =
+                        next_conflict_selection(&paths, keep.as_deref(), view.previous_selected);
+                    view.paths = paths;
+                    view.content = None;
+                    view.error = None;
+                    load_content = !view.paths.is_empty();
+                }
+                Ok(ConflictUpdate::Content(content)) => {
+                    view.content = Some(content);
+                    view.error = None;
+                }
+                Err(error) => {
+                    view.content = None;
+                    view.error = Some(error);
+                }
             }
+        }
+        if load_content {
+            self.load_conflict_content(ctx);
         }
     }
 
-    fn load_conflict_content(&mut self) {
+    fn load_conflict_content(&mut self, ctx: &egui::Context) {
         let Some(path) = self.stash_path() else {
             return;
         };
@@ -1217,18 +1349,27 @@ impl Browser {
         };
         let Some(file) = view.paths.get(view.selected).cloned() else {
             view.content = None;
+            view.loading = false;
             return;
         };
-        match gg_git::conflict::read(&path, &file) {
-            Ok(content) => {
-                view.content = Some(content);
-                view.error = None;
-            }
-            Err(error) => {
-                view.content = None;
-                view.error = Some(error);
-            }
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        let repaint = ctx.clone();
+        if std::thread::Builder::new()
+            .name("gg-conflict-content".into())
+            .spawn(move || {
+                let result = gg_git::conflict::read(&path, &file).map(ConflictUpdate::Content);
+                let _ = tx.send(result);
+                repaint.request_repaint();
+            })
+            .is_err()
+        {
+            view.error = Some("Could not start the conflict content reader.".into());
+            view.loading = false;
+            return;
         }
+        view.loading = true;
+        view.error = None;
+        view.worker = Some(rx);
     }
 
     fn resolve_conflict(
@@ -1245,15 +1386,17 @@ impl Browser {
             .and_then(|view| view.paths.get(view.selected))
             .cloned()
             .ok_or("Select a conflicted path first.")?;
-        match side {
-            Some(side) => gg_git::conflict::use_side(&path, &file, side)?,
-            None => gg_git::conflict::stage(&path, &file)?,
-        }
-        self.open_conflict_view();
-        self.refresh_mutation();
-        self.load(ctx);
-        self.refresh_working(ctx);
-        Ok(())
+        let label = match side {
+            Some(_) => format!("Resolving {file}…"),
+            None => format!("Staging {file}…"),
+        };
+        self.start_operation(ctx, label, move || {
+            match side {
+                Some(side) => gg_git::conflict::use_side(&path, &file, side)?,
+                None => gg_git::conflict::stage(&path, &file)?,
+            }
+            Ok(OperationOutcome::Conflict { file })
+        })
     }
 
     fn load(&mut self, ctx: &egui::Context) {
@@ -1480,6 +1623,7 @@ impl Browser {
                 }
             }
         }
+        self.poll_conflict_view(ctx);
         let narrow = ctx.content_rect().width() < 1040.0;
         let wide_refs = !narrow && self.refs_visible && ctx.content_rect().width() >= 1120.0;
         let filter_id = egui::Id::unique("history-filter");
@@ -2049,6 +2193,7 @@ impl Browser {
         let mut open_backups = false;
         let operation_pending = self.operation_busy();
         if let Some(state) = &self.mutation {
+            let conflicts_remain = !state.conflicts.is_empty();
             egui::Panel::top("mutation")
                 .exact_size(30.0)
                 .show(ui, |ui| {
@@ -2067,7 +2212,15 @@ impl Browser {
                             }
                         }
                         if ui
-                            .add_enabled(!operation_pending, egui::Button::new("Continue"))
+                            .add_enabled(
+                                !operation_pending && !conflicts_remain,
+                                egui::Button::new("Continue"),
+                            )
+                            .on_hover_text(if conflicts_remain {
+                                "Resolve every unmerged path first."
+                            } else {
+                                "Continue the in-progress operation."
+                            })
                             .clicked()
                         {
                             mutation_action = Some(MutationAction::Continue);
@@ -2092,7 +2245,7 @@ impl Browser {
                 });
         }
         if resolve_conflicts {
-            self.open_conflict_view();
+            self.open_conflict_view(ctx);
         }
         if open_backups && let Some(history) = &self.state.history {
             self.backups = Some(backups_view::BackupsView::new(history.path.clone()));
@@ -2613,10 +2766,19 @@ impl Browser {
             }
         }
 
+        let conflict_mutation = self.mutation.clone();
+        let conflict_operation_busy = self.operation_busy();
         let mut conflict_select = None;
         let mut conflict_action = None;
+        let mut conflict_recovery = None;
         let mut conflict_open = true;
         if let Some(view) = &mut self.conflict_view {
+            let operation = conflict_mutation.as_ref().map(|state| state.operation);
+            let unresolved = conflict_mutation
+                .as_ref()
+                .map(|state| state.conflicts.len())
+                .unwrap_or(view.paths.len());
+            let conflicts_remain = unresolved > 0;
             egui::Window::new("Resolve conflicts")
                 .id(egui::Id::unique("resolve-conflicts"))
                 .open(&mut conflict_open)
@@ -2626,42 +2788,104 @@ impl Browser {
                 .default_pos(ctx.content_rect().center())
                 .pivot(egui::Align2::CENTER_CENTER)
                 .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.strong(
+                            operation
+                                .map(gg_engine::mutation::Operation::as_str)
+                                .unwrap_or("operation"),
+                        );
+                        ui.label(format!("· {unresolved} unresolved"));
+                        if let Some(commit) = conflict_mutation
+                            .as_ref()
+                            .and_then(|state| state.commit.as_deref())
+                        {
+                            ui.label(format!("· {}", commit.chars().take(8).collect::<String>()));
+                        }
+                        if view.loading {
+                            ui.spinner();
+                        }
+                    });
+                    ui.label(conflict_side_hint(operation));
                     if let Some(error) = &view.error {
                         ui.colored_label(ui.visuals().error_fg_color, error);
                     }
-                    if view.paths.is_empty() {
+                    if view.paths.is_empty() && !view.loading {
                         ui.label("No unmerged paths.");
                     }
+                    ui.separator();
                     ui.horizontal_top(|ui| {
                         ui.vertical(|ui| {
                             ui.label("Paths");
-                            for (index, path) in view.paths.iter().enumerate() {
-                                if ui.selectable_label(index == view.selected, path).clicked() {
-                                    conflict_select = Some(index);
-                                }
-                            }
+                            egui::ScrollArea::vertical()
+                                .id_salt("conflict-paths")
+                                .max_height(360.0)
+                                .show(ui, |ui| {
+                                    for (index, path) in view.paths.iter().enumerate() {
+                                        if ui
+                                            .selectable_label(index == view.selected, path)
+                                            .clicked()
+                                        {
+                                            conflict_select = Some(index);
+                                        }
+                                    }
+                                });
                         });
                         ui.separator();
                         ui.vertical(|ui| {
-                            if let Some(content) = &view.content {
-                                ui.horizontal(|ui| {
-                                    if ui.button("Use ours").clicked() {
-                                        conflict_action =
-                                            Some(Some(gg_engine::conflict::Side::Ours));
-                                    }
-                                    if ui.button("Use theirs").clicked() {
-                                        conflict_action =
-                                            Some(Some(gg_engine::conflict::Side::Theirs));
-                                    }
-                                    if ui.button("Stage resolved").clicked() {
-                                        conflict_action = Some(None);
-                                    }
-                                });
+                            let Some(content) = &view.content else {
+                                if view.loading {
+                                    ui.spinner();
+                                }
+                                return;
+                            };
+                            ui.horizontal(|ui| {
+                                if ui
+                                    .button(format!(
+                                        "Use ours · {}",
+                                        if operation == Some(gg_engine::mutation::Operation::Rebase)
+                                        {
+                                            "base"
+                                        } else {
+                                            "current branch"
+                                        }
+                                    ))
+                                    .clicked()
+                                {
+                                    conflict_action = Some(Some(gg_engine::conflict::Side::Ours));
+                                }
+                                if ui
+                                    .button(format!(
+                                        "Use theirs · {}",
+                                        if operation == Some(gg_engine::mutation::Operation::Rebase)
+                                        {
+                                            "replayed commit"
+                                        } else {
+                                            "incoming"
+                                        }
+                                    ))
+                                    .clicked()
+                                {
+                                    conflict_action = Some(Some(gg_engine::conflict::Side::Theirs));
+                                }
+                                if ui.button("Stage resolved").clicked() {
+                                    conflict_action = Some(None);
+                                }
+                            });
+                            ui.weak(
+                                "Choosing a side replaces the whole file and stages it. Stage resolved stages external or manually edited content.",
+                            );
+                            if content.binary {
+                                ui.colored_label(ui.visuals().warn_fg_color, "Binary content");
+                            }
+                            if content.truncated {
+                                ui.colored_label(ui.visuals().warn_fg_color, "Content truncated");
+                            }
+                            if ui.available_width() >= 720.0 {
                                 ui.columns(3, |columns| {
                                     for (column, (title, text)) in columns.iter_mut().zip([
-                                        ("Base", &content.base),
-                                        ("Ours", &content.ours),
-                                        ("Theirs", &content.theirs),
+                                        (conflict_side_label(operation, ConflictSide::Base), &content.base),
+                                        (conflict_side_label(operation, ConflictSide::Ours), &content.ours),
+                                        (conflict_side_label(operation, ConflictSide::Theirs), &content.theirs),
                                     ]) {
                                         column.label(title);
                                         egui::ScrollArea::both()
@@ -2672,8 +2896,72 @@ impl Browser {
                                             });
                                     }
                                 });
+                            } else {
+                                ui.horizontal(|ui| {
+                                    ui.selectable_value(&mut view.tab, ConflictSide::Base, "Base");
+                                    ui.selectable_value(&mut view.tab, ConflictSide::Ours, "Ours");
+                                    ui.selectable_value(
+                                        &mut view.tab,
+                                        ConflictSide::Theirs,
+                                        "Theirs",
+                                    );
+                                });
+                                let (title, text) = match view.tab {
+                                    ConflictSide::Base => {
+                                        (conflict_side_label(operation, ConflictSide::Base), &content.base)
+                                    }
+                                    ConflictSide::Ours => {
+                                        (conflict_side_label(operation, ConflictSide::Ours), &content.ours)
+                                    }
+                                    ConflictSide::Theirs => (
+                                        conflict_side_label(operation, ConflictSide::Theirs),
+                                        &content.theirs,
+                                    ),
+                                };
+                                ui.strong(title);
+                                egui::ScrollArea::both()
+                                    .id_salt("conflict-side")
+                                    .max_height(320.0)
+                                    .show(ui, |ui| {
+                                        ui.monospace(text.as_deref().unwrap_or("(absent)"));
+                                    });
                             }
                         });
+                    });
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        if ui
+                            .add_enabled(
+                                !conflicts_remain && !conflict_operation_busy,
+                                egui::Button::new("Continue"),
+                            )
+                            .on_hover_text(if conflicts_remain {
+                                "Resolve every unmerged path first."
+                            } else {
+                                "Continue the in-progress operation."
+                            })
+                            .clicked()
+                        {
+                            conflict_recovery = Some(MutationAction::Continue);
+                        }
+                        if operation != Some(gg_engine::mutation::Operation::Merge)
+                            && ui
+                                .add_enabled(
+                                    !conflict_operation_busy,
+                                    egui::Button::new("Skip"),
+                                )
+                                .on_hover_text("Skip the current commit and continue.")
+                                .clicked()
+                        {
+                            conflict_recovery = Some(MutationAction::Skip);
+                        }
+                        if ui
+                            .add_enabled(!conflict_operation_busy, egui::Button::new("Abort"))
+                            .on_hover_text("Abort the operation and restore the previous tip.")
+                            .clicked()
+                        {
+                            conflict_recovery = Some(MutationAction::Abort);
+                        }
                     });
                 });
         }
@@ -2683,15 +2971,21 @@ impl Browser {
             view.selected = index;
         }
         if conflict_select.is_some() {
-            self.load_conflict_content();
+            self.load_conflict_content(ctx);
         }
-        if let Some(side) = conflict_action {
-            if let Err(error) = self.resolve_conflict(ctx, side)
-                && let Some(view) = &mut self.conflict_view
-            {
-                view.error = Some(error);
-            }
-        } else if self.conflict_view.is_some() && !conflict_open {
+        if let Some(side) = conflict_action
+            && let Err(error) = self.resolve_conflict(ctx, side)
+            && let Some(view) = &mut self.conflict_view
+        {
+            view.error = Some(error);
+        }
+        if let Some(action) = conflict_recovery
+            && let Some(operation) = conflict_mutation.as_ref().map(|state| state.operation)
+            && let Err(error) = self.recover_mutation(ctx, operation, action)
+        {
+            self.mutation_error = Some(error);
+        }
+        if conflict_recovery.is_none() && self.conflict_view.is_some() && !conflict_open {
             self.conflict_view = None;
         }
 
@@ -3881,6 +4175,8 @@ mod tests {
             app.conflict_view = Some(ConflictView {
                 paths: vec!["a".into()],
                 selected: 0,
+                previous_selected: 0,
+                keep: None,
                 content: Some(gg_engine::conflict::Content {
                     path: "a".into(),
                     base: Some("base\n".into()),
@@ -3890,6 +4186,9 @@ mod tests {
                     truncated: false,
                 }),
                 error: None,
+                loading: false,
+                worker: None,
+                tab: ConflictSide::Ours,
             });
             let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
                 app.draw_ui(ctx)
@@ -4307,6 +4606,99 @@ mod tests {
             app.mutation_error
         );
         Ok(())
+    }
+
+    #[test]
+    fn conflict_selection_prefers_the_next_path() {
+        let paths = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        assert_eq!(next_conflict_selection(&paths, Some("b"), 0), 1);
+        assert_eq!(next_conflict_selection(&paths, Some("missing"), 2), 2);
+        assert_eq!(next_conflict_selection(&[], None, 5), 0);
+    }
+
+    #[test]
+    fn conflict_worker_delivers_content_without_blocking() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        app.conflict_view = Some(ConflictView {
+            paths: vec!["a".into()],
+            selected: 0,
+            previous_selected: 0,
+            keep: None,
+            content: None,
+            error: None,
+            loading: true,
+            worker: Some(rx),
+            tab: ConflictSide::Ours,
+        });
+        let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        assert!(app.conflict_view.as_ref().is_some_and(|view| view.loading));
+        assert!(
+            tx.send(Ok(ConflictUpdate::Content(gg_engine::conflict::Content {
+                path: "a".into(),
+                base: Some("base\n".into()),
+                ours: Some("ours\n".into()),
+                theirs: Some("theirs\n".into()),
+                binary: false,
+                truncated: false,
+            })))
+            .is_ok()
+        );
+        let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        assert!(output.shapes.iter().any(|shape| matches!(
+            &shape.shape,
+            egui::epaint::Shape::Text(text) if text.galley.job.text.contains("ours")
+        )));
+        assert!(
+            app.conflict_view
+                .as_ref()
+                .is_some_and(|view| !view.loading && view.content.is_some())
+        );
+    }
+
+    #[test]
+    fn conflict_resolution_runs_on_the_operation_worker() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        app.conflict_view = Some(ConflictView {
+            paths: vec!["a".into()],
+            selected: 0,
+            previous_selected: 0,
+            keep: None,
+            content: Some(gg_engine::conflict::Content {
+                path: "a".into(),
+                base: Some("base\n".into()),
+                ours: Some("ours\n".into()),
+                theirs: Some("theirs\n".into()),
+                binary: false,
+                truncated: false,
+            }),
+            error: None,
+            loading: false,
+            worker: None,
+            tab: ConflictSide::Ours,
+        });
+        assert!(
+            app.resolve_conflict(&ctx, Some(gg_engine::conflict::Side::Ours))
+                .is_ok()
+        );
+        assert!(app.operation_busy());
+        for _ in 0..200 {
+            let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            if !app.operation_busy() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(!app.operation_busy());
+        assert!(app.mutation_error.is_some());
     }
 
     #[test]
