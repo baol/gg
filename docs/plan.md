@@ -11,14 +11,16 @@ Contracts: [working status, committing, and amend](architecture.md#committing).
 ### Increments
 
 1. **Commit drafts · complete.** Retain normal and amend commit text and the selected file when leaving Local Changes for history, review, or a refresh; restore them for the same canonical worktree, clear the submitted draft only after a successful commit, retain it on hook failure and conflict, and never transfer drafts between worktrees.
+2. **Merge, rebase, and recovery workers · complete.** Run merge, rebase, and continue/skip/abort on one background operation worker; close the dialog immediately, name the pending operation in the status line, disable duplicate or incompatible mutation actions, and refresh mutation state, history, refs, status, reflog, and backups once the result is accepted.
 
 ### Acceptance
 
 | Scenario | Expected result | Method |
 | --- | --- | --- |
 | Commit drafts | A multiline draft and selected file survive history/review/refresh; hook failure and conflict retain the text; a successful commit clears only that draft; another worktree starts empty | egui interaction, Git fixture, and native review |
+| Operation responsiveness | Merge, rebase, and recovery start without blocking frames or navigation; duplicate submission starts one operation; success, failure, conflict, and worker disconnection leave actionable state and refresh affected views once | egui interaction, Git fixture, and native review |
 
-Implementation and verification: [verification](verification.md#pre-m7-commit-draft-retention--2026-10-23).
+Implementation and verification: [commit drafts](verification.md#pre-m7-commit-draft-retention--2026-10-23), [operation workers](verification.md#pre-m7-operation-workers--2026-10-23).
 
 ## M6 · Rebase, reorder, squash, amend, and reflog recovery
 

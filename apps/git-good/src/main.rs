@@ -293,6 +293,16 @@ enum MutationAction {
     Abort,
 }
 
+enum OperationOutcome {
+    Merge(gg_engine::merge::Receipt),
+    Rebase(gg_engine::rebase::Receipt),
+    Recovery {
+        operation: gg_engine::mutation::Operation,
+        action: MutationAction,
+        receipt: gg_engine::mutation::MutationReceipt,
+    },
+}
+
 #[derive(Clone, Copy)]
 enum CommitAction {
     CherryPick,
@@ -326,6 +336,8 @@ struct Browser {
     mutation: Option<gg_engine::mutation::OperationState>,
     mutation_notice: Option<String>,
     mutation_error: Option<String>,
+    operation_worker: Option<std::sync::mpsc::Receiver<Result<OperationOutcome, String>>>,
+    operation_restore_row: Option<usize>,
     merge_dialog: Option<MergeDialog>,
     rebase_dialog: Option<RebaseDialog>,
     rewrite_dialog: Option<RewriteDialog>,
@@ -388,6 +400,8 @@ impl Browser {
             mutation: None,
             mutation_notice: None,
             mutation_error: None,
+            operation_worker: None,
+            operation_restore_row: None,
             merge_dialog: None,
             rebase_dialog: None,
             rewrite_dialog: None,
@@ -906,6 +920,116 @@ impl Browser {
         Ok(())
     }
 
+    fn operation_busy(&self) -> bool {
+        self.operation_worker.is_some()
+    }
+
+    fn start_operation(
+        &mut self,
+        ctx: &egui::Context,
+        label: String,
+        apply: impl FnOnce() -> Result<OperationOutcome, String> + Send + 'static,
+    ) -> Result<(), String> {
+        if self.operation_busy() {
+            return Err("Wait for the current operation to finish.".into());
+        }
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        let repaint = ctx.clone();
+        std::thread::Builder::new()
+            .name("gg-operation".into())
+            .spawn(move || {
+                let result = apply();
+                let _ = tx.send(result);
+                repaint.request_repaint();
+            })
+            .map_err(|error| format!("Start operation: {error}"))?;
+        self.operation_worker = Some(rx);
+        self.operation_restore_row = self.state.selected_row;
+        self.mutation_error = None;
+        self.mutation_notice = Some(label);
+        Ok(())
+    }
+
+    fn finish_operation(&mut self, ctx: &egui::Context, outcome: OperationOutcome) {
+        let restore_row = self.operation_restore_row.take();
+        match outcome {
+            OperationOutcome::Merge(receipt) => {
+                self.mutation_notice = Some(match receipt.kind {
+                    Some(gg_engine::merge::Kind::UpToDate) => {
+                        format!("Merge {} · already up to date", receipt.reference)
+                    }
+                    Some(gg_engine::merge::Kind::FastForward) => {
+                        format!("Fast-forwarded to {}", receipt.reference)
+                    }
+                    Some(gg_engine::merge::Kind::MergeCommit) => {
+                        format!("Merged {} as a merge commit", receipt.reference)
+                    }
+                    None => format!(
+                        "Merged {}{}",
+                        receipt.reference,
+                        if receipt.conflicts.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" · {} conflict(s)", receipt.conflicts.len())
+                        }
+                    ),
+                });
+                self.conflict_view = None;
+                self.restore_row = restore_row;
+                self.refresh_mutation();
+                self.load(ctx);
+                self.refresh_working(ctx);
+            }
+            OperationOutcome::Rebase(receipt) => {
+                self.mutation_notice = Some(if receipt.in_progress {
+                    format!(
+                        "Rebasing onto {}{}",
+                        receipt.reference,
+                        if receipt.conflicts.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" · {} conflict(s)", receipt.conflicts.len())
+                        }
+                    )
+                } else {
+                    format!("Rebased onto {}", receipt.reference)
+                });
+                self.conflict_view = None;
+                self.restore_row = restore_row;
+                self.refresh_mutation();
+                self.load(ctx);
+                self.refresh_reflog();
+                self.refresh_backups();
+                self.refresh_working(ctx);
+            }
+            OperationOutcome::Recovery {
+                operation,
+                action,
+                receipt,
+            } => {
+                self.mutation_notice = Some(match action {
+                    MutationAction::Continue => format!("Continued {}", operation.as_str()),
+                    MutationAction::Skip => format!("Skipped {}", operation.as_str()),
+                    MutationAction::Abort => format!("Aborted {}", operation.as_str()),
+                });
+                if !receipt.conflicts.is_empty() {
+                    self.mutation_notice = Some(format!(
+                        "{} · {} conflict(s)",
+                        operation.as_str(),
+                        receipt.conflicts.len()
+                    ));
+                }
+                self.refresh_mutation();
+                if self.mutation.is_none() {
+                    self.conflict_view = None;
+                }
+                self.restore_row = restore_row;
+                self.load(ctx);
+                self.refresh_working(ctx);
+            }
+        }
+    }
+
     fn recover_mutation(
         &mut self,
         ctx: &egui::Context,
@@ -915,33 +1039,23 @@ impl Browser {
         let path = self
             .stash_path()
             .ok_or("Open a repository before recovering history.")?;
-        let restore_row = self.state.selected_row;
-        let receipt = match action {
-            MutationAction::Continue => gg_git::mutation::continue_operation(&path, operation)?,
-            MutationAction::Skip => gg_git::mutation::skip_operation(&path, operation)?,
-            MutationAction::Abort => gg_git::mutation::abort_operation(&path, operation)?,
+        let label = match action {
+            MutationAction::Continue => format!("Continuing {}…", operation.as_str()),
+            MutationAction::Skip => format!("Skipping {}…", operation.as_str()),
+            MutationAction::Abort => format!("Aborting {}…", operation.as_str()),
         };
-        self.mutation_error = None;
-        self.mutation_notice = Some(match action {
-            MutationAction::Continue => format!("Continued {}", operation.as_str()),
-            MutationAction::Skip => format!("Skipped {}", operation.as_str()),
-            MutationAction::Abort => format!("Aborted {}", operation.as_str()),
-        });
-        if !receipt.conflicts.is_empty() {
-            self.mutation_notice = Some(format!(
-                "{} · {} conflict(s)",
-                operation.as_str(),
-                receipt.conflicts.len()
-            ));
-        }
-        self.refresh_mutation();
-        if self.mutation.is_none() {
-            self.conflict_view = None;
-        }
-        self.restore_row = restore_row;
-        self.load(ctx);
-        self.refresh_working(ctx);
-        Ok(())
+        self.start_operation(ctx, label, move || {
+            let receipt = match action {
+                MutationAction::Continue => gg_git::mutation::continue_operation(&path, operation)?,
+                MutationAction::Skip => gg_git::mutation::skip_operation(&path, operation)?,
+                MutationAction::Abort => gg_git::mutation::abort_operation(&path, operation)?,
+            };
+            Ok(OperationOutcome::Recovery {
+                operation,
+                action,
+                receipt,
+            })
+        })
     }
 
     fn start_merge(
@@ -953,32 +1067,11 @@ impl Browser {
         let path = self
             .stash_path()
             .ok_or("Open a repository before merging.")?;
-        let restore_row = self.state.selected_row;
-        let receipt = gg_git::merge::merge(&path, reference, no_ff)?;
-        self.mutation_error = None;
-        self.mutation_notice = Some(match receipt.kind {
-            Some(gg_engine::merge::Kind::UpToDate) => {
-                format!("Merge {reference} · already up to date")
-            }
-            Some(gg_engine::merge::Kind::FastForward) => format!("Fast-forwarded to {reference}"),
-            Some(gg_engine::merge::Kind::MergeCommit) => {
-                format!("Merged {reference} as a merge commit")
-            }
-            None => format!(
-                "Merged {reference}{}",
-                if receipt.conflicts.is_empty() {
-                    String::new()
-                } else {
-                    format!(" · {} conflict(s)", receipt.conflicts.len())
-                }
-            ),
-        });
-        self.conflict_view = None;
-        self.restore_row = restore_row;
-        self.refresh_mutation();
-        self.load(ctx);
-        self.refresh_working(ctx);
-        Ok(())
+        let reference = reference.to_string();
+        let label = format!("Merging {reference}…");
+        self.start_operation(ctx, label, move || {
+            gg_git::merge::merge(&path, &reference, no_ff).map(OperationOutcome::Merge)
+        })
     }
 
     fn start_rebase(
@@ -990,29 +1083,11 @@ impl Browser {
         let path = self
             .stash_path()
             .ok_or("Open a repository before rebasing.")?;
-        let restore_row = self.state.selected_row;
-        let receipt = gg_git::rebase::rebase(&path, reference, autostash)?;
-        self.mutation_error = None;
-        self.mutation_notice = Some(if receipt.in_progress {
-            format!(
-                "Rebasing onto {reference}{}",
-                if receipt.conflicts.is_empty() {
-                    String::new()
-                } else {
-                    format!(" · {} conflict(s)", receipt.conflicts.len())
-                }
-            )
-        } else {
-            format!("Rebased onto {reference}")
-        });
-        self.conflict_view = None;
-        self.restore_row = restore_row;
-        self.refresh_mutation();
-        self.load(ctx);
-        self.refresh_reflog();
-        self.refresh_backups();
-        self.refresh_working(ctx);
-        Ok(())
+        let reference = reference.to_string();
+        let label = format!("Rebasing onto {reference}…");
+        self.start_operation(ctx, label, move || {
+            gg_git::rebase::rebase(&path, &reference, autostash).map(OperationOutcome::Rebase)
+        })
     }
 
     fn open_rewrite_dialog(&mut self, from: &str) -> Result<(), String> {
@@ -1386,6 +1461,25 @@ impl Browser {
                 }
             }
         }
+        let operation_done = match self.operation_worker.as_ref().map(|rx| rx.try_recv()) {
+            None | Some(Err(std::sync::mpsc::TryRecvError::Empty)) => None,
+            Some(Ok(result)) => Some(result),
+            Some(Err(std::sync::mpsc::TryRecvError::Disconnected)) => {
+                Some(Err("Operation worker stopped. Refresh and retry.".into()))
+            }
+        };
+        if let Some(result) = operation_done {
+            self.operation_worker = None;
+            match result {
+                Ok(outcome) => self.finish_operation(ctx, outcome),
+                Err(error) => {
+                    self.operation_restore_row = None;
+                    self.mutation_notice = None;
+                    self.mutation_error = Some(error);
+                    self.refresh_mutation();
+                }
+            }
+        }
         let narrow = ctx.content_rect().width() < 1040.0;
         let wide_refs = !narrow && self.refs_visible && ctx.content_rect().width() >= 1120.0;
         let filter_id = egui::Id::unique("history-filter");
@@ -1579,7 +1673,9 @@ impl Browser {
                 ui.menu_button("Repository", |ui| {
                     if ui
                         .add_enabled(
-                            self.network.is_none() && self.branch.is_none(),
+                            self.network.is_none()
+                                && self.branch.is_none()
+                                && !self.operation_busy(),
                             egui::Button::new("Open…"),
                         )
                         .clicked()
@@ -1622,7 +1718,8 @@ impl Browser {
                         ui.close();
                     }
                     ui.separator();
-                    let network_idle = self.network.is_none() && self.branch.is_none();
+                    let network_idle =
+                        self.network.is_none() && self.branch.is_none() && !self.operation_busy();
                     let has_repo = self.state.history.is_some();
                     if ui
                         .add_enabled(network_idle && has_repo, egui::Button::new("Fetch"))
@@ -1668,7 +1765,7 @@ impl Browser {
                     }
                 });
                 let refs = self.state.refs.clone();
-                let branch_pending = self.branch.is_some();
+                let branch_pending = self.branch.is_some() || self.operation_busy();
                 let mut jump = None;
                 let mut switch = None;
                 let mut new_branch = false;
@@ -1725,7 +1822,10 @@ impl Browser {
                     }
                     if ui
                         .add_enabled(
-                            !branch_pending && self.mutation.is_none() && self.network.is_none(),
+                            !branch_pending
+                                && self.mutation.is_none()
+                                && self.network.is_none()
+                                && !self.operation_busy(),
                             egui::Button::new("Merge branch…"),
                         )
                         .on_hover_text("Merge a local branch, remote-tracking ref, or tag")
@@ -1736,7 +1836,10 @@ impl Browser {
                     }
                     if ui
                         .add_enabled(
-                            !branch_pending && self.mutation.is_none() && self.network.is_none(),
+                            !branch_pending
+                                && self.mutation.is_none()
+                                && self.network.is_none()
+                                && !self.operation_busy(),
                             egui::Button::new("Rebase branch…"),
                         )
                         .on_hover_text("Rebase the current branch onto a branch, remote, or tag")
@@ -1830,7 +1933,8 @@ impl Browser {
                         "Resize the window to at least 1120 px to show the sidebar"
                     });
                 });
-                let stash_busy = self.branch.is_some() || self.network.is_some();
+                let stash_busy =
+                    self.branch.is_some() || self.network.is_some() || self.operation_busy();
                 let has_repo = self.state.history.is_some();
                 ui.menu_button("Stash", |ui| {
                     if ui
@@ -1943,6 +2047,7 @@ impl Browser {
         let mut mutation_action = None;
         let mut resolve_conflicts = false;
         let mut open_backups = false;
+        let operation_pending = self.operation_busy();
         if let Some(state) = &self.mutation {
             egui::Panel::top("mutation")
                 .exact_size(30.0)
@@ -1951,19 +2056,33 @@ impl Browser {
                         ui.label(format!("{} in progress", state.operation.as_str()));
                         if !state.conflicts.is_empty() {
                             ui.label(format!("· {} conflict(s)", state.conflicts.len()));
-                            if ui.button("Resolve conflicts…").clicked() {
+                            if ui
+                                .add_enabled(
+                                    !operation_pending,
+                                    egui::Button::new("Resolve conflicts…"),
+                                )
+                                .clicked()
+                            {
                                 resolve_conflicts = true;
                             }
                         }
-                        if ui.button("Continue").clicked() {
+                        if ui
+                            .add_enabled(!operation_pending, egui::Button::new("Continue"))
+                            .clicked()
+                        {
                             mutation_action = Some(MutationAction::Continue);
                         }
                         if state.operation != gg_engine::mutation::Operation::Merge
-                            && ui.button("Skip").clicked()
+                            && ui
+                                .add_enabled(!operation_pending, egui::Button::new("Skip"))
+                                .clicked()
                         {
                             mutation_action = Some(MutationAction::Skip);
                         }
-                        if ui.button("Abort").clicked() {
+                        if ui
+                            .add_enabled(!operation_pending, egui::Button::new("Abort"))
+                            .clicked()
+                        {
                             mutation_action = Some(MutationAction::Abort);
                         }
                         if ui.button("Backups…").clicked() {
@@ -2014,7 +2133,10 @@ impl Browser {
         }
         if wide_refs {
             let refs = self.state.refs.clone();
-            let busy = self.branch.is_some() || self.network.is_some() || self.mutation.is_some();
+            let busy = self.branch.is_some()
+                || self.network.is_some()
+                || self.mutation.is_some()
+                || self.operation_busy();
             let has_repo = self.state.history.is_some();
             let local_selected = self.working.is_some();
             let mut action = None;
@@ -2080,11 +2202,12 @@ impl Browser {
         if go_history {
             self.close_to_history(ctx);
         }
+        let new_branch_pending = self.branch.is_some() || self.operation_busy();
         if let Some(name) = &mut self.new_branch {
             let mut submit = None;
             let mut open =
                 !ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
-            let branch_pending = self.branch.is_some();
+            let branch_pending = new_branch_pending;
             egui::Window::new("New branch")
                 .id(egui::Id::unique("new-branch"))
                 .open(&mut open)
@@ -2191,12 +2314,13 @@ impl Browser {
                 self.clone_dialog = None;
             }
         }
+        let track_busy = self.branch.is_some() || self.network.is_some() || self.operation_busy();
         if let Some(remote_branch) = &mut self.track_dialog {
             let mut submit = false;
             let mut cancelled = false;
             let mut open =
                 !ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
-            let busy = self.branch.is_some() || self.network.is_some();
+            let busy = track_busy;
             egui::Window::new("Track remote branch")
                 .id(egui::Id::unique("track-remote-branch"))
                 .open(&mut open)
@@ -3263,7 +3387,8 @@ impl Browser {
                                             });
                                             if ui
                                                 .add_enabled(
-                                                    self.mutation.is_none(),
+                                                    self.mutation.is_none()
+                                                        && !self.operation_busy(),
                                                     egui::Button::new(
                                                         "Reorder and squash to HEAD…",
                                                     ),
@@ -4031,6 +4156,157 @@ mod tests {
         });
         assert!(app.rewrite_dialog.is_none());
         assert!(app.rewrite_refresh.is_none());
+    }
+
+    #[test]
+    fn operation_worker_keeps_the_ui_responsive_and_rejects_duplicates() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        let (gate_tx, gate_rx) = std::sync::mpsc::channel();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        assert!(
+            app.start_operation(&ctx, "Testing operation…".into(), move || {
+                let _ = started_tx.send(());
+                let _ = gate_rx.recv();
+                Ok(OperationOutcome::Rebase(gg_engine::rebase::Receipt {
+                    reference: "main".into(),
+                    commit: None,
+                    previous: None,
+                    backup: None,
+                    applied: true,
+                    in_progress: false,
+                    conflicts: Vec::new(),
+                    warnings: Vec::new(),
+                }))
+            })
+            .is_ok()
+        );
+        assert!(app.operation_busy());
+        assert!(
+            started_rx
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .is_ok()
+        );
+        assert!(
+            app.start_operation(&ctx, "Second…".into(), || unreachable!())
+                .is_err()
+        );
+        let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        assert!(output.shapes.iter().any(|shape| matches!(
+            &shape.shape,
+            egui::epaint::Shape::Text(text) if text.galley.job.text.contains("Testing operation")
+        )));
+        assert!(gate_tx.send(()).is_ok());
+        for _ in 0..200 {
+            let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            if !app.operation_busy() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(!app.operation_busy());
+        assert!(
+            app.mutation_notice
+                .as_deref()
+                .is_some_and(|notice| notice.contains("Rebased onto"))
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rebase_worker_keeps_frames_rendering_while_a_hook_waits()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir()?;
+        let repo = dir.path();
+        let git = |args: &[&str]| -> Result<(), Box<dyn std::error::Error>> {
+            let output = std::process::Command::new("git")
+                .arg("-C")
+                .arg(repo)
+                .args(args)
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_AUTHOR_NAME", "Test")
+                .env("GIT_AUTHOR_EMAIL", "test@example.org")
+                .env("GIT_COMMITTER_NAME", "Test")
+                .env("GIT_COMMITTER_EMAIL", "test@example.org")
+                .output()?;
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            Ok(())
+        };
+        git(&["init", "-q"])?;
+        git(&["config", "user.name", "Test"])?;
+        git(&["config", "user.email", "test@example.org"])?;
+        std::fs::write(repo.join("a"), b"base\n")?;
+        git(&["add", "a"])?;
+        git(&["commit", "-qm", "base"])?;
+        git(&["checkout", "-qb", "feature"])?;
+        std::fs::write(repo.join("b"), b"feature\n")?;
+        git(&["add", "b"])?;
+        git(&["commit", "-qm", "feature"])?;
+        git(&["checkout", "-q", "-"])?;
+        std::fs::write(repo.join("c"), b"mainline\n")?;
+        git(&["add", "c"])?;
+        git(&["commit", "-qm", "mainline"])?;
+
+        let marker = repo.join("release-pre-rebase");
+        let hook = repo.join(".git/hooks/pre-rebase");
+        std::fs::write(
+            &hook,
+            format!(
+                "#!/bin/sh\nwhile [ ! -f '{}' ]; do sleep 0.05; done\n",
+                marker.display()
+            ),
+        )?;
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755))?;
+
+        let ctx = egui::Context::default();
+        let mut app = Browser::new(repo.to_path_buf());
+        app.state.history = Some(History {
+            path: repo.to_path_buf(),
+            head: "main".into(),
+            truncated: false,
+            shallow: false,
+            commits: Vec::new(),
+        });
+        assert!(app.start_rebase(&ctx, "feature", false).is_ok());
+        assert!(app.operation_busy());
+        let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        assert!(output.shapes.iter().any(|shape| matches!(
+            &shape.shape,
+            egui::epaint::Shape::Text(text)
+                if text.galley.job.text.contains("Rebasing onto feature")
+        )));
+        std::fs::write(&marker, b"go")?;
+        for _ in 0..400 {
+            let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            if !app.operation_busy() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(!app.operation_busy());
+        assert!(
+            app.mutation_notice
+                .as_deref()
+                .is_some_and(|notice| notice.contains("Rebased onto feature")),
+            "notice={:?} error={:?}",
+            app.mutation_notice,
+            app.mutation_error
+        );
+        Ok(())
     }
 
     #[test]

@@ -364,3 +364,14 @@ Linux x86_64 · Rust 1.99.1 · local Git fixtures.
 - The selected path and area are captured with the draft and restored when the same entry is present in the refreshed status.
 - Hook-failure coverage verifies a failed commit keeps the submitted message; successful-commit coverage verifies the submitted draft clears.
 - Native wide/narrow interaction review remains pending for this increment.
+
+## Pre-M7 operation workers · 2026-10-23
+
+Linux x86_64 · Rust 1.99.1 · local Git fixtures.
+
+- 302 workspace tests pass (3 ignored); formatting and Clippy with `-D warnings` pass.
+- Merge, rebase, and continue/skip/abort share one background operation worker. The dialog returns immediately, the pending operation is named in the status line, duplicate submission is rejected, and the accepted result refreshes mutation state, history, refs, status, reflog, and backups once.
+- The event-driven regression holds a worker behind a channel, proves a frame still renders and names the pending operation while the worker is blocked, rejects a second submission, then releases the worker and verifies one accepted result.
+- A fixture `pre-rebase` hook blocks on a marker file. The rebase start returns immediately, a frame renders and names **Rebasing onto feature…** while the hook waits, and releasing the marker completes the rebase with the accepted notice.
+- Worker failure or disconnection clears the pending label and reports an actionable error while preserving Git's recovery state.
+- Native wide/narrow interaction review remains pending for this increment.
