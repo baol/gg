@@ -218,7 +218,7 @@ M1 is complete: commit review, selected-parent diffs, binary previews, exact exp
 - Graph unit tests cover linear lanes, merge parents, joins, lane reuse, lane retirement, single-parent color continuity, and downward starts for only the row’s own lane. Stream tests keep graph rows aligned with their commits when filtering, and deep selected-ID recovery finds completed rows by identity. An all-ref oracle compares the commit set with `git rev-list --all`, includes branch-, remote-, and tag-only commits, and requires every parent to follow its children.
 - Branch oracles cover local switching, creation from HEAD, dirty unstaged/staged/conflicted rejection, duplicate and missing names, invalid names, detached starts, unborn repositories, and `post-checkout` hooks; a failing post-checkout hook leaves the branch switched and returns a warning. Untracked files no longer block switching or creation and survive the switch, while Git still rejects an untracked file that the target branch would overwrite. Successful switches preserve the expected worktree content and symbolic HEAD; failures leave the old branch and working files intact.
 - CLI checks verify `git good switch [--create]` JSON receipts and dirty-tree stderr. egui checks verify graph-column geometry, current-first ref labels and overflow, single-click selection, double-click branch switching, tag/remote jumping, and current-branch no-ops, sidebar visibility at 1120 px versus 1119 px, grouped branch/remote/tag trees, filtering, and the branch creation window at supported widths.
-- Native X11 review at 1120×740 and 720×740 shows all five disposable-repository commits from every branch and tag with continuous lanes, refined merges, a green third-branch tip that keeps its color while joining an existing orange lane, an orange branch that stays orange through its final join, merge branches that retain their parent-lane color with no duplicate downward stub, Fork-style ref pills with icons, the grouped refs sidebar with branch folders and HEAD check, branch switching through the sidebar and a pill double-click, tag jumping through a pill double-click, branch creation at HEAD, and the narrow refs-menu fallback. The worktree was clean before each mutation.
+- Native X11 review at 1120×740 and 720×740 shows all five disposable-repository commits from every branch and tag with continuous lanes, refined merges, a green third-branch tip that keeps its color while joining an existing orange lane, an orange branch that stays orange through its final join, merge branches that retain their parent-lane color with no duplicate downward stub, ref pills with icons, the grouped refs sidebar with branch folders and HEAD check, branch switching through the sidebar and a pill double-click, tag jumping through a pill double-click, branch creation at HEAD, and the narrow refs-menu fallback. The worktree was clean before each mutation.
 - Captures: [sidebar and history](screenshots/m3-refs-sidebar-wide.png), [all-ref history](screenshots/m3-all-refs-wide.png), [branch color join](screenshots/m3-branch-color.png), [branch switched](screenshots/m3-refs-sidebar-switch.png), [new branch modal](screenshots/m3-refs-sidebar-new-branch.png), [narrow history](screenshots/m3-graph-narrow.png).
 
 M3 is complete. Branch deletion/rename, remote tracking, and tag creation remain future work.
@@ -405,4 +405,15 @@ Linux x86_64 · Rust 1.99.1 · local Git fixtures.
 - Commit readiness is derived from the completed status scan and validated identity. A normal commit requires a nonempty message and at least one staged entry; message-only amend stays valid; disabled reasons cover a running operation, a pending scan, an empty message, and no staged files.
 - The amend banner names the affected commit and its subject directly above the commit action.
 - The message editor expands and collapses, and the existing commit/hook/amend fixtures still pass.
+- Native wide/narrow interaction review remains pending for this increment.
+
+## Pre-M7 responsive staging · 2026-10-23
+
+Linux x86_64 · Rust 1.99.1 · local Git fixtures.
+
+- 309 workspace tests pass (3 ignored); formatting and Clippy with `-D warnings` pass.
+- Wide widths keep both comparisons side by side. Narrow widths show a **Staged**/**Unstaged** switch with change counts; the nonempty pane is focused when the other is empty, and **Split** stacks both comparisons.
+- The combined-view test exercises both wide and narrow modes, switches tabs, verifies the focused and inactive hunk actions, and toggles **Split** to confirm both panes remain available.
+- A narrow-only test opens an unstaged-only file and confirms the unstaged pane is focused by default with **Stage hunk** visible and **Unstage hunk** absent.
+- Pane selection and scroll state remain on their own panes across focus and layout changes.
 - Native wide/narrow interaction review remains pending for this increment.

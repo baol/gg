@@ -1661,14 +1661,98 @@ mod tests {
         }
         for width in [1120.0, 720.0] {
             let output = run(&ctx, &mut view, width, vec![]);
-            for label in ["Staged", "Unstaged", "Unstage hunk", "Stage hunk"] {
+            let text = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            if width >= 860.0 {
+                for label in ["Staged", "Unstaged", "Unstage hunk", "Stage hunk"] {
+                    assert!(text.contains(&label), "missing {label}");
+                }
+            } else {
+                let staged_tab = text.iter().any(|line| line.starts_with("Staged ("));
+                let unstaged_tab = text.iter().any(|line| line.starts_with("Unstaged ("));
                 assert!(
-                    text_pos(&output, label).is_some(),
-                    "missing {label} at {width}"
+                    staged_tab && unstaged_tab,
+                    "missing narrow switch at {width}"
                 );
+                assert!(
+                    text.contains(&"Unstage hunk"),
+                    "missing focused hunk action at {width}"
+                );
+                let unstaged = output.shapes.iter().find_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text)
+                        if text.galley.job.text.starts_with("Unstaged (") =>
+                    {
+                        Some(text.pos)
+                    }
+                    _ => None,
+                });
+                let Some(unstaged) = unstaged else {
+                    return Err("missing Unstaged tab".into());
+                };
+                click(&ctx, &mut view, width, unstaged + egui::vec2(5.0, 0.0));
+                let output = run(&ctx, &mut view, width, vec![]);
+                assert!(
+                    output.shapes.iter().any(|shape| matches!(
+                        &shape.shape,
+                        egui::epaint::Shape::Text(text) if text.galley.job.text == "Stage hunk"
+                    )),
+                    "missing unstaged hunk action at {width}"
+                );
+                let split = output.shapes.iter().find_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) if text.galley.job.text == "Split" => {
+                        Some(text.pos)
+                    }
+                    _ => None,
+                });
+                let Some(split) = split else {
+                    return Err("missing split toggle".into());
+                };
+                click(&ctx, &mut view, width, split + egui::vec2(5.0, 0.0));
+                let output = run(&ctx, &mut view, width, vec![]);
+                let split_text = output
+                    .shapes
+                    .iter()
+                    .filter_map(|shape| match &shape.shape {
+                        egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                assert!(split_text.contains(&"Stage hunk"));
+                assert!(split_text.contains(&"Unstage hunk"));
+                assert!(split_text.contains(&"Focus"));
             }
         }
         assert!(view.reading);
+        Ok(())
+    }
+
+    #[test]
+    fn narrow_layout_prefers_the_nonempty_pane() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        generated(dir.path())?;
+        let ctx = egui::Context::default();
+        let mut view = StatusView::new(dir.path().into(), &ctx);
+        settle(&ctx, &mut view, 1120.0);
+        select_area(&mut view, Area::Unstaged);
+        view.open_diff(&ctx);
+        ready(&ctx, &mut view, 1120.0);
+        let output = run(&ctx, &mut view, 720.0, vec![]);
+        let text = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(text.contains(&"Stage hunk"));
+        assert!(!text.contains(&"Unstage hunk"));
         Ok(())
     }
 
