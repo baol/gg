@@ -12,6 +12,26 @@ enum Mutation {
     Stage,
     Unstage,
 }
+fn commit_reason(
+    busy: bool,
+    scanning: bool,
+    message: &str,
+    amend: bool,
+    staged: usize,
+) -> Option<&'static str> {
+    if busy {
+        Some("Wait for the current operation")
+    } else if scanning {
+        Some("Waiting for the status scan")
+    } else if message.trim().is_empty() {
+        Some("Enter a commit message")
+    } else if !amend && staged == 0 {
+        Some("Stage at least one file")
+    } else {
+        None
+    }
+}
+
 /// Session-level commit text and selection retained while the workspace is closed.
 #[derive(Clone, Default)]
 pub(crate) struct Draft {
@@ -37,6 +57,8 @@ pub struct StatusView {
     amend_draft: String,
     amend: bool,
     amend_base: Option<String>,
+    amend_subject: Option<String>,
+    message_expanded: bool,
     pending_selection: Option<(Vec<u8>, Area)>,
     last_amended: bool,
     worker: Option<Worker>,
@@ -44,6 +66,7 @@ pub struct StatusView {
     staged: Option<Update>,
     rows: BTreeMap<usize, StatusEntry>,
     count: usize,
+    staged_count: usize,
     complete: bool,
     error: Option<String>,
     action_error: Option<String>,
@@ -74,6 +97,8 @@ impl StatusView {
             amend_draft: String::new(),
             amend: false,
             amend_base: None,
+            amend_subject: None,
+            message_expanded: false,
             pending_selection: None,
             last_amended: false,
             worker: None,
@@ -81,6 +106,7 @@ impl StatusView {
             staged: None,
             rows: BTreeMap::new(),
             count: 0,
+            staged_count: 0,
             complete: false,
             error: None,
             action_error: None,
@@ -162,6 +188,7 @@ impl StatusView {
         self.path = update.identity.path.clone();
         self.identity = Some(update.identity);
         self.count = update.count;
+        self.staged_count = update.staged;
         self.complete = update.complete;
         // Paging a retained scan must preserve an action failure until explicit retry.
         self.error = update.error.or_else(|| self.action_error.clone());
@@ -284,8 +311,13 @@ impl StatusView {
         }
         self.amend = true;
         self.amend_base = Some(base);
+        let head = gg_git::commit::head_message(&self.path).ok();
+        self.amend_subject = head
+            .as_deref()
+            .and_then(|message| message.lines().next())
+            .map(str::to_string);
         self.message = if self.amend_draft.is_empty() {
-            gg_git::commit::head_message(&self.path).unwrap_or_default()
+            head.unwrap_or_default()
         } else {
             self.amend_draft.clone()
         };
@@ -330,6 +362,13 @@ impl StatusView {
         if !self.amend {
             self.normal_draft = self.message.clone();
         }
+        self.amend_subject = Some(
+            message
+                .lines()
+                .next()
+                .unwrap_or("(empty message)")
+                .to_string(),
+        );
         self.message = if self.amend_draft.trim().is_empty() {
             message
         } else {
@@ -538,6 +577,7 @@ impl StatusView {
                     }
                     self.amend = false;
                     self.amend_base = None;
+                    self.amend_subject = None;
                     self.commit_done = Some(receipt.id.clone());
                     self.commit_warning = if receipt.warnings.is_empty() {
                         None
@@ -743,44 +783,68 @@ impl StatusView {
                 };
                 bounded_text::field(ui, &text, egui::FontId::proportional(12.0), 22.0);
             });
+        let commit_height = if self.message_expanded { 150.0 } else { 82.0 };
+        let message_height = if self.message_expanded { 118.0 } else { 54.0 };
         egui::Panel::bottom("working-commit")
-            .exact_size(82.0)
+            .exact_size(commit_height)
             .show(ui, |ui| {
                 ui.add_space(4.0);
                 let busy = self.busy() || self.replacing;
-                let can_commit = !busy && !self.message.trim().is_empty();
+                let scanning = self.replacing || !self.complete || self.identity.is_none();
+                let reason = commit_reason(
+                    busy,
+                    scanning,
+                    &self.message,
+                    self.amend,
+                    self.staged_count,
+                );
+                let can_commit = reason.is_none();
                 ui.horizontal(|ui| {
                     let button_width = if self.amend { 104.0 } else { 88.0 };
-                    let width = (ui.available_width() - button_width - 14.0).max(160.0);
+                    let width = (ui.available_width() - button_width - 26.0).max(160.0);
                     ui.add_sized(
-                        [width, 54.0],
+                        [width, message_height],
                         egui::TextEdit::multiline(&mut self.message)
                             .hint_text("Commit subject\n\nOptional body")
                             .desired_rows(2),
                     );
                     ui.vertical(|ui| {
-                        let mut amend = self.amend;
-                        if ui
-                            .add_enabled(!busy, egui::Checkbox::new(&mut amend, "Amend"))
-                            .on_hover_text(
-                                "Show the commit's contents as staged. Unstage removes changes from the amended commit; working files stay unchanged.",
-                            )
-                            .changed()
-                        {
-                            if amend {
-                                if let Err(error) = self.start_amend(ctx) {
-                                    self.action_error = Some(error);
+                        ui.horizontal(|ui| {
+                            let mut amend = self.amend;
+                            if ui
+                                .add_enabled(!busy, egui::Checkbox::new(&mut amend, "Amend"))
+                                .on_hover_text(
+                                    "Show the commit's contents as staged. Unstage removes changes from the amended commit; working files stay unchanged.",
+                                )
+                                .changed()
+                            {
+                                if amend {
+                                    if let Err(error) = self.start_amend(ctx) {
+                                        self.action_error = Some(error);
+                                    }
+                                } else {
+                                    if self.amend {
+                                        self.amend_draft = self.message.clone();
+                                    }
+                                    self.amend = false;
+                                    self.amend_base = None;
+                                    self.amend_subject = None;
+                                    self.message = self.normal_draft.clone();
+                                    self.restart(ctx);
                                 }
-                            } else {
-                                if self.amend {
-                                    self.amend_draft = self.message.clone();
-                                }
-                                self.amend = false;
-                                self.amend_base = None;
-                                self.message = self.normal_draft.clone();
-                                self.restart(ctx);
                             }
-                        }
+                            if ui
+                                .small_button(if self.message_expanded {
+                                    "Collapse"
+                                } else {
+                                    "Expand"
+                                })
+                                .on_hover_text("Expand the commit message editor")
+                                .clicked()
+                            {
+                                self.message_expanded = !self.message_expanded;
+                            }
+                        });
                         let label = if self.commit.is_some() {
                             "Committing…"
                         } else if self.amend {
@@ -788,17 +852,21 @@ impl StatusView {
                         } else {
                             "Commit"
                         };
-                        commit_now |= ui
-                            .add_enabled(
-                                can_commit,
-                                egui::Button::new(label).min_size(egui::vec2(button_width, 26.0)),
-                            )
-                            .clicked();
+                        let response = ui.add_enabled(
+                            can_commit,
+                            egui::Button::new(label).min_size(egui::vec2(button_width, 26.0)),
+                        );
+                        let response = if let Some(reason) = reason {
+                            response.on_hover_text(reason)
+                        } else {
+                            response
+                        };
+                        commit_now |= response.clicked();
                     });
                 });
             });
         if self.amend {
-            egui::Panel::top("working-amend")
+            egui::Panel::bottom("working-amend")
                 .exact_size(23.0)
                 .show(ui, |ui| {
                     let head = self
@@ -807,10 +875,11 @@ impl StatusView {
                         .and_then(|identity| identity.head.as_deref())
                         .and_then(|id| id.get(..7))
                         .unwrap_or("HEAD");
+                    let subject = self.amend_subject.as_deref().unwrap_or("(empty message)");
                     bounded_text::field(
                         ui,
                         &format!(
-                            "Amending {head} · Staged changes are the commit contents · Unstage removes them from the amended commit"
+                            "Amending {head} · {subject} · Staged changes are the commit contents · Unstage removes them from the amended commit"
                         ),
                         egui::FontId::proportional(12.0),
                         22.0,
@@ -1057,6 +1126,8 @@ mod tests {
             amend_draft: String::new(),
             amend: false,
             amend_base: None,
+            amend_subject: None,
+            message_expanded: false,
             pending_selection: None,
             last_amended: false,
             worker: None,
@@ -1064,6 +1135,7 @@ mod tests {
             staged: None,
             rows: (0..count.min(256)).map(|i| (i, entry(i))).collect(),
             count,
+            staged_count: 0,
             complete: true,
             error: None,
             action_error: None,
@@ -1087,6 +1159,7 @@ mod tests {
             },
             rows: (0..count.min(256)).map(|i| (i, entry(i))).collect(),
             count,
+            staged: 0,
             complete,
             error: None,
         }
@@ -1729,6 +1802,60 @@ mod tests {
     }
 
     #[test]
+    fn commit_readiness_explains_disabled_states() {
+        assert_eq!(
+            commit_reason(false, false, "subject", false, 0),
+            Some("Stage at least one file")
+        );
+        assert_eq!(
+            commit_reason(false, false, "   ", false, 1),
+            Some("Enter a commit message")
+        );
+        assert_eq!(
+            commit_reason(false, true, "subject", true, 1),
+            Some("Waiting for the status scan")
+        );
+        assert_eq!(
+            commit_reason(true, false, "subject", false, 1),
+            Some("Wait for the current operation")
+        );
+        assert_eq!(commit_reason(false, false, "subject", true, 0), None);
+        assert_eq!(commit_reason(false, false, "subject", false, 1), None);
+    }
+
+    #[test]
+    fn commit_editor_expands_and_collapses() {
+        let ctx = egui::Context::default();
+        let mut view = view(2);
+        view.identity = Some(gg_engine::status::StatusIdentity {
+            path: "/repository".into(),
+            head: Some("a".repeat(40)),
+            index: "index".into(),
+            base_tree: None,
+        });
+        let output = run(&ctx, &mut view, 1120.0, vec![]);
+        let expand = text_pos(&output, "Expand");
+        assert!(expand.is_some(), "missing expand button");
+        click(
+            &ctx,
+            &mut view,
+            1120.0,
+            expand.unwrap_or_default() + egui::vec2(5.0, 0.0),
+        );
+        assert!(view.message_expanded);
+        let output = run(&ctx, &mut view, 1120.0, vec![]);
+        let collapse = text_pos(&output, "Collapse");
+        assert!(collapse.is_some(), "missing collapse button");
+        click(
+            &ctx,
+            &mut view,
+            1120.0,
+            collapse.unwrap_or_default() + egui::vec2(5.0, 0.0),
+        );
+        assert!(!view.message_expanded);
+    }
+
+    #[test]
     fn amend_panel_loads_head_and_rewrites_the_commit() -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempfile::tempdir()?;
         generated(dir.path())?;
@@ -1740,9 +1867,16 @@ mod tests {
         let mut view = StatusView::new(dir.path().into(), &ctx);
         settle(&ctx, &mut view, 1120.0);
         view.start_amend(&ctx)?;
+        settle(&ctx, &mut view, 1120.0);
         assert_eq!(view.message, "base");
         assert!(view.amend);
         let output = run(&ctx, &mut view, 1120.0, vec![]);
+        assert!(output.shapes.iter().any(|shape| matches!(
+            &shape.shape,
+            egui::epaint::Shape::Text(text)
+                if text.galley.job.text.contains("Amending")
+                    && text.galley.job.text.contains("base")
+        )));
         let amend = text_pos(&output, "Amend commit").ok_or("missing amend button")?;
         click(&ctx, &mut view, 1120.0, amend + egui::vec2(5.0, 0.0));
         pump(&ctx, &mut view, 1120.0, |view| {

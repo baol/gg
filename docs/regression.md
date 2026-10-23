@@ -186,6 +186,7 @@ Native review: the refs sidebar and status line show the current branch upstream
 - Amend mode compares the index with HEAD's parent, including the empty tree for a root commit. Staged rows expose the commit contents, working changes remain unstaged, and unstage restores the parent side for whole files and hunks without changing working files.
 - Amend rejects an unborn HEAD, an empty message, and a HEAD changed during hooks. The refs snapshot excludes backup refs.
 - CLI tests verify the `amend` receipt fields and backup ref. egui tests load the HEAD message, show the commit contents as staged, unstage and restage working changes, rewrite the index, clear the toggle and amend base, and render the **Amended** status line.
+- Commit readiness tests cover the disabled reasons for a running operation, a pending scan, an empty or whitespace message, and no staged files; message-only amend remains enabled. The amend banner names the affected commit and subject, and the message editor expands and collapses.
 
 ## M6 reflog
 

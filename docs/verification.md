@@ -396,3 +396,13 @@ Linux x86_64 · Rust 1.99.1 · local Git fixtures.
 - The commit-row action is **Compare with current HEAD**. A review test renders an `--against HEAD` comparison and checks the persistent Before line for the `HEAD` ref name plus the resolved base ID and the After line for the resolved target ID.
 - Whole-file staging actions are **Stage file**, **Unstage file**, and **Discard file**. Hunk and selected-line actions remain distinct, and the confirmation names the exact file and scope and states that the index is unchanged.
 - Native wide/narrow interaction review remains pending for this increment.
+
+## Pre-M7 commit readiness and amend mode · 2026-10-23
+
+Linux x86_64 · Rust 1.99.1 · local Git fixtures.
+
+- 308 workspace tests pass (3 ignored); formatting and Clippy with `-D warnings` pass.
+- Commit readiness is derived from the completed status scan and validated identity. A normal commit requires a nonempty message and at least one staged entry; message-only amend stays valid; disabled reasons cover a running operation, a pending scan, an empty message, and no staged files.
+- The amend banner names the affected commit and its subject directly above the commit action.
+- The message editor expands and collapses, and the existing commit/hook/amend fixtures still pass.
+- Native wide/narrow interaction review remains pending for this increment.
