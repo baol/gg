@@ -1,8 +1,17 @@
 # gg · good git
 
+![gg native history view](docs/screenshots/gg-native-wide.png)
+
 Purpose: introduce gg and explain installation and use.
 
-A CLI-first Git browser with a native Rust interface.
+A native, fast-starting Git GUI and CLI. Browse history, inspect diffs, stage files, commit, and recover rewrites from a focused desktop interface, with the same operations available on the command line.
+
+## Why gg
+
+- **Fast, native desktop app.** Opens directly into a repository with a focused history, refs, and details layout.
+- **Easy staging and commit flow.** Local Changes shows staged, unstaged, untracked, and conflicted paths with clear whole-file, hunk, and line actions.
+- **Responsive operations.** Merge, rebase, rewrite, conflict reads, and status scans run on background workers so navigation stays smooth.
+- **Visible recovery.** Private backup refs, conflict recovery, and explicit discard/reset confirmations keep destructive actions deliberate.
 
 Download binary archives from [GitHub Releases](https://github.com/baol/gg/releases) when available, or from the Rust workflow artifacts. Builds cover Linux, macOS, and Windows on x86_64 and arm64. Verify the SHA-256 sidecar, extract the archive, and place `git-good` (`git-good.exe` on Windows) on your PATH. See [platform requirements and release gates](docs/development.md).
 
