@@ -214,7 +214,7 @@ Commit writes the current index, not working-tree content. Pin HEAD and the inde
 
 Run `pre-commit`, `prepare-commit-msg` with the message file and `message` source, and `commit-msg` before taking the index lock. Hooks may stage content or edit the message, so re-read the index and message afterwards and reject a HEAD change made during the hooks. Acquire the index lock only after hooks finish, rebuild the tree from the current index, verify it differs from HEAD, and create the commit object with the observed parent. Update `HEAD` atomically with the reference lock and write the reflog. Run `post-commit` after publication; its failure is a warning because the commit already exists.
 
-Every other hook failure aborts before the commit is published. Preserve the index, working tree, and message file, and return the hook name, exit status, and captured output with a retry path. The native view keeps the draft message, refreshes status to expose any hook staging, and stays on Status; Back refreshes history and selects the new commit. CLI `git good commit -m MESSAGE` returns a JSON receipt with the commit, tree, parents, and any post-commit warnings. Amend and signing remain later milestones.
+Every other hook failure aborts before the commit is published. Preserve the index, working tree, and message file, and return the hook name, exit status, and captured output with a retry path. The native view keeps the draft message, refreshes status to expose any hook staging, and stays on Status; Back refreshes history and selects the new commit. CLI `git good commit -m MESSAGE` returns a JSON receipt with the commit, tree, parents, and any post-commit warnings. Amend is specified below; signing remains M7.
 
 ### Whole-file unstaging
 
@@ -275,3 +275,25 @@ The native **Stash changes…** dialog records a message and the untracked/keep-
 ### Merge, cherry-pick, revert, and recovery
 
 Merge, cherry-pick, and revert are explicit mutations delegated to Git so commit order, parent selection, hooks, and conflict behavior match the executable. Each operation validates a clean worktree, resolves one explicit commit or ref, and reports conflicts with unmerged paths instead of manufacturing a result. An in-progress merge, cherry-pick, or revert is detected from the repository state and exposed as Continue, Skip where supported, and Abort. Abort restores the pre-operation HEAD, index, and worktree as far as Git can; failures report enough detail for manual recovery without deleting user files. Conflict resolution shows base, ours, and theirs content for each unmerged path and marks a path resolved by staging it. UI mutations run on a worker, disable duplicate actions while pending, and refresh refs/history/status at an interaction-safe boundary.
+
+## History rewrites and recovery · M6
+
+### Amend
+
+Amend rewrites the latest commit with the current index and an edited message. It requires an existing HEAD and a working tree, validates the repository status, pins the previous HEAD, and preserves the previous commit's author and parents. The committer identity and time come from the current configuration. An empty index is valid for a message-only amend; unlike a normal commit, the tree may equal the old tree.
+
+Run `pre-commit`, `prepare-commit-msg` with the message file, `commit` source, and the old commit ID, then `commit-msg`. Re-read the message and index afterwards, reject a HEAD change made by a hook, acquire the index lock, rebuild the tree, and write the commit object with the original parents. Update `HEAD` atomically with the observed old ID as the expected value and write a `commit (amend): subject` reflog entry. Run `post-commit` and `post-rewrite amend` after publication; their failures are warnings because the rewrite already exists. `post-rewrite` receives the old and new IDs on stdin through `git hook run --to-stdin`, because the hook runner does not forward the parent process's stdin.
+
+Before publication, create `refs/gg/backup/<label>/<unix-nanos>` pointing at the previous tip. A backup failure aborts the rewrite. Backup refs are private recovery anchors: the refs snapshot excludes `refs/gg/`, so they never appear in the sidebar or graph labels. The amend receipt carries `amended`, `previous`, and `backup` in addition to the commit, tree, parents, and warnings. CLI `git good commit --amend -m MESSAGE` prints the same receipt.
+
+The Status commit bar exposes an **Amend** toggle. Enabling it loads the current HEAD message without replacing a nonempty draft, and the action becomes **Amend commit**. After success the toggle clears, the status line reads **Amended**, and the status refreshes against the new HEAD. **Commit → Amend last commit…** opens Status with amend enabled and the message loaded.
+
+### Reflog
+
+Read reflog entries through `git reflog show --date=unix --format=%H%x00%gD%x00%gs REF`, with `HEAD` as the default. Parse the timestamp from the dated selector, reconstruct stable `REF@{n}` index selectors from entry order, and split the subject at the first colon into an action and detail. Missing refs, option-shaped references, and Git failures return actionable errors; listing is read-only and never changes refs, the index, or working files. `git good reflog [REF] [--repo PATH]` prints the repository, reference, and entries as JSON.
+
+The native **Repository → Reflog…** window lists entries newest first and defaults to `HEAD`, with a selector for `HEAD` and local branches. Selecting an entry shows its full ID, relative time, action, and detail, with **Reset branch here** (Soft, Mixed, or Hard), **Create branch here…**, and **Copy hash**. Reset reuses the existing reset path and confirmation, including the Hard warning that staged and working changes are discarded. Create branch resolves the selected commit, validates the name, rejects an existing branch, and creates it without switching; the current branch and worktree stay put. Successful reset and branch creation refresh refs, history, status, and an open reflog.
+
+### Rebase, reorder, and squash · planned
+
+Run rebase, reorder, and squash through the Git executable with a generated todo and non-interactive sequence editor so commit order, conflicts, hooks, and continue/abort semantics match Git. Require a clean worktree unless an explicit autostash decision is accepted, create a backup ref before starting, surface conflicts and the in-progress rebase in the existing recovery banner, and refresh history and the pre-rewrite selection after completion or abort.

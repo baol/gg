@@ -174,3 +174,17 @@ Native review: the refs sidebar and status line show the current branch upstream
 - CLI tests cover `git good branch --delete BRANCH [--force]` and `git good tag --delete TAG` receipts and errors.
 - egui tests render the branch and tag delete confirmations at 720 and 1120 widths.
 - Branch, tag, and remote menus expose switch/jump, merge, track, delete, and copy actions.
+
+## M6 amend
+
+- Git oracle tests rewrite HEAD with the staged index, preserve the original author and parents, allow a message-only amend with an unchanged tree, and keep the previous commit reachable through `refs/gg/backup/...`.
+- Hook fixtures verify `pre-commit`, `prepare-commit-msg` with the `commit` source and old ID, `commit-msg`, and `post-rewrite amend` stdin. A failing `post-rewrite` returns a warning after the rewrite; other hook failures leave HEAD unchanged.
+- Amend rejects an unborn HEAD, an empty message, and a HEAD changed during hooks. The refs snapshot excludes backup refs.
+- CLI tests verify the `amend` receipt fields and backup ref. egui tests load the HEAD message, toggle amend, rewrite the index, clear the toggle, and render the **Amended** status line.
+
+## M6 reflog
+
+- Git oracle tests compare `HEAD` and branch reflog order, selectors, IDs, times, actions, and details with `git reflog show`; missing and option-shaped references are rejected.
+- CLI tests verify `git good reflog [REF]` JSON, the default `HEAD`, entries after an amend, and missing-reference errors.
+- Reflog tests verify read-only loading, cleared stale entries on failure, and the native window at 720 and 1120 widths with the reference selector, entry list, reset actions, branch creation, and copy.
+- Branch creation at a reflog commit resolves the revision, rejects an existing branch, and does not switch the current branch. The reflog branch-creation dialog renders at both supported widths.

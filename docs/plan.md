@@ -1,6 +1,33 @@
 # Plan
 
-Purpose: sequence M5 delivery and acceptance.
+Purpose: sequence M6 delivery and acceptance.
+
+## M6 · Rebase, reorder, squash, amend, and reflog recovery
+
+Goal: rewrite history deliberately and recover previous tips without weakening read-only browsing, clean-worktree checks, or existing mutations. Every rewrite records a private backup ref before publication.
+
+Contracts: [history rewrites and recovery](architecture.md#history-rewrites-and-recovery--m6), [M5 recovery](architecture.md#history-mutations-and-recovery--m5). M5 is complete; [evidence](verification.md#m5-recovery-and-operation-state--2026-10-22).
+
+### Increments
+
+1. **Amend · complete.** Add `git good commit --amend -m MESSAGE`, an **Amend** toggle in the Status commit bar, and **Commit → Amend last commit…**. Amend the latest commit with the staged index and an editable message, allow a message-only amend when the index is empty, preserve the original author, run commit hooks plus `post-rewrite`, and save the previous tip under a private backup ref.
+2. **Reflog · complete.** Add `git good reflog [REF]`, a **Repository → Reflog…** window showing `HEAD` by default with a local-branch selector, confirmed Soft/Mixed/Hard reset to an entry, **Create branch here…** without switching, and **Copy hash**. Read-only listing never changes refs, the index, or working files.
+3. **Rebase onto · planned.** Rebase the current branch onto a local branch, remote-tracking ref, or tag through Git with a clean-worktree check, conflict recovery, continue/abort, and a backup ref.
+4. **Reorder and squash · planned.** Generate a rebase todo and run it through Git with a non-interactive sequence editor, preserving commit messages, reporting conflicts, and refreshing history after completion or abort.
+5. **Rewrite recovery · planned.** Surface backup refs and in-progress rebase state, restore the pre-rewrite selection, and document the recovery paths for amend, rebase, reorder, and squash.
+
+### Acceptance
+
+| Scenario | Expected result | Method |
+| --- | --- | --- |
+| Amend content | HEAD is rewritten with the staged index, its original parents, and the edited message; a message-only amend keeps the tree | Git oracle, CLI, and native review |
+| Amend identity and hooks | The original author is preserved, the committer is current, hooks run in Git order, and `post-rewrite` receives the old and new IDs | Git oracle and hook fixtures |
+| Amend safety | The previous tip is reachable through a private `refs/gg/backup/...` ref, backup refs stay out of the refs sidebar, and backup failure aborts | Git oracle and refs snapshot |
+| Reflog listing | Entries match `git reflog show`, newest first, with selector, commit, time, action, and detail; the default is `HEAD` | Git oracle and CLI |
+| Reflog recovery | Reset to an entry matches Git after confirmation, Hard warns, and branch creation at an entry does not switch the current branch | Git oracle, CLI, and native review |
+| Rewrite recovery | Continue, abort, and backup restoration recover each rewrite without deleting user files | Git fixtures and native review |
+
+Record native wide/narrow captures and verification in [verification](verification.md).
 
 ## M5 · Merge, conflicts, cherry-pick, revert, stash, and recovery
 
@@ -25,7 +52,7 @@ Goal: expose commit and ref actions through right-click and keyboard context men
 
 ### Increments
 
-1. **Commit-row menu · in progress.** Add **Cherry-pick**, **Revert**, **Reset here** (Soft, Mixed, Hard with confirmation), **Copy hash**, and **Copy subject** to history rows, with right-click access.
+1. **Commit-row menu · complete.** Add **Cherry-pick**, **Revert**, **Reset here** (Soft, Mixed, Hard with confirmation), **Copy hash**, and **Copy subject** to history rows, with right-click access.
 2. **Compare to local · complete.** Compare the selected commit against the current branch tip in a review diff, exposed from the commit-row menu and `git good show --against REF`.
 3. **Ref menus · complete.** Add checkout/switch, merge, delete branch (safe, then confirmed force), delete tag, track remote, and copy actions to branch, tag, and remote items.
 

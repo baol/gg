@@ -20,6 +20,8 @@ mod navigation;
 mod network;
 mod phosphor;
 mod records;
+mod reflog_cli;
+mod reflog_view;
 mod refs_cli;
 mod refs_view;
 mod reset_cli;
@@ -51,7 +53,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("--help")) {
         println!(
-            "gg · good git\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good refs [PATH]      Print branches, remotes, tags, and HEAD as JSON\ngit-good status [PATH] [--file PATH --area AREA]   Print working status or diff as JSON\ngit-good stage --file PATH [--hunk HEADER]... [--repo PATH]   Stage one file or selected hunks\ngit-good unstage --file PATH [--repo PATH]   Unstage one file\ngit-good commit -m MESSAGE [--repo PATH]   Commit the index after Git hooks\ngit-good switch [--create] BRANCH [--repo PATH]   Switch to or create a local branch\ngit-good fetch [REMOTE] [--prune] [--repo PATH]   Fetch and update remote-tracking refs\ngit-good push [REMOTE] [BRANCH] [--set-upstream] [--repo PATH]   Push a local branch without force\ngit-good clone URL [PATH]   Clone a repository and open it\ngit-good stash <list|push|apply|pop|drop> [OPTIONS] [--repo PATH]   List or mutate stashes\ngit-good cherry-pick COMMIT [--repo PATH]   Apply a commit\ngit-good revert COMMIT [--repo PATH]   Invert a commit\ngit-good merge REF [--no-ff] [--repo PATH]   Merge a branch, remote, or tag\ngit-good conflicts [--repo PATH]   List unmerged paths\ngit-good conflict --file PATH [--use ours|theirs|--stage] [--repo PATH]   Read or resolve a conflict\ngit-good reset --soft|--mixed|--hard COMMIT [--repo PATH]   Reset the current branch\ngit-good branch --delete BRANCH [--force] [--repo PATH]   Delete a local branch\ngit-good tag --delete TAG [--repo PATH]   Delete a local tag\ngit-good show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]   Review or export\n\nBrowse commits reachable from HEAD and all local, remote, and tag refs."
+            "gg · good git\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good refs [PATH]      Print branches, remotes, tags, and HEAD as JSON\ngit-good status [PATH] [--file PATH --area AREA]   Print working status or diff as JSON\ngit-good stage --file PATH [--hunk HEADER]... [--repo PATH]   Stage one file or selected hunks\ngit-good unstage --file PATH [--repo PATH]   Unstage one file\ngit-good commit [--amend] -m MESSAGE [--repo PATH]   Commit the index or amend HEAD after Git hooks\ngit-good reflog [REF] [--repo PATH]   Print reflog entries as JSON\ngit-good switch [--create] BRANCH [--repo PATH]   Switch to or create a local branch\ngit-good fetch [REMOTE] [--prune] [--repo PATH]   Fetch and update remote-tracking refs\ngit-good push [REMOTE] [BRANCH] [--set-upstream] [--repo PATH]   Push a local branch without force\ngit-good clone URL [PATH]   Clone a repository and open it\ngit-good stash <list|push|apply|pop|drop> [OPTIONS] [--repo PATH]   List or mutate stashes\ngit-good cherry-pick COMMIT [--repo PATH]   Apply a commit\ngit-good revert COMMIT [--repo PATH]   Invert a commit\ngit-good merge REF [--no-ff] [--repo PATH]   Merge a branch, remote, or tag\ngit-good conflicts [--repo PATH]   List unmerged paths\ngit-good conflict --file PATH [--use ours|theirs|--stage] [--repo PATH]   Read or resolve a conflict\ngit-good reset --soft|--mixed|--hard COMMIT [--repo PATH]   Reset the current branch\ngit-good branch --delete BRANCH [--force] [--repo PATH]   Delete a local branch\ngit-good branch --create NAME [--at REF] [--repo PATH]   Create a local branch without switching\ngit-good tag --delete TAG [--repo PATH]   Delete a local tag\ngit-good show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]   Review or export\n\nBrowse commits reachable from HEAD and all local, remote, and tag refs."
         );
         return Ok(());
     }
@@ -69,6 +71,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("commit")) {
         return commit_cli::run(args);
+    }
+    if first.as_deref() == Some(std::ffi::OsStr::new("reflog")) {
+        return reflog_cli::run(args);
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("refs")) {
         return refs_cli::run(args);
@@ -98,7 +103,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return reset_cli::run(args);
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("branch")) {
-        return branch_cli::delete(args);
+        return branch_cli::manage(args);
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("tag")) {
         return tag_cli::run(args);
@@ -227,6 +232,14 @@ struct TagDeleteDialog {
     error: Option<String>,
 }
 
+#[derive(Clone)]
+struct CreateBranchDialog {
+    name: String,
+    commit: String,
+    selector: String,
+    error: Option<String>,
+}
+
 struct ConflictView {
     paths: Vec<String>,
     selected: usize,
@@ -283,6 +296,8 @@ struct Browser {
     reset_confirm: Option<(String, gg_engine::reset::Mode)>,
     branch_delete: Option<BranchDeleteDialog>,
     tag_delete: Option<TagDeleteDialog>,
+    create_branch: Option<CreateBranchDialog>,
+    reflog: Option<reflog_view::ReflogView>,
     refs_visible: bool,
     refs_query: String,
     state: state::State,
@@ -336,6 +351,8 @@ impl Browser {
             reset_confirm: None,
             branch_delete: None,
             tag_delete: None,
+            create_branch: None,
+            reflog: None,
             refs_visible: true,
             refs_query: String::new(),
             state: state::State::default(),
@@ -540,6 +557,7 @@ impl Browser {
                 self.state.selected_row = None;
                 self.state.refs = Default::default();
                 self.refs_query.clear();
+                self.reflog = None;
                 self.load(ctx);
             }
             Err(error) => {
@@ -638,6 +656,27 @@ impl Browser {
         Ok(())
     }
 
+    fn reflog_references(&self) -> Vec<String> {
+        let mut references = vec!["HEAD".to_string()];
+        references.extend(
+            self.state
+                .refs
+                .items
+                .iter()
+                .filter(|item| item.kind == gg_engine::refs::RefKind::Branch)
+                .map(|item| item.name.clone()),
+        );
+        references.sort();
+        references.dedup();
+        references
+    }
+
+    fn refresh_reflog(&mut self) {
+        if let Some(view) = &mut self.reflog {
+            view.load();
+        }
+    }
+
     fn refresh_working(&mut self, ctx: &egui::Context) {
         if self.working.is_some()
             && let Some(history) = &self.state.history
@@ -702,6 +741,7 @@ impl Browser {
         self.conflict_view = None;
         self.refresh_mutation();
         self.load(ctx);
+        self.refresh_reflog();
         self.refresh_working(ctx);
         Ok(())
     }
@@ -755,6 +795,7 @@ impl Browser {
         ));
         self.refresh_mutation();
         self.load(ctx);
+        self.refresh_reflog();
         self.refresh_working(ctx);
         Ok(())
     }
@@ -1299,6 +1340,19 @@ impl Browser {
                         self.load(ctx);
                         ui.close();
                     }
+                    if ui
+                        .add_enabled(self.state.history.is_some(), egui::Button::new("Reflog…"))
+                        .on_hover_text("Inspect HEAD or branch reflog entries and recover a tip")
+                        .clicked()
+                    {
+                        if let Some(history) = &self.state.history {
+                            self.reflog = Some(reflog_view::ReflogView::new(
+                                history.path.clone(),
+                                "HEAD".into(),
+                            ));
+                        }
+                        ui.close();
+                    }
                     ui.separator();
                     let network_idle = self.network.is_none() && self.branch.is_none();
                     let has_repo = self.state.history.is_some();
@@ -1548,6 +1602,29 @@ impl Browser {
                         revert = true;
                         ui.close();
                     }
+                    ui.separator();
+                    if ui
+                        .add_enabled(
+                            self.state.history.is_some() && !mutation_busy,
+                            egui::Button::new("Amend last commit…"),
+                        )
+                        .on_hover_text("Open the working view with the HEAD message and amend mode")
+                        .clicked()
+                    {
+                        if let Some(working) = &mut self.working {
+                            if let Err(error) = working.start_amend() {
+                                self.mutation_error = Some(error);
+                            }
+                        } else if let Some(history) = &self.state.history {
+                            let mut working =
+                                status_view::StatusView::new(history.path.clone(), ctx);
+                            match working.start_amend() {
+                                Ok(()) => self.working = Some(working),
+                                Err(error) => self.mutation_error = Some(error),
+                            }
+                        }
+                        ui.close();
+                    }
                 });
                 if cherry_pick
                     && let Err(error) =
@@ -1685,6 +1762,7 @@ impl Browser {
                         .clicked()
                         || enter
                     {
+                        self.reflog = None;
                         self.load(ctx);
                         self.edit_path = false;
                     }
@@ -1889,6 +1967,103 @@ impl Browser {
                 self.track_dialog = None;
             }
         }
+        let reflog_references = self.reflog_references();
+        let mut reflog_action = None;
+        let mut reflog_open = true;
+        if let Some(view) = &mut self.reflog {
+            reflog_action = view.draw(ctx, &reflog_references, &mut reflog_open);
+        }
+        if !reflog_open {
+            self.reflog = None;
+        }
+        if let Some(action) = reflog_action {
+            match action {
+                reflog_view::Action::Reset { commit, mode } => {
+                    self.reset_confirm = Some((commit, mode));
+                }
+                reflog_view::Action::CreateBranch { commit, selector } => {
+                    self.create_branch = Some(CreateBranchDialog {
+                        name: String::new(),
+                        commit,
+                        selector,
+                        error: None,
+                    });
+                }
+            }
+        }
+
+        let mut create_branch_submit = None;
+        let mut create_branch_cancel = false;
+        if let Some(dialog) = &mut self.create_branch {
+            egui::Window::new("Create branch here")
+                .id(egui::Id::unique("create-branch-here"))
+                .collapsible(false)
+                .resizable(false)
+                .default_pos(ctx.content_rect().center())
+                .pivot(egui::Align2::CENTER_CENTER)
+                .show(ctx, |ui| {
+                    ui.label(format!(
+                        "Create a branch at {} ({})",
+                        dialog.commit.chars().take(8).collect::<String>(),
+                        dialog.selector
+                    ));
+                    ui.add(
+                        egui::TextEdit::singleline(&mut dialog.name)
+                            .hint_text("Branch name")
+                            .desired_width(300.0),
+                    );
+                    if let Some(error) = &dialog.error {
+                        ui.colored_label(ui.visuals().error_fg_color, error);
+                    }
+                    ui.horizontal(|ui| {
+                        if ui
+                            .add_enabled(
+                                !dialog.name.trim().is_empty(),
+                                egui::Button::new("Create"),
+                            )
+                            .clicked()
+                        {
+                            create_branch_submit = Some(dialog.name.trim().to_string());
+                        }
+                        if ui.button("Cancel").clicked() {
+                            create_branch_cancel = true;
+                        }
+                    });
+                });
+        }
+        if create_branch_cancel {
+            self.create_branch = None;
+        }
+        if let Some(name) = create_branch_submit
+            && let Some(dialog) = self.create_branch.clone()
+        {
+            match self.stash_path() {
+                Some(path) => match gg_git::branch::create_at(&path, &name, &dialog.commit) {
+                    Ok(receipt) => {
+                        self.create_branch = None;
+                        self.load(ctx);
+                        if let Some(view) = &mut self.reflog {
+                            view.notice(format!(
+                                "Created {} at {}",
+                                receipt.branch,
+                                receipt.commit.chars().take(8).collect::<String>()
+                            ));
+                        }
+                    }
+                    Err(error) => {
+                        if let Some(dialog) = &mut self.create_branch {
+                            dialog.error = Some(error);
+                        }
+                    }
+                },
+                None => {
+                    if let Some(dialog) = &mut self.create_branch {
+                        dialog.error = Some("Open a repository before creating a branch.".into());
+                    }
+                }
+            }
+        }
+
         let mut branch_delete_action = None;
         let mut branch_delete_open = true;
         if let Some(dialog) = &mut self.branch_delete {
@@ -3197,6 +3372,39 @@ mod tests {
                 .collect::<Vec<_>>();
             assert!(text.iter().any(|line| line.contains("New branch")));
             assert!(text.iter().any(|line| line.contains("Create branch")));
+        }
+    }
+
+    #[test]
+    fn reflog_branch_creation_dialog_renders_at_supported_widths() {
+        for width in [720.0, 1120.0] {
+            let ctx = egui::Context::default();
+            let mut app = layout_fixture();
+            app.create_branch = Some(CreateBranchDialog {
+                name: "recovered".into(),
+                commit: "b".repeat(40),
+                selector: "HEAD@{2}".into(),
+                error: None,
+            });
+            let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let output = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let text = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert!(text.iter().any(|line| line.contains("Create branch here")));
+            assert!(text.iter().any(|line| line.contains("HEAD@{2}")));
+            assert!(text.iter().any(|line| line.contains("recovered")));
+            assert!(text.iter().any(|line| line == &"Create"));
+            assert!(text.iter().any(|line| line == &"Cancel"));
         }
     }
 

@@ -24,6 +24,8 @@ pub struct StatusView {
     last_commit: Option<String>,
     commit_warning: Option<String>,
     message: String,
+    amend: bool,
+    last_amended: bool,
     worker: Option<Worker>,
     pending: Option<Worker>,
     staged: Option<Update>,
@@ -55,6 +57,8 @@ impl StatusView {
             last_commit: None,
             commit_warning: None,
             message: String::new(),
+            amend: false,
+            last_amended: false,
             worker: None,
             pending: None,
             staged: None,
@@ -201,6 +205,15 @@ impl StatusView {
         self.commit_done.take()
     }
 
+    /// Enable amend mode and load the current HEAD message.
+    pub fn start_amend(&mut self) -> Result<(), String> {
+        self.message = gg_git::commit::head_message(&self.path)?;
+        self.amend = true;
+        self.error = None;
+        self.action_error = None;
+        Ok(())
+    }
+
     fn start_commit(&mut self, ctx: &egui::Context) {
         if self.busy() || self.replacing || self.message.trim().is_empty() {
             return;
@@ -210,12 +223,17 @@ impl StatusView {
             return;
         };
         let message = self.message.clone();
+        let amend = self.amend;
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         let repaint = ctx.clone();
         match std::thread::Builder::new()
             .name("gg-commit".into())
             .spawn(move || {
-                let result = gg_git::commit::create(&repository, &message);
+                let result = if amend {
+                    gg_git::commit::amend(&repository, &message)
+                } else {
+                    gg_git::commit::create(&repository, &message)
+                };
                 let _ = tx.send(result);
                 repaint.request_repaint();
             }) {
@@ -381,6 +399,8 @@ impl StatusView {
             match result {
                 Ok(receipt) => {
                     self.last_commit = Some(receipt.id.get(..7).unwrap_or(&receipt.id).to_string());
+                    self.last_amended = receipt.amended;
+                    self.amend = false;
                     self.commit_done = Some(receipt.id.clone());
                     self.commit_warning = if receipt.warnings.is_empty() {
                         None
@@ -558,7 +578,12 @@ impl StatusView {
                     )
                 } else if let Some(id) = &self.last_commit {
                     format!(
-                        "Committed {id} · {}",
+                        "{} {id} · {}",
+                        if self.last_amended {
+                            "Amended"
+                        } else {
+                            "Committed"
+                        },
                         if self.complete && self.count == 0 {
                             "Clean working tree".into()
                         } else {
@@ -591,26 +616,53 @@ impl StatusView {
             .exact_size(82.0)
             .show(ui, |ui| {
                 ui.add_space(4.0);
-                let can_commit = !self.busy() && !self.replacing && !self.message.trim().is_empty();
+                let busy = self.busy() || self.replacing;
+                let can_commit = !busy && !self.message.trim().is_empty();
                 ui.horizontal(|ui| {
-                    let width = (ui.available_width() - 102.0).max(180.0);
+                    let button_width = if self.amend { 104.0 } else { 88.0 };
+                    let width = (ui.available_width() - button_width - 14.0).max(160.0);
                     ui.add_sized(
                         [width, 54.0],
                         egui::TextEdit::multiline(&mut self.message)
                             .hint_text("Commit subject\n\nOptional body")
                             .desired_rows(2),
                     );
-                    let label = if self.commit.is_some() {
-                        "Committing…"
-                    } else {
-                        "Commit"
-                    };
-                    commit_now |= ui
-                        .add_enabled(
-                            can_commit,
-                            egui::Button::new(label).min_size(egui::vec2(88.0, 26.0)),
-                        )
-                        .clicked();
+                    ui.vertical(|ui| {
+                        let mut amend = self.amend;
+                        if ui
+                            .add_enabled(!busy, egui::Checkbox::new(&mut amend, "Amend"))
+                            .on_hover_text("Rewrite HEAD with the staged index and this message")
+                            .changed()
+                        {
+                            if amend {
+                                match gg_git::commit::head_message(&self.path) {
+                                    Ok(message) => {
+                                        if self.message.trim().is_empty() {
+                                            self.message = message;
+                                        }
+                                        self.amend = true;
+                                        self.action_error = None;
+                                    }
+                                    Err(error) => self.action_error = Some(error),
+                                }
+                            } else {
+                                self.amend = false;
+                            }
+                        }
+                        let label = if self.commit.is_some() {
+                            "Committing…"
+                        } else if self.amend {
+                            "Amend commit"
+                        } else {
+                            "Commit"
+                        };
+                        commit_now |= ui
+                            .add_enabled(
+                                can_commit,
+                                egui::Button::new(label).min_size(egui::vec2(button_width, 26.0)),
+                            )
+                            .clicked();
+                    });
                 });
             });
         let selected_area = self
@@ -849,6 +901,8 @@ mod tests {
             last_commit: None,
             commit_warning: None,
             message: String::new(),
+            amend: false,
+            last_amended: false,
             worker: None,
             pending: None,
             staged: None,
@@ -1507,6 +1561,55 @@ mod tests {
                 "missing commit at {width}"
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn amend_panel_loads_head_and_rewrites_the_commit() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        generated(dir.path())?;
+        git(dir.path(), &["config", "user.name", "Test"])?;
+        git(dir.path(), &["config", "user.email", "test@example.org"])?;
+        git(dir.path(), &["add", "a"])?;
+        let previous = file(dir.path(), &["rev-parse", "HEAD"])?;
+        let ctx = egui::Context::default();
+        let mut view = StatusView::new(dir.path().into(), &ctx);
+        settle(&ctx, &mut view, 1120.0);
+        view.start_amend()?;
+        assert_eq!(view.message, "base");
+        assert!(view.amend);
+        let output = run(&ctx, &mut view, 1120.0, vec![]);
+        let amend = text_pos(&output, "Amend commit").ok_or("missing amend button")?;
+        click(&ctx, &mut view, 1120.0, amend + egui::vec2(5.0, 0.0));
+        pump(&ctx, &mut view, 1120.0, |view| {
+            !view.busy() && view.complete && !view.replacing && view.commit_done.is_some()
+        });
+        assert!(view.take_commit().is_some());
+        assert!(!view.amend);
+        assert_eq!(
+            file(dir.path(), &["show", "-s", "--format=%s", "HEAD"])?,
+            b"base\n"
+        );
+        assert_eq!(
+            file(dir.path(), &["show", "HEAD:a"])?,
+            b"ONE\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\nTWELVE\n"
+        );
+        assert_eq!(file(dir.path(), &["rev-list", "--count", "HEAD"])?, b"1\n");
+        assert_ne!(file(dir.path(), &["rev-parse", "HEAD"])?, previous);
+        assert!(
+            std::fs::read_dir(dir.path().join(".git/refs/gg/backup/amend"))?
+                .next()
+                .is_some()
+        );
+        let output = run(&ctx, &mut view, 1120.0, vec![]);
+        assert!(
+            output.shapes.iter().any(|shape| matches!(
+                &shape.shape,
+                egui::epaint::Shape::Text(text)
+                    if text.galley.job.text.starts_with("Amended ")
+            )),
+            "missing amended status line"
+        );
         Ok(())
     }
 

@@ -316,3 +316,14 @@ Linux x86_64 · Rust 1.99.1 · local Git fixtures.
 - CLI tests cover `git good branch --delete BRANCH [--force]` and `git good tag --delete TAG` receipts and errors.
 - egui tests render the branch and tag delete confirmations at 720 and 1120 widths.
 - Branch, tag, and remote menus expose switch/jump, merge, track, delete, and copy actions.
+
+## M6 amend and reflog · 2026-10-23
+
+Linux x86_64 · Rust 1.99.1 · local Git fixtures.
+
+- 267 workspace tests pass (3 ignored); formatting, Clippy with `-D warnings`, and the debug build pass.
+- Git oracle tests amend with the staged index, preserve the original author and parents, keep a message-only tree, and verify the private backup ref. Hook fixtures cover `prepare-commit-msg` arguments, `commit-msg`, and `post-rewrite amend` stdin plus warnings.
+- CLI tests cover `git good commit --amend`, `git good reflog [REF]`, and `git good branch --create NAME [--at REF]`, including receipts, backup refs, missing references, and branch creation without switching.
+- egui tests load the HEAD message into the amend toggle, rewrite the commit, render the **Amended** status line, and render the reflog window and branch-creation dialog at 720 and 1120 widths.
+- Reflog read-only tests cover `HEAD` and branch selectors, newest-first entries, times, actions, details, stale-entry clearing, and missing or option-shaped references.
+- CI evidence will be added after the pull request runs.
