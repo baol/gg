@@ -1612,13 +1612,13 @@ impl Browser {
                         .clicked()
                     {
                         if let Some(working) = &mut self.working {
-                            if let Err(error) = working.start_amend() {
+                            if let Err(error) = working.start_amend(ctx) {
                                 self.mutation_error = Some(error);
                             }
                         } else if let Some(history) = &self.state.history {
                             let mut working =
                                 status_view::StatusView::new(history.path.clone(), ctx);
-                            match working.start_amend() {
+                            match working.start_amend(ctx) {
                                 Ok(()) => self.working = Some(working),
                                 Err(error) => self.mutation_error = Some(error),
                             }

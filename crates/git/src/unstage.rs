@@ -1,4 +1,4 @@
-//! Restore whole index paths or selected staged hunks/lines from pinned HEAD.
+//! Restore whole index paths or selected staged hunks/lines from the pinned base tree.
 use crate::patch::{self, Direction, Edit};
 use gg_engine::{
     diff::{self, DiffKind},
@@ -31,7 +31,7 @@ fn apply_file(request: &WorkingRequest) -> Result<(), Box<dyn std::error::Error>
     }
     let path = BStr::new(&request.entry.path_bytes);
     patch::check_conflicts(&index, path)?;
-    let before = head_side(request, &repo, &relative)?;
+    let before = base_side(request, &repo, &relative)?;
     if before.is_some() {
         patch::check_collision(&index, &request.entry.path_bytes)?;
     }
@@ -68,7 +68,7 @@ fn apply_changes(
     }
     let path = BStr::new(&request.entry.path_bytes);
     patch::check_conflicts(&index, path)?;
-    let before = head_side(request, &repo, &relative)?;
+    let before = base_side(request, &repo, &relative)?;
     if before.is_some() {
         patch::check_collision(&index, &request.entry.path_bytes)?;
     }
@@ -143,21 +143,26 @@ fn apply_changes(
     patch::publish(index, lock, request)
 }
 
-fn head_side(
+fn base_side(
     request: &WorkingRequest,
     repo: &gix::Repository,
     relative: &std::path::Path,
 ) -> Result<Option<(gix::ObjectId, u16)>, Box<dyn std::error::Error>> {
-    let Some(head) = &request.repository.head else {
-        return Ok(None);
+    let side = if let Some(base) = &request.repository.base_tree {
+        repo.find_tree(gix::ObjectId::from_hex(base.as_bytes())?)?
+            .lookup_entry_by_path(relative)?
+            .map(|entry| (entry.id().detach(), entry.mode().value()))
+    } else {
+        let Some(head) = &request.repository.head else {
+            return Ok(None);
+        };
+        repo.find_commit(gix::ObjectId::from_hex(head.as_bytes())?)?
+            .tree()?
+            .lookup_entry_by_path(relative)?
+            .map(|entry| (entry.id().detach(), entry.mode().value()))
     };
-    let side = repo
-        .find_commit(gix::ObjectId::from_hex(head.as_bytes())?)?
-        .tree()?
-        .lookup_entry_by_path(relative)?
-        .map(|entry| (entry.id().detach(), entry.mode().value()));
     if side.is_some_and(|(_, mode)| mode == 0o040000) {
-        return Err("Select an individual file; this path is a directory in HEAD".into());
+        return Err("Select an individual file; this path is a directory in the base tree".into());
     }
     Ok(side)
 }

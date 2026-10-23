@@ -321,9 +321,9 @@ Linux x86_64 · Rust 1.99.1 · local Git fixtures.
 
 Linux x86_64 · Rust 1.99.1 · local Git fixtures.
 
-- 267 workspace tests pass (3 ignored); formatting, Clippy with `-D warnings`, and the debug build pass.
-- Git oracle tests amend with the staged index, preserve the original author and parents, keep a message-only tree, and verify the private backup ref. Hook fixtures cover `prepare-commit-msg` arguments, `commit-msg`, and `post-rewrite amend` stdin plus warnings.
+- 271 workspace tests pass (3 ignored); formatting, Clippy with `-D warnings`, and the debug build pass.
+- Git oracle tests amend with the staged index, preserve the original author and parents, keep a message-only tree, and verify the private backup ref. Amend-base tests show HEAD's contents as staged, use the empty tree for a root commit, and unstage whole files and hunks against the parent without changing working files. Hook fixtures cover `prepare-commit-msg` arguments, `commit-msg`, and `post-rewrite amend` stdin plus warnings.
 - CLI tests cover `git good commit --amend`, `git good reflog [REF]`, and `git good branch --create NAME [--at REF]`, including receipts, backup refs, missing references, and branch creation without switching.
-- egui tests load the HEAD message into the amend toggle, rewrite the commit, render the **Amended** status line, and render the reflog window and branch-creation dialog at 720 and 1120 widths.
+- egui tests load the HEAD message into the amend toggle, show the commit's contents as staged, unstage and restage a working change through the unified view, rewrite the commit, clear the amend base, render the **Amended** status line, and render the reflog window and branch-creation dialog at 720 and 1120 widths.
 - Reflog read-only tests cover `HEAD` and branch selectors, newest-first entries, times, actions, details, stale-entry clearing, and missing or option-shaped references.
-- [Six native CI jobs](https://github.com/baol/gg/actions/runs/39922911100) pass tests, Clippy with `-D warnings`, release builds, CLI smoke checks, and packaging on Linux, macOS, and Windows on x86_64 and arm64 for `853cb3e`.
+- CI evidence will be added after the amend-view change runs in the pull request.

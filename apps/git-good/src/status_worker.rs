@@ -46,7 +46,11 @@ fn send(tx: &mpsc::SyncSender<Event>, mut event: Event, stop: &AtomicBool) -> Re
     }
 }
 impl Worker {
-    pub fn start(path: PathBuf, ctx: eframe::egui::Context) -> Result<Self, String> {
+    pub fn start(
+        path: PathBuf,
+        ctx: eframe::egui::Context,
+        base_tree: Option<String>,
+    ) -> Result<Self, String> {
         let input = Arc::new(Mutex::new(0..64));
         let output = Arc::new(Mutex::new(None));
         let stop = Arc::new(AtomicBool::new(false));
@@ -54,7 +58,7 @@ impl Worker {
         let handle = thread::Builder::new()
             .name("gg-status-pages".into())
             .spawn(move || {
-                let result = run(path, &i, &o, &s, &ctx);
+                let result = run(path, base_tree, &i, &o, &s, &ctx);
                 if let Err(e) = result {
                     if let Ok(mut out) = o.lock() {
                         *out = Some(Err(e));
@@ -91,6 +95,7 @@ impl Drop for Worker {
 }
 fn run(
     path: PathBuf,
+    base_tree: Option<String>,
     input: &Mutex<Range<usize>>,
     output: &Mutex<Option<Result<Update, String>>>,
     stop: &Arc<AtomicBool>,
@@ -101,10 +106,12 @@ fn run(
     thread::Builder::new()
         .name("gg-status-scan".into())
         .spawn(move || {
-            let result = gg_git::status::Session::open(&path).and_then(|session| {
-                send(&tx, Event::Identity(session.identity.clone()), &s)?;
-                session.scan(&s, |entry| send(&tx, Event::Entry(entry), &s))
-            });
+            let result = gg_git::status::Session::open_with_base_tree(&path, base_tree).and_then(
+                |session| {
+                    send(&tx, Event::Identity(session.identity.clone()), &s)?;
+                    session.scan(&s, |entry| send(&tx, Event::Entry(entry), &s))
+                },
+            );
             let _ = send(&tx, Event::Done(result), &s);
         })
         .map_err(|e| e.to_string())?;
@@ -190,7 +197,7 @@ mod tests {
         for i in 0..1000 {
             std::fs::write(dir.path().join(format!("file-{i:04}")), b"content")?;
         }
-        let worker = Worker::start(dir.path().into(), eframe::egui::Context::default())?;
+        let worker = Worker::start(dir.path().into(), eframe::egui::Context::default(), None)?;
         let wait = |complete: bool, row: usize| -> Result<Update, Box<dyn std::error::Error>> {
             let deadline = std::time::Instant::now() + Duration::from_secs(15);
             loop {
