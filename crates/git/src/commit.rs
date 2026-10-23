@@ -21,6 +21,9 @@ pub struct Receipt {
     pub tree: String,
     pub parents: Vec<String>,
     pub warnings: Vec<String>,
+    pub amended: bool,
+    pub previous: Option<String>,
+    pub backup: Option<String>,
 }
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -97,7 +100,149 @@ fn create_inner(repository: &StatusIdentity, message: &str) -> Result<Receipt> {
         tree: tree.to_string(),
         parents: head.iter().map(ToString::to_string).collect(),
         warnings,
+        amended: false,
+        previous: None,
+        backup: None,
     })
+}
+
+/// Rewrite HEAD with the current index and a new message.
+pub fn amend(repository: &StatusIdentity, message: &str) -> std::result::Result<Receipt, String> {
+    amend_inner(repository, message).map_err(|e| format!("Amend: {e}"))
+}
+
+fn amend_inner(repository: &StatusIdentity, message: &str) -> Result<Receipt> {
+    let message = normalize_message(message)?;
+    crate::status::validate(repository)?;
+    let repo = gix::discover(&repository.path)?;
+    let worktree = repo
+        .workdir()
+        .ok_or("Amend requires a working tree")?
+        .to_path_buf();
+    let previous =
+        head_id(&repo)?.ok_or("There is no commit to amend. Create the first commit instead.")?;
+    let previous_id = gix::ObjectId::from_hex(previous.as_bytes())?;
+    let head = repo.find_commit(previous_id)?;
+    let author = head.author()?.to_owned()?;
+    let parents: Vec<_> = head.parent_ids().map(|id| id.detach()).collect();
+    let mut index = (**repo.index_or_empty()?).clone();
+    check_index(&index)?;
+
+    let message_path = repo.git_dir().join("COMMIT_EDITMSG");
+    write_message(&message_path, &message)?;
+
+    run_hook(&worktree, "pre-commit", &[])?;
+    ensure_head(&repo, Some(&previous))?;
+    run_hook(
+        &worktree,
+        "prepare-commit-msg",
+        &[
+            message_path.as_os_str(),
+            OsStr::new("commit"),
+            OsStr::new(&previous),
+        ],
+    )?;
+    ensure_head(&repo, Some(&previous))?;
+    run_hook(&worktree, "commit-msg", &[message_path.as_os_str()])?;
+    let message = read_message(&message_path)?;
+
+    let lock = patch::acquire(&repo)?;
+    ensure_head(&repo, Some(&previous))?;
+    index = (**repo.index_or_empty()?).clone();
+    check_index(&index)?;
+    let tree = tree_from_index(&repo, &index)?;
+    let committer = repo
+        .committer()
+        .ok_or("Committer identity is not configured. Set user.name/user.email or GIT_COMMITTER_NAME/EMAIL.")?
+        .map_err(|e| format!("Read committer identity: {e}"))?
+        .to_owned()?;
+    let backup = crate::backup::create(&repository.path, "amend", &previous)?;
+    let id = write_amended_commit(
+        &repo,
+        committer,
+        author,
+        &message,
+        tree,
+        &parents,
+        previous_id,
+    )?;
+    drop(lock);
+
+    let mut warnings = vec![];
+    if let Err(e) = run_hook(&worktree, "post-commit", &[]) {
+        warnings.push(format!(
+            "The commit was amended, but its post-commit hook failed. Inspect the commit and fix the hook before retrying.\n{e}"
+        ));
+    }
+    let rewritten = format!("{previous} {id}\n");
+    if let Err(e) = run_hook_input(
+        &worktree,
+        "post-rewrite",
+        &[OsStr::new("amend")],
+        Some(rewritten.as_bytes()),
+    ) {
+        warnings.push(format!(
+            "The commit was amended, but its post-rewrite hook failed. Inspect the commit and fix the hook before retrying.\n{e}"
+        ));
+    }
+    Ok(Receipt {
+        id: id.to_string(),
+        tree: tree.to_string(),
+        parents: parents.iter().map(ToString::to_string).collect(),
+        warnings,
+        amended: true,
+        previous: Some(previous),
+        backup: Some(backup),
+    })
+}
+
+fn write_amended_commit(
+    repo: &gix::Repository,
+    committer: gix::actor::Signature,
+    author: gix::actor::Signature,
+    message: &str,
+    tree: gix::ObjectId,
+    parents: &[gix::ObjectId],
+    previous: gix::ObjectId,
+) -> Result<gix::ObjectId> {
+    let commit = gix::objs::Commit {
+        message: message.into(),
+        tree,
+        author,
+        committer: committer.clone(),
+        encoding: None,
+        parents: parents.to_vec().into(),
+        extra_headers: Default::default(),
+    };
+    let id = repo.write_object(&commit)?.detach();
+    let subject = message.lines().next().unwrap_or_default();
+    let name: gix::refs::FullName = "HEAD"
+        .try_into()
+        .map_err(|error| format!("Resolve HEAD: {error}"))?;
+    let edit = gix::refs::transaction::RefEdit::update(
+        name,
+        id,
+        gix::refs::transaction::PreviousValue::MustExistAndMatch(gix::refs::Target::Object(
+            previous,
+        )),
+        format!("commit (amend): {subject}"),
+    )
+    .with_deref(true);
+    let mut time = gix::date::parse::TimeBuf::default();
+    repo.edit_references_as(std::iter::once(edit), Some(committer.to_ref(&mut time)))?;
+    Ok(id)
+}
+
+/// Read the current HEAD message without changing repository state.
+pub fn head_message(path: &Path) -> std::result::Result<String, String> {
+    let repo = gix::discover(path).map_err(|e| format!("Read repository: {e}"))?;
+    let commit = repo
+        .head_commit()
+        .map_err(|e| format!("Read HEAD commit: {e}"))?;
+    let decoded = commit
+        .decode()
+        .map_err(|e| format!("Read HEAD message: {e}"))?;
+    Ok(decoded.message.to_str_lossy().trim_end().to_string())
 }
 
 fn head_id(repo: &gix::Repository) -> Result<Option<String>> {
@@ -216,18 +361,43 @@ fn read_message(path: &Path) -> Result<String> {
 }
 
 fn run_hook(worktree: &Path, name: &str, args: &[&OsStr]) -> Result<()> {
+    run_hook_input(worktree, name, args, None)
+}
+
+fn run_hook_input(
+    worktree: &Path,
+    name: &str,
+    args: &[&OsStr],
+    input: Option<&[u8]>,
+) -> Result<()> {
     let mut command = Command::new("git");
     command
         .arg("hook")
         .arg("run")
         .arg("--ignore-missing")
-        .arg(name)
         .current_dir(worktree)
         .stdin(Stdio::null())
         .env_remove("GIT_DIR")
         .env_remove("GIT_WORK_TREE")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    let mut input_path = None;
+    if let Some(input) = input {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or_default();
+        let path = std::env::temp_dir().join(format!(
+            "gg-{}-{}-post-rewrite.stdin",
+            std::process::id(),
+            nanos
+        ));
+        std::fs::write(&path, input)?;
+        command.arg(format!("--to-stdin={}", path.display()));
+        input_path = Some(path);
+    }
+    command.arg(name);
     if !args.is_empty() {
         command.arg("--");
         for arg in args {
@@ -238,7 +408,11 @@ fn run_hook(worktree: &Path, name: &str, args: &[&OsStr]) -> Result<()> {
         format!(
             "Could not run the {name} hook using Git: {e}. Install Git on PATH and retry. The index and working tree are preserved."
         )
-    })?;
+    });
+    if let Some(path) = input_path {
+        let _ = std::fs::remove_file(path);
+    }
+    let output = output?;
     if output.status.success() {
         return Ok(());
     }

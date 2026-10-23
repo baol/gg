@@ -350,3 +350,125 @@ fn hooks_run_in_order_and_linked_worktrees_commit_independently() -> Result {
     assert_eq!(receipt.parents.len(), 1);
     Ok(())
 }
+
+#[test]
+fn amend_rewrites_head_preserves_author_and_saves_a_backup() -> Result {
+    let dir = repo()?;
+    let p = dir.path();
+    std::fs::write(p.join("a"), b"base\n")?;
+    git(p, &["add", "a"])?;
+    let base = commit(p, "base")?;
+    std::fs::write(p.join("a"), b"next\n")?;
+    git(p, &["add", "a"])?;
+    let previous = commit(p, "subject")?;
+    let old_author = git(p, &["show", "-s", "--format=%an <%ae>", "HEAD"])?;
+
+    std::fs::write(p.join("a"), b"amended\n")?;
+    git(p, &["add", "a"])?;
+    git(p, &["config", "user.name", "Different"])?;
+    let receipt = gg_git::commit::amend(&identity(p)?, "amended subject\n\nBody.")?;
+    assert!(receipt.amended);
+    assert_eq!(receipt.previous.as_deref(), Some(previous.id.as_str()));
+    assert_eq!(receipt.parents, vec![base.id.clone()]);
+    assert_ne!(receipt.id, previous.id);
+    let backup = receipt.backup.ok_or("missing backup")?;
+    assert_eq!(
+        git(p, &["rev-parse", &backup])?,
+        format!("{}\n", previous.id).as_bytes()
+    );
+    assert_eq!(git(p, &["rev-list", "--count", "HEAD"])?, b"2\n");
+    assert_eq!(
+        git(p, &["show", "-s", "--format=%B", "HEAD"])?,
+        b"amended subject\n\nBody.\n\n"
+    );
+    assert_eq!(git(p, &["show", "HEAD:a"])?, b"amended\n");
+    assert_eq!(
+        git(p, &["show", "-s", "--format=%an <%ae>", "HEAD"])?,
+        old_author
+    );
+    assert_eq!(
+        git(p, &["reflog", "-1", "--format=%gs"])?,
+        b"commit (amend): amended subject\n"
+    );
+    let refs = gg_git::refs::read(p)?;
+    assert!(
+        refs.items
+            .iter()
+            .all(|item| !item.full_name.starts_with("refs/gg/"))
+    );
+
+    let amended = receipt.id;
+    let message_only = gg_git::commit::amend(&identity(p)?, "message only")?;
+    assert_eq!(message_only.tree, receipt.tree);
+    assert_eq!(message_only.previous.as_deref(), Some(amended.as_str()));
+    assert_eq!(
+        git(p, &["show", "-s", "--format=%s", "HEAD"])?,
+        b"message only\n"
+    );
+    Ok(())
+}
+
+#[test]
+fn amend_hooks_receive_the_old_commit_and_post_rewrite_warnings_are_kept() -> Result {
+    let dir = repo()?;
+    let p = dir.path();
+    std::fs::write(p.join("a"), b"base\n")?;
+    git(p, &["add", "a"])?;
+    let base = commit(p, "base")?;
+    hook(
+        p,
+        "prepare-commit-msg",
+        "printf '%s\\n%s\\n' \"$1\" \"$2\" > amend.args\nprintf '%s\\n' \"$3\" >> amend.args",
+    )?;
+    hook(p, "commit-msg", "printf 'Hook amended subject\\n' > \"$1\"")?;
+    hook(
+        p,
+        "post-rewrite",
+        "cat > rewrite.log\necho rewrite-warning >&2\nexit 3",
+    )?;
+    let receipt = gg_git::commit::amend(&identity(p)?, "original")?;
+    let args = std::fs::read_to_string(p.join("amend.args"))?;
+    assert!(args.contains("COMMIT_EDITMSG"), "{args}");
+    assert!(args.lines().nth(1) == Some("commit"), "{args}");
+    assert!(
+        args.lines().any(|line| line.contains(&base.id)),
+        "prepare-commit-msg must receive the old commit: {args}"
+    );
+    assert_eq!(
+        git(p, &["show", "-s", "--format=%s", "HEAD"])?,
+        b"Hook amended subject\n"
+    );
+    let rewritten = std::fs::read_to_string(p.join("rewrite.log"))?;
+    assert!(rewritten.contains(&base.id), "{rewritten}");
+    assert!(rewritten.contains(&receipt.id), "{rewritten}");
+    assert!(receipt.warnings.iter().any(|w| w.contains("post-rewrite")));
+    assert!(
+        receipt
+            .warnings
+            .iter()
+            .any(|w| w.contains("rewrite-warning"))
+    );
+    Ok(())
+}
+
+#[test]
+fn amend_rejects_unborn_head_and_empty_messages() -> Result {
+    let dir = repo()?;
+    let p = dir.path();
+    let error = match gg_git::commit::amend(&identity(p)?, "first") {
+        Ok(_) => return Err("amend unexpectedly succeeded without a commit".into()),
+        Err(error) => error,
+    };
+    assert!(error.contains("no commit to amend"), "{error}");
+
+    std::fs::write(p.join("a"), b"base\n")?;
+    git(p, &["add", "a"])?;
+    commit(p, "base")?;
+    let error = match gg_git::commit::amend(&identity(p)?, "   ") {
+        Ok(_) => return Err("empty amend unexpectedly succeeded".into()),
+        Err(error) => error,
+    };
+    assert!(error.contains("empty"), "{error}");
+    assert_eq!(git(p, &["rev-list", "--count", "HEAD"])?, b"1\n");
+    Ok(())
+}

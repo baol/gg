@@ -1762,3 +1762,116 @@ fn branch_and_tag_delete_cli() -> Result {
     assert!(!out.status.success());
     Ok(())
 }
+
+#[test]
+fn commit_amend_and_reflog_cli() -> Result {
+    let repo = tempfile::tempdir()?;
+    init(repo.path(), &["-b", "main"])?;
+    git(repo.path(), &["config", "user.name", "Test"])?;
+    git(repo.path(), &["config", "user.email", "test@example.org"])?;
+    std::fs::write(repo.path().join("a"), b"base\n")?;
+    git(repo.path(), &["add", "a"])?;
+    git(repo.path(), &["commit", "-qm", "base"])?;
+    std::fs::write(repo.path().join("a"), b"amended\n")?;
+    git(repo.path(), &["add", "a"])?;
+    let previous = String::from_utf8(git_output(repo.path(), &["rev-parse", "HEAD"])?)?
+        .trim()
+        .to_string();
+
+    let binary = env!("CARGO_BIN_EXE_git-good");
+    let out = Command::new(binary)
+        .args(["commit", "--amend", "-m", "amended subject", "--repo"])
+        .arg(repo.path())
+        .output()?;
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let receipt: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(receipt["operation"], "amend");
+    assert_eq!(receipt["previous"], previous);
+    let id = receipt["id"].as_str().ok_or("missing amended id")?;
+    let backup = receipt["backup"].as_str().ok_or("missing backup")?;
+    assert!(backup.starts_with("refs/gg/backup/amend/"));
+    assert_eq!(
+        String::from_utf8(git_output(repo.path(), &["rev-parse", backup])?)?.trim(),
+        previous
+    );
+    assert_eq!(
+        git_output(repo.path(), &["show", "-s", "--format=%s", id])?,
+        b"amended subject\n"
+    );
+
+    let out = Command::new(binary)
+        .args(["reflog", "HEAD", "--repo"])
+        .arg(repo.path())
+        .output()?;
+    assert!(out.status.success());
+    let reflog: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(reflog["operation"], "reflog");
+    assert_eq!(reflog["reference"], "HEAD");
+    assert_eq!(reflog["entries"][0]["id"], id);
+    assert_eq!(reflog["entries"][0]["selector"], "HEAD@{0}");
+    assert_eq!(reflog["entries"][0]["action"], "commit (amend)");
+
+    let out = Command::new(binary)
+        .args(["reflog", "missing", "--repo"])
+        .arg(repo.path())
+        .output()?;
+    assert!(!out.status.success());
+    Ok(())
+}
+
+#[test]
+fn branch_create_at_cli_does_not_switch() -> Result {
+    let repo = tempfile::tempdir()?;
+    init(repo.path(), &["-b", "main"])?;
+    git(repo.path(), &["config", "user.name", "Test"])?;
+    git(repo.path(), &["config", "user.email", "test@example.org"])?;
+    std::fs::write(repo.path().join("a"), b"base\n")?;
+    git(repo.path(), &["add", "a"])?;
+    git(repo.path(), &["commit", "-qm", "base"])?;
+    let head = String::from_utf8(git_output(repo.path(), &["rev-parse", "HEAD"])?)?
+        .trim()
+        .to_string();
+
+    let binary = env!("CARGO_BIN_EXE_git-good");
+    let out = Command::new(binary)
+        .args(["branch", "--create", "recovered", "--at", &head, "--repo"])
+        .arg(repo.path())
+        .output()?;
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let receipt: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(receipt["operation"], "branch-create");
+    assert_eq!(receipt["branch"], "recovered");
+    assert_eq!(receipt["commit"], head);
+    assert_eq!(
+        String::from_utf8(git_output(repo.path(), &["rev-parse", "recovered"])?)?.trim(),
+        head
+    );
+    assert_eq!(
+        String::from_utf8(git_output(
+            repo.path(),
+            &["symbolic-ref", "--short", "HEAD"]
+        )?)?
+        .trim(),
+        "main"
+    );
+
+    let out = Command::new(binary)
+        .args(["branch", "--create", "recovered", "--repo"])
+        .arg(repo.path())
+        .output()?;
+    assert!(!out.status.success());
+    let out = Command::new(binary)
+        .args(["branch", "--create", "bad", "--at", "nope", "--repo"])
+        .arg(repo.path())
+        .output()?;
+    assert!(!out.status.success());
+    Ok(())
+}

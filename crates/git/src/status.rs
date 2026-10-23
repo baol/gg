@@ -14,12 +14,24 @@ pub struct Session {
 }
 impl Session {
     pub fn open(path: &Path) -> Result<Self, String> {
+        Self::open_with_base_tree(path, None)
+    }
+
+    /// Open status with an explicit tree for the staged side.
+    pub fn open_with_base_tree(path: &Path, base_tree: Option<String>) -> Result<Self, String> {
         let repo =
             gix::discover(path).map_err(|e| format!("Read status {}: {e}", path.display()))?;
         let workdir = repo
             .workdir()
             .ok_or_else(|| format!("Status requires a working tree: {}", path.display()))?
             .to_path_buf();
+        if let Some(base) = &base_tree {
+            repo.find_tree(
+                gix::ObjectId::from_hex(base.as_bytes())
+                    .map_err(|e| format!("Read amend base {base}: {e}"))?,
+            )
+            .map_err(|e| format!("Read amend base {base}: {e}"))?;
+        }
         let head = repo
             .head()
             .map_err(|e| e.to_string())?
@@ -32,8 +44,14 @@ impl Session {
                 path: workdir,
                 head,
                 index,
+                base_tree,
             },
         })
+    }
+
+    /// Open status against the amend base: the parent tree of HEAD, or the empty tree for a root commit.
+    pub fn open_amend(path: &Path) -> Result<Self, String> {
+        Self::open_with_base_tree(path, Some(amend_base_tree(path)?))
     }
     pub fn scan(
         &self,
@@ -63,12 +81,13 @@ impl Session {
             })
             .map(|e| e.path(&index).to_vec())
             .collect();
-        let tree = match &self.identity.head {
-            Some(head) => repo
+        let tree = match (&self.identity.base_tree, &self.identity.head) {
+            (Some(base), _) => gix::ObjectId::from_hex(base.as_bytes())?,
+            (None, Some(head)) => repo
                 .find_commit(gix::ObjectId::from_hex(head.as_bytes())?)?
                 .tree_id()?
                 .detach(),
-            None => gix::ObjectId::empty_tree(repo.object_hash()),
+            (None, None) => gix::ObjectId::empty_tree(repo.object_hash()),
         };
         let mut pathspec = repo.pathspec(
             false,
@@ -235,6 +254,27 @@ impl gix::dir::walk::Delegate for Sink<'_> {
             ControlFlow::Continue(())
         }
     }
+}
+
+/// Return the tree an amended commit is compared against: HEAD's parent, or the empty tree.
+pub fn amend_base_tree(path: &Path) -> Result<String, String> {
+    let repo = gix::discover(path).map_err(|e| format!("Read status {}: {e}", path.display()))?;
+    if repo.workdir().is_none() {
+        return Err(format!("Amend requires a working tree: {}", path.display()));
+    }
+    let commit = repo.head_commit().map_err(|e| {
+        format!("There is no commit to amend. Create the first commit instead: {e}")
+    })?;
+    let tree = match commit.parent_ids().next() {
+        Some(parent) => repo
+            .find_commit(parent.detach())
+            .map_err(|e| format!("Read parent commit: {e}"))?
+            .tree_id()
+            .map_err(|e| format!("Read parent tree: {e}"))?
+            .detach(),
+        None => gix::ObjectId::empty_tree(repo.object_hash()),
+    };
+    Ok(tree.to_string())
 }
 
 fn index_fingerprint(repo: &gix::Repository) -> Result<String, String> {

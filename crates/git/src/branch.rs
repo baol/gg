@@ -20,6 +20,78 @@ pub struct DeleteReceipt {
     pub force: bool,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CreateReceipt {
+    pub branch: String,
+    pub commit: String,
+}
+
+/// Create a local branch at a revision without switching to it.
+pub fn create_at(path: &Path, branch: &str, start: &str) -> Result<CreateReceipt, String> {
+    let branch = branch.trim();
+    validate_name(branch)?;
+    let start = start.trim();
+    if start.is_empty() || start.starts_with('-') || start.contains('\0') {
+        return Err("Branch start point is invalid.".into());
+    }
+    let repo = gix::discover(path).map_err(|e| format!("Read repository: {e}"))?;
+    let full = format!("refs/heads/{branch}");
+    if repo
+        .try_find_reference(full.as_str())
+        .map_err(|e| format!("Read branch {branch}: {e}"))?
+        .is_some()
+    {
+        return Err(format!(
+            "Branch {branch} already exists. Choose another name or switch to it."
+        ));
+    }
+    let resolved = Command::new("git")
+        .current_dir(path)
+        .args(["rev-parse", "--verify", "--quiet"])
+        .arg(format!("{start}^{{commit}}"))
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .output()
+        .map_err(|e| format!("Could not resolve {start} using Git: {e}. Install Git and retry."))?;
+    if !resolved.status.success() {
+        return Err(format!("Revision {start} was not found."));
+    }
+    let commit = String::from_utf8_lossy(&resolved.stdout).trim().to_string();
+    let output = Command::new("git")
+        .current_dir(path)
+        .args(["branch", "--"])
+        .arg(branch)
+        .arg(&commit)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .output()
+        .map_err(|e| {
+            format!("Could not create branch {branch} using Git: {e}. Install Git and retry.")
+        })?;
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(format!(
+            "Create branch {branch} failed ({}).{}",
+            output.status,
+            if detail.is_empty() {
+                String::new()
+            } else {
+                format!("\n{detail}")
+            }
+        ));
+    }
+    Ok(CreateReceipt {
+        branch: branch.to_string(),
+        commit,
+    })
+}
+
 pub fn switch(path: &Path, branch: &str) -> Result<Receipt, String> {
     run(path, branch, false)
 }

@@ -52,7 +52,13 @@ fn read_inner(request: &WorkingRequest, cancelled: &dyn Fn() -> bool) -> Result<
         ));
     }
     if request.entry.area == Area::Staged {
-        let before = if let Some(head) = &request.repository.head {
+        let before = if let Some(base) = &request.repository.base_tree {
+            let tree = repo.find_tree(gix::ObjectId::from_hex(base.as_bytes())?)?;
+            tree.lookup_entry_by_path(&relative)?.map(|e| FileSide {
+                id: e.id().to_string(),
+                mode: e.mode().value(),
+            })
+        } else if let Some(head) = &request.repository.head {
             let tree = repo
                 .find_commit(gix::ObjectId::from_hex(head.as_bytes())?)?
                 .tree()?;

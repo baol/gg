@@ -7,6 +7,9 @@ pub struct StatusIdentity {
     pub path: PathBuf,
     pub head: Option<String>,
     pub index: String,
+    /// Tree compared with the index for staged entries. `None` means the HEAD tree.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_tree: Option<String>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

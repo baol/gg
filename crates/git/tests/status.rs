@@ -1735,3 +1735,114 @@ fn drop_restores_filtered_line_endings_and_missing_final_newline() -> Result {
     assert!(scan(p)?.is_empty());
     Ok(())
 }
+
+#[test]
+fn amend_base_shows_the_commit_and_unstage_restores_the_parent() -> Result {
+    let dir = tempfile::tempdir()?;
+    let p = dir.path();
+    git(p, &["init", "-b", "main"])?;
+    std::fs::write(p.join("a"), b"base\n")?;
+    std::fs::write(p.join("c"), b"keep\n")?;
+    git(p, &["add", "."])?;
+    git(p, &["commit", "-qm", "base"])?;
+    std::fs::write(p.join("a"), b"commit\n")?;
+    std::fs::write(p.join("b"), b"added\n")?;
+    git(p, &["add", "."])?;
+    git(p, &["commit", "-qm", "second"])?;
+    std::fs::write(p.join("a"), b"working\n")?;
+
+    let session = gg_git::status::Session::open_amend(p)?;
+    assert!(session.identity.base_tree.is_some());
+    let mut rows = vec![];
+    session.scan(&AtomicBool::new(false), |entry| {
+        rows.push(entry);
+        Ok(())
+    })?;
+    assert!(rows.iter().any(|e| e.path == "a" && e.area == Area::Staged));
+    assert!(rows.iter().any(|e| e.path == "b" && e.area == Area::Staged));
+    assert!(
+        rows.iter()
+            .any(|e| e.path == "a" && e.area == Area::Unstaged)
+    );
+    assert!(
+        !rows
+            .iter()
+            .any(|e| e.path == "c" && e.area != Area::Unstaged)
+    );
+
+    let entry = rows
+        .into_iter()
+        .find(|e| e.path == "a" && e.area == Area::Staged)
+        .ok_or("amend staged entry missing")?;
+    let request = gg_engine::status::WorkingRequest {
+        repository: session.identity,
+        entry,
+    };
+    gg_git::unstage::file(&request)?;
+    assert_eq!(git(p, &["show", ":a"])?, b"base\n");
+    assert_eq!(git(p, &["diff", "--cached", "HEAD^", "--", "a"])?, b"");
+    assert!(!git(p, &["diff", "--cached", "HEAD^", "--", "b"])?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn root_amend_base_is_the_empty_tree() -> Result {
+    let dir = tempfile::tempdir()?;
+    let p = dir.path();
+    git(p, &["init", "-b", "main"])?;
+    std::fs::write(p.join("a"), b"root\n")?;
+    git(p, &["add", "a"])?;
+    git(p, &["commit", "-qm", "root"])?;
+    let session = gg_git::status::Session::open_amend(p)?;
+    let mut rows = vec![];
+    session.scan(&AtomicBool::new(false), |entry| {
+        rows.push(entry);
+        Ok(())
+    })?;
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].path, "a");
+    assert_eq!(rows[0].area, Area::Staged);
+    assert_eq!(rows[0].kind, Kind::Added);
+    Ok(())
+}
+
+#[test]
+fn amend_base_unstages_a_hunk_against_the_parent() -> Result {
+    use gg_engine::diff::RowKind;
+    let dir = tempfile::tempdir()?;
+    let p = dir.path();
+    git(p, &["init", "-b", "main"])?;
+    let lines = "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\ntwelve\n";
+    std::fs::write(p.join("a"), lines.as_bytes())?;
+    git(p, &["add", "a"])?;
+    git(p, &["commit", "-qm", "base"])?;
+    let changed = "ONE\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\nTWELVE\n";
+    std::fs::write(p.join("a"), changed.as_bytes())?;
+    git(p, &["commit", "-qam", "second"])?;
+
+    let session = gg_git::status::Session::open_amend(p)?;
+    let mut entry = None;
+    session.scan(&AtomicBool::new(false), |row| {
+        if row.path == "a" && row.area == Area::Staged {
+            entry = Some(row);
+        }
+        Ok(())
+    })?;
+    let request = gg_engine::status::WorkingRequest {
+        repository: session.identity,
+        entry: entry.ok_or("amend staged entry missing")?,
+    };
+    let diff = gg_git::working_diff::read(&request, || false)?;
+    let headers: Vec<_> = diff
+        .rows
+        .iter()
+        .filter(|row| row.kind == RowKind::Hunk)
+        .map(|row| row.text.clone())
+        .collect();
+    assert_eq!(headers.len(), 2, "{headers:?}");
+    gg_git::unstage::hunks(&request, &headers[..1])?;
+    let restored = git(p, &["show", ":a"])?;
+    assert!(restored.starts_with(b"one\n"));
+    assert!(restored.ends_with(b"eleven\nTWELVE\n"));
+    Ok(())
+}

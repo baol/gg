@@ -170,6 +170,7 @@ impl gg_engine::HistoryReader for Session {
     }
 }
 
+pub mod backup;
 pub mod blob;
 pub mod branch;
 pub mod commit;
@@ -179,6 +180,7 @@ pub mod drop;
 pub mod merge;
 pub mod mutation;
 pub mod patch;
+pub mod reflog;
 pub mod refs;
 pub mod reset;
 pub mod review;

@@ -1,6 +1,34 @@
 # Plan
 
-Purpose: sequence M5 delivery and acceptance.
+Purpose: sequence M6 delivery and acceptance.
+
+## M6 · Rebase, reorder, squash, amend, and reflog recovery
+
+Goal: rewrite history deliberately and recover previous tips without weakening read-only browsing, clean-worktree checks, or existing mutations. Every rewrite records a private backup ref before publication.
+
+Contracts: [history rewrites and recovery](architecture.md#history-rewrites-and-recovery--m6), [M5 recovery](architecture.md#history-mutations-and-recovery--m5). M5 is complete; [evidence](verification.md#m5-recovery-and-operation-state--2026-10-22).
+
+### Increments
+
+1. **Amend and Local Changes · complete.** Remove the stand-alone **Commit** menu and **Status** button. Add **Local Changes** and **All Commits** to the left navigation sidebar, keep the toolbar and sidebar visible while Local Changes is open, and keep cherry-pick/revert/reset in the commit-row context menu. Add `git good commit --amend -m MESSAGE` and an **Amend** toggle in the Local Changes commit bar. Amend the latest commit with the staged index and an editable message, allow a message-only amend, preserve the original author, run commit hooks plus `post-rewrite`, and save the previous tip under a private backup ref. Amend mode compares the index with HEAD's parent so the staged rows are the commit's actual contents: staging adds working changes, while unstaging a file, hunk, or line removes that change from the amended commit without touching working files.
+2. **Reflog · complete.** Add `git good reflog [REF]`, a **Repository → Reflog…** window showing `HEAD` by default with a local-branch selector, confirmed Soft/Mixed/Hard reset to an entry, **Create branch here…** without switching, and **Copy hash**. Read-only listing never changes refs, the index, or working files.
+3. **Rebase onto · planned.** Rebase the current branch onto a local branch, remote-tracking ref, or tag through Git with a clean-worktree check, conflict recovery, continue/abort, and a backup ref.
+4. **Reorder and squash · planned.** Generate a rebase todo and run it through Git with a non-interactive sequence editor, preserving commit messages, reporting conflicts, and refreshing history after completion or abort.
+5. **Rewrite recovery · planned.** Surface backup refs and in-progress rebase state, restore the pre-rewrite selection, and document the recovery paths for amend, rebase, reorder, and squash.
+
+### Acceptance
+
+| Scenario | Expected result | Method |
+| --- | --- | --- |
+| Local Changes navigation | Local Changes and All Commits are peers in the sidebar, the toolbar and refs stay visible, and a narrow-window fallback switches between them | egui layout and native review |
+| Amend contents | Amend mode shows the parent-to-index changes as staged; Stage adds working changes, Unstage removes files/hunks/lines from the amended commit without touching working files, and the rewritten commit carries the edited message | Git oracle, CLI, and native review |
+| Amend identity and hooks | The original author is preserved, the committer is current, hooks run in Git order, and `post-rewrite` receives the old and new IDs | Git oracle and hook fixtures |
+| Amend safety | The previous tip is reachable through a private `refs/gg/backup/...` ref, backup refs stay out of the refs sidebar, and backup failure aborts | Git oracle and refs snapshot |
+| Reflog listing | Entries match `git reflog show`, newest first, with selector, commit, time, action, and detail; the default is `HEAD` | Git oracle and CLI |
+| Reflog recovery | Reset to an entry matches Git after confirmation, Hard warns, and branch creation at an entry does not switch the current branch | Git oracle, CLI, and native review |
+| Rewrite recovery | Continue, abort, and backup restoration recover each rewrite without deleting user files | Git fixtures and native review |
+
+Record native wide/narrow captures and verification in [verification](verification.md).
 
 ## M5 · Merge, conflicts, cherry-pick, revert, stash, and recovery
 
@@ -25,7 +53,7 @@ Goal: expose commit and ref actions through right-click and keyboard context men
 
 ### Increments
 
-1. **Commit-row menu · in progress.** Add **Cherry-pick**, **Revert**, **Reset here** (Soft, Mixed, Hard with confirmation), **Copy hash**, and **Copy subject** to history rows, with right-click access.
+1. **Commit-row menu · complete.** Add **Cherry-pick**, **Revert**, **Reset here** (Soft, Mixed, Hard with confirmation), **Copy hash**, and **Copy subject** to history rows, with right-click access.
 2. **Compare to local · complete.** Compare the selected commit against the current branch tip in a review diff, exposed from the commit-row menu and `git good show --against REF`.
 3. **Ref menus · complete.** Add checkout/switch, merge, delete branch (safe, then confirmed force), delete tag, track remote, and copy actions to branch, tag, and remote items.
 
@@ -33,7 +61,7 @@ Goal: expose commit and ref actions through right-click and keyboard context men
 
 | Scenario | Expected result | Method |
 | --- | --- | --- |
-| Commit menu | Right-click or keyboard opens the commit actions; copy writes the exact hash/subject | egui and native review |
+| Commit-row actions | Right-click or keyboard opens the commit actions; copy writes the exact hash/subject | egui and native review |
 | Reset here | Soft, Mixed, and Hard reset match Git; Hard warns before discarding changes | Git oracle, CLI, and native review |
 | Compare to local | Selected commit is compared with the current branch tip | Git oracle and native review |
 | Ref menus | Branch/tag/remote actions match Git; destructive actions confirm | Git oracle, CLI, and native review |

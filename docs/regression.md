@@ -154,7 +154,7 @@ Native review: the refs sidebar and status line show the current branch upstream
 
 - Git and CLI tests cover continue, skip, and abort for cherry-pick, revert, and merge, including merge's unsupported skip and restored HEAD/worktree on abort.
 - The native in-progress banner exposes Continue, Skip, and Abort, hides Skip for merges, and shows the conflict count.
-- Recovery refreshes history, refs, and an open Status view at a safe boundary; the conflict window closes once no operation remains.
+- Recovery refreshes history, refs, and an open Local Changes view at a safe boundary; the conflict window closes once no operation remains.
 
 ## Commit-row context menu and reset
 
@@ -174,3 +174,19 @@ Native review: the refs sidebar and status line show the current branch upstream
 - CLI tests cover `git good branch --delete BRANCH [--force]` and `git good tag --delete TAG` receipts and errors.
 - egui tests render the branch and tag delete confirmations at 720 and 1120 widths.
 - Branch, tag, and remote menus expose switch/jump, merge, track, delete, and copy actions.
+
+## M6 amend and navigation
+
+- egui tests open Local Changes from the sidebar at 1120 px and from the toolbar at 720 px, keep the global toolbar and refs visible, return through All Commits, and confirm the old Status button is gone.
+- Git oracle tests rewrite HEAD with the staged index, preserve the original author and parents, allow a message-only amend with an unchanged tree, and keep the previous commit reachable through `refs/gg/backup/...`.
+- Hook fixtures verify `pre-commit`, `prepare-commit-msg` with the `commit` source and old ID, `commit-msg`, and `post-rewrite amend` stdin. A failing `post-rewrite` returns a warning after the rewrite; other hook failures leave HEAD unchanged.
+- Amend mode compares the index with HEAD's parent, including the empty tree for a root commit. Staged rows expose the commit contents, working changes remain unstaged, and unstage restores the parent side for whole files and hunks without changing working files.
+- Amend rejects an unborn HEAD, an empty message, and a HEAD changed during hooks. The refs snapshot excludes backup refs.
+- CLI tests verify the `amend` receipt fields and backup ref. egui tests load the HEAD message, show the commit contents as staged, unstage and restage working changes, rewrite the index, clear the toggle and amend base, and render the **Amended** status line.
+
+## M6 reflog
+
+- Git oracle tests compare `HEAD` and branch reflog order, selectors, IDs, times, actions, and details with `git reflog show`; missing and option-shaped references are rejected.
+- CLI tests verify `git good reflog [REF]` JSON, the default `HEAD`, entries after an amend, and missing-reference errors.
+- Reflog tests verify read-only loading, cleared stale entries on failure, and the native window at 720 and 1120 widths with the reference selector, entry list, reset actions, branch creation, and copy.
+- Branch creation at a reflog commit resolves the revision, rejects an existing branch, and does not switch the current branch. The reflog branch-creation dialog renders at both supported widths.

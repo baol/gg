@@ -311,3 +311,34 @@ fn deletes_other_branches_with_safe_or_forced_delete() -> Result {
     assert!(receipt.force);
     Ok(())
 }
+
+#[test]
+fn creates_a_branch_at_a_revision_without_switching() -> Result {
+    let dir = repo()?;
+    let p = dir.path();
+    let base = git(p, &["rev-parse", "HEAD"])?;
+    std::fs::write(p.join("b"), b"next\n")?;
+    git(p, &["add", "b"])?;
+    git(p, &["commit", "-qm", "next"])?;
+    let base = String::from_utf8(base)?.trim().to_string();
+
+    let receipt = gg_git::branch::create_at(p, "recovered", &base)?;
+    assert_eq!(receipt.branch, "recovered");
+    assert_eq!(receipt.commit, base);
+    assert_eq!(
+        String::from_utf8(git(p, &["rev-parse", "recovered"])?)?.trim(),
+        base
+    );
+    assert_eq!(
+        String::from_utf8(git(p, &["symbolic-ref", "--short", "HEAD"])?)?.trim(),
+        "main"
+    );
+
+    let error = rejected(gg_git::branch::create_at(p, "recovered", &base))?;
+    assert!(error.contains("already exists"), "{error}");
+    let error = rejected(gg_git::branch::create_at(p, "missing", "nope"))?;
+    assert!(error.contains("not found"), "{error}");
+    let error = rejected(gg_git::branch::create_at(p, "option", "--force"))?;
+    assert!(error.contains("invalid"), "{error}");
+    Ok(())
+}

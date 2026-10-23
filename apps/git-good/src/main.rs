@@ -20,6 +20,8 @@ mod navigation;
 mod network;
 mod phosphor;
 mod records;
+mod reflog_cli;
+mod reflog_view;
 mod refs_cli;
 mod refs_view;
 mod reset_cli;
@@ -51,7 +53,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("--help")) {
         println!(
-            "gg · good git\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good refs [PATH]      Print branches, remotes, tags, and HEAD as JSON\ngit-good status [PATH] [--file PATH --area AREA]   Print working status or diff as JSON\ngit-good stage --file PATH [--hunk HEADER]... [--repo PATH]   Stage one file or selected hunks\ngit-good unstage --file PATH [--repo PATH]   Unstage one file\ngit-good commit -m MESSAGE [--repo PATH]   Commit the index after Git hooks\ngit-good switch [--create] BRANCH [--repo PATH]   Switch to or create a local branch\ngit-good fetch [REMOTE] [--prune] [--repo PATH]   Fetch and update remote-tracking refs\ngit-good push [REMOTE] [BRANCH] [--set-upstream] [--repo PATH]   Push a local branch without force\ngit-good clone URL [PATH]   Clone a repository and open it\ngit-good stash <list|push|apply|pop|drop> [OPTIONS] [--repo PATH]   List or mutate stashes\ngit-good cherry-pick COMMIT [--repo PATH]   Apply a commit\ngit-good revert COMMIT [--repo PATH]   Invert a commit\ngit-good merge REF [--no-ff] [--repo PATH]   Merge a branch, remote, or tag\ngit-good conflicts [--repo PATH]   List unmerged paths\ngit-good conflict --file PATH [--use ours|theirs|--stage] [--repo PATH]   Read or resolve a conflict\ngit-good reset --soft|--mixed|--hard COMMIT [--repo PATH]   Reset the current branch\ngit-good branch --delete BRANCH [--force] [--repo PATH]   Delete a local branch\ngit-good tag --delete TAG [--repo PATH]   Delete a local tag\ngit-good show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]   Review or export\n\nBrowse commits reachable from HEAD and all local, remote, and tag refs."
+            "gg · good git\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good refs [PATH]      Print branches, remotes, tags, and HEAD as JSON\ngit-good status [PATH] [--file PATH --area AREA]   Print working status or diff as JSON\ngit-good stage --file PATH [--hunk HEADER]... [--repo PATH]   Stage one file or selected hunks\ngit-good unstage --file PATH [--repo PATH]   Unstage one file\ngit-good commit [--amend] -m MESSAGE [--repo PATH]   Commit the index or amend HEAD after Git hooks\ngit-good reflog [REF] [--repo PATH]   Print reflog entries as JSON\ngit-good switch [--create] BRANCH [--repo PATH]   Switch to or create a local branch\ngit-good fetch [REMOTE] [--prune] [--repo PATH]   Fetch and update remote-tracking refs\ngit-good push [REMOTE] [BRANCH] [--set-upstream] [--repo PATH]   Push a local branch without force\ngit-good clone URL [PATH]   Clone a repository and open it\ngit-good stash <list|push|apply|pop|drop> [OPTIONS] [--repo PATH]   List or mutate stashes\ngit-good cherry-pick COMMIT [--repo PATH]   Apply a commit\ngit-good revert COMMIT [--repo PATH]   Invert a commit\ngit-good merge REF [--no-ff] [--repo PATH]   Merge a branch, remote, or tag\ngit-good conflicts [--repo PATH]   List unmerged paths\ngit-good conflict --file PATH [--use ours|theirs|--stage] [--repo PATH]   Read or resolve a conflict\ngit-good reset --soft|--mixed|--hard COMMIT [--repo PATH]   Reset the current branch\ngit-good branch --delete BRANCH [--force] [--repo PATH]   Delete a local branch\ngit-good branch --create NAME [--at REF] [--repo PATH]   Create a local branch without switching\ngit-good tag --delete TAG [--repo PATH]   Delete a local tag\ngit-good show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]   Review or export\n\nBrowse commits reachable from HEAD and all local, remote, and tag refs."
         );
         return Ok(());
     }
@@ -69,6 +71,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("commit")) {
         return commit_cli::run(args);
+    }
+    if first.as_deref() == Some(std::ffi::OsStr::new("reflog")) {
+        return reflog_cli::run(args);
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("refs")) {
         return refs_cli::run(args);
@@ -98,7 +103,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return reset_cli::run(args);
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("branch")) {
-        return branch_cli::delete(args);
+        return branch_cli::manage(args);
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("tag")) {
         return tag_cli::run(args);
@@ -227,6 +232,14 @@ struct TagDeleteDialog {
     error: Option<String>,
 }
 
+#[derive(Clone)]
+struct CreateBranchDialog {
+    name: String,
+    commit: String,
+    selector: String,
+    error: Option<String>,
+}
+
 struct ConflictView {
     paths: Vec<String>,
     selected: usize,
@@ -283,6 +296,8 @@ struct Browser {
     reset_confirm: Option<(String, gg_engine::reset::Mode)>,
     branch_delete: Option<BranchDeleteDialog>,
     tag_delete: Option<TagDeleteDialog>,
+    create_branch: Option<CreateBranchDialog>,
+    reflog: Option<reflog_view::ReflogView>,
     refs_visible: bool,
     refs_query: String,
     state: state::State,
@@ -336,6 +351,8 @@ impl Browser {
             reset_confirm: None,
             branch_delete: None,
             tag_delete: None,
+            create_branch: None,
+            reflog: None,
             refs_visible: true,
             refs_query: String::new(),
             state: state::State::default(),
@@ -540,6 +557,7 @@ impl Browser {
                 self.state.selected_row = None;
                 self.state.refs = Default::default();
                 self.refs_query.clear();
+                self.reflog = None;
                 self.load(ctx);
             }
             Err(error) => {
@@ -638,12 +656,66 @@ impl Browser {
         Ok(())
     }
 
-    fn refresh_working(&mut self, ctx: &egui::Context) {
-        if self.working.is_some()
-            && let Some(history) = &self.state.history
-        {
-            self.working = Some(status_view::StatusView::new(history.path.clone(), ctx));
+    fn reflog_references(&self) -> Vec<String> {
+        let mut references = vec!["HEAD".to_string()];
+        references.extend(
+            self.state
+                .refs
+                .items
+                .iter()
+                .filter(|item| item.kind == gg_engine::refs::RefKind::Branch)
+                .map(|item| item.name.clone()),
+        );
+        references.sort();
+        references.dedup();
+        references
+    }
+
+    fn refresh_reflog(&mut self) {
+        if let Some(view) = &mut self.reflog {
+            view.load();
         }
+    }
+
+    fn refresh_working(&mut self, ctx: &egui::Context) {
+        if let Some(working) = &mut self.working {
+            working.refresh(ctx);
+        }
+    }
+
+    fn open_working(&mut self, ctx: &egui::Context) {
+        if self.working.is_some() {
+            return;
+        }
+        let Some(history) = &self.state.history else {
+            return;
+        };
+        self.review = None;
+        self.working = Some(status_view::StatusView::new(history.path.clone(), ctx));
+        ctx.request_repaint();
+    }
+
+    fn close_to_history(&mut self, ctx: &egui::Context) {
+        if let Some(working) = &mut self.working
+            && let Some(id) = working.take_commit()
+        {
+            self.pending_commit = Some(id);
+        }
+        let had_working = self.working.take().is_some();
+        let had_review = self.review.take().is_some();
+        if !had_working && !had_review {
+            return;
+        }
+        if let Some(id) = self.pending_commit.take() {
+            self.state.selected = Some(id);
+            self.scroll_offset = 0.0;
+            self.restore_offset = None;
+            self.scroll_to_selection = true;
+            self.load(ctx);
+        } else {
+            self.restore_offset = Some(self.scroll_offset);
+        }
+        ctx.request_repaint();
     }
 
     fn refresh_mutation(&mut self) {
@@ -702,6 +774,7 @@ impl Browser {
         self.conflict_view = None;
         self.refresh_mutation();
         self.load(ctx);
+        self.refresh_reflog();
         self.refresh_working(ctx);
         Ok(())
     }
@@ -755,6 +828,7 @@ impl Browser {
         ));
         self.refresh_mutation();
         self.load(ctx);
+        self.refresh_reflog();
         self.refresh_working(ctx);
         Ok(())
     }
@@ -1069,211 +1143,189 @@ impl Browser {
         if let Some(result) = network_done {
             self.finish_network(ctx, result);
         }
-        if let Some(working) = &mut self.working {
-            let close = working.draw_ui(ui);
-            if let Some(id) = working.take_commit() {
-                self.pending_commit = Some(id);
-            }
-            if close {
-                self.working = None;
-                if let Some(id) = self.pending_commit.take() {
-                    self.state.selected = Some(id);
-                    self.scroll_offset = 0.0;
-                    self.restore_offset = None;
-                    self.scroll_to_selection = true;
-                    self.load(ctx);
-                } else {
-                    self.restore_offset = Some(self.scroll_offset);
-                }
-                ctx.request_repaint();
-            }
-            return;
-        }
-        if let Some(review) = &mut self.review {
-            if review.draw_ui(ui) {
-                self.review = None;
-                self.restore_offset = Some(self.scroll_offset);
-                ctx.request_repaint();
-            }
-            return;
-        }
-        self.state.viewport = self.viewport.clone();
-        let (hovering_history, interacting, now) = ctx.input(|i| {
-            (
-                i.pointer.hover_pos().is_some_and(|p| {
-                    self.history_rect.contains(p) || self.details_rect.contains(p)
-                }),
-                i.pointer.any_down() || i.smooth_scroll_delta != egui::Vec2::ZERO,
-                i.time,
-            )
-        });
-        if interacting {
-            self.last_scroll = now;
-        }
-        if now - self.last_scroll <= 0.2 {
-            ctx.request_repaint_after(std::time::Duration::from_millis(200));
-        }
-        let safe = !hovering_history && !interacting && now - self.last_scroll > 0.2;
-        let hovering_scrollbar = ctx.input(|i| i.pointer.hover_pos()).is_some_and(|p| {
-            self.history_rect.contains(p) && p.x >= self.history_rect.right() - 18.0
-        });
-        let extent_safe = !interacting && !hovering_scrollbar && now - self.last_scroll > 0.2;
-        let pinned = ctx.input(|i| i.pointer.hover_pos()).and_then(|p| {
-            self.row_rects
-                .iter()
-                .find(|(_, rect)| rect.contains(p))
-                .map(|(row, _)| *row)
-        });
-        if let Some(result) = self.pending.as_ref().and_then(stream::Worker::poll) {
-            match result {
-                Ok(update) if self.pending_filter_edit && !self.state.is_current(&update) => {}
-                Ok(update) => self.staged = Some(update),
-                Err(error) => {
-                    self.state.error = Some(error);
-                    self.pending = None;
-                    self.staged = None;
-                }
-            }
-        }
-        if self.pending.is_some()
-            && (safe || self.state.history.is_none())
-            && self.staged.as_ref().is_some_and(|u| {
-                u.request.anchor_id.is_none()
-                    || u.anchor_row.is_some()
-                    || u.complete
-                    || u.error.is_some()
-            })
-            && let Some(update) = self.staged.take()
-        {
-            self.restore_offset = Some(
-                update
-                    .anchor_row
-                    .map(|row| {
-                        row as f32 * history_view::ROW_HEIGHT
-                            + self.scroll_offset % history_view::ROW_HEIGHT
-                    })
-                    .unwrap_or(0.0),
-            );
-            self.state.accept(update, true, true, pinned);
-            self.worker = self.pending.take();
-            self.pending_filter_edit = false;
-            self.viewport = 0..64;
-            self.scroll_to_selection = false;
-        }
-        if self.pending.is_none() {
-            if let Some(result) = self.worker.as_ref().and_then(stream::Worker::poll) {
-                match result {
-                    Ok(update) if !self.state.is_current(&update) => {}
-                    Ok(update) => {
-                        if safe {
-                            self.staged = None;
-                            if self.state.selected_row.is_none() && update.selection.is_some() {
-                                self.scroll_to_selection = true;
-                            }
-                            self.state.accept(update, false, true, pinned);
-                        } else if self.state.is_current(&update) {
-                            // Rows can fill off-pointer; counts and selection wait for a safe boundary.
-                            self.staged = Some(update);
-                        }
-                    }
-                    Err(error) => self.state.error = Some(error),
-                }
-            }
-            if !safe && let Some(update) = &self.staged {
-                self.state.accept(update.clone(), false, false, pinned);
-            }
-            if extent_safe
-                && let Some(update) = &self.staged
-                && self.state.is_current(update)
-            {
-                self.state.count = update.count;
-                self.state.scanned = update.scanned;
-                self.state.finished = update.complete;
-                if self.state.requested.is_none() {
-                    self.state.error = update.error.clone();
-                }
-            }
-            if safe && let Some(update) = self.staged.take() {
-                if self.state.selected_row.is_none() && update.selection.is_some() {
-                    self.scroll_to_selection = true;
-                }
-                self.state.accept(update, false, true, pinned);
-            }
-        }
-        self.avatars.poll(
-            ctx,
-            !hovering_history && !interacting && now - self.last_scroll > 0.2,
-        );
-        let filter_id = egui::Id::unique("history-filter");
-        let focus_filter = ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::F));
-        if focus_filter {
-            self.narrow_details = false;
-            ctx.memory_mut(|m| m.request_focus(filter_id));
-        }
-        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::R)) {
-            self.load(ctx);
-        }
         let narrow = ctx.content_rect().width() < 1040.0;
-        if crate::navigation::available(ctx) {
-            if ctx.input_mut(|i| {
-                i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)
-                    || i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft)
-            }) {
-                self.narrow_details = false;
+        let wide_refs = !narrow && self.refs_visible && ctx.content_rect().width() >= 1120.0;
+        let filter_id = egui::Id::unique("history-filter");
+        if self.working.is_none() && self.review.is_none() {
+            self.state.viewport = self.viewport.clone();
+            let (hovering_history, interacting, now) = ctx.input(|i| {
+                (
+                    i.pointer.hover_pos().is_some_and(|p| {
+                        self.history_rect.contains(p) || self.details_rect.contains(p)
+                    }),
+                    i.pointer.any_down() || i.smooth_scroll_delta != egui::Vec2::ZERO,
+                    i.time,
+                )
+            });
+            if interacting {
+                self.last_scroll = now;
             }
-            if self.state.selected.is_some()
-                && crate::navigation::activation_available(ctx)
-                && ctx.input_mut(|i| {
-                    i.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
-                        || i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight)
-                })
-            {
-                self.open_review(ctx);
+            if now - self.last_scroll <= 0.2 {
+                ctx.request_repaint_after(std::time::Duration::from_millis(200));
             }
-            if crate::navigation::activation_available(ctx)
-                && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Space))
-            {
-                if narrow {
-                    self.narrow_details = !self.narrow_details;
-                } else {
-                    self.details_visible = !self.details_visible;
-                }
-            }
-            let page = self.page_rows.saturating_sub(1).max(1) as i32;
-            for (modifiers, key, distance) in [
-                (egui::Modifiers::NONE, egui::Key::ArrowUp, -1),
-                (egui::Modifiers::NONE, egui::Key::ArrowDown, 1),
-                (egui::Modifiers::NONE, egui::Key::K, -1),
-                (egui::Modifiers::NONE, egui::Key::J, 1),
-                (egui::Modifiers::CTRL, egui::Key::P, -1),
-                (egui::Modifiers::CTRL, egui::Key::N, 1),
-                (egui::Modifiers::NONE, egui::Key::PageUp, -page),
-                (egui::Modifiers::NONE, egui::Key::PageDown, page),
-                (egui::Modifiers::ALT, egui::Key::V, -page),
-            ] {
-                if !(narrow && self.narrow_details)
-                    && ctx.input_mut(|i| i.consume_key(modifiers, key))
-                    && self.state.count > 0
-                {
-                    if self.worker.is_some() {
-                        let row = self.state.selected_row.unwrap_or(0);
-                        let next = row
-                            .saturating_add_signed(distance as isize)
-                            .min(self.state.count - 1);
-                        self.state.select_row(next);
-                    } else {
-                        self.state.move_selection(distance);
+            let safe = !hovering_history && !interacting && now - self.last_scroll > 0.2;
+            let hovering_scrollbar = ctx.input(|i| i.pointer.hover_pos()).is_some_and(|p| {
+                self.history_rect.contains(p) && p.x >= self.history_rect.right() - 18.0
+            });
+            let extent_safe = !interacting && !hovering_scrollbar && now - self.last_scroll > 0.2;
+            let pinned = ctx.input(|i| i.pointer.hover_pos()).and_then(|p| {
+                self.row_rects
+                    .iter()
+                    .find(|(_, rect)| rect.contains(p))
+                    .map(|(row, _)| *row)
+            });
+            if let Some(result) = self.pending.as_ref().and_then(stream::Worker::poll) {
+                match result {
+                    Ok(update) if self.pending_filter_edit && !self.state.is_current(&update) => {}
+                    Ok(update) => self.staged = Some(update),
+                    Err(error) => {
+                        self.state.error = Some(error);
+                        self.pending = None;
+                        self.staged = None;
                     }
-                    crate::navigation::focus_content(ctx);
-                    self.scroll_to_selection = true;
                 }
             }
-            if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::C))
-                && let Some(id) = &self.state.selected
+            if self.pending.is_some()
+                && (safe || self.state.history.is_none())
+                && self.staged.as_ref().is_some_and(|u| {
+                    u.request.anchor_id.is_none()
+                        || u.anchor_row.is_some()
+                        || u.complete
+                        || u.error.is_some()
+                })
+                && let Some(update) = self.staged.take()
             {
-                ctx.copy_text(id.clone());
+                self.restore_offset = Some(
+                    update
+                        .anchor_row
+                        .map(|row| {
+                            row as f32 * history_view::ROW_HEIGHT
+                                + self.scroll_offset % history_view::ROW_HEIGHT
+                        })
+                        .unwrap_or(0.0),
+                );
+                self.state.accept(update, true, true, pinned);
+                self.worker = self.pending.take();
+                self.pending_filter_edit = false;
+                self.viewport = 0..64;
+                self.scroll_to_selection = false;
+            }
+            if self.pending.is_none() {
+                if let Some(result) = self.worker.as_ref().and_then(stream::Worker::poll) {
+                    match result {
+                        Ok(update) if !self.state.is_current(&update) => {}
+                        Ok(update) => {
+                            if safe {
+                                self.staged = None;
+                                if self.state.selected_row.is_none() && update.selection.is_some() {
+                                    self.scroll_to_selection = true;
+                                }
+                                self.state.accept(update, false, true, pinned);
+                            } else if self.state.is_current(&update) {
+                                // Rows can fill off-pointer; counts and selection wait for a safe boundary.
+                                self.staged = Some(update);
+                            }
+                        }
+                        Err(error) => self.state.error = Some(error),
+                    }
+                }
+                if !safe && let Some(update) = &self.staged {
+                    self.state.accept(update.clone(), false, false, pinned);
+                }
+                if extent_safe
+                    && let Some(update) = &self.staged
+                    && self.state.is_current(update)
+                {
+                    self.state.count = update.count;
+                    self.state.scanned = update.scanned;
+                    self.state.finished = update.complete;
+                    if self.state.requested.is_none() {
+                        self.state.error = update.error.clone();
+                    }
+                }
+                if safe && let Some(update) = self.staged.take() {
+                    if self.state.selected_row.is_none() && update.selection.is_some() {
+                        self.scroll_to_selection = true;
+                    }
+                    self.state.accept(update, false, true, pinned);
+                }
+            }
+            self.avatars.poll(
+                ctx,
+                !hovering_history && !interacting && now - self.last_scroll > 0.2,
+            );
+            let focus_filter =
+                ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::F));
+            if focus_filter {
+                self.narrow_details = false;
+                ctx.memory_mut(|m| m.request_focus(filter_id));
+            }
+            if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::R)) {
+                self.load(ctx);
+            }
+            if crate::navigation::available(ctx) {
+                if ctx.input_mut(|i| {
+                    i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)
+                        || i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft)
+                }) {
+                    self.narrow_details = false;
+                }
+                if self.state.selected.is_some()
+                    && crate::navigation::activation_available(ctx)
+                    && ctx.input_mut(|i| {
+                        i.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
+                            || i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight)
+                    })
+                {
+                    self.open_review(ctx);
+                }
+                if crate::navigation::activation_available(ctx)
+                    && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Space))
+                {
+                    if narrow {
+                        self.narrow_details = !self.narrow_details;
+                    } else {
+                        self.details_visible = !self.details_visible;
+                    }
+                }
+                let page = self.page_rows.saturating_sub(1).max(1) as i32;
+                for (modifiers, key, distance) in [
+                    (egui::Modifiers::NONE, egui::Key::ArrowUp, -1),
+                    (egui::Modifiers::NONE, egui::Key::ArrowDown, 1),
+                    (egui::Modifiers::NONE, egui::Key::K, -1),
+                    (egui::Modifiers::NONE, egui::Key::J, 1),
+                    (egui::Modifiers::CTRL, egui::Key::P, -1),
+                    (egui::Modifiers::CTRL, egui::Key::N, 1),
+                    (egui::Modifiers::NONE, egui::Key::PageUp, -page),
+                    (egui::Modifiers::NONE, egui::Key::PageDown, page),
+                    (egui::Modifiers::ALT, egui::Key::V, -page),
+                ] {
+                    if !(narrow && self.narrow_details)
+                        && ctx.input_mut(|i| i.consume_key(modifiers, key))
+                        && self.state.count > 0
+                    {
+                        if self.worker.is_some() {
+                            let row = self.state.selected_row.unwrap_or(0);
+                            let next = row
+                                .saturating_add_signed(distance as isize)
+                                .min(self.state.count - 1);
+                            self.state.select_row(next);
+                        } else {
+                            self.state.move_selection(distance);
+                        }
+                        crate::navigation::focus_content(ctx);
+                        self.scroll_to_selection = true;
+                    }
+                }
+                if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::C))
+                    && let Some(id) = &self.state.selected
+                {
+                    ctx.copy_text(id.clone());
+                }
             }
         }
+        let mut go_local = false;
+        let mut go_history = false;
         egui::Panel::top("toolbar").exact_size(42.0).show(ui, |ui| {
             ui.add_space(5.0);
             ui.horizontal(|ui| {
@@ -1297,6 +1349,19 @@ impl Browser {
                         .clicked()
                     {
                         self.load(ctx);
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(self.state.history.is_some(), egui::Button::new("Reflog…"))
+                        .on_hover_text("Inspect HEAD or branch reflog entries and recover a tip")
+                        .clicked()
+                    {
+                        if let Some(history) = &self.state.history {
+                            self.reflog = Some(reflog_view::ReflogView::new(
+                                history.path.clone(),
+                                "HEAD".into(),
+                            ));
+                        }
                         ui.close();
                     }
                     ui.separator();
@@ -1523,46 +1588,9 @@ impl Browser {
                         ui.close();
                     }
                 });
-                let has_selection = self.state.selected.is_some();
-                let mutation_busy =
-                    self.mutation.is_some() || self.branch.is_some() || self.network.is_some();
-                let mut cherry_pick = false;
-                let mut revert = false;
-                ui.menu_button("Commit", |ui| {
-                    if ui
-                        .add_enabled(
-                            has_selection && !mutation_busy,
-                            egui::Button::new("Cherry-pick"),
-                        )
-                        .on_hover_text("Apply the selected commit to the current branch")
-                        .clicked()
-                    {
-                        cherry_pick = true;
-                        ui.close();
-                    }
-                    if ui
-                        .add_enabled(has_selection && !mutation_busy, egui::Button::new("Revert"))
-                        .on_hover_text("Invert the selected commit on the current branch")
-                        .clicked()
-                    {
-                        revert = true;
-                        ui.close();
-                    }
-                });
-                if cherry_pick
-                    && let Err(error) =
-                        self.start_mutation(ctx, gg_engine::mutation::Operation::CherryPick)
-                {
-                    self.mutation_error = Some(error);
-                }
-                if revert
-                    && let Err(error) =
-                        self.start_mutation(ctx, gg_engine::mutation::Operation::Revert)
-                {
-                    self.mutation_error = Some(error);
-                }
                 ui.separator();
-                let trailing = if self.network.is_some() { 120.0 } else { 84.0 };
+                let trailing = if self.network.is_some() { 40.0 } else { 0.0 }
+                    + if wide_refs { 0.0 } else { 110.0 };
                 let identity_width = (ui.available_width() - trailing).max(80.0);
                 let (identity, path) = if let Some(history) = &self.state.history {
                     let tracking = self
@@ -1604,15 +1632,23 @@ impl Browser {
                         );
                     },
                 );
-                if ui
-                    .add_enabled(
-                        self.state.history.is_some(),
-                        egui::Button::new("Status").min_size(egui::vec2(66.0, 26.0)),
-                    )
-                    .clicked()
-                    && let Some(history) = &self.state.history
-                {
-                    self.working = Some(status_view::StatusView::new(history.path.clone(), ctx));
+                if !wide_refs {
+                    if self.working.is_some() || self.review.is_some() {
+                        if ui
+                            .add(egui::Button::new("All Commits").min_size(egui::vec2(92.0, 26.0)))
+                            .clicked()
+                        {
+                            go_history = true;
+                        }
+                    } else if ui
+                        .add_enabled(
+                            self.state.history.is_some(),
+                            egui::Button::new("Local Changes").min_size(egui::vec2(100.0, 26.0)),
+                        )
+                        .clicked()
+                    {
+                        go_local = true;
+                    }
                 }
                 if let Some(worker) = &self.network {
                     let cancelled = worker.is_cancelled();
@@ -1685,22 +1721,43 @@ impl Browser {
                         .clicked()
                         || enter
                     {
+                        self.reflog = None;
                         self.load(ctx);
                         self.edit_path = false;
                     }
                 });
             });
         }
-        let wide_refs = !narrow && self.refs_visible && ctx.content_rect().width() >= 1120.0;
         if wide_refs {
             let refs = self.state.refs.clone();
             let busy = self.branch.is_some() || self.network.is_some();
+            let has_repo = self.state.history.is_some();
+            let local_selected = self.working.is_some();
             let mut action = None;
             egui::Panel::left("refs-sidebar")
                 .exact_size(190.0)
                 .resizable(false)
                 .frame(egui::Frame::side_top_panel(ui.style().as_ref()).inner_margin(8.0))
                 .show(ui, |ui| {
+                    ui.add_space(2.0);
+                    ui.add_enabled_ui(has_repo, |ui| {
+                        if ui
+                            .selectable_label(local_selected, "Local Changes")
+                            .on_hover_text("Stage, unstage, commit, and amend in one view")
+                            .clicked()
+                        {
+                            go_local = true;
+                        }
+                        if ui
+                            .selectable_label(!local_selected, "All Commits")
+                            .on_hover_text("Browse commit history")
+                            .clicked()
+                        {
+                            go_history = true;
+                        }
+                    });
+                    ui.add_space(4.0);
+                    ui.separator();
                     action = refs_view::show(ui, &refs, &mut self.refs_query, busy);
                 });
             match action {
@@ -1725,6 +1782,12 @@ impl Browser {
                 }
                 None => {}
             }
+        }
+        if go_local {
+            self.open_working(ctx);
+        }
+        if go_history {
+            self.close_to_history(ctx);
         }
         if let Some(name) = &mut self.new_branch {
             let mut submit = None;
@@ -1889,6 +1952,103 @@ impl Browser {
                 self.track_dialog = None;
             }
         }
+        let reflog_references = self.reflog_references();
+        let mut reflog_action = None;
+        let mut reflog_open = true;
+        if let Some(view) = &mut self.reflog {
+            reflog_action = view.draw(ctx, &reflog_references, &mut reflog_open);
+        }
+        if !reflog_open {
+            self.reflog = None;
+        }
+        if let Some(action) = reflog_action {
+            match action {
+                reflog_view::Action::Reset { commit, mode } => {
+                    self.reset_confirm = Some((commit, mode));
+                }
+                reflog_view::Action::CreateBranch { commit, selector } => {
+                    self.create_branch = Some(CreateBranchDialog {
+                        name: String::new(),
+                        commit,
+                        selector,
+                        error: None,
+                    });
+                }
+            }
+        }
+
+        let mut create_branch_submit = None;
+        let mut create_branch_cancel = false;
+        if let Some(dialog) = &mut self.create_branch {
+            egui::Window::new("Create branch here")
+                .id(egui::Id::unique("create-branch-here"))
+                .collapsible(false)
+                .resizable(false)
+                .default_pos(ctx.content_rect().center())
+                .pivot(egui::Align2::CENTER_CENTER)
+                .show(ctx, |ui| {
+                    ui.label(format!(
+                        "Create a branch at {} ({})",
+                        dialog.commit.chars().take(8).collect::<String>(),
+                        dialog.selector
+                    ));
+                    ui.add(
+                        egui::TextEdit::singleline(&mut dialog.name)
+                            .hint_text("Branch name")
+                            .desired_width(300.0),
+                    );
+                    if let Some(error) = &dialog.error {
+                        ui.colored_label(ui.visuals().error_fg_color, error);
+                    }
+                    ui.horizontal(|ui| {
+                        if ui
+                            .add_enabled(
+                                !dialog.name.trim().is_empty(),
+                                egui::Button::new("Create"),
+                            )
+                            .clicked()
+                        {
+                            create_branch_submit = Some(dialog.name.trim().to_string());
+                        }
+                        if ui.button("Cancel").clicked() {
+                            create_branch_cancel = true;
+                        }
+                    });
+                });
+        }
+        if create_branch_cancel {
+            self.create_branch = None;
+        }
+        if let Some(name) = create_branch_submit
+            && let Some(dialog) = self.create_branch.clone()
+        {
+            match self.stash_path() {
+                Some(path) => match gg_git::branch::create_at(&path, &name, &dialog.commit) {
+                    Ok(receipt) => {
+                        self.create_branch = None;
+                        self.load(ctx);
+                        if let Some(view) = &mut self.reflog {
+                            view.notice(format!(
+                                "Created {} at {}",
+                                receipt.branch,
+                                receipt.commit.chars().take(8).collect::<String>()
+                            ));
+                        }
+                    }
+                    Err(error) => {
+                        if let Some(dialog) = &mut self.create_branch {
+                            dialog.error = Some(error);
+                        }
+                    }
+                },
+                None => {
+                    if let Some(dialog) = &mut self.create_branch {
+                        dialog.error = Some("Open a repository before creating a branch.".into());
+                    }
+                }
+            }
+        }
+
         let mut branch_delete_action = None;
         let mut branch_delete_open = true;
         if let Some(dialog) = &mut self.branch_delete {
@@ -2293,6 +2453,36 @@ impl Browser {
             self.stash_window = None;
         }
 
+        if self.working.is_some() {
+            let close = self
+                .working
+                .as_mut()
+                .is_some_and(|working| working.draw_ui(ui));
+            let committed = self
+                .working
+                .as_mut()
+                .and_then(|working| working.take_commit());
+            if let Some(id) = committed {
+                self.pending_commit = Some(id);
+            }
+            if close {
+                self.close_to_history(ctx);
+            }
+            return;
+        }
+        if self.review.is_some() {
+            let close = self
+                .review
+                .as_mut()
+                .is_some_and(|review| review.draw_ui(ui));
+            if close {
+                self.review = None;
+                self.restore_offset = Some(self.scroll_offset);
+                ctx.request_repaint();
+            }
+            return;
+        }
+
         egui::Panel::bottom("status").exact_size(25.0).show(ui, |ui| {
             let (message, color) = if let Some(error) = &self.network_error {
                 (format!("Network · {error}"), ui.visuals().error_fg_color)
@@ -2301,7 +2491,7 @@ impl Browser {
             } else if let Some(error) = &self.branch_error {
                 (format!("Branch · {error}"), ui.visuals().error_fg_color)
             } else if let Some(error) = &self.mutation_error {
-                (format!("History · {error}"), ui.visuals().error_fg_color)
+                (format!("All Commits · {error}"), ui.visuals().error_fg_color)
             } else if let Some(worker) = &self.network {
                 if worker.is_cancelled() {
                     ("Cancelling network operation…".into(), ui.visuals().text_color())
@@ -2325,7 +2515,7 @@ impl Browser {
             } else if let Some(notice) = &self.stash_notice {
                 (format!("Stash · {notice}"), ui.visuals().text_color())
             } else if let Some(notice) = &self.mutation_notice {
-                (format!("History · {notice}"), ui.visuals().text_color())
+                (format!("All Commits · {notice}"), ui.visuals().text_color())
             } else if self.pending.is_some() {
                 (format!("Reading {}{}", self.state.requested.as_deref().unwrap_or(std::path::Path::new(".")).display(), if self.state.history.is_some() { " · showing previous results" } else { "" }), ui.visuals().text_color())
             } else if !self.state.finished && self.worker.is_some() {
@@ -2346,7 +2536,7 @@ impl Browser {
             egui::Panel::top("filter").exact_size(40.0).show(ui, |ui| {
                 ui.add_space(5.0);
                 ui.horizontal(|ui| {
-                    ui.strong("History");
+                    ui.strong("All Commits");
                     let count = format!(
                         "{}{}",
                         self.state.count,
@@ -3201,6 +3391,39 @@ mod tests {
     }
 
     #[test]
+    fn reflog_branch_creation_dialog_renders_at_supported_widths() {
+        for width in [720.0, 1120.0] {
+            let ctx = egui::Context::default();
+            let mut app = layout_fixture();
+            app.create_branch = Some(CreateBranchDialog {
+                name: "recovered".into(),
+                commit: "b".repeat(40),
+                selector: "HEAD@{2}".into(),
+                error: None,
+            });
+            let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let output = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let text = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert!(text.iter().any(|line| line.contains("Create branch here")));
+            assert!(text.iter().any(|line| line.contains("HEAD@{2}")));
+            assert!(text.iter().any(|line| line.contains("recovered")));
+            assert!(text.iter().any(|line| line == &"Create"));
+            assert!(text.iter().any(|line| line == &"Cancel"));
+        }
+    }
+
+    #[test]
     fn ref_jump_clears_filters_and_retargets_selection() {
         let mut app = layout_fixture();
         app.state.query = "filter".into();
@@ -3371,7 +3594,7 @@ mod tests {
                 } else {
                     assert_eq!(app.details_rect, egui::Rect::NOTHING);
                 }
-                for label in ["Repository", "View", "Status"] {
+                for label in ["Repository", "View", "Local Changes"] {
                     let shape = output.shapes.iter().find_map(|shape| match &shape.shape {
                         egui::epaint::Shape::Text(text) if text.galley.job.text == label => {
                             Some(text)
@@ -3447,6 +3670,99 @@ mod tests {
         let _ = crate::tests::run_ui(&ctx, input, |ctx| app.draw_ui(ctx));
         assert_eq!(app.state.count, 100_000);
         assert!((app.scroll_offset - offset).abs() < 0.1);
+    }
+
+    #[test]
+    fn local_changes_and_all_commits_share_one_navigation_entry() {
+        for width in [720.0, 1120.0] {
+            let ctx = egui::Context::default();
+            let mut app = layout_fixture();
+            let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let output = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let text = |needle: &str| {
+                output.shapes.iter().find_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) if text.galley.job.text == needle => {
+                        Some(text.pos)
+                    }
+                    _ => None,
+                })
+            };
+            assert!(text("Local Changes").is_some());
+            assert!(text("Status").is_none());
+            assert!(text("Local Changes").is_some(), "width {width}");
+            let local = text("Local Changes").unwrap_or(egui::Pos2::ZERO);
+            let click = |ctx: &egui::Context, app: &mut Browser, pos: egui::Pos2| {
+                let press = egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                };
+                let release = egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                };
+                crate::tests::run_ui(
+                    ctx,
+                    frame_input(width, 740.0, vec![press, release]),
+                    |ctx| app.draw_ui(ctx),
+                )
+            };
+            click(&ctx, &mut app, local + egui::vec2(8.0, 6.0));
+            assert!(app.working.is_some(), "width {width}");
+            let output = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            assert!(output.shapes.iter().any(|shape| matches!(
+                &shape.shape,
+                egui::epaint::Shape::Text(text) if text.galley.job.text == "Repository"
+            )));
+            for label in ["Local Changes", "Commit", "Amend"] {
+                assert!(
+                    output.shapes.iter().any(|shape| matches!(
+                        &shape.shape,
+                        egui::epaint::Shape::Text(text) if text.galley.job.text == label
+                    )),
+                    "missing {label} at width {width}"
+                );
+            }
+            if width >= 1120.0 {
+                let positions = output
+                    .shapes
+                    .iter()
+                    .filter_map(|shape| match &shape.shape {
+                        egui::epaint::Shape::Text(text)
+                            if text.galley.job.text == "Local Changes" =>
+                        {
+                            Some(text.pos.x)
+                        }
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                assert!(positions.iter().any(|x| *x < 190.0), "{positions:?}");
+                assert!(positions.iter().any(|x| *x >= 190.0), "{positions:?}");
+                assert!(output.shapes.iter().any(|shape| matches!(
+                    &shape.shape,
+                    egui::epaint::Shape::Text(text) if text.galley.job.text == "Refs"
+                )));
+            }
+            let history = output.shapes.iter().find_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) if text.galley.job.text == "All Commits" => {
+                    Some(text.pos)
+                }
+                _ => None,
+            });
+            assert!(history.is_some(), "width {width}");
+            let history = history.unwrap_or(egui::Pos2::ZERO);
+            click(&ctx, &mut app, history + egui::vec2(8.0, 6.0));
+            assert!(app.working.is_none(), "width {width}");
+        }
     }
 
     #[test]

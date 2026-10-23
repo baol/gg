@@ -356,6 +356,7 @@ impl StageView {
             return;
         };
         let path = request.repository.path.clone();
+        let base_tree = request.repository.base_tree.clone();
         let label = match &action {
             Action::Drop { .. } => "Dropping…",
             Action::Hunk { .. } | Action::Whole { .. } if pane_index == 0 => "Unstaging…",
@@ -392,7 +393,7 @@ impl StageView {
                     }
                 }
                 .and_then(|()| {
-                    gg_git::status::Session::open(&path)
+                    gg_git::status::Session::open_with_base_tree(&path, base_tree)
                         .map(|session| session.identity)
                         .map_err(|e| format!("Refresh diff: {e}"))
                 });
@@ -583,7 +584,19 @@ fn draw_pane(
         PaneKind::Unstaged => 1,
     };
     let (title, route, verb) = match kind {
-        PaneKind::Staged => ("Staged", "HEAD to index", "Unstage"),
+        PaneKind::Staged => (
+            "Staged",
+            if pane
+                .request
+                .as_ref()
+                .is_some_and(|request| request.repository.base_tree.is_some())
+            {
+                "parent to index"
+            } else {
+                "HEAD to index"
+            },
+            "Unstage",
+        ),
         PaneKind::Unstaged => ("Unstaged", "index to working", "Stage"),
     };
     ui.horizontal(|ui| {
@@ -1044,6 +1057,7 @@ mod tests {
                     path: "/nonexistent".into(),
                     head: None,
                     index: String::new(),
+                    base_tree: None,
                 },
                 entry: staged,
             }),
