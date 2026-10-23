@@ -326,4 +326,5 @@ Linux x86_64 · Rust 1.99.1 · local Git fixtures.
 - CLI tests cover `git good commit --amend`, `git good reflog [REF]`, and `git good branch --create NAME [--at REF]`, including receipts, backup refs, missing references, and branch creation without switching.
 - egui tests load the HEAD message into the amend toggle, show the commit's contents as staged, unstage and restage a working change through the unified view, rewrite the commit, clear the amend base, render the **Amended** status line, and render the reflog window and branch-creation dialog at 720 and 1120 widths.
 - Reflog read-only tests cover `HEAD` and branch selectors, newest-first entries, times, actions, details, stale-entry clearing, and missing or option-shaped references.
-- CI evidence will be added after the amend-view change runs in the pull request.
+- [Six native CI jobs](https://github.com/baol/gg/actions/runs/39931125549) pass tests, Clippy with `-D warnings`, release builds, CLI smoke checks, and packaging on Linux, macOS, and Windows on x86_64 and arm64 for `37ff8c7`.
+- The macOS Intel artifact upload hit a transient GitHub `ENOTFOUND`; the job passed on rerun without code changes.
