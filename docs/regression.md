@@ -162,6 +162,7 @@ Native review: the refs sidebar and status line show the current branch upstream
 - Git oracle tests cover soft, mixed, and hard reset and reject option-shaped or missing targets.
 - CLI tests cover `git good reset --soft|--mixed|--hard COMMIT` receipts and missing-mode errors.
 - egui tests render the reset confirmation, including the hard-reset warning, at 720 and 1120 widths.
+- The visible **Actions** menu and **Commit actions** window share the commit-row context-menu definitions, grouped as Inspect, Integrate, Rewrite and destructive, and Recovery. Tests cover grouped rendering at 720 and 1120 widths, the Alt+A shortcut, the Help shortcut window, and the shared menu returning the clicked command.
 
 ## Compare to local
 

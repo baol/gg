@@ -68,8 +68,11 @@ Preserve matching selection; otherwise select the first published match. Clear s
 | Previous / next page | Page Up/Down; Alt+V for previous |
 | Open selected commit/file / return | Enter or Right / Escape, Left, or Back |
 | Toggle commit details | Space |
+| Selected commit actions | Alt+A or the **Actions** menu |
 
 Emacs bindings use physical Control. Ctrl+V retains native paste. Escape leaves filter focus. Text editors and open menus retain editing/navigation shortcuts; focused buttons allow list navigation. Reading views use Up/Down, j/k, Ctrl+P/N, and page keys to scroll their content. Enter opens a full-width diff from either file-list layout. History bindings apply while history is visible and editors are unfocused. Empty results keep selection empty.
+
+The **Actions** menu and the **Commit actions** window use the same grouped command definition as the commit-row context menu: Inspect, Integrate, Rewrite and destructive, and Recovery. Labels include the selected short commit, for example **Cherry-pick a1b2c3d** or **Compare a1b2c3d with current HEAD**. Mutation commands are disabled with an explanation while a mutation, operation worker, branch switch, or network operation is active. The **Help** menu opens a concise keyboard-shortcut window; the visible control and the context menu invoke the same command for the same target.
 
 Follow [bounded-reveal rules](design.md). Page by the rendered viewport with one row of overlap, clamp at history boundaries, and stream uncached destinations. Show cached selected metadata immediately; reserve the full-message slot while loading. Narrow details preserve hidden history selection and pixel offset.
 

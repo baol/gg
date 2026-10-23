@@ -417,3 +417,14 @@ Linux x86_64 · Rust 1.99.1 · local Git fixtures.
 - A narrow-only test opens an unstaged-only file and confirms the unstaged pane is focused by default with **Stage hunk** visible and **Unstage hunk** absent.
 - Pane selection and scroll state remain on their own panes across focus and layout changes.
 - Native wide/narrow interaction review remains pending for this increment.
+
+## Pre-M7 action discoverability · 2026-10-23
+
+Linux x86_64 · Rust 1.99.1 · local Git fixtures.
+
+- 313 workspace tests pass (3 ignored); formatting and Clippy with `-D warnings` pass.
+- The toolbar **Actions** menu and the **Commit actions** window use the same grouped command definition as the commit-row context menu: Inspect, Integrate, Rewrite and destructive, and Recovery. Labels carry the selected short commit.
+- Mutation commands are disabled with an explanation while a mutation, operation worker, branch switch, or network operation is active.
+- Alt+A toggles the commit-actions window. The **Help** menu opens a keyboard-shortcut window that names navigation, repository, and action bindings.
+- Tests render the grouped window at 720 and 1120 widths, exercise the Alt+A shortcut, verify the shared menu returns the clicked command, and render the Help window.
+- Native wide/narrow interaction review remains pending for this increment.

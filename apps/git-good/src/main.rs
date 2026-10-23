@@ -372,11 +372,94 @@ enum OperationOutcome {
 
 #[derive(Clone, Copy)]
 enum CommitAction {
+    Review,
     CherryPick,
     Revert,
     Reset(gg_engine::reset::Mode),
     Rewrite,
     Compare,
+}
+
+enum CommitCommand {
+    Action(CommitAction),
+    CopyHash,
+    CopySubject,
+    OpenBackups,
+}
+
+fn commit_action_menu(
+    ui: &mut egui::Ui,
+    id: &str,
+    can_mutate: bool,
+    mutate_reason: Option<&str>,
+) -> Option<CommitCommand> {
+    let short: String = id.chars().take(7).collect();
+    let mut command = None;
+    ui.label(egui::RichText::new("Inspect").weak());
+    if ui.button(format!("Review {short}")).clicked() {
+        command = Some(CommitCommand::Action(CommitAction::Review));
+    }
+    if ui
+        .button(format!("Compare {short} with current HEAD"))
+        .clicked()
+    {
+        command = Some(CommitCommand::Action(CommitAction::Compare));
+    }
+    if ui.button("Copy hash").clicked() {
+        command = Some(CommitCommand::CopyHash);
+    }
+    if ui.button("Copy subject").clicked() {
+        command = Some(CommitCommand::CopySubject);
+    }
+    ui.separator();
+    ui.label(egui::RichText::new("Integrate").weak());
+    if ui
+        .add_enabled(
+            can_mutate,
+            egui::Button::new(format!("Cherry-pick {short}")),
+        )
+        .on_hover_text(mutate_reason.unwrap_or("Apply this commit to the current branch"))
+        .clicked()
+    {
+        command = Some(CommitCommand::Action(CommitAction::CherryPick));
+    }
+    if ui
+        .add_enabled(can_mutate, egui::Button::new(format!("Revert {short}")))
+        .on_hover_text(mutate_reason.unwrap_or("Invert this commit on the current branch"))
+        .clicked()
+    {
+        command = Some(CommitCommand::Action(CommitAction::Revert));
+    }
+    ui.separator();
+    ui.label(egui::RichText::new("Rewrite and destructive").weak());
+    ui.menu_button(format!("Reset {short} here"), |ui| {
+        for (label, mode) in [
+            ("Soft", gg_engine::reset::Mode::Soft),
+            ("Mixed", gg_engine::reset::Mode::Mixed),
+            ("Hard", gg_engine::reset::Mode::Hard),
+        ] {
+            if ui
+                .add_enabled(can_mutate, egui::Button::new(label))
+                .on_hover_text(mutate_reason.unwrap_or("Reset the current branch here"))
+                .clicked()
+            {
+                command = Some(CommitCommand::Action(CommitAction::Reset(mode)));
+            }
+        }
+    });
+    if ui
+        .add_enabled(can_mutate, egui::Button::new("Reorder and squash to HEAD…"))
+        .on_hover_text(mutate_reason.unwrap_or("Rewrite commits from this commit through HEAD"))
+        .clicked()
+    {
+        command = Some(CommitCommand::Action(CommitAction::Rewrite));
+    }
+    ui.separator();
+    ui.label(egui::RichText::new("Recovery").weak());
+    if ui.button("Backups…").clicked() {
+        command = Some(CommitCommand::OpenBackups);
+    }
+    command
 }
 
 struct Browser {
@@ -410,6 +493,8 @@ struct Browser {
     rewrite_dialog: Option<RewriteDialog>,
     rewrite_job: Option<RewriteJob>,
     rewrite_refresh: Option<u64>,
+    commit_actions: bool,
+    help_shortcuts: bool,
     conflict_view: Option<ConflictView>,
     reset_confirm: Option<(String, gg_engine::reset::Mode)>,
     branch_delete: Option<BranchDeleteDialog>,
@@ -474,6 +559,8 @@ impl Browser {
             rewrite_dialog: None,
             rewrite_job: None,
             rewrite_refresh: None,
+            commit_actions: false,
+            help_shortcuts: false,
             conflict_view: None,
             reset_confirm: None,
             branch_delete: None,
@@ -989,6 +1076,53 @@ impl Browser {
 
     fn operation_busy(&self) -> bool {
         self.operation_worker.is_some()
+    }
+
+    fn mutation_ready(&self) -> bool {
+        self.mutation.is_none()
+            && !self.operation_busy()
+            && self.branch.is_none()
+            && self.network.is_none()
+    }
+
+    fn mutation_reason(&self) -> Option<&'static str> {
+        if self.mutation.is_some() {
+            Some("Recover the operation in progress first.")
+        } else if self.operation_busy() {
+            Some("Wait for the current operation to finish.")
+        } else if self.branch.is_some() || self.network.is_some() {
+            Some("Wait for the branch or network operation to finish.")
+        } else {
+            None
+        }
+    }
+
+    fn run_commit_action(&mut self, ctx: &egui::Context, id: String, action: CommitAction) {
+        self.state.selected = Some(id.clone());
+        self.state.reconcile_selection();
+        match action {
+            CommitAction::Review => self.open_review(ctx),
+            CommitAction::CherryPick => {
+                if let Err(error) =
+                    self.start_mutation(ctx, gg_engine::mutation::Operation::CherryPick)
+                {
+                    self.mutation_error = Some(error);
+                }
+            }
+            CommitAction::Revert => {
+                if let Err(error) = self.start_mutation(ctx, gg_engine::mutation::Operation::Revert)
+                {
+                    self.mutation_error = Some(error);
+                }
+            }
+            CommitAction::Reset(mode) => self.reset_confirm = Some((id, mode)),
+            CommitAction::Rewrite => {
+                if let Err(error) = self.open_rewrite_dialog(&id) {
+                    self.mutation_error = Some(error);
+                }
+            }
+            CommitAction::Compare => self.open_compare(ctx, id),
+        }
     }
 
     fn start_operation(
@@ -1772,6 +1906,9 @@ impl Browser {
                         self.details_visible = !self.details_visible;
                     }
                 }
+                if ctx.input_mut(|i| i.consume_key(egui::Modifiers::ALT, egui::Key::A)) {
+                    self.commit_actions = !self.commit_actions;
+                }
                 let page = self.page_rows.saturating_sub(1).max(1) as i32;
                 for (modifiers, key, distance) in [
                     (egui::Modifiers::NONE, egui::Key::ArrowUp, -1),
@@ -2109,6 +2246,50 @@ impl Browser {
                             confirm_drop: None,
                         });
                         self.refresh_stashes();
+                        ui.close();
+                    }
+                });
+                if let Some(id) = self.state.selected.clone() {
+                    ui.menu_button("Actions", |ui| {
+                        if let Some(command) = commit_action_menu(
+                            ui,
+                            &id,
+                            self.mutation_ready(),
+                            self.mutation_reason(),
+                        ) {
+                            match command {
+                                CommitCommand::Action(action) => {
+                                    self.run_commit_action(ctx, id.clone(), action);
+                                }
+                                CommitCommand::CopyHash => ui.ctx().copy_text(id.clone()),
+                                CommitCommand::CopySubject => {
+                                    if let Some(subject) = self
+                                        .state
+                                        .displayed_details()
+                                        .map(|commit| commit.subject().to_owned())
+                                    {
+                                        ui.ctx().copy_text(subject);
+                                    }
+                                }
+                                CommitCommand::OpenBackups => {
+                                    if let Some(history) = &self.state.history {
+                                        self.backups = Some(backups_view::BackupsView::new(
+                                            history.path.clone(),
+                                        ));
+                                    }
+                                }
+                            }
+                            ui.close();
+                        }
+                    });
+                }
+                ui.menu_button("Help", |ui| {
+                    if ui.button("Keyboard shortcuts…").clicked() {
+                        self.help_shortcuts = true;
+                        ui.close();
+                    }
+                    if ui.button("Selected commit actions…").clicked() {
+                        self.commit_actions = true;
                         ui.close();
                     }
                 });
@@ -2988,6 +3169,86 @@ impl Browser {
         if conflict_recovery.is_none() && self.conflict_view.is_some() && !conflict_open {
             self.conflict_view = None;
         }
+        if self.commit_actions {
+            let id = self.state.selected.clone();
+            let subject = self
+                .state
+                .displayed_details()
+                .map(|commit| commit.subject().to_owned())
+                .unwrap_or_default();
+            let ready = self.mutation_ready();
+            let reason = self.mutation_reason();
+            let mut command = None;
+            let mut open = true;
+            egui::Window::new("Commit actions")
+                .id(egui::Id::unique("commit-actions"))
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(false)
+                .default_width(340.0)
+                .default_pos(ctx.content_rect().center())
+                .pivot(egui::Align2::CENTER_CENTER)
+                .show(ctx, |ui| {
+                    if let Some(id) = &id {
+                        command = commit_action_menu(ui, id, ready, reason);
+                    } else {
+                        ui.label("Select a commit first.");
+                    }
+                });
+            if let Some(command) = command
+                && let Some(id) = id
+            {
+                match command {
+                    CommitCommand::Action(action) => self.run_commit_action(ctx, id, action),
+                    CommitCommand::CopyHash => ctx.copy_text(id),
+                    CommitCommand::CopySubject => ctx.copy_text(subject),
+                    CommitCommand::OpenBackups => {
+                        if let Some(history) = &self.state.history {
+                            self.backups =
+                                Some(backups_view::BackupsView::new(history.path.clone()));
+                        }
+                    }
+                }
+                self.commit_actions = false;
+            }
+            if !open {
+                self.commit_actions = false;
+            }
+        }
+        if self.help_shortcuts {
+            let mut open = true;
+            egui::Window::new("Keyboard shortcuts")
+                .id(egui::Id::unique("keyboard-shortcuts"))
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(false)
+                .default_width(420.0)
+                .default_pos(ctx.content_rect().center())
+                .pivot(egui::Align2::CENTER_CENTER)
+                .show(ctx, |ui| {
+                    for (group, keys) in [
+                        (
+                            "Navigation",
+                            "Up/Down or j/k: move · PgUp/PgDn: page · Enter: review · Space: details · Esc: back",
+                        ),
+                        (
+                            "Repository",
+                            "Ctrl/Cmd+R: refresh · Ctrl/Cmd+F: filter · Ctrl/Cmd+C: copy ID",
+                        ),
+                        (
+                            "Actions",
+                            "Alt+A: selected commit actions · menus: Repository, Refs, View, Stash, Help",
+                        ),
+                    ] {
+                        ui.strong(group);
+                        ui.label(keys);
+                        ui.add_space(6.0);
+                    }
+                });
+            if !open {
+                self.help_shortcuts = false;
+            }
+        }
 
         let mut merge_submit = None;
         let mut merge_open = true;
@@ -3560,6 +3821,7 @@ impl Browser {
             self.details_rect = details.response.rect;
         }
         let mut pending_commit_action: Option<(String, CommitAction)> = None;
+        let mut open_commit_backups = false;
         egui::CentralPanel::default().show(ui, |ui| {
             if narrow && self.narrow_details {
                 self.history_rect = egui::Rect::NOTHING;
@@ -3654,60 +3916,29 @@ impl Browser {
                                         self.row_rects.push((row, response.rect));
                                         response.context_menu(|ui| {
                                             let id = commit.id.clone();
-                                            if ui.button("Cherry-pick").clicked() {
-                                                pending_commit_action =
-                                                    Some((id.clone(), CommitAction::CherryPick));
-                                                ui.close();
-                                            }
-                                            if ui.button("Revert").clicked() {
-                                                pending_commit_action =
-                                                    Some((id.clone(), CommitAction::Revert));
-                                                ui.close();
-                                            }
-                                            ui.menu_button("Reset here", |ui| {
-                                                for (label, mode) in [
-                                                    ("Soft", gg_engine::reset::Mode::Soft),
-                                                    ("Mixed", gg_engine::reset::Mode::Mixed),
-                                                    ("Hard", gg_engine::reset::Mode::Hard),
-                                                ] {
-                                                    if ui.button(label).clicked() {
-                                                        pending_commit_action = Some((
-                                                            id.clone(),
-                                                            CommitAction::Reset(mode),
-                                                        ));
-                                                        ui.close();
+                                            if let Some(command) = commit_action_menu(
+                                                ui,
+                                                &id,
+                                                self.mutation_ready(),
+                                                self.mutation_reason(),
+                                            ) {
+                                                match command {
+                                                    CommitCommand::Action(action) => {
+                                                        pending_commit_action =
+                                                            Some((id.clone(), action));
+                                                    }
+                                                    CommitCommand::CopyHash => {
+                                                        ui.ctx().copy_text(id.clone());
+                                                    }
+                                                    CommitCommand::CopySubject => {
+                                                        ui.ctx().copy_text(
+                                                            commit.subject().to_string(),
+                                                        );
+                                                    }
+                                                    CommitCommand::OpenBackups => {
+                                                        open_commit_backups = true;
                                                     }
                                                 }
-                                            });
-                                            if ui
-                                                .add_enabled(
-                                                    self.mutation.is_none()
-                                                        && !self.operation_busy(),
-                                                    egui::Button::new(
-                                                        "Reorder and squash to HEAD…",
-                                                    ),
-                                                )
-                                                .on_hover_text(
-                                                    "Rewrite commits from this commit through HEAD",
-                                                )
-                                                .clicked()
-                                            {
-                                                pending_commit_action =
-                                                    Some((id.clone(), CommitAction::Rewrite));
-                                                ui.close();
-                                            }
-                                            if ui.button("Compare with current HEAD").clicked() {
-                                                pending_commit_action =
-                                                    Some((id.clone(), CommitAction::Compare));
-                                                ui.close();
-                                            }
-                                            ui.separator();
-                                            if ui.button("Copy hash").clicked() {
-                                                ui.ctx().copy_text(id.clone());
-                                                ui.close();
-                                            }
-                                            if ui.button("Copy subject").clicked() {
-                                                ui.ctx().copy_text(commit.subject().to_string());
                                                 ui.close();
                                             }
                                         });
@@ -3786,35 +4017,10 @@ impl Browser {
             }
         });
         if let Some((id, action)) = pending_commit_action {
-            self.state.selected = Some(id.clone());
-            self.state.reconcile_selection();
-            match action {
-                CommitAction::CherryPick => {
-                    if let Err(error) =
-                        self.start_mutation(ctx, gg_engine::mutation::Operation::CherryPick)
-                    {
-                        self.mutation_error = Some(error);
-                    }
-                }
-                CommitAction::Revert => {
-                    if let Err(error) =
-                        self.start_mutation(ctx, gg_engine::mutation::Operation::Revert)
-                    {
-                        self.mutation_error = Some(error);
-                    }
-                }
-                CommitAction::Reset(mode) => {
-                    self.reset_confirm = Some((id, mode));
-                }
-                CommitAction::Rewrite => {
-                    if let Err(error) = self.open_rewrite_dialog(&id) {
-                        self.mutation_error = Some(error);
-                    }
-                }
-                CommitAction::Compare => {
-                    self.open_compare(ctx, id);
-                }
-            }
+            self.run_commit_action(ctx, id, action);
+        }
+        if open_commit_backups && let Some(history) = &self.state.history {
+            self.backups = Some(backups_view::BackupsView::new(history.path.clone()));
         }
         if self.pending_filter_edit
             && let Some(pending) = &self.pending
@@ -4699,6 +4905,143 @@ mod tests {
         }
         assert!(!app.operation_busy());
         assert!(app.mutation_error.is_some());
+    }
+
+    #[test]
+    fn commit_actions_window_lists_grouped_actions() {
+        for width in [720.0, 1120.0] {
+            let ctx = egui::Context::default();
+            let mut app = layout_fixture();
+            app.state.selected = Some("a".repeat(40));
+            app.commit_actions = true;
+            let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let output = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let text = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            for label in [
+                "Commit actions",
+                "Inspect",
+                "Integrate",
+                "Rewrite and destructive",
+                "Recovery",
+                "Backups…",
+            ] {
+                assert!(text.contains(&label), "missing {label} at {width}");
+            }
+            assert!(
+                text.iter().any(|line| line.starts_with("Cherry-pick ")),
+                "missing target-aware cherry-pick at {width}"
+            );
+        }
+    }
+
+    #[test]
+    fn actions_shortcut_opens_the_window() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        app.state.selected = Some("a".repeat(40));
+        let _ = crate::tests::run_ui(
+            &ctx,
+            frame_input(1120.0, 740.0, vec![key(egui::Key::A, egui::Modifiers::ALT)]),
+            |ctx| app.draw_ui(ctx),
+        );
+        assert!(app.commit_actions);
+        let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        assert!(output.shapes.iter().any(|shape| matches!(
+            &shape.shape,
+            egui::epaint::Shape::Text(text) if text.galley.job.text == "Commit actions"
+        )));
+    }
+
+    #[test]
+    fn commit_action_menu_returns_the_clicked_command() {
+        let ctx = egui::Context::default();
+        let id = "a".repeat(40);
+        let command = std::cell::RefCell::new(None);
+        let first = crate::tests::run_ui(&ctx, frame_input(360.0, 600.0, vec![]), |ui| {
+            command
+                .borrow_mut()
+                .replace(commit_action_menu(ui, &id, true, None));
+        });
+        let compare = first.shapes.iter().find_map(|shape| match &shape.shape {
+            egui::epaint::Shape::Text(text)
+                if text.galley.job.text == "Compare aaaaaaa with current HEAD" =>
+            {
+                Some(text.pos)
+            }
+            _ => None,
+        });
+        let Some(compare) = compare else {
+            return;
+        };
+        let press = egui::Event::PointerButton {
+            pos: compare + egui::vec2(5.0, 0.0),
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let release = egui::Event::PointerButton {
+            pos: compare + egui::vec2(5.0, 0.0),
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let _ = crate::tests::run_ui(
+            &ctx,
+            frame_input(
+                360.0,
+                600.0,
+                vec![egui::Event::PointerMoved(compare), press],
+            ),
+            |ui| {
+                command
+                    .borrow_mut()
+                    .replace(commit_action_menu(ui, &id, true, None));
+            },
+        );
+        let _ = crate::tests::run_ui(&ctx, frame_input(360.0, 600.0, vec![release]), |ui| {
+            command
+                .borrow_mut()
+                .replace(commit_action_menu(ui, &id, true, None));
+        });
+        assert!(matches!(
+            command.borrow().as_ref(),
+            Some(Some(CommitCommand::Action(CommitAction::Compare)))
+        ));
+    }
+
+    #[test]
+    fn help_shortcuts_window_renders() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        app.help_shortcuts = true;
+        let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        let text = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(text.contains(&"Keyboard shortcuts"));
+        assert!(text.contains(&"Navigation"));
+        assert!(text.contains(&"Actions"));
+        assert!(text.iter().any(|line| line.contains("Alt+A")));
     }
 
     #[test]
