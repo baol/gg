@@ -154,7 +154,7 @@ Native review: the refs sidebar and status line show the current branch upstream
 
 - Git and CLI tests cover continue, skip, and abort for cherry-pick, revert, and merge, including merge's unsupported skip and restored HEAD/worktree on abort.
 - The native in-progress banner exposes Continue, Skip, and Abort, hides Skip for merges, and shows the conflict count.
-- Recovery refreshes history, refs, and an open Status view at a safe boundary; the conflict window closes once no operation remains.
+- Recovery refreshes history, refs, and an open Local Changes view at a safe boundary; the conflict window closes once no operation remains.
 
 ## Commit-row context menu and reset
 
@@ -175,8 +175,9 @@ Native review: the refs sidebar and status line show the current branch upstream
 - egui tests render the branch and tag delete confirmations at 720 and 1120 widths.
 - Branch, tag, and remote menus expose switch/jump, merge, track, delete, and copy actions.
 
-## M6 amend
+## M6 amend and navigation
 
+- egui tests open Local Changes from the sidebar at 1120 px and from the toolbar at 720 px, keep the global toolbar and refs visible, return through All Commits, and confirm the old Status button is gone.
 - Git oracle tests rewrite HEAD with the staged index, preserve the original author and parents, allow a message-only amend with an unchanged tree, and keep the previous commit reachable through `refs/gg/backup/...`.
 - Hook fixtures verify `pre-commit`, `prepare-commit-msg` with the `commit` source and old ID, `commit-msg`, and `post-rewrite amend` stdin. A failing `post-rewrite` returns a warning after the rewrite; other hook failures leave HEAD unchanged.
 - Amend mode compares the index with HEAD's parent, including the empty tree for a root commit. Staged rows expose the commit contents, working changes remain unstaged, and unstage restores the parent side for whole files and hunks without changing working files.

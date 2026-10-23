@@ -287,7 +287,7 @@ Linux x86_64 · Rust 1.99.1 · local Git fixtures.
 - 241 workspace tests pass (3 ignored); formatting, Clippy with `-D warnings`, and the debug build pass.
 - Continue, skip, and abort are covered for cherry-pick, revert, and merge, including merge's unsupported skip and restored HEAD/worktree on abort.
 - The in-progress banner exposes Continue, Skip, and Abort and hides Skip for merges.
-- Stash, cherry-pick, revert, merge, and conflict resolution refresh an open Status view after success, and the conflict window closes when no operation remains.
+- Stash, cherry-pick, revert, merge, and conflict resolution refresh an open Local Changes view after success, and the conflict window closes when no operation remains.
 
 ## Commit-row context menu and reset · 2026-10-22
 
@@ -321,10 +321,10 @@ Linux x86_64 · Rust 1.99.1 · local Git fixtures.
 
 Linux x86_64 · Rust 1.99.1 · local Git fixtures.
 
-- 271 workspace tests pass (3 ignored); formatting, Clippy with `-D warnings`, and the debug build pass.
+- 272 workspace tests pass (3 ignored); formatting, Clippy with `-D warnings`, and the debug build pass.
 - Git oracle tests amend with the staged index, preserve the original author and parents, keep a message-only tree, and verify the private backup ref. Amend-base tests show HEAD's contents as staged, use the empty tree for a root commit, and unstage whole files and hunks against the parent without changing working files. Hook fixtures cover `prepare-commit-msg` arguments, `commit-msg`, and `post-rewrite amend` stdin plus warnings.
 - CLI tests cover `git good commit --amend`, `git good reflog [REF]`, and `git good branch --create NAME [--at REF]`, including receipts, backup refs, missing references, and branch creation without switching.
-- egui tests load the HEAD message into the amend toggle, show the commit's contents as staged, unstage and restage a working change through the unified view, rewrite the commit, clear the amend base, render the **Amended** status line, and render the reflog window and branch-creation dialog at 720 and 1120 widths.
+- egui tests switch between Local Changes and All Commits from the sidebar and toolbar fallback, keep the toolbar and refs visible, and assert the old Status button is gone. They load the HEAD message into the amend toggle, show the commit's contents as staged, unstage and restage a working change through the unified view, rewrite the commit, clear the amend base, render the **Amended** status line, and render the reflog window and branch-creation dialog at 720 and 1120 widths.
 - Reflog read-only tests cover `HEAD` and branch selectors, newest-first entries, times, actions, details, stale-entry clearing, and missing or option-shaped references.
 - [Six native CI jobs](https://github.com/baol/gg/actions/runs/39931125549) pass tests, Clippy with `-D warnings`, release builds, CLI smoke checks, and packaging on Linux, macOS, and Windows on x86_64 and arm64 for `37ff8c7`.
 - The macOS Intel artifact upload hit a transient GitHub `ENOTFOUND`; the job passed on rerun without code changes.

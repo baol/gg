@@ -219,6 +219,23 @@ impl StatusView {
         self.commit_done.take()
     }
 
+    /// Refresh the status scan without discarding the amend mode or message draft.
+    pub fn refresh(&mut self, ctx: &egui::Context) {
+        if self.amend {
+            match gg_git::status::amend_base_tree(&self.path) {
+                Ok(base) => self.amend_base = Some(base),
+                Err(error) => {
+                    self.amend = false;
+                    self.amend_base = None;
+                    self.action_error = Some(error);
+                }
+            }
+        }
+        self.reading = false;
+        self.stage = crate::stage_view::StageView::default();
+        self.start(ctx, true);
+    }
+
     /// Enable amend mode, load the current HEAD message, and compare the index with HEAD's parent.
     pub fn start_amend(&mut self, ctx: &egui::Context) -> Result<(), String> {
         if self.busy() || self.replacing {
@@ -551,13 +568,7 @@ impl StatusView {
             .show(ui, |ui| {
                 ui.add_space(5.0);
                 ui.horizontal(|ui| {
-                    back |= ui
-                        .add_enabled(
-                            !self.busy(),
-                            egui::Button::new("Back").min_size(egui::vec2(64.0, 26.0)),
-                        )
-                        .clicked();
-                    ui.strong("Status");
+                    ui.strong("Local Changes");
                     ui.allocate_ui_with_layout(
                         egui::vec2((ui.available_width() - 82.0).max(100.0), 26.0),
                         egui::Layout::left_to_right(egui::Align::Center),
