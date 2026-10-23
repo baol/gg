@@ -630,6 +630,66 @@ fn review_navigation_and_late_history_preserve_history_until_back() -> Result {
 }
 
 #[test]
+fn commit_draft_survives_history_navigation() -> Result {
+    let mut h = Harness::new(100);
+    h.app.open_working(&h.ctx);
+    h.app
+        .working
+        .as_mut()
+        .ok_or("missing working view")?
+        .set_draft("Subject line\n\nBody paragraph".into());
+    h.app.close_to_history(&h.ctx);
+    assert!(h.app.working.is_none());
+    h.app.open_working(&h.ctx);
+    assert_eq!(
+        h.app
+            .working
+            .as_ref()
+            .ok_or("missing working view")?
+            .draft(),
+        "Subject line\n\nBody paragraph"
+    );
+    Ok(())
+}
+
+#[test]
+fn commit_draft_does_not_cross_worktrees() -> Result {
+    let mut h = Harness::new(100);
+    h.app.state.history.as_mut().ok_or("missing history")?.path = "worktree-a".into();
+    h.app.open_working(&h.ctx);
+    h.app
+        .working
+        .as_mut()
+        .ok_or("missing working view")?
+        .set_draft("draft for a".into());
+    h.app.close_to_history(&h.ctx);
+
+    h.app.state.history.as_mut().ok_or("missing history")?.path = "worktree-b".into();
+    h.app.open_working(&h.ctx);
+    assert_eq!(
+        h.app
+            .working
+            .as_ref()
+            .ok_or("missing working view")?
+            .draft(),
+        ""
+    );
+    h.app.close_to_history(&h.ctx);
+
+    h.app.state.history.as_mut().ok_or("missing history")?.path = "worktree-a".into();
+    h.app.open_working(&h.ctx);
+    assert_eq!(
+        h.app
+            .working
+            .as_ref()
+            .ok_or("missing working view")?
+            .draft(),
+        "draft for a"
+    );
+    Ok(())
+}
+
+#[test]
 fn status_back_preserves_history_selection_and_anchor() {
     let mut h = Harness::new(1000);
     h.app.state.select_row(900);

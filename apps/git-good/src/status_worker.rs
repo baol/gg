@@ -16,6 +16,7 @@ pub struct Update {
     pub identity: StatusIdentity,
     pub rows: Vec<(usize, StatusEntry)>,
     pub count: usize,
+    pub staged: usize,
     pub complete: bool,
     pub error: Option<String>,
 }
@@ -117,6 +118,7 @@ fn run(
         .map_err(|e| e.to_string())?;
     let mut store = crate::records::Store::new()?;
     let mut identity = None;
+    let mut staged = 0;
     let mut done = false;
     let mut error = None;
     while !stop.load(Ordering::Relaxed) {
@@ -126,7 +128,12 @@ fn run(
             for _ in 0..32 {
                 match rx.recv_timeout(Duration::from_millis(4)) {
                     Ok(Event::Identity(value)) => identity = Some(value),
-                    Ok(Event::Entry(entry)) => store.append(&entry)?,
+                    Ok(Event::Entry(entry)) => {
+                        if entry.area == gg_engine::status::Area::Staged {
+                            staged += 1;
+                        }
+                        store.append(&entry)?;
+                    }
                     Ok(Event::Done(result)) => {
                         done = true;
                         error = result.err();
@@ -149,6 +156,7 @@ fn run(
                 identity: identity.clone(),
                 rows: store.page(range.clone())?,
                 count: store.count,
+                staged,
                 complete: done && error.is_none(),
                 error: error.clone(),
             }));

@@ -1,4 +1,4 @@
-//! Fork-style branch, remote, and tag navigation.
+//! Branch, remote, and tag navigation.
 use eframe::egui;
 use gg_engine::refs::{RefItem, RefKind, Snapshot};
 use std::collections::BTreeMap;

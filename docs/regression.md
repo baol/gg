@@ -92,7 +92,7 @@ Partial unstaging: stage regular text additions, modifications, and deletions, t
 
 Dropping working changes: drop whole hunk, selected block, and whole-file changes from the unstaged pane; verify the index bytes are unchanged and other hunks survive. Restore modified, deleted, executable, and symlink content from the index, remove untracked files, and leave working bytes untouched on stale or unsupported input. Cover confirmation and cancellation, mode/type fallbacks, filtered line endings, lock ownership, and errors.
 
-Split stage view: open from either a staged or unstaged row and require both panes at 720 and 1120 widths. Verify immediate adoption under hover, inline **Stage hunk**/**Unstage hunk** actions, hunk-header and individual-line selection, **Drop hunk**/**Drop selected**/**Drop all** with confirmation and cancellation, whole-file fallbacks, in-place refresh after success, status refresh on Back, and retained panes/error/index after failure.
+Split stage view: open from either a staged or unstaged row. Wide widths show both panes side by side; narrow widths show a **Staged**/**Unstaged** switch with counts, focus the nonempty pane, and provide **Split** to stack both comparisons. Verify immediate adoption under hover, inline **Stage hunk**/**Unstage hunk** actions, hunk-header and individual-line selection, **Discard hunk**/**Discard selected**/**Discard file** with confirmation and cancellation, whole-file fallbacks, in-place refresh after success, status refresh on Back, preserved pane selection and scroll across focus/layout changes, and retained panes/error/index after failure.
 
 Committing: compare committed trees, parents, messages, and reflogs with Git for root, normal, detached-HEAD, and linked-worktree cases. Verify that only index content is committed, unstaged working bytes survive, and history selects the new commit after Back. Cover empty indexes, empty messages, conflicts, intent-to-add, sparse indexes, stale HEAD/index observations, identity resolution, and lock ownership.
 
@@ -148,25 +148,29 @@ Native review: the refs sidebar and status line show the current branch upstream
 
 - Git oracle tests cover unmerged path listing, base/ours/theirs content, side selection with staging, manual staging, add/add conflicts without a base, and unknown-path or base-side rejection.
 - CLI tests cover `conflicts` listing, `conflict --file` content, `--use ours|theirs`, `--stage`, and missing-path errors.
-- egui tests render the **Resolve conflicts** window with path selection and Base, Ours, and Theirs panes at 720 and 1120 widths.
+- egui tests render the **Resolve conflicts** window with path selection, operation-aware Base/Ours/Theirs labels, and side tabs at 720 and 1120 widths. Worker tests deliver conflict content to the open window without blocking, route side resolution through the operation worker, and prefer the next unresolved path after a resolution.
 
 ## M5 recovery and operation state
 
 - Git and CLI tests cover continue, skip, and abort for cherry-pick, revert, and merge, including merge's unsupported skip and restored HEAD/worktree on abort.
 - The native in-progress banner exposes Continue, Skip, and Abort, hides Skip for merges, and shows the conflict count.
 - Recovery refreshes history, refs, and an open Local Changes view at a safe boundary; the conflict window closes once no operation remains.
+- Merge, rebase, and recovery use one background operation worker. The UI test blocks the worker behind a channel gate, proves the start call returns and a frame still renders and names the pending operation, rejects a duplicate submission, then releases the gate and accepts one result. Mutation actions are disabled while the worker is pending, and a failure or disconnection reports an actionable error.
+- Operation outcomes render a severity-colored summary with **Details…** and one recovery button such as **Resolve conflicts…** or **Backups…** at 720 and 1120 widths. The details window shows selectable full text, and the recovery button opens the matching surface.
 
 ## Commit-row context menu and reset
 
 - Git oracle tests cover soft, mixed, and hard reset and reject option-shaped or missing targets.
 - CLI tests cover `git good reset --soft|--mixed|--hard COMMIT` receipts and missing-mode errors.
 - egui tests render the reset confirmation, including the hard-reset warning, at 720 and 1120 widths.
+- The visible **Actions** menu and **Commit actions** window share the commit-row context-menu definitions, grouped as Inspect, Integrate, Rewrite and destructive, and Recovery. Tests cover grouped rendering at 720 and 1120 widths, the Alt+A shortcut, the Help shortcut window, and the shared menu returning the clicked command.
 
 ## Compare to local
 
 - Git oracle tests compare an arbitrary `against` base with the selected commit and assert the old/new sides.
 - CLI tests cover `git good show HEAD --against HEAD^`, the generated comparison subject, changed files, and the `--against`/`--parent` conflict.
-- The commit-row menu exposes **Compare to local**, which opens the review diff against the current branch tip.
+- The commit-row menu exposes **Compare with current HEAD**, which opens the review diff against the current branch tip. The review header names the Before ref and resolved commit and the After commit, including for parent, root, and merge comparisons.
+- Whole-file staging actions read **Stage file**, **Unstage file**, and **Discard file**; hunk and selected-line actions stay distinct; **Discard** confirms the exact file and scope and states that the index is unchanged.
 
 ## Ref context menus
 
@@ -178,11 +182,13 @@ Native review: the refs sidebar and status line show the current branch upstream
 ## M6 amend and navigation
 
 - egui tests open Local Changes from the sidebar at 1120 px and from the toolbar at 720 px, keep the global toolbar and refs visible, return through All Commits, and confirm the old Status button is gone.
+- Draft tests retain a multiline normal commit message and the selected path/area across history/review navigation, keep normal and amend drafts separate when toggling amend, and never transfer a draft between worktrees. Hook-failure tests verify a failed commit keeps the message.
 - Git oracle tests rewrite HEAD with the staged index, preserve the original author and parents, allow a message-only amend with an unchanged tree, and keep the previous commit reachable through `refs/gg/backup/...`.
 - Hook fixtures verify `pre-commit`, `prepare-commit-msg` with the `commit` source and old ID, `commit-msg`, and `post-rewrite amend` stdin. A failing `post-rewrite` returns a warning after the rewrite; other hook failures leave HEAD unchanged.
 - Amend mode compares the index with HEAD's parent, including the empty tree for a root commit. Staged rows expose the commit contents, working changes remain unstaged, and unstage restores the parent side for whole files and hunks without changing working files.
 - Amend rejects an unborn HEAD, an empty message, and a HEAD changed during hooks. The refs snapshot excludes backup refs.
 - CLI tests verify the `amend` receipt fields and backup ref. egui tests load the HEAD message, show the commit contents as staged, unstage and restage working changes, rewrite the index, clear the toggle and amend base, and render the **Amended** status line.
+- Commit readiness tests cover the disabled reasons for a running operation, a pending scan, an empty or whitespace message, and no staged files; message-only amend remains enabled. The amend banner names the affected commit and subject, and the message editor expands and collapses.
 
 ## M6 reflog
 

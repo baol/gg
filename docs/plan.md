@@ -1,6 +1,38 @@
 # Plan
 
-Purpose: sequence M6 delivery and acceptance.
+Purpose: sequence milestone delivery and acceptance.
+
+## UI-flow consolidation · pre-M7
+
+Goal: improve continuity, explicit decisions, and recovery feedback in the existing native workflows before adding M7 features.
+
+Contracts: [working status, committing, and amend](architecture.md#committing).
+
+### Increments
+
+1. **Commit drafts · complete.** Retain normal and amend commit text and the selected file when leaving Local Changes for history, review, or a refresh; restore them for the same canonical worktree, clear the submitted draft only after a successful commit, retain it on hook failure and conflict, and never transfer drafts between worktrees.
+2. **Merge, rebase, and recovery workers · complete.** Run merge, rebase, and continue/skip/abort on one background operation worker; close the dialog immediately, name the pending operation in the status line, disable duplicate or incompatible mutation actions, and refresh mutation state, history, refs, status, reflog, and backups once the result is accepted.
+3. **Conflict workflow · complete.** Name the operation, unresolved count, and operation commit above the conflict content; explain Ours/Theirs per operation, especially rebase; state that whole-file choices replace and stage while **Stage resolved** stages external edits; disable Continue while unresolved paths remain; run conflict listing, content reads, and side resolution on workers; select the next unresolved path after resolution; and use side tabs with bounded scrolling at narrow widths.
+4. **Comparison direction and scope · complete.** Rename the commit-row action to **Compare with current HEAD** and show a persistent Before/After header with the requested ref name and resolved commit IDs. Label whole-file staging actions **Stage file**, **Unstage file**, and **Discard file**, keep hunk and selected-line actions distinct, use **Discard** consistently, and state the exact file/scope plus unchanged index in the confirmation.
+5. **Commit readiness and amend mode · complete.** Derive readiness from the completed, validated status scan: a normal commit requires a nonempty message and at least one staged entry, message-only amend stays valid, and disabled states name the reason. The amend banner names the affected commit and subject above the commit action. The message editor expands and collapses without permanently displacing the file list.
+6. **Responsive staging · complete.** At narrow widths, show a **Staged**/**Unstaged** switch with change counts, focus the nonempty pane when the other is empty, and offer **Split** to stack both comparisons. Keep both panes discoverable and preserve each pane's selection and scroll across focus and layout changes.
+7. **Action discoverability · complete.** Add a visible **Actions** menu and **Commit actions** window for the selected commit, sharing the commit-row context-menu definitions and grouped as Inspect, Integrate, Rewrite and destructive, and Recovery. Use target-aware labels, explain disabled mutation commands, add the Alt+A shortcut, and add a **Help** keyboard-shortcut window.
+8. **Readable and actionable outcomes · complete.** Give operation results a severity, concise summary, optional full details, and at most one recovery action. Keep the fixed-height status line, add **Details…** and context recovery buttons such as **Resolve conflicts…**, **Backups…**, **Retry push**, **Retry fetch**, and **Manage stashes…**, and keep errors ahead of success notices.
+
+### Acceptance
+
+| Scenario | Expected result | Method |
+| --- | --- | --- |
+| Commit drafts | A multiline draft and selected file survive history/review/refresh; hook failure and conflict retain the text; a successful commit clears only that draft; another worktree starts empty | egui interaction, Git fixture, and native review |
+| Operation responsiveness | Merge, rebase, and recovery start without blocking frames or navigation; duplicate submission starts one operation; success, failure, conflict, and worker disconnection leave actionable state and refresh affected views once | egui interaction, Git fixture, and native review |
+| Conflict workflow | Operation-aware side identities and staging consequences are explicit; Continue waits for zero unresolved paths; conflict listing, content, and resolution are worker-backed; the next unresolved path is selected after resolution; narrow widths use side tabs and bounded scrolling | egui interaction, Git fixture, and native review |
+| Comparison direction and scope | Compare with current HEAD names the Before ref and resolved commit; parent, root, and merge comparisons name their exact base and target; Stage file, Unstage file, and Discard file never imply repository scope; Discard confirms the exact file and scope and states the index is unchanged | egui interaction, Git oracle, and native review |
+| Commit readiness and amend mode | Commit enables only after the scan with a nonempty message and staged files; message-only amend stays valid; disabled states explain why; the amend banner names the affected commit and subject; the message editor expands and collapses | egui interaction, Git fixture, and native review |
+| Responsive staging | Narrow widths switch between Staged and Unstaged with counts, focus the nonempty pane by default, and can stack both panes with Split; both panes stay discoverable and preserve selection and scroll across layout changes | egui geometry, Git fixture, and native review |
+| Action discoverability | A visible Actions menu and Commit actions window share the context-menu definitions, group inspect/integrate/rewrite/recovery commands, use target-aware labels, explain disabled commands, open with Alt+A, and provide a Help shortcut window; keyboard-only users can inspect, compare, switch a branch from Refs, and reach recovery | egui interaction, Git fixture, and native review |
+| Readable outcomes | Merge, rebase, recovery, rewrite, push, fetch, and stash outcomes keep a concise status summary with optional selectable Details and one recovery action; errors outrank success notices; a remaining conflict or worker failure stays visible | egui interaction, Git fixture, and native review |
+
+Implementation and verification: [commit drafts](verification.md#pre-m7-commit-draft-retention--2026-10-23), [operation workers](verification.md#pre-m7-operation-workers--2026-10-23).
 
 ## M6 · Rebase, reorder, squash, amend, and reflog recovery
 

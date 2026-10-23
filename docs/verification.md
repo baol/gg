@@ -218,7 +218,7 @@ M1 is complete: commit review, selected-parent diffs, binary previews, exact exp
 - Graph unit tests cover linear lanes, merge parents, joins, lane reuse, lane retirement, single-parent color continuity, and downward starts for only the row’s own lane. Stream tests keep graph rows aligned with their commits when filtering, and deep selected-ID recovery finds completed rows by identity. An all-ref oracle compares the commit set with `git rev-list --all`, includes branch-, remote-, and tag-only commits, and requires every parent to follow its children.
 - Branch oracles cover local switching, creation from HEAD, dirty unstaged/staged/conflicted rejection, duplicate and missing names, invalid names, detached starts, unborn repositories, and `post-checkout` hooks; a failing post-checkout hook leaves the branch switched and returns a warning. Untracked files no longer block switching or creation and survive the switch, while Git still rejects an untracked file that the target branch would overwrite. Successful switches preserve the expected worktree content and symbolic HEAD; failures leave the old branch and working files intact.
 - CLI checks verify `git good switch [--create]` JSON receipts and dirty-tree stderr. egui checks verify graph-column geometry, current-first ref labels and overflow, single-click selection, double-click branch switching, tag/remote jumping, and current-branch no-ops, sidebar visibility at 1120 px versus 1119 px, grouped branch/remote/tag trees, filtering, and the branch creation window at supported widths.
-- Native X11 review at 1120×740 and 720×740 shows all five disposable-repository commits from every branch and tag with continuous lanes, refined merges, a green third-branch tip that keeps its color while joining an existing orange lane, an orange branch that stays orange through its final join, merge branches that retain their parent-lane color with no duplicate downward stub, Fork-style ref pills with icons, the grouped refs sidebar with branch folders and HEAD check, branch switching through the sidebar and a pill double-click, tag jumping through a pill double-click, branch creation at HEAD, and the narrow refs-menu fallback. The worktree was clean before each mutation.
+- Native X11 review at 1120×740 and 720×740 shows all five disposable-repository commits from every branch and tag with continuous lanes, refined merges, a green third-branch tip that keeps its color while joining an existing orange lane, an orange branch that stays orange through its final join, merge branches that retain their parent-lane color with no duplicate downward stub, ref pills with icons, the grouped refs sidebar with branch folders and HEAD check, branch switching through the sidebar and a pill double-click, tag jumping through a pill double-click, branch creation at HEAD, and the narrow refs-menu fallback. The worktree was clean before each mutation.
 - Captures: [sidebar and history](screenshots/m3-refs-sidebar-wide.png), [all-ref history](screenshots/m3-all-refs-wide.png), [branch color join](screenshots/m3-branch-color.png), [branch switched](screenshots/m3-refs-sidebar-switch.png), [new branch modal](screenshots/m3-refs-sidebar-new-branch.png), [narrow history](screenshots/m3-graph-narrow.png).
 
 M3 is complete. Branch deletion/rename, remote tracking, and tag creation remain future work.
@@ -352,3 +352,89 @@ Linux x86_64 · Rust 1.99.1 · local Git fixtures.
 - Backup tests verify `gg_git::backup::list` returns the private reference, kind, commit, subject, and commit time, while the refs snapshot continues to exclude `refs/gg/`.
 - egui tests render the **Reorder and squash** modal with ordered rows, up/down icon controls, Squash choices, autostash, and the private-backup warning at 720 and 1120 widths. A pending rewrite keeps the modal open with **Rewriting commits…** and ignores Escape; a pending refresh shows **Refreshing history…** and closes only after the replacement history generation is accepted. The Backups window renders the entry list, **Open commit**, **Reset branch here**, **Create branch here…**, **Copy hash**, and **Copy ref**. The in-progress banner exposes **Backups…** and names an in-progress rebase.
 - The native rewrite runs Git on a background worker. The modal disables its controls during the run, overrides the history hover-safety gate for the rewrite refresh, and stays open until the replacement history has loaded instead of exposing the previous commit list.
+
+## Pre-M7 commit draft retention · 2026-10-23
+
+Linux x86_64 · Rust 1.99.1 · local Git fixtures.
+
+- 300 workspace tests pass (3 ignored); formatting and Clippy with `-D warnings` pass.
+- A Browser-level regression reproduces the old loss: a multiline draft set in Local Changes, then navigation to history and back through All Commits restores the exact text.
+- Drafts are keyed by canonical worktree identity: a second worktree starts with an empty draft, and returning to the first worktree restores its draft.
+- Normal and amend drafts stay separate across an amend toggle round trip; enabling amend keeps the normal draft, and disabling it restores the normal text while retaining the amend text.
+- The selected path and area are captured with the draft and restored when the same entry is present in the refreshed status.
+- Hook-failure coverage verifies a failed commit keeps the submitted message; successful-commit coverage verifies the submitted draft clears.
+- Native wide/narrow interaction review remains pending for this increment.
+
+## Pre-M7 operation workers · 2026-10-23
+
+Linux x86_64 · Rust 1.99.1 · local Git fixtures.
+
+- 302 workspace tests pass (3 ignored); formatting and Clippy with `-D warnings` pass.
+- Merge, rebase, and continue/skip/abort share one background operation worker. The dialog returns immediately, the pending operation is named in the status line, duplicate submission is rejected, and the accepted result refreshes mutation state, history, refs, status, reflog, and backups once.
+- The event-driven regression holds a worker behind a channel, proves a frame still renders and names the pending operation while the worker is blocked, rejects a second submission, then releases the worker and verifies one accepted result.
+- A fixture `pre-rebase` hook blocks on a marker file. The rebase start returns immediately, a frame renders and names **Rebasing onto feature…** while the hook waits, and releasing the marker completes the rebase with the accepted notice.
+- Worker failure or disconnection clears the pending label and reports an actionable error while preserving Git's recovery state.
+- Native wide/narrow interaction review remains pending for this increment.
+
+## Pre-M7 conflict workflow · 2026-10-23
+
+Linux x86_64 · Rust 1.99.1 · local Git fixtures.
+
+- 305 workspace tests pass (3 ignored); formatting and Clippy with `-D warnings` pass.
+- The conflict window names the operation, unresolved count, and operation commit; explains Ours/Theirs for merge, rebase, cherry-pick, and revert; states that side choices replace and stage the whole file; and states that **Stage resolved** stages external or manually edited content.
+- Continue is disabled while unresolved paths remain and explains why. Skip and Abort remain deliberate actions with explicit consequences.
+- Conflict listing, content reads, and side resolution run on workers. The content test tolerates a blocked reader while frames render and adopts content when it arrives; side resolution starts and completes through the shared operation worker.
+- Resolving a path reloads the list and selects the next unresolved path predictably; a pure selection test covers keep-found, keep-missing, and empty lists.
+- At narrow widths the Base/Ours/Theirs panes become side tabs with one bounded scroll region; the path list keeps its own bounded scroll.
+- Native wide/narrow interaction review remains pending for this increment.
+
+## Pre-M7 comparison direction and scope · 2026-10-23
+
+Linux x86_64 · Rust 1.99.1 · local Git fixtures.
+
+- 306 workspace tests pass (3 ignored); formatting and Clippy with `-D warnings` pass.
+- The commit-row action is **Compare with current HEAD**. A review test renders an `--against HEAD` comparison and checks the persistent Before line for the `HEAD` ref name plus the resolved base ID and the After line for the resolved target ID.
+- Whole-file staging actions are **Stage file**, **Unstage file**, and **Discard file**. Hunk and selected-line actions remain distinct, and the confirmation names the exact file and scope and states that the index is unchanged.
+- Native wide/narrow interaction review remains pending for this increment.
+
+## Pre-M7 commit readiness and amend mode · 2026-10-23
+
+Linux x86_64 · Rust 1.99.1 · local Git fixtures.
+
+- 308 workspace tests pass (3 ignored); formatting and Clippy with `-D warnings` pass.
+- Commit readiness is derived from the completed status scan and validated identity. A normal commit requires a nonempty message and at least one staged entry; message-only amend stays valid; disabled reasons cover a running operation, a pending scan, an empty message, and no staged files.
+- The amend banner names the affected commit and its subject directly above the commit action.
+- The message editor expands and collapses, and the existing commit/hook/amend fixtures still pass.
+- Native wide/narrow interaction review remains pending for this increment.
+
+## Pre-M7 responsive staging · 2026-10-23
+
+Linux x86_64 · Rust 1.99.1 · local Git fixtures.
+
+- 309 workspace tests pass (3 ignored); formatting and Clippy with `-D warnings` pass.
+- Wide widths keep both comparisons side by side. Narrow widths show a **Staged**/**Unstaged** switch with change counts; the nonempty pane is focused when the other is empty, and **Split** stacks both comparisons.
+- The combined-view test exercises both wide and narrow modes, switches tabs, verifies the focused and inactive hunk actions, and toggles **Split** to confirm both panes remain available.
+- A narrow-only test opens an unstaged-only file and confirms the unstaged pane is focused by default with **Stage hunk** visible and **Unstage hunk** absent.
+- Pane selection and scroll state remain on their own panes across focus and layout changes.
+- Native wide/narrow interaction review remains pending for this increment.
+
+## Pre-M7 action discoverability · 2026-10-23
+
+Linux x86_64 · Rust 1.99.1 · local Git fixtures.
+
+- 313 workspace tests pass (3 ignored); formatting and Clippy with `-D warnings` pass.
+- The toolbar **Actions** menu and the **Commit actions** window use the same grouped command definition as the commit-row context menu: Inspect, Integrate, Rewrite and destructive, and Recovery. Labels carry the selected short commit.
+- Mutation commands are disabled with an explanation while a mutation, operation worker, branch switch, or network operation is active.
+- Alt+A toggles the commit-actions window. The **Help** menu opens a keyboard-shortcut window that names navigation, repository, and action bindings.
+- Tests render the grouped window at 720 and 1120 widths, exercise the Alt+A shortcut, verify the shared menu returns the clicked command, and render the Help window.
+- Native wide/narrow interaction review remains pending for this increment.
+
+## Pre-M7 readable operation outcomes · 2026-10-23
+
+Linux x86_64 · Rust 1.99.1 · local Git fixtures.
+
+- 316 workspace tests pass (3 ignored); formatting and Clippy with `-D warnings` pass.
+- Merge, rebase, recovery, rewrite, push, fetch, and stash results populate a severity, summary, optional full details, and at most one recovery action. Errors outrank success notices in the status line.
+- Tests render a conflict outcome summary with **Details…** and **Resolve conflicts…** at 720 and 1120 widths, open the selectable **Operation details** window, and click **Backups…** to open the recovery surface.
+- Rewrite outcomes include the saved backup ref and conflict paths in the details text.
+- Native wide/narrow interaction review remains pending for this increment.

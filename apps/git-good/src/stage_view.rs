@@ -133,6 +133,8 @@ pub struct StageView {
     drop_confirm: Option<Action>,
     error: Option<String>,
     changed: bool,
+    narrow_focus: usize,
+    narrow_split: bool,
 }
 
 impl StageView {
@@ -166,6 +168,8 @@ impl StageView {
         self.mutation = None;
         self.mutation_label = None;
         self.drop_confirm = None;
+        self.narrow_focus = 0;
+        self.narrow_split = false;
         self.reload(ctx);
     }
 
@@ -431,7 +435,10 @@ impl StageView {
             ui.horizontal(|ui| {
                 ui.colored_label(
                     ui.visuals().error_fg_color,
-                    format!("Discard {scope} from {}?", self.path),
+                    format!(
+                        "Discard {scope} from {}? The index is unchanged.",
+                        self.path
+                    ),
                 );
                 if ui
                     .add_enabled(
@@ -481,35 +488,85 @@ impl StageView {
                 );
             });
         } else {
-            let height = ui.available_height();
-            let half = ((height - 8.0) / 2.0).max(72.0);
-            ui.allocate_ui_with_layout(
-                egui::vec2(ui.available_width(), half),
-                egui::Layout::top_down(egui::Align::Min),
-                |ui| {
-                    draw_pane(
-                        &mut self.panes[0],
-                        PaneKind::Staged,
-                        ui,
-                        blocked,
-                        &mut action,
-                    );
-                },
-            );
-            ui.separator();
-            ui.allocate_ui_with_layout(
-                egui::vec2(ui.available_width(), ui.available_height()),
-                egui::Layout::top_down(egui::Align::Min),
-                |ui| {
-                    draw_pane(
-                        &mut self.panes[1],
-                        PaneKind::Unstaged,
-                        ui,
-                        blocked,
-                        &mut action,
-                    );
-                },
-            );
+            let staged_changes = self.panes[0].hunks.len();
+            let unstaged_changes = self.panes[1].hunks.len();
+            if staged_changes == 0 && unstaged_changes > 0 {
+                self.narrow_focus = 1;
+            } else if unstaged_changes == 0 && staged_changes > 0 {
+                self.narrow_focus = 0;
+            }
+            ui.horizontal(|ui| {
+                ui.selectable_value(
+                    &mut self.narrow_focus,
+                    0,
+                    format!("Staged ({staged_changes})"),
+                );
+                ui.selectable_value(
+                    &mut self.narrow_focus,
+                    1,
+                    format!("Unstaged ({unstaged_changes})"),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .small_button(if self.narrow_split { "Focus" } else { "Split" })
+                        .on_hover_text(if self.narrow_split {
+                            "Show only the active comparison"
+                        } else {
+                            "Show both comparisons stacked"
+                        })
+                        .clicked()
+                    {
+                        self.narrow_split = !self.narrow_split;
+                    }
+                });
+            });
+            if self.narrow_split {
+                let height = ui.available_height();
+                let half = ((height - 8.0) / 2.0).max(72.0);
+                ui.allocate_ui_with_layout(
+                    egui::vec2(ui.available_width(), half),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        draw_pane(
+                            &mut self.panes[0],
+                            PaneKind::Staged,
+                            ui,
+                            blocked,
+                            &mut action,
+                        );
+                    },
+                );
+                ui.separator();
+                ui.allocate_ui_with_layout(
+                    egui::vec2(ui.available_width(), ui.available_height()),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        draw_pane(
+                            &mut self.panes[1],
+                            PaneKind::Unstaged,
+                            ui,
+                            blocked,
+                            &mut action,
+                        );
+                    },
+                );
+            } else if self.narrow_focus == 0 {
+                draw_pane(
+                    &mut self.panes[0],
+                    PaneKind::Staged,
+                    ui,
+                    blocked,
+                    &mut action,
+                );
+            } else {
+                draw_pane(
+                    &mut self.panes[1],
+                    PaneKind::Unstaged,
+                    ui,
+                    blocked,
+                    &mut action,
+                );
+            }
         }
         if let Some(action) = action {
             match action {
@@ -607,7 +664,7 @@ fn draw_pane(
                 && ui
                     .add_enabled(
                         !pending,
-                        egui::Button::new(format!("{verb} all")).min_size(egui::vec2(88.0, 20.0)),
+                        egui::Button::new(format!("{verb} file")).min_size(egui::vec2(88.0, 20.0)),
                     )
                     .clicked()
             {
@@ -618,9 +675,11 @@ fn draw_pane(
                 && ui
                     .add_enabled(
                         !pending,
-                        egui::Button::new("Drop all").min_size(egui::vec2(76.0, 20.0)),
+                        egui::Button::new("Discard file").min_size(egui::vec2(76.0, 20.0)),
                     )
-                    .on_hover_text("Discard all working changes; the index is unchanged")
+                    .on_hover_text(
+                        "Discard all working changes in this file; the index is unchanged",
+                    )
                     .clicked()
             {
                 *action = Some(Action::Drop {
@@ -816,7 +875,11 @@ fn draw_pane(
                         .changes
                         .iter()
                         .any(|line| selected.contains(line));
-                    let label = if chosen { "Drop selected" } else { "Drop hunk" };
+                    let label = if chosen {
+                        "Discard selected"
+                    } else {
+                        "Discard hunk"
+                    };
                     let button = egui::Rect::from_min_size(
                         egui::pos2(rect.right() - 108.0, rect.top() + 1.0),
                         egui::vec2(104.0, HEIGHT - 2.0),

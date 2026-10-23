@@ -7,6 +7,20 @@ use eframe::egui;
 use gg_engine::review::*;
 use std::{collections::BTreeMap, ops::Range};
 const ROW: f32 = 26.0;
+
+fn short_id(id: &str) -> String {
+    id.chars().take(8).collect()
+}
+
+fn review_source(reference: Option<&str>, id: Option<&str>, absent: &str) -> String {
+    match (reference, id) {
+        (Some(reference), Some(id)) => format!("{reference} ({})", short_id(id)),
+        (Some(reference), None) => format!("{reference} (resolving…)"),
+        (None, Some(id)) => short_id(id),
+        (None, None) => absent.to_string(),
+    }
+}
+
 pub struct Review {
     request: ReviewRequest,
     subject: String,
@@ -348,39 +362,73 @@ impl Review {
                 });
             });
         egui::Panel::top("review-identity")
-            .exact_size(64.0)
+            .exact_size(88.0)
             .show(ui, |ui| {
-                bounded_text::field(ui, &self.subject, egui::FontId::proportional(16.0), 26.0);
-                let base = self
+                bounded_text::field(ui, &self.subject, egui::FontId::proportional(16.0), 24.0);
+                let after_id = self
                     .comparison
                     .as_ref()
-                    .map(|c| c.parent.as_deref().unwrap_or("empty tree"))
-                    .unwrap_or("resolving parent");
+                    .map(|c| c.commit.as_str())
+                    .unwrap_or(self.request.revision.as_str());
+                let (before, after) = if let Some(against) = self.request.against.as_deref() {
+                    (
+                        review_source(
+                            Some(against),
+                            self.comparison.as_ref().and_then(|c| c.parent.as_deref()),
+                            "resolving…",
+                        ),
+                        review_source(None, Some(after_id), "resolving…"),
+                    )
+                } else {
+                    (
+                        review_source(
+                            None,
+                            self.comparison.as_ref().and_then(|c| c.parent.as_deref()),
+                            "empty tree",
+                        ),
+                        review_source(None, Some(after_id), "resolving…"),
+                    )
+                };
                 bounded_text::field(
                     ui,
-                    &format!(
-                        "{} · {} · parent {}",
-                        self.request.path.display(),
-                        self.request.revision,
-                        base
-                    ),
+                    &format!("Before  {before}"),
                     egui::FontId::monospace(11.0),
-                    22.0,
+                    20.0,
+                );
+                bounded_text::field(
+                    ui,
+                    &format!("After   {after}"),
+                    egui::FontId::monospace(11.0),
+                    20.0,
+                );
+                bounded_text::field(
+                    ui,
+                    &self.request.path.display().to_string(),
+                    egui::FontId::monospace(11.0),
+                    20.0,
                 );
             });
         egui::Panel::bottom("review-status")
             .exact_size(26.0)
             .show(ui, |ui| {
-                let pending = format!(
-                    "Loading parent {} · showing previous comparison",
-                    self.request.parent.unwrap_or(1)
-                );
+                let pending = if self.request.against.is_some() {
+                    "Loading comparison · showing previous comparison".into()
+                } else {
+                    format!(
+                        "Loading parent {} · showing previous comparison",
+                        self.request.parent.unwrap_or(1)
+                    )
+                };
                 let failure = self.error.as_ref().map(|error| {
                     if self.replacing {
-                        format!(
-                            "Parent {} failed · showing previous comparison · {error}",
-                            self.request.parent.unwrap_or(1)
-                        )
+                        if self.request.against.is_some() {
+                            format!("Comparison failed · showing previous comparison · {error}")
+                        } else {
+                            format!(
+                                "Parent {} failed · showing previous comparison · {error}",
+                                self.request.parent.unwrap_or(1)
+                            )
+                        }
                     } else {
                         error.clone()
                     }
@@ -585,6 +633,45 @@ impl Review {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn against_comparison_names_before_and_after_sources() {
+        let ctx = egui::Context::default();
+        let mut view = Review::fixture(&ctx);
+        view.staged = None;
+        view.request.against = Some("HEAD".into());
+        view.request.revision = "a".repeat(40);
+        view.comparison = Some(Comparison {
+            path: "repo".into(),
+            commit: "a".repeat(40),
+            parent: Some("b".repeat(40)),
+            parents: Vec::new(),
+            subject: "Compare".into(),
+        });
+        let output = crate::tests::run_ui(
+            &ctx,
+            crate::tests::frame_input(1120.0, 740.0, vec![]),
+            |ctx| {
+                view.draw_ui(ctx);
+            },
+        );
+        let text = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(text.iter().any(|line| {
+            line.contains("Before") && line.contains("HEAD") && line.contains(&"b".repeat(8))
+        }));
+        assert!(
+            text.iter()
+                .any(|line| line.contains("After") && line.contains(&"a".repeat(8)))
+        );
+    }
+
     #[test]
     fn retry_same_comparison_keeps_selection_anchor_and_diff() -> Result<(), String> {
         for width in [720.0, 1120.0] {

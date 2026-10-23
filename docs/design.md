@@ -2,7 +2,7 @@
 
 Purpose: define shared layout and interaction rules.
 
-- Revisit [Fork's screenshots](https://fork.dev/) during layout and interaction refinements. Use them as references for density, hierarchy, alignment, and readable diffs while following gg's CLI-first workflow and milestone scope. Link to external references; commit original gg visuals and assets with compatible licenses and required attribution.
+- Use external references for density, hierarchy, alignment, and readable diffs while following gg's CLI-first workflow and milestone scope. Link to external references; commit original gg visuals and assets with compatible licenses and required attribution.
 - Group repository actions in **Repository** and presentation options in **View**. Keep primary navigation visible; place file actions beside the file list.
 - Reserve compact, stable slots for text, controls, images, and loading states.
 - Embed the root `gg.png` as the native window icon and toolbar brand. Keep the toolbar image in a fixed 30-pixel slot, with its aspect ratio and “gg · good git” accessible label.

@@ -273,11 +273,75 @@ struct CreateBranchDialog {
     error: Option<String>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ConflictSide {
+    Base,
+    Ours,
+    Theirs,
+}
+
+enum ConflictUpdate {
+    Paths(Vec<String>),
+    Content(gg_engine::conflict::Content),
+}
+
 struct ConflictView {
     paths: Vec<String>,
     selected: usize,
+    previous_selected: usize,
+    keep: Option<String>,
     content: Option<gg_engine::conflict::Content>,
     error: Option<String>,
+    loading: bool,
+    worker: Option<std::sync::mpsc::Receiver<Result<ConflictUpdate, String>>>,
+    tab: ConflictSide,
+}
+
+fn next_conflict_selection(paths: &[String], keep: Option<&str>, previous: usize) -> usize {
+    keep.and_then(|path| paths.iter().position(|candidate| candidate == path))
+        .unwrap_or(previous)
+        .min(paths.len().saturating_sub(1))
+}
+
+fn conflict_side_hint(operation: Option<gg_engine::mutation::Operation>) -> &'static str {
+    match operation {
+        Some(gg_engine::mutation::Operation::Merge) => {
+            "Ours is the current branch. Theirs is the branch being merged."
+        }
+        Some(gg_engine::mutation::Operation::Rebase) => {
+            "Ours is the base being rebased onto. Theirs is the commit being replayed."
+        }
+        Some(gg_engine::mutation::Operation::CherryPick) => {
+            "Ours is the current branch. Theirs is the cherry-picked commit."
+        }
+        Some(gg_engine::mutation::Operation::Revert) => {
+            "Ours is the current branch. Theirs is the reverted change."
+        }
+        None => "Ours is stage 2. Theirs is stage 3.",
+    }
+}
+
+fn conflict_side_label(
+    operation: Option<gg_engine::mutation::Operation>,
+    side: ConflictSide,
+) -> &'static str {
+    match (operation, side) {
+        (_, ConflictSide::Base) => "Base",
+        (Some(gg_engine::mutation::Operation::Rebase), ConflictSide::Ours) => {
+            "Ours · base being rebased onto (stage 2)"
+        }
+        (Some(gg_engine::mutation::Operation::Rebase), ConflictSide::Theirs) => {
+            "Theirs · replayed commit (stage 3)"
+        }
+        (Some(gg_engine::mutation::Operation::Merge), ConflictSide::Ours) => {
+            "Ours · current branch (stage 2)"
+        }
+        (Some(gg_engine::mutation::Operation::Merge), ConflictSide::Theirs) => {
+            "Theirs · incoming branch (stage 3)"
+        }
+        (_, ConflictSide::Ours) => "Ours · current branch (stage 2)",
+        (_, ConflictSide::Theirs) => "Theirs · incoming change (stage 3)",
+    }
 }
 
 enum StashAction {
@@ -293,8 +357,22 @@ enum MutationAction {
     Abort,
 }
 
+enum OperationOutcome {
+    Merge(gg_engine::merge::Receipt),
+    Rebase(gg_engine::rebase::Receipt),
+    Recovery {
+        operation: gg_engine::mutation::Operation,
+        action: MutationAction,
+        receipt: gg_engine::mutation::MutationReceipt,
+    },
+    Conflict {
+        file: String,
+    },
+}
+
 #[derive(Clone, Copy)]
 enum CommitAction {
+    Review,
     CherryPick,
     Revert,
     Reset(gg_engine::reset::Mode),
@@ -302,11 +380,127 @@ enum CommitAction {
     Compare,
 }
 
+enum CommitCommand {
+    Action(CommitAction),
+    CopyHash,
+    CopySubject,
+    OpenBackups,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum OutcomeSeverity {
+    Info,
+    Warning,
+    Error,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RecoveryAction {
+    Backups,
+    ResolveConflicts,
+    RetryFetch,
+    RetryPush,
+    ManageStashes,
+}
+
+struct Outcome {
+    severity: OutcomeSeverity,
+    summary: String,
+    details: Option<String>,
+    recovery: Option<RecoveryAction>,
+}
+
+fn recovery_label(action: RecoveryAction) -> &'static str {
+    match action {
+        RecoveryAction::Backups => "Backups…",
+        RecoveryAction::ResolveConflicts => "Resolve conflicts…",
+        RecoveryAction::RetryFetch => "Retry fetch",
+        RecoveryAction::RetryPush => "Retry push",
+        RecoveryAction::ManageStashes => "Manage stashes…",
+    }
+}
+
+fn commit_action_menu(
+    ui: &mut egui::Ui,
+    id: &str,
+    can_mutate: bool,
+    mutate_reason: Option<&str>,
+) -> Option<CommitCommand> {
+    let short: String = id.chars().take(7).collect();
+    let mut command = None;
+    ui.label(egui::RichText::new("Inspect").weak());
+    if ui.button(format!("Review {short}")).clicked() {
+        command = Some(CommitCommand::Action(CommitAction::Review));
+    }
+    if ui
+        .button(format!("Compare {short} with current HEAD"))
+        .clicked()
+    {
+        command = Some(CommitCommand::Action(CommitAction::Compare));
+    }
+    if ui.button("Copy hash").clicked() {
+        command = Some(CommitCommand::CopyHash);
+    }
+    if ui.button("Copy subject").clicked() {
+        command = Some(CommitCommand::CopySubject);
+    }
+    ui.separator();
+    ui.label(egui::RichText::new("Integrate").weak());
+    if ui
+        .add_enabled(
+            can_mutate,
+            egui::Button::new(format!("Cherry-pick {short}")),
+        )
+        .on_hover_text(mutate_reason.unwrap_or("Apply this commit to the current branch"))
+        .clicked()
+    {
+        command = Some(CommitCommand::Action(CommitAction::CherryPick));
+    }
+    if ui
+        .add_enabled(can_mutate, egui::Button::new(format!("Revert {short}")))
+        .on_hover_text(mutate_reason.unwrap_or("Invert this commit on the current branch"))
+        .clicked()
+    {
+        command = Some(CommitCommand::Action(CommitAction::Revert));
+    }
+    ui.separator();
+    ui.label(egui::RichText::new("Rewrite and destructive").weak());
+    ui.menu_button(format!("Reset {short} here"), |ui| {
+        for (label, mode) in [
+            ("Soft", gg_engine::reset::Mode::Soft),
+            ("Mixed", gg_engine::reset::Mode::Mixed),
+            ("Hard", gg_engine::reset::Mode::Hard),
+        ] {
+            if ui
+                .add_enabled(can_mutate, egui::Button::new(label))
+                .on_hover_text(mutate_reason.unwrap_or("Reset the current branch here"))
+                .clicked()
+            {
+                command = Some(CommitCommand::Action(CommitAction::Reset(mode)));
+            }
+        }
+    });
+    if ui
+        .add_enabled(can_mutate, egui::Button::new("Reorder and squash to HEAD…"))
+        .on_hover_text(mutate_reason.unwrap_or("Rewrite commits from this commit through HEAD"))
+        .clicked()
+    {
+        command = Some(CommitCommand::Action(CommitAction::Rewrite));
+    }
+    ui.separator();
+    ui.label(egui::RichText::new("Recovery").weak());
+    if ui.button("Backups…").clicked() {
+        command = Some(CommitCommand::OpenBackups);
+    }
+    command
+}
+
 struct Browser {
     logo: Option<egui::TextureHandle>,
     path: String,
     review: Option<review_view::Review>,
     working: Option<status_view::StatusView>,
+    working_drafts: std::collections::HashMap<PathBuf, status_view::Draft>,
     pending_commit: Option<String>,
     branch: Option<std::sync::mpsc::Receiver<Result<gg_git::branch::Receipt, String>>>,
     branch_label: Option<String>,
@@ -325,11 +519,17 @@ struct Browser {
     mutation: Option<gg_engine::mutation::OperationState>,
     mutation_notice: Option<String>,
     mutation_error: Option<String>,
+    outcome: Option<Outcome>,
+    outcome_details_open: bool,
+    operation_worker: Option<std::sync::mpsc::Receiver<Result<OperationOutcome, String>>>,
+    operation_restore_row: Option<usize>,
     merge_dialog: Option<MergeDialog>,
     rebase_dialog: Option<RebaseDialog>,
     rewrite_dialog: Option<RewriteDialog>,
     rewrite_job: Option<RewriteJob>,
     rewrite_refresh: Option<u64>,
+    commit_actions: bool,
+    help_shortcuts: bool,
     conflict_view: Option<ConflictView>,
     reset_confirm: Option<(String, gg_engine::reset::Mode)>,
     branch_delete: Option<BranchDeleteDialog>,
@@ -368,6 +568,7 @@ impl Browser {
             path: path.to_string_lossy().into_owned(),
             review: None,
             working: None,
+            working_drafts: std::collections::HashMap::new(),
             pending_commit: None,
             branch: None,
             branch_label: None,
@@ -386,11 +587,17 @@ impl Browser {
             mutation: None,
             mutation_notice: None,
             mutation_error: None,
+            outcome: None,
+            outcome_details_open: false,
+            operation_worker: None,
+            operation_restore_row: None,
             merge_dialog: None,
             rebase_dialog: None,
             rewrite_dialog: None,
             rewrite_job: None,
             rewrite_refresh: None,
+            commit_actions: false,
+            help_shortcuts: false,
             conflict_view: None,
             reset_confirm: None,
             branch_delete: None,
@@ -571,7 +778,12 @@ impl Browser {
             .unwrap_or_default()
     }
 
-    fn finish_network(&mut self, ctx: &egui::Context, result: Result<network::Outcome, String>) {
+    fn finish_network(
+        &mut self,
+        ctx: &egui::Context,
+        result: Result<network::Outcome, String>,
+        operation: Option<gg_engine::sync::Operation>,
+    ) {
         self.network = None;
         self.network_progress = None;
         match result {
@@ -608,7 +820,13 @@ impl Browser {
                 self.load(ctx);
             }
             Err(error) => {
-                self.network_error = Some(error);
+                let recovery = match operation {
+                    Some(gg_engine::sync::Operation::Push) => Some(RecoveryAction::RetryPush),
+                    Some(gg_engine::sync::Operation::Fetch) => Some(RecoveryAction::RetryFetch),
+                    _ => None,
+                };
+                self.set_outcome(OutcomeSeverity::Error, error.clone(), None, recovery);
+                self.network_error = None;
             }
         }
     }
@@ -677,14 +895,26 @@ impl Browser {
             gg_git::stash::apply(&path, Some(reference), false)?
         };
         let action = if remove { "Popped" } else { "Applied" };
-        self.stash_notice = Some(if receipt.conflicts.is_empty() {
+        let summary = if receipt.conflicts.is_empty() {
             format!("{action} {reference}")
         } else {
             format!(
                 "{action} {reference} · {} conflict(s)",
                 receipt.conflicts.len()
             )
-        });
+        };
+        self.stash_notice = Some(summary.clone());
+        let conflicts = !receipt.conflicts.is_empty();
+        self.set_outcome(
+            if conflicts {
+                OutcomeSeverity::Warning
+            } else {
+                OutcomeSeverity::Info
+            },
+            summary,
+            conflicts.then(|| receipt.conflicts.join("\n")),
+            conflicts.then_some(RecoveryAction::ManageStashes),
+        );
         self.refresh_stashes();
         self.load(ctx);
         self.refresh_working(ctx);
@@ -744,7 +974,11 @@ impl Browser {
             return;
         };
         self.review = None;
-        self.working = Some(status_view::StatusView::new(history.path.clone(), ctx));
+        let mut working = status_view::StatusView::new(history.path.clone(), ctx);
+        if let Some(draft) = self.working_drafts.get(&working.repository_key()).cloned() {
+            working.restore_draft(draft, ctx);
+        }
+        self.working = Some(working);
         ctx.request_repaint();
     }
 
@@ -753,6 +987,10 @@ impl Browser {
             && let Some(id) = working.take_commit()
         {
             self.pending_commit = Some(id);
+        }
+        if let Some(working) = &self.working {
+            self.working_drafts
+                .insert(working.repository_key(), working.capture_draft());
         }
         let had_working = self.working.take().is_some();
         let had_review = self.review.take().is_some();
@@ -896,6 +1134,246 @@ impl Browser {
         Ok(())
     }
 
+    fn operation_busy(&self) -> bool {
+        self.operation_worker.is_some()
+    }
+
+    fn set_outcome(
+        &mut self,
+        severity: OutcomeSeverity,
+        summary: String,
+        details: Option<String>,
+        recovery: Option<RecoveryAction>,
+    ) {
+        self.outcome = Some(Outcome {
+            severity,
+            summary,
+            details,
+            recovery,
+        });
+    }
+
+    fn run_recovery_action(&mut self, ctx: &egui::Context, action: RecoveryAction) {
+        match action {
+            RecoveryAction::Backups => {
+                if let Some(history) = &self.state.history {
+                    self.backups = Some(backups_view::BackupsView::new(history.path.clone()));
+                }
+            }
+            RecoveryAction::ResolveConflicts => self.open_conflict_view(ctx),
+            RecoveryAction::RetryFetch => self.start_fetch(ctx, None, false),
+            RecoveryAction::RetryPush => self.start_push(ctx),
+            RecoveryAction::ManageStashes => {
+                self.stash_window = Some(StashWindow {
+                    entries: Vec::new(),
+                    error: None,
+                    notice: None,
+                    confirm_drop: None,
+                });
+                self.refresh_stashes();
+            }
+        }
+    }
+
+    fn mutation_ready(&self) -> bool {
+        self.mutation.is_none()
+            && !self.operation_busy()
+            && self.branch.is_none()
+            && self.network.is_none()
+    }
+
+    fn mutation_reason(&self) -> Option<&'static str> {
+        if self.mutation.is_some() {
+            Some("Recover the operation in progress first.")
+        } else if self.operation_busy() {
+            Some("Wait for the current operation to finish.")
+        } else if self.branch.is_some() || self.network.is_some() {
+            Some("Wait for the branch or network operation to finish.")
+        } else {
+            None
+        }
+    }
+
+    fn run_commit_action(&mut self, ctx: &egui::Context, id: String, action: CommitAction) {
+        self.state.selected = Some(id.clone());
+        self.state.reconcile_selection();
+        match action {
+            CommitAction::Review => self.open_review(ctx),
+            CommitAction::CherryPick => {
+                if let Err(error) =
+                    self.start_mutation(ctx, gg_engine::mutation::Operation::CherryPick)
+                {
+                    self.mutation_error = Some(error);
+                }
+            }
+            CommitAction::Revert => {
+                if let Err(error) = self.start_mutation(ctx, gg_engine::mutation::Operation::Revert)
+                {
+                    self.mutation_error = Some(error);
+                }
+            }
+            CommitAction::Reset(mode) => self.reset_confirm = Some((id, mode)),
+            CommitAction::Rewrite => {
+                if let Err(error) = self.open_rewrite_dialog(&id) {
+                    self.mutation_error = Some(error);
+                }
+            }
+            CommitAction::Compare => self.open_compare(ctx, id),
+        }
+    }
+
+    fn start_operation(
+        &mut self,
+        ctx: &egui::Context,
+        label: String,
+        apply: impl FnOnce() -> Result<OperationOutcome, String> + Send + 'static,
+    ) -> Result<(), String> {
+        if self.operation_busy() {
+            return Err("Wait for the current operation to finish.".into());
+        }
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        let repaint = ctx.clone();
+        std::thread::Builder::new()
+            .name("gg-operation".into())
+            .spawn(move || {
+                let result = apply();
+                let _ = tx.send(result);
+                repaint.request_repaint();
+            })
+            .map_err(|error| format!("Start operation: {error}"))?;
+        self.operation_worker = Some(rx);
+        self.operation_restore_row = self.state.selected_row;
+        self.mutation_error = None;
+        self.mutation_notice = Some(label);
+        Ok(())
+    }
+
+    fn finish_operation(&mut self, ctx: &egui::Context, outcome: OperationOutcome) {
+        let restore_row = self.operation_restore_row.take();
+        match outcome {
+            OperationOutcome::Merge(receipt) => {
+                let summary = match receipt.kind {
+                    Some(gg_engine::merge::Kind::UpToDate) => {
+                        format!("Merge {} · already up to date", receipt.reference)
+                    }
+                    Some(gg_engine::merge::Kind::FastForward) => {
+                        format!("Fast-forwarded to {}", receipt.reference)
+                    }
+                    Some(gg_engine::merge::Kind::MergeCommit) => {
+                        format!("Merged {} as a merge commit", receipt.reference)
+                    }
+                    None => format!(
+                        "Merged {}{}",
+                        receipt.reference,
+                        if receipt.conflicts.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" · {} conflict(s)", receipt.conflicts.len())
+                        }
+                    ),
+                };
+                self.mutation_notice = Some(summary.clone());
+                let conflicts = !receipt.conflicts.is_empty();
+                self.set_outcome(
+                    if conflicts {
+                        OutcomeSeverity::Warning
+                    } else {
+                        OutcomeSeverity::Info
+                    },
+                    summary,
+                    conflicts.then(|| receipt.conflicts.join("\n")),
+                    conflicts.then_some(RecoveryAction::ResolveConflicts),
+                );
+                self.conflict_view = None;
+                self.restore_row = restore_row;
+                self.refresh_mutation();
+                self.load(ctx);
+                self.refresh_working(ctx);
+            }
+            OperationOutcome::Rebase(receipt) => {
+                let summary = if receipt.in_progress {
+                    format!(
+                        "Rebasing onto {}{}",
+                        receipt.reference,
+                        if receipt.conflicts.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" · {} conflict(s)", receipt.conflicts.len())
+                        }
+                    )
+                } else {
+                    format!("Rebased onto {}", receipt.reference)
+                };
+                self.mutation_notice = Some(summary.clone());
+                let conflicts = !receipt.conflicts.is_empty();
+                self.set_outcome(
+                    if conflicts {
+                        OutcomeSeverity::Warning
+                    } else {
+                        OutcomeSeverity::Info
+                    },
+                    summary,
+                    conflicts.then(|| receipt.conflicts.join("\n")),
+                    conflicts.then_some(RecoveryAction::ResolveConflicts),
+                );
+                self.conflict_view = None;
+                self.restore_row = restore_row;
+                self.refresh_mutation();
+                self.load(ctx);
+                self.refresh_reflog();
+                self.refresh_backups();
+                self.refresh_working(ctx);
+            }
+            OperationOutcome::Conflict { file } => {
+                let summary = format!("Resolved {file}");
+                self.mutation_notice = Some(summary.clone());
+                self.set_outcome(OutcomeSeverity::Info, summary, None, None);
+                self.refresh_mutation();
+                self.refresh_conflict_view(ctx, Some(&file));
+                self.load(ctx);
+                self.refresh_working(ctx);
+            }
+            OperationOutcome::Recovery {
+                operation,
+                action,
+                receipt,
+            } => {
+                let summary = if receipt.conflicts.is_empty() {
+                    match action {
+                        MutationAction::Continue => format!("Continued {}", operation.as_str()),
+                        MutationAction::Skip => format!("Skipped {}", operation.as_str()),
+                        MutationAction::Abort => format!("Aborted {}", operation.as_str()),
+                    }
+                } else {
+                    format!(
+                        "{} · {} conflict(s)",
+                        operation.as_str(),
+                        receipt.conflicts.len()
+                    )
+                };
+                self.mutation_notice = Some(summary.clone());
+                let conflicts = !receipt.conflicts.is_empty();
+                self.set_outcome(
+                    if conflicts {
+                        OutcomeSeverity::Warning
+                    } else {
+                        OutcomeSeverity::Info
+                    },
+                    summary,
+                    conflicts.then(|| receipt.conflicts.join("\n")),
+                    conflicts.then_some(RecoveryAction::ResolveConflicts),
+                );
+                self.refresh_mutation();
+                if self.mutation.is_none() {
+                    self.conflict_view = None;
+                }
+                self.restore_row = restore_row;
+                self.load(ctx);
+                self.refresh_working(ctx);
+            }
+        }
+    }
+
     fn recover_mutation(
         &mut self,
         ctx: &egui::Context,
@@ -905,33 +1383,23 @@ impl Browser {
         let path = self
             .stash_path()
             .ok_or("Open a repository before recovering history.")?;
-        let restore_row = self.state.selected_row;
-        let receipt = match action {
-            MutationAction::Continue => gg_git::mutation::continue_operation(&path, operation)?,
-            MutationAction::Skip => gg_git::mutation::skip_operation(&path, operation)?,
-            MutationAction::Abort => gg_git::mutation::abort_operation(&path, operation)?,
+        let label = match action {
+            MutationAction::Continue => format!("Continuing {}…", operation.as_str()),
+            MutationAction::Skip => format!("Skipping {}…", operation.as_str()),
+            MutationAction::Abort => format!("Aborting {}…", operation.as_str()),
         };
-        self.mutation_error = None;
-        self.mutation_notice = Some(match action {
-            MutationAction::Continue => format!("Continued {}", operation.as_str()),
-            MutationAction::Skip => format!("Skipped {}", operation.as_str()),
-            MutationAction::Abort => format!("Aborted {}", operation.as_str()),
-        });
-        if !receipt.conflicts.is_empty() {
-            self.mutation_notice = Some(format!(
-                "{} · {} conflict(s)",
-                operation.as_str(),
-                receipt.conflicts.len()
-            ));
-        }
-        self.refresh_mutation();
-        if self.mutation.is_none() {
-            self.conflict_view = None;
-        }
-        self.restore_row = restore_row;
-        self.load(ctx);
-        self.refresh_working(ctx);
-        Ok(())
+        self.start_operation(ctx, label, move || {
+            let receipt = match action {
+                MutationAction::Continue => gg_git::mutation::continue_operation(&path, operation)?,
+                MutationAction::Skip => gg_git::mutation::skip_operation(&path, operation)?,
+                MutationAction::Abort => gg_git::mutation::abort_operation(&path, operation)?,
+            };
+            Ok(OperationOutcome::Recovery {
+                operation,
+                action,
+                receipt,
+            })
+        })
     }
 
     fn start_merge(
@@ -943,32 +1411,11 @@ impl Browser {
         let path = self
             .stash_path()
             .ok_or("Open a repository before merging.")?;
-        let restore_row = self.state.selected_row;
-        let receipt = gg_git::merge::merge(&path, reference, no_ff)?;
-        self.mutation_error = None;
-        self.mutation_notice = Some(match receipt.kind {
-            Some(gg_engine::merge::Kind::UpToDate) => {
-                format!("Merge {reference} · already up to date")
-            }
-            Some(gg_engine::merge::Kind::FastForward) => format!("Fast-forwarded to {reference}"),
-            Some(gg_engine::merge::Kind::MergeCommit) => {
-                format!("Merged {reference} as a merge commit")
-            }
-            None => format!(
-                "Merged {reference}{}",
-                if receipt.conflicts.is_empty() {
-                    String::new()
-                } else {
-                    format!(" · {} conflict(s)", receipt.conflicts.len())
-                }
-            ),
-        });
-        self.conflict_view = None;
-        self.restore_row = restore_row;
-        self.refresh_mutation();
-        self.load(ctx);
-        self.refresh_working(ctx);
-        Ok(())
+        let reference = reference.to_string();
+        let label = format!("Merging {reference}…");
+        self.start_operation(ctx, label, move || {
+            gg_git::merge::merge(&path, &reference, no_ff).map(OperationOutcome::Merge)
+        })
     }
 
     fn start_rebase(
@@ -980,29 +1427,11 @@ impl Browser {
         let path = self
             .stash_path()
             .ok_or("Open a repository before rebasing.")?;
-        let restore_row = self.state.selected_row;
-        let receipt = gg_git::rebase::rebase(&path, reference, autostash)?;
-        self.mutation_error = None;
-        self.mutation_notice = Some(if receipt.in_progress {
-            format!(
-                "Rebasing onto {reference}{}",
-                if receipt.conflicts.is_empty() {
-                    String::new()
-                } else {
-                    format!(" · {} conflict(s)", receipt.conflicts.len())
-                }
-            )
-        } else {
-            format!("Rebased onto {reference}")
-        });
-        self.conflict_view = None;
-        self.restore_row = restore_row;
-        self.refresh_mutation();
-        self.load(ctx);
-        self.refresh_reflog();
-        self.refresh_backups();
-        self.refresh_working(ctx);
-        Ok(())
+        let reference = reference.to_string();
+        let label = format!("Rebasing onto {reference}…");
+        self.start_operation(ctx, label, move || {
+            gg_git::rebase::rebase(&path, &reference, autostash).map(OperationOutcome::Rebase)
+        })
     }
 
     fn open_rewrite_dialog(&mut self, from: &str) -> Result<(), String> {
@@ -1075,7 +1504,8 @@ impl Browser {
         restore_row: Option<usize>,
     ) -> u64 {
         self.mutation_error = None;
-        self.mutation_notice = Some(if receipt.in_progress {
+        let conflicts = receipt.in_progress || !receipt.conflicts.is_empty();
+        let summary = if receipt.in_progress {
             format!(
                 "Rewriting {} commit(s){}",
                 receipt.steps,
@@ -1087,7 +1517,29 @@ impl Browser {
             )
         } else {
             format!("Rewrote {} commit(s)", receipt.steps)
-        });
+        };
+        self.mutation_notice = Some(summary.clone());
+        let mut details = Vec::new();
+        if let Some(backup) = &receipt.backup {
+            details.push(format!("Backup: {backup}"));
+        }
+        if !receipt.conflicts.is_empty() {
+            details.push(format!("Conflicts: {}", receipt.conflicts.join(", ")));
+        }
+        self.set_outcome(
+            if conflicts {
+                OutcomeSeverity::Warning
+            } else {
+                OutcomeSeverity::Info
+            },
+            summary,
+            (!details.is_empty()).then(|| details.join("\n")),
+            Some(if conflicts {
+                RecoveryAction::ResolveConflicts
+            } else {
+                RecoveryAction::Backups
+            }),
+        );
         self.conflict_view = None;
         self.restore_row = restore_row;
         self.refresh_mutation();
@@ -1098,32 +1550,90 @@ impl Browser {
         self.state.generation
     }
 
-    fn open_conflict_view(&mut self) {
+    fn open_conflict_view(&mut self, ctx: &egui::Context) {
+        self.refresh_conflict_view(ctx, None);
+    }
+
+    fn refresh_conflict_view(&mut self, ctx: &egui::Context, keep: Option<&str>) {
         let Some(path) = self.stash_path() else {
             return;
         };
-        match gg_git::conflict::unmerged(&path) {
-            Ok(paths) => {
-                self.conflict_view = Some(ConflictView {
-                    paths,
-                    selected: 0,
-                    content: None,
-                    error: None,
-                });
-                self.load_conflict_content();
+        let view = self.conflict_view.get_or_insert_with(|| ConflictView {
+            paths: Vec::new(),
+            selected: 0,
+            previous_selected: 0,
+            keep: None,
+            content: None,
+            error: None,
+            loading: false,
+            worker: None,
+            tab: ConflictSide::Ours,
+        });
+        view.keep = keep.map(str::to_string);
+        view.previous_selected = view.selected;
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        let repaint = ctx.clone();
+        if std::thread::Builder::new()
+            .name("gg-conflicts".into())
+            .spawn(move || {
+                let result = gg_git::conflict::unmerged(&path).map(ConflictUpdate::Paths);
+                let _ = tx.send(result);
+                repaint.request_repaint();
+            })
+            .is_err()
+        {
+            view.error = Some("Could not start the conflict reader.".into());
+            view.loading = false;
+            return;
+        }
+        view.loading = true;
+        view.error = None;
+        view.worker = Some(rx);
+    }
+
+    fn poll_conflict_view(&mut self, ctx: &egui::Context) {
+        let message = match self
+            .conflict_view
+            .as_ref()
+            .and_then(|view| view.worker.as_ref())
+            .map(|rx| rx.try_recv())
+        {
+            None | Some(Err(std::sync::mpsc::TryRecvError::Empty)) => return,
+            Some(Ok(result)) => result,
+            Some(Err(std::sync::mpsc::TryRecvError::Disconnected)) => {
+                Err("Conflict reader stopped. Reopen conflicts and retry.".into())
             }
-            Err(error) => {
-                self.conflict_view = Some(ConflictView {
-                    paths: Vec::new(),
-                    selected: 0,
-                    content: None,
-                    error: Some(error),
-                });
+        };
+        let mut load_content = false;
+        if let Some(view) = &mut self.conflict_view {
+            view.worker = None;
+            view.loading = false;
+            match message {
+                Ok(ConflictUpdate::Paths(paths)) => {
+                    let keep = view.keep.take();
+                    view.selected =
+                        next_conflict_selection(&paths, keep.as_deref(), view.previous_selected);
+                    view.paths = paths;
+                    view.content = None;
+                    view.error = None;
+                    load_content = !view.paths.is_empty();
+                }
+                Ok(ConflictUpdate::Content(content)) => {
+                    view.content = Some(content);
+                    view.error = None;
+                }
+                Err(error) => {
+                    view.content = None;
+                    view.error = Some(error);
+                }
             }
+        }
+        if load_content {
+            self.load_conflict_content(ctx);
         }
     }
 
-    fn load_conflict_content(&mut self) {
+    fn load_conflict_content(&mut self, ctx: &egui::Context) {
         let Some(path) = self.stash_path() else {
             return;
         };
@@ -1132,18 +1642,27 @@ impl Browser {
         };
         let Some(file) = view.paths.get(view.selected).cloned() else {
             view.content = None;
+            view.loading = false;
             return;
         };
-        match gg_git::conflict::read(&path, &file) {
-            Ok(content) => {
-                view.content = Some(content);
-                view.error = None;
-            }
-            Err(error) => {
-                view.content = None;
-                view.error = Some(error);
-            }
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        let repaint = ctx.clone();
+        if std::thread::Builder::new()
+            .name("gg-conflict-content".into())
+            .spawn(move || {
+                let result = gg_git::conflict::read(&path, &file).map(ConflictUpdate::Content);
+                let _ = tx.send(result);
+                repaint.request_repaint();
+            })
+            .is_err()
+        {
+            view.error = Some("Could not start the conflict content reader.".into());
+            view.loading = false;
+            return;
         }
+        view.loading = true;
+        view.error = None;
+        view.worker = Some(rx);
     }
 
     fn resolve_conflict(
@@ -1160,15 +1679,17 @@ impl Browser {
             .and_then(|view| view.paths.get(view.selected))
             .cloned()
             .ok_or("Select a conflicted path first.")?;
-        match side {
-            Some(side) => gg_git::conflict::use_side(&path, &file, side)?,
-            None => gg_git::conflict::stage(&path, &file)?,
-        }
-        self.open_conflict_view();
-        self.refresh_mutation();
-        self.load(ctx);
-        self.refresh_working(ctx);
-        Ok(())
+        let label = match side {
+            Some(_) => format!("Resolving {file}…"),
+            None => format!("Staging {file}…"),
+        };
+        self.start_operation(ctx, label, move || {
+            match side {
+                Some(side) => gg_git::conflict::use_side(&path, &file, side)?,
+                None => gg_git::conflict::stage(&path, &file)?,
+            }
+            Ok(OperationOutcome::Conflict { file })
+        })
     }
 
     fn load(&mut self, ctx: &egui::Context) {
@@ -1332,6 +1853,7 @@ impl Browser {
             }
         }
         let mut network_done = None;
+        let network_operation = self.network.as_ref().map(|worker| worker.operation);
         if let Some(worker) = self.network.as_ref() {
             loop {
                 match worker.try_recv() {
@@ -1352,7 +1874,7 @@ impl Browser {
             }
         }
         if let Some(result) = network_done {
-            self.finish_network(ctx, result);
+            self.finish_network(ctx, result, network_operation);
         }
         let rewrite_done = match self.rewrite_job.as_ref().map(|job| job.receiver.try_recv()) {
             None | Some(Err(std::sync::mpsc::TryRecvError::Empty)) => None,
@@ -1376,6 +1898,27 @@ impl Browser {
                 }
             }
         }
+        let operation_done = match self.operation_worker.as_ref().map(|rx| rx.try_recv()) {
+            None | Some(Err(std::sync::mpsc::TryRecvError::Empty)) => None,
+            Some(Ok(result)) => Some(result),
+            Some(Err(std::sync::mpsc::TryRecvError::Disconnected)) => {
+                Some(Err("Operation worker stopped. Refresh and retry.".into()))
+            }
+        };
+        if let Some(result) = operation_done {
+            self.operation_worker = None;
+            match result {
+                Ok(outcome) => self.finish_operation(ctx, outcome),
+                Err(error) => {
+                    self.operation_restore_row = None;
+                    self.mutation_notice = None;
+                    self.set_outcome(OutcomeSeverity::Error, error.clone(), None, None);
+                    self.mutation_error = Some(error);
+                    self.refresh_mutation();
+                }
+            }
+        }
+        self.poll_conflict_view(ctx);
         let narrow = ctx.content_rect().width() < 1040.0;
         let wide_refs = !narrow && self.refs_visible && ctx.content_rect().width() >= 1120.0;
         let filter_id = egui::Id::unique("history-filter");
@@ -1524,6 +2067,9 @@ impl Browser {
                         self.details_visible = !self.details_visible;
                     }
                 }
+                if ctx.input_mut(|i| i.consume_key(egui::Modifiers::ALT, egui::Key::A)) {
+                    self.commit_actions = !self.commit_actions;
+                }
                 let page = self.page_rows.saturating_sub(1).max(1) as i32;
                 for (modifiers, key, distance) in [
                     (egui::Modifiers::NONE, egui::Key::ArrowUp, -1),
@@ -1569,7 +2115,9 @@ impl Browser {
                 ui.menu_button("Repository", |ui| {
                     if ui
                         .add_enabled(
-                            self.network.is_none() && self.branch.is_none(),
+                            self.network.is_none()
+                                && self.branch.is_none()
+                                && !self.operation_busy(),
                             egui::Button::new("Open…"),
                         )
                         .clicked()
@@ -1612,7 +2160,8 @@ impl Browser {
                         ui.close();
                     }
                     ui.separator();
-                    let network_idle = self.network.is_none() && self.branch.is_none();
+                    let network_idle =
+                        self.network.is_none() && self.branch.is_none() && !self.operation_busy();
                     let has_repo = self.state.history.is_some();
                     if ui
                         .add_enabled(network_idle && has_repo, egui::Button::new("Fetch"))
@@ -1658,7 +2207,7 @@ impl Browser {
                     }
                 });
                 let refs = self.state.refs.clone();
-                let branch_pending = self.branch.is_some();
+                let branch_pending = self.branch.is_some() || self.operation_busy();
                 let mut jump = None;
                 let mut switch = None;
                 let mut new_branch = false;
@@ -1715,7 +2264,10 @@ impl Browser {
                     }
                     if ui
                         .add_enabled(
-                            !branch_pending && self.mutation.is_none() && self.network.is_none(),
+                            !branch_pending
+                                && self.mutation.is_none()
+                                && self.network.is_none()
+                                && !self.operation_busy(),
                             egui::Button::new("Merge branch…"),
                         )
                         .on_hover_text("Merge a local branch, remote-tracking ref, or tag")
@@ -1726,7 +2278,10 @@ impl Browser {
                     }
                     if ui
                         .add_enabled(
-                            !branch_pending && self.mutation.is_none() && self.network.is_none(),
+                            !branch_pending
+                                && self.mutation.is_none()
+                                && self.network.is_none()
+                                && !self.operation_busy(),
                             egui::Button::new("Rebase branch…"),
                         )
                         .on_hover_text("Rebase the current branch onto a branch, remote, or tag")
@@ -1820,7 +2375,8 @@ impl Browser {
                         "Resize the window to at least 1120 px to show the sidebar"
                     });
                 });
-                let stash_busy = self.branch.is_some() || self.network.is_some();
+                let stash_busy =
+                    self.branch.is_some() || self.network.is_some() || self.operation_busy();
                 let has_repo = self.state.history.is_some();
                 ui.menu_button("Stash", |ui| {
                     if ui
@@ -1851,6 +2407,50 @@ impl Browser {
                             confirm_drop: None,
                         });
                         self.refresh_stashes();
+                        ui.close();
+                    }
+                });
+                if let Some(id) = self.state.selected.clone() {
+                    ui.menu_button("Actions", |ui| {
+                        if let Some(command) = commit_action_menu(
+                            ui,
+                            &id,
+                            self.mutation_ready(),
+                            self.mutation_reason(),
+                        ) {
+                            match command {
+                                CommitCommand::Action(action) => {
+                                    self.run_commit_action(ctx, id.clone(), action);
+                                }
+                                CommitCommand::CopyHash => ui.ctx().copy_text(id.clone()),
+                                CommitCommand::CopySubject => {
+                                    if let Some(subject) = self
+                                        .state
+                                        .displayed_details()
+                                        .map(|commit| commit.subject().to_owned())
+                                    {
+                                        ui.ctx().copy_text(subject);
+                                    }
+                                }
+                                CommitCommand::OpenBackups => {
+                                    if let Some(history) = &self.state.history {
+                                        self.backups = Some(backups_view::BackupsView::new(
+                                            history.path.clone(),
+                                        ));
+                                    }
+                                }
+                            }
+                            ui.close();
+                        }
+                    });
+                }
+                ui.menu_button("Help", |ui| {
+                    if ui.button("Keyboard shortcuts…").clicked() {
+                        self.help_shortcuts = true;
+                        ui.close();
+                    }
+                    if ui.button("Selected commit actions…").clicked() {
+                        self.commit_actions = true;
                         ui.close();
                     }
                 });
@@ -1933,7 +2533,9 @@ impl Browser {
         let mut mutation_action = None;
         let mut resolve_conflicts = false;
         let mut open_backups = false;
+        let operation_pending = self.operation_busy();
         if let Some(state) = &self.mutation {
+            let conflicts_remain = !state.conflicts.is_empty();
             egui::Panel::top("mutation")
                 .exact_size(30.0)
                 .show(ui, |ui| {
@@ -1941,19 +2543,41 @@ impl Browser {
                         ui.label(format!("{} in progress", state.operation.as_str()));
                         if !state.conflicts.is_empty() {
                             ui.label(format!("· {} conflict(s)", state.conflicts.len()));
-                            if ui.button("Resolve conflicts…").clicked() {
+                            if ui
+                                .add_enabled(
+                                    !operation_pending,
+                                    egui::Button::new("Resolve conflicts…"),
+                                )
+                                .clicked()
+                            {
                                 resolve_conflicts = true;
                             }
                         }
-                        if ui.button("Continue").clicked() {
+                        if ui
+                            .add_enabled(
+                                !operation_pending && !conflicts_remain,
+                                egui::Button::new("Continue"),
+                            )
+                            .on_hover_text(if conflicts_remain {
+                                "Resolve every unmerged path first."
+                            } else {
+                                "Continue the in-progress operation."
+                            })
+                            .clicked()
+                        {
                             mutation_action = Some(MutationAction::Continue);
                         }
                         if state.operation != gg_engine::mutation::Operation::Merge
-                            && ui.button("Skip").clicked()
+                            && ui
+                                .add_enabled(!operation_pending, egui::Button::new("Skip"))
+                                .clicked()
                         {
                             mutation_action = Some(MutationAction::Skip);
                         }
-                        if ui.button("Abort").clicked() {
+                        if ui
+                            .add_enabled(!operation_pending, egui::Button::new("Abort"))
+                            .clicked()
+                        {
                             mutation_action = Some(MutationAction::Abort);
                         }
                         if ui.button("Backups…").clicked() {
@@ -1963,7 +2587,7 @@ impl Browser {
                 });
         }
         if resolve_conflicts {
-            self.open_conflict_view();
+            self.open_conflict_view(ctx);
         }
         if open_backups && let Some(history) = &self.state.history {
             self.backups = Some(backups_view::BackupsView::new(history.path.clone()));
@@ -2004,7 +2628,10 @@ impl Browser {
         }
         if wide_refs {
             let refs = self.state.refs.clone();
-            let busy = self.branch.is_some() || self.network.is_some() || self.mutation.is_some();
+            let busy = self.branch.is_some()
+                || self.network.is_some()
+                || self.mutation.is_some()
+                || self.operation_busy();
             let has_repo = self.state.history.is_some();
             let local_selected = self.working.is_some();
             let mut action = None;
@@ -2070,11 +2697,12 @@ impl Browser {
         if go_history {
             self.close_to_history(ctx);
         }
+        let new_branch_pending = self.branch.is_some() || self.operation_busy();
         if let Some(name) = &mut self.new_branch {
             let mut submit = None;
             let mut open =
                 !ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
-            let branch_pending = self.branch.is_some();
+            let branch_pending = new_branch_pending;
             egui::Window::new("New branch")
                 .id(egui::Id::unique("new-branch"))
                 .open(&mut open)
@@ -2181,12 +2809,13 @@ impl Browser {
                 self.clone_dialog = None;
             }
         }
+        let track_busy = self.branch.is_some() || self.network.is_some() || self.operation_busy();
         if let Some(remote_branch) = &mut self.track_dialog {
             let mut submit = false;
             let mut cancelled = false;
             let mut open =
                 !ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
-            let busy = self.branch.is_some() || self.network.is_some();
+            let busy = track_busy;
             egui::Window::new("Track remote branch")
                 .id(egui::Id::unique("track-remote-branch"))
                 .open(&mut open)
@@ -2479,10 +3108,19 @@ impl Browser {
             }
         }
 
+        let conflict_mutation = self.mutation.clone();
+        let conflict_operation_busy = self.operation_busy();
         let mut conflict_select = None;
         let mut conflict_action = None;
+        let mut conflict_recovery = None;
         let mut conflict_open = true;
         if let Some(view) = &mut self.conflict_view {
+            let operation = conflict_mutation.as_ref().map(|state| state.operation);
+            let unresolved = conflict_mutation
+                .as_ref()
+                .map(|state| state.conflicts.len())
+                .unwrap_or(view.paths.len());
+            let conflicts_remain = unresolved > 0;
             egui::Window::new("Resolve conflicts")
                 .id(egui::Id::unique("resolve-conflicts"))
                 .open(&mut conflict_open)
@@ -2492,42 +3130,104 @@ impl Browser {
                 .default_pos(ctx.content_rect().center())
                 .pivot(egui::Align2::CENTER_CENTER)
                 .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.strong(
+                            operation
+                                .map(gg_engine::mutation::Operation::as_str)
+                                .unwrap_or("operation"),
+                        );
+                        ui.label(format!("· {unresolved} unresolved"));
+                        if let Some(commit) = conflict_mutation
+                            .as_ref()
+                            .and_then(|state| state.commit.as_deref())
+                        {
+                            ui.label(format!("· {}", commit.chars().take(8).collect::<String>()));
+                        }
+                        if view.loading {
+                            ui.spinner();
+                        }
+                    });
+                    ui.label(conflict_side_hint(operation));
                     if let Some(error) = &view.error {
                         ui.colored_label(ui.visuals().error_fg_color, error);
                     }
-                    if view.paths.is_empty() {
+                    if view.paths.is_empty() && !view.loading {
                         ui.label("No unmerged paths.");
                     }
+                    ui.separator();
                     ui.horizontal_top(|ui| {
                         ui.vertical(|ui| {
                             ui.label("Paths");
-                            for (index, path) in view.paths.iter().enumerate() {
-                                if ui.selectable_label(index == view.selected, path).clicked() {
-                                    conflict_select = Some(index);
-                                }
-                            }
+                            egui::ScrollArea::vertical()
+                                .id_salt("conflict-paths")
+                                .max_height(360.0)
+                                .show(ui, |ui| {
+                                    for (index, path) in view.paths.iter().enumerate() {
+                                        if ui
+                                            .selectable_label(index == view.selected, path)
+                                            .clicked()
+                                        {
+                                            conflict_select = Some(index);
+                                        }
+                                    }
+                                });
                         });
                         ui.separator();
                         ui.vertical(|ui| {
-                            if let Some(content) = &view.content {
-                                ui.horizontal(|ui| {
-                                    if ui.button("Use ours").clicked() {
-                                        conflict_action =
-                                            Some(Some(gg_engine::conflict::Side::Ours));
-                                    }
-                                    if ui.button("Use theirs").clicked() {
-                                        conflict_action =
-                                            Some(Some(gg_engine::conflict::Side::Theirs));
-                                    }
-                                    if ui.button("Stage resolved").clicked() {
-                                        conflict_action = Some(None);
-                                    }
-                                });
+                            let Some(content) = &view.content else {
+                                if view.loading {
+                                    ui.spinner();
+                                }
+                                return;
+                            };
+                            ui.horizontal(|ui| {
+                                if ui
+                                    .button(format!(
+                                        "Use ours · {}",
+                                        if operation == Some(gg_engine::mutation::Operation::Rebase)
+                                        {
+                                            "base"
+                                        } else {
+                                            "current branch"
+                                        }
+                                    ))
+                                    .clicked()
+                                {
+                                    conflict_action = Some(Some(gg_engine::conflict::Side::Ours));
+                                }
+                                if ui
+                                    .button(format!(
+                                        "Use theirs · {}",
+                                        if operation == Some(gg_engine::mutation::Operation::Rebase)
+                                        {
+                                            "replayed commit"
+                                        } else {
+                                            "incoming"
+                                        }
+                                    ))
+                                    .clicked()
+                                {
+                                    conflict_action = Some(Some(gg_engine::conflict::Side::Theirs));
+                                }
+                                if ui.button("Stage resolved").clicked() {
+                                    conflict_action = Some(None);
+                                }
+                            });
+                            ui.weak(
+                                "Choosing a side replaces the whole file and stages it. Stage resolved stages external or manually edited content.",
+                            );
+                            if content.binary {
+                                ui.colored_label(ui.visuals().warn_fg_color, "Binary content");
+                            }
+                            if content.truncated {
+                                ui.colored_label(ui.visuals().warn_fg_color, "Content truncated");
+                            }
+                            if ui.available_width() >= 720.0 {
                                 ui.columns(3, |columns| {
                                     for (column, (title, text)) in columns.iter_mut().zip([
-                                        ("Base", &content.base),
-                                        ("Ours", &content.ours),
-                                        ("Theirs", &content.theirs),
+                                        (conflict_side_label(operation, ConflictSide::Base), &content.base),
+                                        (conflict_side_label(operation, ConflictSide::Ours), &content.ours),
+                                        (conflict_side_label(operation, ConflictSide::Theirs), &content.theirs),
                                     ]) {
                                         column.label(title);
                                         egui::ScrollArea::both()
@@ -2538,8 +3238,72 @@ impl Browser {
                                             });
                                     }
                                 });
+                            } else {
+                                ui.horizontal(|ui| {
+                                    ui.selectable_value(&mut view.tab, ConflictSide::Base, "Base");
+                                    ui.selectable_value(&mut view.tab, ConflictSide::Ours, "Ours");
+                                    ui.selectable_value(
+                                        &mut view.tab,
+                                        ConflictSide::Theirs,
+                                        "Theirs",
+                                    );
+                                });
+                                let (title, text) = match view.tab {
+                                    ConflictSide::Base => {
+                                        (conflict_side_label(operation, ConflictSide::Base), &content.base)
+                                    }
+                                    ConflictSide::Ours => {
+                                        (conflict_side_label(operation, ConflictSide::Ours), &content.ours)
+                                    }
+                                    ConflictSide::Theirs => (
+                                        conflict_side_label(operation, ConflictSide::Theirs),
+                                        &content.theirs,
+                                    ),
+                                };
+                                ui.strong(title);
+                                egui::ScrollArea::both()
+                                    .id_salt("conflict-side")
+                                    .max_height(320.0)
+                                    .show(ui, |ui| {
+                                        ui.monospace(text.as_deref().unwrap_or("(absent)"));
+                                    });
                             }
                         });
+                    });
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        if ui
+                            .add_enabled(
+                                !conflicts_remain && !conflict_operation_busy,
+                                egui::Button::new("Continue"),
+                            )
+                            .on_hover_text(if conflicts_remain {
+                                "Resolve every unmerged path first."
+                            } else {
+                                "Continue the in-progress operation."
+                            })
+                            .clicked()
+                        {
+                            conflict_recovery = Some(MutationAction::Continue);
+                        }
+                        if operation != Some(gg_engine::mutation::Operation::Merge)
+                            && ui
+                                .add_enabled(
+                                    !conflict_operation_busy,
+                                    egui::Button::new("Skip"),
+                                )
+                                .on_hover_text("Skip the current commit and continue.")
+                                .clicked()
+                        {
+                            conflict_recovery = Some(MutationAction::Skip);
+                        }
+                        if ui
+                            .add_enabled(!conflict_operation_busy, egui::Button::new("Abort"))
+                            .on_hover_text("Abort the operation and restore the previous tip.")
+                            .clicked()
+                        {
+                            conflict_recovery = Some(MutationAction::Abort);
+                        }
                     });
                 });
         }
@@ -2549,16 +3313,102 @@ impl Browser {
             view.selected = index;
         }
         if conflict_select.is_some() {
-            self.load_conflict_content();
+            self.load_conflict_content(ctx);
         }
-        if let Some(side) = conflict_action {
-            if let Err(error) = self.resolve_conflict(ctx, side)
-                && let Some(view) = &mut self.conflict_view
-            {
-                view.error = Some(error);
-            }
-        } else if self.conflict_view.is_some() && !conflict_open {
+        if let Some(side) = conflict_action
+            && let Err(error) = self.resolve_conflict(ctx, side)
+            && let Some(view) = &mut self.conflict_view
+        {
+            view.error = Some(error);
+        }
+        if let Some(action) = conflict_recovery
+            && let Some(operation) = conflict_mutation.as_ref().map(|state| state.operation)
+            && let Err(error) = self.recover_mutation(ctx, operation, action)
+        {
+            self.mutation_error = Some(error);
+        }
+        if conflict_recovery.is_none() && self.conflict_view.is_some() && !conflict_open {
             self.conflict_view = None;
+        }
+        if self.commit_actions {
+            let id = self.state.selected.clone();
+            let subject = self
+                .state
+                .displayed_details()
+                .map(|commit| commit.subject().to_owned())
+                .unwrap_or_default();
+            let ready = self.mutation_ready();
+            let reason = self.mutation_reason();
+            let mut command = None;
+            let mut open = true;
+            egui::Window::new("Commit actions")
+                .id(egui::Id::unique("commit-actions"))
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(false)
+                .default_width(340.0)
+                .default_pos(ctx.content_rect().center())
+                .pivot(egui::Align2::CENTER_CENTER)
+                .show(ctx, |ui| {
+                    if let Some(id) = &id {
+                        command = commit_action_menu(ui, id, ready, reason);
+                    } else {
+                        ui.label("Select a commit first.");
+                    }
+                });
+            if let Some(command) = command
+                && let Some(id) = id
+            {
+                match command {
+                    CommitCommand::Action(action) => self.run_commit_action(ctx, id, action),
+                    CommitCommand::CopyHash => ctx.copy_text(id),
+                    CommitCommand::CopySubject => ctx.copy_text(subject),
+                    CommitCommand::OpenBackups => {
+                        if let Some(history) = &self.state.history {
+                            self.backups =
+                                Some(backups_view::BackupsView::new(history.path.clone()));
+                        }
+                    }
+                }
+                self.commit_actions = false;
+            }
+            if !open {
+                self.commit_actions = false;
+            }
+        }
+        if self.help_shortcuts {
+            let mut open = true;
+            egui::Window::new("Keyboard shortcuts")
+                .id(egui::Id::unique("keyboard-shortcuts"))
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(false)
+                .default_width(420.0)
+                .default_pos(ctx.content_rect().center())
+                .pivot(egui::Align2::CENTER_CENTER)
+                .show(ctx, |ui| {
+                    for (group, keys) in [
+                        (
+                            "Navigation",
+                            "Up/Down or j/k: move · PgUp/PgDn: page · Enter: review · Space: details · Esc: back",
+                        ),
+                        (
+                            "Repository",
+                            "Ctrl/Cmd+R: refresh · Ctrl/Cmd+F: filter · Ctrl/Cmd+C: copy ID",
+                        ),
+                        (
+                            "Actions",
+                            "Alt+A: selected commit actions · menus: Repository, Refs, View, Stash, Help",
+                        ),
+                    ] {
+                        ui.strong(group);
+                        ui.label(keys);
+                        ui.add_space(6.0);
+                    }
+                });
+            if !open {
+                self.help_shortcuts = false;
+            }
         }
 
         let mut merge_submit = None;
@@ -3026,6 +3876,13 @@ impl Browser {
                 (format!("Branch · {error}"), ui.visuals().error_fg_color)
             } else if let Some(error) = &self.mutation_error {
                 (format!("All Commits · {error}"), ui.visuals().error_fg_color)
+            } else if let Some(outcome) = &self.outcome {
+                let color = match outcome.severity {
+                    OutcomeSeverity::Info => ui.visuals().text_color(),
+                    OutcomeSeverity::Warning => ui.visuals().warn_fg_color,
+                    OutcomeSeverity::Error => ui.visuals().error_fg_color,
+                };
+                (format!("All Commits · {}", outcome.summary), color)
             } else if let Some(worker) = &self.network {
                 if worker.is_cancelled() {
                     ("Cancelling network operation…".into(), ui.visuals().text_color())
@@ -3063,9 +3920,80 @@ impl Browser {
                     .unwrap_or_default();
                 (format!("{tracking}Up/Down / j k: select   ·   PgUp/PgDn: page   ·   Enter: review   ·   Space: details   ·   Esc: history   ·   Ctrl/Cmd+F: filter   ·   Ctrl/Cmd+C: copy ID"), ui.visuals().weak_text_color())
             };
-            let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 18.0), egui::Sense::hover());
-            bounded_text::paint(ui, rect, &message, egui::FontId::proportional(11.0), color);
+            let outcome_active = self.network_error.is_none()
+                && self.state.error.is_none()
+                && self.branch_error.is_none()
+                && self.mutation_error.is_none()
+                && self.outcome.is_some();
+            let details = outcome_active
+                .then(|| self.outcome.as_ref().and_then(|outcome| outcome.details.clone()))
+                .flatten();
+            let recovery = outcome_active
+                .then(|| self.outcome.as_ref().and_then(|outcome| outcome.recovery))
+                .flatten();
+            let mut details_clicked = false;
+            let mut recovery_clicked = None;
+            ui.horizontal(|ui| {
+                let reserved = if recovery.is_some() {
+                    150.0
+                } else if details.is_some() {
+                    76.0
+                } else {
+                    0.0
+                };
+                let width = (ui.available_width() - reserved).max(100.0);
+                let (rect, _) = ui.allocate_exact_size(
+                    egui::vec2(width, 18.0),
+                    egui::Sense::hover(),
+                );
+                bounded_text::paint(ui, rect, &message, egui::FontId::proportional(11.0), color);
+                if details.is_some() && ui.small_button("Details…").clicked() {
+                    details_clicked = true;
+                }
+                if let Some(action) = recovery
+                    && ui.small_button(recovery_label(action)).clicked()
+                {
+                    recovery_clicked = Some(action);
+                }
+            });
+            if details_clicked {
+                self.outcome_details_open = true;
+            }
+            if let Some(action) = recovery_clicked {
+                self.run_recovery_action(ctx, action);
+            }
         });
+        if self.outcome_details_open {
+            let details = self
+                .outcome
+                .as_ref()
+                .and_then(|outcome| outcome.details.clone());
+            if let Some(details) = details {
+                let mut open = true;
+                egui::Window::new("Operation details")
+                    .id(egui::Id::unique("operation-details"))
+                    .open(&mut open)
+                    .collapsible(false)
+                    .resizable(true)
+                    .default_width(560.0)
+                    .default_height(240.0)
+                    .default_pos(ctx.content_rect().center())
+                    .pivot(egui::Align2::CENTER_CENTER)
+                    .show(ctx, |ui| {
+                        if ui.button("Copy details").clicked() {
+                            ui.ctx().copy_text(details.clone());
+                        }
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            ui.add(egui::Label::new(&details).wrap().selectable(true));
+                        });
+                    });
+                if !open {
+                    self.outcome_details_open = false;
+                }
+            } else {
+                self.outcome_details_open = false;
+            }
+        }
         if !narrow || !self.narrow_details {
             egui::Panel::top("filter").exact_size(40.0).show(ui, |ui| {
                 ui.add_space(5.0);
@@ -3132,6 +4060,7 @@ impl Browser {
             self.details_rect = details.response.rect;
         }
         let mut pending_commit_action: Option<(String, CommitAction)> = None;
+        let mut open_commit_backups = false;
         egui::CentralPanel::default().show(ui, |ui| {
             if narrow && self.narrow_details {
                 self.history_rect = egui::Rect::NOTHING;
@@ -3226,59 +4155,29 @@ impl Browser {
                                         self.row_rects.push((row, response.rect));
                                         response.context_menu(|ui| {
                                             let id = commit.id.clone();
-                                            if ui.button("Cherry-pick").clicked() {
-                                                pending_commit_action =
-                                                    Some((id.clone(), CommitAction::CherryPick));
-                                                ui.close();
-                                            }
-                                            if ui.button("Revert").clicked() {
-                                                pending_commit_action =
-                                                    Some((id.clone(), CommitAction::Revert));
-                                                ui.close();
-                                            }
-                                            ui.menu_button("Reset here", |ui| {
-                                                for (label, mode) in [
-                                                    ("Soft", gg_engine::reset::Mode::Soft),
-                                                    ("Mixed", gg_engine::reset::Mode::Mixed),
-                                                    ("Hard", gg_engine::reset::Mode::Hard),
-                                                ] {
-                                                    if ui.button(label).clicked() {
-                                                        pending_commit_action = Some((
-                                                            id.clone(),
-                                                            CommitAction::Reset(mode),
-                                                        ));
-                                                        ui.close();
+                                            if let Some(command) = commit_action_menu(
+                                                ui,
+                                                &id,
+                                                self.mutation_ready(),
+                                                self.mutation_reason(),
+                                            ) {
+                                                match command {
+                                                    CommitCommand::Action(action) => {
+                                                        pending_commit_action =
+                                                            Some((id.clone(), action));
+                                                    }
+                                                    CommitCommand::CopyHash => {
+                                                        ui.ctx().copy_text(id.clone());
+                                                    }
+                                                    CommitCommand::CopySubject => {
+                                                        ui.ctx().copy_text(
+                                                            commit.subject().to_string(),
+                                                        );
+                                                    }
+                                                    CommitCommand::OpenBackups => {
+                                                        open_commit_backups = true;
                                                     }
                                                 }
-                                            });
-                                            if ui
-                                                .add_enabled(
-                                                    self.mutation.is_none(),
-                                                    egui::Button::new(
-                                                        "Reorder and squash to HEAD…",
-                                                    ),
-                                                )
-                                                .on_hover_text(
-                                                    "Rewrite commits from this commit through HEAD",
-                                                )
-                                                .clicked()
-                                            {
-                                                pending_commit_action =
-                                                    Some((id.clone(), CommitAction::Rewrite));
-                                                ui.close();
-                                            }
-                                            if ui.button("Compare to local").clicked() {
-                                                pending_commit_action =
-                                                    Some((id.clone(), CommitAction::Compare));
-                                                ui.close();
-                                            }
-                                            ui.separator();
-                                            if ui.button("Copy hash").clicked() {
-                                                ui.ctx().copy_text(id.clone());
-                                                ui.close();
-                                            }
-                                            if ui.button("Copy subject").clicked() {
-                                                ui.ctx().copy_text(commit.subject().to_string());
                                                 ui.close();
                                             }
                                         });
@@ -3357,35 +4256,10 @@ impl Browser {
             }
         });
         if let Some((id, action)) = pending_commit_action {
-            self.state.selected = Some(id.clone());
-            self.state.reconcile_selection();
-            match action {
-                CommitAction::CherryPick => {
-                    if let Err(error) =
-                        self.start_mutation(ctx, gg_engine::mutation::Operation::CherryPick)
-                    {
-                        self.mutation_error = Some(error);
-                    }
-                }
-                CommitAction::Revert => {
-                    if let Err(error) =
-                        self.start_mutation(ctx, gg_engine::mutation::Operation::Revert)
-                    {
-                        self.mutation_error = Some(error);
-                    }
-                }
-                CommitAction::Reset(mode) => {
-                    self.reset_confirm = Some((id, mode));
-                }
-                CommitAction::Rewrite => {
-                    if let Err(error) = self.open_rewrite_dialog(&id) {
-                        self.mutation_error = Some(error);
-                    }
-                }
-                CommitAction::Compare => {
-                    self.open_compare(ctx, id);
-                }
-            }
+            self.run_commit_action(ctx, id, action);
+        }
+        if open_commit_backups && let Some(history) = &self.state.history {
+            self.backups = Some(backups_view::BackupsView::new(history.path.clone()));
         }
         if self.pending_filter_edit
             && let Some(pending) = &self.pending
@@ -3746,6 +4620,8 @@ mod tests {
             app.conflict_view = Some(ConflictView {
                 paths: vec!["a".into()],
                 selected: 0,
+                previous_selected: 0,
+                keep: None,
                 content: Some(gg_engine::conflict::Content {
                     path: "a".into(),
                     base: Some("base\n".into()),
@@ -3755,6 +4631,9 @@ mod tests {
                     truncated: false,
                 }),
                 error: None,
+                loading: false,
+                worker: None,
+                tab: ConflictSide::Ours,
             });
             let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
                 app.draw_ui(ctx)
@@ -4024,6 +4903,498 @@ mod tests {
     }
 
     #[test]
+    fn operation_worker_keeps_the_ui_responsive_and_rejects_duplicates() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        let (gate_tx, gate_rx) = std::sync::mpsc::channel();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        assert!(
+            app.start_operation(&ctx, "Testing operation…".into(), move || {
+                let _ = started_tx.send(());
+                let _ = gate_rx.recv();
+                Ok(OperationOutcome::Rebase(gg_engine::rebase::Receipt {
+                    reference: "main".into(),
+                    commit: None,
+                    previous: None,
+                    backup: None,
+                    applied: true,
+                    in_progress: false,
+                    conflicts: Vec::new(),
+                    warnings: Vec::new(),
+                }))
+            })
+            .is_ok()
+        );
+        assert!(app.operation_busy());
+        assert!(
+            started_rx
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .is_ok()
+        );
+        assert!(
+            app.start_operation(&ctx, "Second…".into(), || unreachable!())
+                .is_err()
+        );
+        let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        assert!(output.shapes.iter().any(|shape| matches!(
+            &shape.shape,
+            egui::epaint::Shape::Text(text) if text.galley.job.text.contains("Testing operation")
+        )));
+        assert!(gate_tx.send(()).is_ok());
+        for _ in 0..200 {
+            let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            if !app.operation_busy() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(!app.operation_busy());
+        assert!(
+            app.mutation_notice
+                .as_deref()
+                .is_some_and(|notice| notice.contains("Rebased onto"))
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rebase_worker_keeps_frames_rendering_while_a_hook_waits()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir()?;
+        let repo = dir.path();
+        let git = |args: &[&str]| -> Result<(), Box<dyn std::error::Error>> {
+            let output = std::process::Command::new("git")
+                .arg("-C")
+                .arg(repo)
+                .args(args)
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_AUTHOR_NAME", "Test")
+                .env("GIT_AUTHOR_EMAIL", "test@example.org")
+                .env("GIT_COMMITTER_NAME", "Test")
+                .env("GIT_COMMITTER_EMAIL", "test@example.org")
+                .output()?;
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            Ok(())
+        };
+        git(&["init", "-q"])?;
+        git(&["config", "user.name", "Test"])?;
+        git(&["config", "user.email", "test@example.org"])?;
+        std::fs::write(repo.join("a"), b"base\n")?;
+        git(&["add", "a"])?;
+        git(&["commit", "-qm", "base"])?;
+        git(&["checkout", "-qb", "feature"])?;
+        std::fs::write(repo.join("b"), b"feature\n")?;
+        git(&["add", "b"])?;
+        git(&["commit", "-qm", "feature"])?;
+        git(&["checkout", "-q", "-"])?;
+        std::fs::write(repo.join("c"), b"mainline\n")?;
+        git(&["add", "c"])?;
+        git(&["commit", "-qm", "mainline"])?;
+
+        let marker = repo.join("release-pre-rebase");
+        let hook = repo.join(".git/hooks/pre-rebase");
+        std::fs::write(
+            &hook,
+            format!(
+                "#!/bin/sh\nwhile [ ! -f '{}' ]; do sleep 0.05; done\n",
+                marker.display()
+            ),
+        )?;
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755))?;
+
+        let ctx = egui::Context::default();
+        let mut app = Browser::new(repo.to_path_buf());
+        app.state.history = Some(History {
+            path: repo.to_path_buf(),
+            head: "main".into(),
+            truncated: false,
+            shallow: false,
+            commits: Vec::new(),
+        });
+        assert!(app.start_rebase(&ctx, "feature", false).is_ok());
+        assert!(app.operation_busy());
+        let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        assert!(output.shapes.iter().any(|shape| matches!(
+            &shape.shape,
+            egui::epaint::Shape::Text(text)
+                if text.galley.job.text.contains("Rebasing onto feature")
+        )));
+        std::fs::write(&marker, b"go")?;
+        for _ in 0..400 {
+            let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            if !app.operation_busy() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(!app.operation_busy());
+        assert!(
+            app.mutation_notice
+                .as_deref()
+                .is_some_and(|notice| notice.contains("Rebased onto feature")),
+            "notice={:?} error={:?}",
+            app.mutation_notice,
+            app.mutation_error
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn conflict_selection_prefers_the_next_path() {
+        let paths = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        assert_eq!(next_conflict_selection(&paths, Some("b"), 0), 1);
+        assert_eq!(next_conflict_selection(&paths, Some("missing"), 2), 2);
+        assert_eq!(next_conflict_selection(&[], None, 5), 0);
+    }
+
+    #[test]
+    fn conflict_worker_delivers_content_without_blocking() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        app.conflict_view = Some(ConflictView {
+            paths: vec!["a".into()],
+            selected: 0,
+            previous_selected: 0,
+            keep: None,
+            content: None,
+            error: None,
+            loading: true,
+            worker: Some(rx),
+            tab: ConflictSide::Ours,
+        });
+        let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        assert!(app.conflict_view.as_ref().is_some_and(|view| view.loading));
+        assert!(
+            tx.send(Ok(ConflictUpdate::Content(gg_engine::conflict::Content {
+                path: "a".into(),
+                base: Some("base\n".into()),
+                ours: Some("ours\n".into()),
+                theirs: Some("theirs\n".into()),
+                binary: false,
+                truncated: false,
+            })))
+            .is_ok()
+        );
+        let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        assert!(output.shapes.iter().any(|shape| matches!(
+            &shape.shape,
+            egui::epaint::Shape::Text(text) if text.galley.job.text.contains("ours")
+        )));
+        assert!(
+            app.conflict_view
+                .as_ref()
+                .is_some_and(|view| !view.loading && view.content.is_some())
+        );
+    }
+
+    #[test]
+    fn conflict_resolution_runs_on_the_operation_worker() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        app.conflict_view = Some(ConflictView {
+            paths: vec!["a".into()],
+            selected: 0,
+            previous_selected: 0,
+            keep: None,
+            content: Some(gg_engine::conflict::Content {
+                path: "a".into(),
+                base: Some("base\n".into()),
+                ours: Some("ours\n".into()),
+                theirs: Some("theirs\n".into()),
+                binary: false,
+                truncated: false,
+            }),
+            error: None,
+            loading: false,
+            worker: None,
+            tab: ConflictSide::Ours,
+        });
+        assert!(
+            app.resolve_conflict(&ctx, Some(gg_engine::conflict::Side::Ours))
+                .is_ok()
+        );
+        assert!(app.operation_busy());
+        for _ in 0..200 {
+            let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            if !app.operation_busy() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(!app.operation_busy());
+        assert!(app.mutation_error.is_some());
+    }
+
+    #[test]
+    fn commit_actions_window_lists_grouped_actions() {
+        for width in [720.0, 1120.0] {
+            let ctx = egui::Context::default();
+            let mut app = layout_fixture();
+            app.state.selected = Some("a".repeat(40));
+            app.commit_actions = true;
+            let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let output = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let text = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            for label in [
+                "Commit actions",
+                "Inspect",
+                "Integrate",
+                "Rewrite and destructive",
+                "Recovery",
+                "Backups…",
+            ] {
+                assert!(text.contains(&label), "missing {label} at {width}");
+            }
+            assert!(
+                text.iter().any(|line| line.starts_with("Cherry-pick ")),
+                "missing target-aware cherry-pick at {width}"
+            );
+        }
+    }
+
+    #[test]
+    fn actions_shortcut_opens_the_window() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        app.state.selected = Some("a".repeat(40));
+        let _ = crate::tests::run_ui(
+            &ctx,
+            frame_input(1120.0, 740.0, vec![key(egui::Key::A, egui::Modifiers::ALT)]),
+            |ctx| app.draw_ui(ctx),
+        );
+        assert!(app.commit_actions);
+        let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        assert!(output.shapes.iter().any(|shape| matches!(
+            &shape.shape,
+            egui::epaint::Shape::Text(text) if text.galley.job.text == "Commit actions"
+        )));
+    }
+
+    #[test]
+    fn commit_action_menu_returns_the_clicked_command() {
+        let ctx = egui::Context::default();
+        let id = "a".repeat(40);
+        let command = std::cell::RefCell::new(None);
+        let first = crate::tests::run_ui(&ctx, frame_input(360.0, 600.0, vec![]), |ui| {
+            command
+                .borrow_mut()
+                .replace(commit_action_menu(ui, &id, true, None));
+        });
+        let compare = first.shapes.iter().find_map(|shape| match &shape.shape {
+            egui::epaint::Shape::Text(text)
+                if text.galley.job.text == "Compare aaaaaaa with current HEAD" =>
+            {
+                Some(text.pos)
+            }
+            _ => None,
+        });
+        let Some(compare) = compare else {
+            return;
+        };
+        let press = egui::Event::PointerButton {
+            pos: compare + egui::vec2(5.0, 0.0),
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let release = egui::Event::PointerButton {
+            pos: compare + egui::vec2(5.0, 0.0),
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let _ = crate::tests::run_ui(
+            &ctx,
+            frame_input(
+                360.0,
+                600.0,
+                vec![egui::Event::PointerMoved(compare), press],
+            ),
+            |ui| {
+                command
+                    .borrow_mut()
+                    .replace(commit_action_menu(ui, &id, true, None));
+            },
+        );
+        let _ = crate::tests::run_ui(&ctx, frame_input(360.0, 600.0, vec![release]), |ui| {
+            command
+                .borrow_mut()
+                .replace(commit_action_menu(ui, &id, true, None));
+        });
+        assert!(matches!(
+            command.borrow().as_ref(),
+            Some(Some(CommitCommand::Action(CommitAction::Compare)))
+        ));
+    }
+
+    #[test]
+    fn help_shortcuts_window_renders() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        app.help_shortcuts = true;
+        let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        let text = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(text.contains(&"Keyboard shortcuts"));
+        assert!(text.contains(&"Navigation"));
+        assert!(text.contains(&"Actions"));
+        assert!(text.iter().any(|line| line.contains("Alt+A")));
+    }
+
+    #[test]
+    fn operation_outcome_shows_details_and_recovery() {
+        for width in [720.0, 1120.0] {
+            let ctx = egui::Context::default();
+            let mut app = layout_fixture();
+            app.outcome = Some(Outcome {
+                severity: OutcomeSeverity::Warning,
+                summary: "Rebased onto feature · 1 conflict(s)".into(),
+                details: Some("Conflicts: a.txt".into()),
+                recovery: Some(RecoveryAction::ResolveConflicts),
+            });
+            let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let output = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let text = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert!(
+                text.iter()
+                    .any(|line| line.contains("Rebased onto feature")),
+                "missing outcome summary at {width}"
+            );
+            assert!(text.contains(&"Details…"), "missing details at {width}");
+            assert!(
+                text.contains(&"Resolve conflicts…"),
+                "missing recovery at {width}"
+            );
+        }
+    }
+
+    #[test]
+    fn operation_details_window_lists_full_text() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        app.outcome = Some(Outcome {
+            severity: OutcomeSeverity::Warning,
+            summary: "Rewrote 2 commit(s)".into(),
+            details: Some("Backup: refs/gg/backup/rewrite/1".into()),
+            recovery: Some(RecoveryAction::Backups),
+        });
+        app.outcome_details_open = true;
+        let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        let text = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(text.contains(&"Operation details"));
+        assert!(text.contains(&"Backup: refs/gg/backup/rewrite/1"));
+    }
+
+    #[test]
+    fn outcome_recovery_button_opens_backups() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        app.outcome = Some(Outcome {
+            severity: OutcomeSeverity::Info,
+            summary: "Rewrote 1 commit(s)".into(),
+            details: None,
+            recovery: Some(RecoveryAction::Backups),
+        });
+        let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        let backups = output.shapes.iter().find_map(|shape| match &shape.shape {
+            egui::epaint::Shape::Text(text) if text.galley.job.text == "Backups…" => {
+                Some(text.pos)
+            }
+            _ => None,
+        });
+        assert!(backups.is_some(), "missing backups button");
+        let pos = backups.unwrap_or_default();
+        let press = egui::Event::PointerButton {
+            pos: pos + egui::vec2(5.0, 0.0),
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let release = egui::Event::PointerButton {
+            pos: pos + egui::vec2(5.0, 0.0),
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let _ = crate::tests::run_ui(
+            &ctx,
+            frame_input(1120.0, 740.0, vec![egui::Event::PointerMoved(pos), press]),
+            |ctx| app.draw_ui(ctx),
+        );
+        let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![release]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        assert!(app.backups.is_some());
+    }
+
+    #[test]
     fn mutation_banner_renders_at_supported_widths() {
         for width in [720.0, 1120.0] {
             let ctx = egui::Context::default();
@@ -4121,6 +5492,7 @@ mod tests {
                 head: None,
                 branch: Some("main".into()),
             })),
+            None,
         );
         assert_eq!(app.path, path.to_string_lossy());
         assert!(app.network.is_none());
