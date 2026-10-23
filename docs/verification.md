@@ -387,3 +387,12 @@ Linux x86_64 · Rust 1.99.1 · local Git fixtures.
 - Resolving a path reloads the list and selects the next unresolved path predictably; a pure selection test covers keep-found, keep-missing, and empty lists.
 - At narrow widths the Base/Ours/Theirs panes become side tabs with one bounded scroll region; the path list keeps its own bounded scroll.
 - Native wide/narrow interaction review remains pending for this increment.
+
+## Pre-M7 comparison direction and scope · 2026-10-23
+
+Linux x86_64 · Rust 1.99.1 · local Git fixtures.
+
+- 306 workspace tests pass (3 ignored); formatting and Clippy with `-D warnings` pass.
+- The commit-row action is **Compare with current HEAD**. A review test renders an `--against HEAD` comparison and checks the persistent Before line for the `HEAD` ref name plus the resolved base ID and the After line for the resolved target ID.
+- Whole-file staging actions are **Stage file**, **Unstage file**, and **Discard file**. Hunk and selected-line actions remain distinct, and the confirmation names the exact file and scope and states that the index is unchanged.
+- Native wide/narrow interaction review remains pending for this increment.

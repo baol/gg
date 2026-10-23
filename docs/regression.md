@@ -167,7 +167,8 @@ Native review: the refs sidebar and status line show the current branch upstream
 
 - Git oracle tests compare an arbitrary `against` base with the selected commit and assert the old/new sides.
 - CLI tests cover `git good show HEAD --against HEAD^`, the generated comparison subject, changed files, and the `--against`/`--parent` conflict.
-- The commit-row menu exposes **Compare to local**, which opens the review diff against the current branch tip.
+- The commit-row menu exposes **Compare with current HEAD**, which opens the review diff against the current branch tip. The review header names the Before ref and resolved commit and the After commit, including for parent, root, and merge comparisons.
+- Whole-file staging actions read **Stage file**, **Unstage file**, and **Discard file**; hunk and selected-line actions stay distinct; **Discard** confirms the exact file and scope and states that the index is unchanged.
 
 ## Ref context menus
 

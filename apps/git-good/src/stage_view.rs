@@ -431,7 +431,10 @@ impl StageView {
             ui.horizontal(|ui| {
                 ui.colored_label(
                     ui.visuals().error_fg_color,
-                    format!("Discard {scope} from {}?", self.path),
+                    format!(
+                        "Discard {scope} from {}? The index is unchanged.",
+                        self.path
+                    ),
                 );
                 if ui
                     .add_enabled(
@@ -607,7 +610,7 @@ fn draw_pane(
                 && ui
                     .add_enabled(
                         !pending,
-                        egui::Button::new(format!("{verb} all")).min_size(egui::vec2(88.0, 20.0)),
+                        egui::Button::new(format!("{verb} file")).min_size(egui::vec2(88.0, 20.0)),
                     )
                     .clicked()
             {
@@ -618,9 +621,11 @@ fn draw_pane(
                 && ui
                     .add_enabled(
                         !pending,
-                        egui::Button::new("Drop all").min_size(egui::vec2(76.0, 20.0)),
+                        egui::Button::new("Discard file").min_size(egui::vec2(76.0, 20.0)),
                     )
-                    .on_hover_text("Discard all working changes; the index is unchanged")
+                    .on_hover_text(
+                        "Discard all working changes in this file; the index is unchanged",
+                    )
                     .clicked()
             {
                 *action = Some(Action::Drop {
@@ -816,7 +821,11 @@ fn draw_pane(
                         .changes
                         .iter()
                         .any(|line| selected.contains(line));
-                    let label = if chosen { "Drop selected" } else { "Drop hunk" };
+                    let label = if chosen {
+                        "Discard selected"
+                    } else {
+                        "Discard hunk"
+                    };
                     let button = egui::Rect::from_min_size(
                         egui::pos2(rect.right() - 108.0, rect.top() + 1.0),
                         egui::vec2(104.0, HEIGHT - 2.0),

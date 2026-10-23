@@ -1700,7 +1700,7 @@ mod tests {
             b"one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\nTWELVE\n"
         );
         let output = run(&ctx, &mut view, 1120.0, vec![]);
-        let button = text_pos(&output, "Unstage all").ok_or("missing unstage all")?;
+        let button = text_pos(&output, "Unstage file").ok_or("missing unstage all")?;
         click(&ctx, &mut view, 1120.0, button + egui::vec2(5.0, 0.0));
         pump(&ctx, &mut view, 1120.0, |view| {
             !view.stage.pending() && view.stage.ready() && !view.stage.pane_has_text(0, "TWELVE")
@@ -2019,7 +2019,7 @@ mod tests {
         let line = text_pos(&output, "TWELVE").ok_or("missing selected line")?;
         click(&ctx, &mut view, 1120.0, line + egui::vec2(5.0, 0.0));
         let output = run(&ctx, &mut view, 1120.0, vec![]);
-        let drop = text_pos(&output, "Drop selected").ok_or("missing selected drop")?;
+        let drop = text_pos(&output, "Discard selected").ok_or("missing selected drop")?;
         click(&ctx, &mut view, 1120.0, drop + egui::vec2(5.0, 0.0));
         let output = run(&ctx, &mut view, 1120.0, vec![]);
         let discard = text_pos(&output, "Discard").ok_or("missing discard")?;
@@ -2052,7 +2052,7 @@ mod tests {
             ready(&ctx, &mut view, width);
 
             let output = run(&ctx, &mut view, width, vec![]);
-            let drop = text_pos(&output, "Drop hunk").ok_or("missing drop hunk")?;
+            let drop = text_pos(&output, "Discard hunk").ok_or("missing drop hunk")?;
             click(&ctx, &mut view, width, drop + egui::vec2(5.0, 0.0));
             let output = run(&ctx, &mut view, width, vec![]);
             let cancel = text_pos(&output, "Cancel").ok_or("missing drop cancel")?;
@@ -2061,7 +2061,7 @@ mod tests {
             assert_eq!(std::fs::read(dir.path().join(".git/index"))?, index);
 
             let output = run(&ctx, &mut view, width, vec![]);
-            let drop = text_pos(&output, "Drop hunk").ok_or("missing drop hunk")?;
+            let drop = text_pos(&output, "Discard hunk").ok_or("missing drop hunk")?;
             click(&ctx, &mut view, width, drop + egui::vec2(5.0, 0.0));
             let output = run(&ctx, &mut view, width, vec![]);
             let discard = text_pos(&output, "Discard").ok_or("missing discard")?;
@@ -2080,7 +2080,7 @@ mod tests {
             assert_eq!(std::fs::read(dir.path().join(".git/index"))?, index);
 
             let output = run(&ctx, &mut view, width, vec![]);
-            let drop = text_pos(&output, "Drop all").ok_or("missing drop all")?;
+            let drop = text_pos(&output, "Discard file").ok_or("missing drop all")?;
             click(&ctx, &mut view, width, drop + egui::vec2(5.0, 0.0));
             let output = run(&ctx, &mut view, width, vec![]);
             let discard = text_pos(&output, "Discard").ok_or("missing discard all")?;

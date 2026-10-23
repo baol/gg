@@ -3696,7 +3696,7 @@ impl Browser {
                                                     Some((id.clone(), CommitAction::Rewrite));
                                                 ui.close();
                                             }
-                                            if ui.button("Compare to local").clicked() {
+                                            if ui.button("Compare with current HEAD").clicked() {
                                                 pending_commit_action =
                                                     Some((id.clone(), CommitAction::Compare));
                                                 ui.close();
