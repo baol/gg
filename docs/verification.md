@@ -344,6 +344,7 @@ Linux x86_64 · Rust 1.99.1 · local Git fixtures.
 Linux x86_64 · Rust 1.99.1 · local Git fixtures.
 
 - 296 workspace tests pass (3 ignored); formatting, Clippy with `-D warnings`, and the debug build pass.
+- [Six native CI jobs](https://github.com/baol/gg/actions/runs/39957559424) pass tests, Clippy with `-D warnings`, release builds, CLI smoke checks, and packaging on Linux, macOS, and Windows on x86_64 and arm64 for `171d2f8`.
 - Git oracle tests list a linear range oldest first, reorder commits, squash a commit into the previous row with both messages preserved, rewrite a root range through `--root`, and verify a private `refs/gg/backup/rewrite/...` ref points at the previous tip.
 - Rewrite validation rejects empty, squash-first, duplicate, missing, and out-of-range steps; non-ancestor and option-shaped starts; and ranges containing merge commits. Merge commits are rejected rather than flattened, and a shallow boundary is rejected instead of being rewritten as a root.
 - Conflict fixtures verify the rewrite leaves Git rebase state, lists unmerged paths, aborts to the previous tip and worktree, and skips the conflicting commit to finish the remaining range. Dirty tracked worktrees are rejected unless autostash is explicit, even with `rebase.autoStash=true`; autostash restores the working change.
