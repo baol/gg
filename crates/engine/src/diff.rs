@@ -53,7 +53,7 @@ impl FileDiff {
         }
     }
 }
-fn display(bytes: &[u8]) -> String {
+pub(crate) fn display(bytes: &[u8]) -> String {
     let mut result = String::new();
     let mut rest = bytes.strip_suffix(b"\n").unwrap_or(bytes);
     while !rest.is_empty() {

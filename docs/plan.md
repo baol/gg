@@ -2,6 +2,38 @@
 
 Purpose: sequence milestone delivery and acceptance.
 
+## M7 · File reading, history, attribution, and large repositories
+
+Goal: make the selected file a first-class reading surface, then follow a file or line through history before adding the remaining large-repository features. Reading stays read-only, bounded, cancellable, and independent of the history selection.
+
+Contracts: [file reading and history](architecture.md#file-reading-and-history--m7).
+
+### Increments
+
+1. **File reading surface · complete.** Add a **Diff / Full file** toggle that keeps the selected file, Before/After side, and reading position. Show exact line numbers and changed-line markers, select a line or range with the pointer or keyboard, move to previous/next change with `[`/`]` and visible buttons, and move between files with `Alt+Up/Down` and **Prev file**/**Next file**. Read one side on the existing cancellable selected-file worker, bounded to 2 MiB and 100,000 lines, with explicit absent, binary, gitlink, symlink, and budget states. Keep the status line and help text in step with the bindings.
+2. **File history · planned.** Open a worker-backed path timeline for the selected file, follow renames by default, and show change kind, commit, subject, author, date, and old path. Selecting a row shows the full file at that commit with the place highlighted. `H` opens history and `Esc` backs out one level.
+3. **Blame and line/range history · planned.** Attribute each line to a commit and open the same timeline anchored to `path bytes + revision + start_line..end_line`. Deleted lines anchor the before side explicitly instead of dropping the place. `B` opens blame.
+4. **Image diffs · planned.** Compare images with explicit dimensions, fit modes, and a side-by-side or swipe presentation while keeping the bounded preview and export rules.
+5. **Worktrees · planned.** List, create, open, and remove worktrees without disturbing user files; keep each worktree's drafts and selection separate.
+6. **Submodules · planned.** Show submodule status, referenced commits, and explicit update actions without silently changing the parent repository.
+7. **Git LFS · planned.** Identify LFS pointers, show their object identity, and keep fetch/smudge actions explicit.
+8. **Commit and tag signing · planned.** Verify signatures where the repository provides them and keep signing configuration explicit.
+
+### Acceptance
+
+| Scenario | Expected result | Method |
+| --- | --- | --- |
+| Full-file reading | Diff and Full file keep the same file, side, and reading position; full mode shows exact line numbers and changed-line markers; added/deleted files open the side that exists | egui interaction, Git fixture, and native review |
+| Bounded reads | One side is read on the selected-file worker, cancelled by selection or mode changes, and bounded to 2 MiB and 100,000 lines; binary, gitlink, symlink, absent, and over-budget sides are explicit | Worker tests, Git fixtures, and native review |
+| Line place | Clicking or moving the cursor sets a line; Shift extends a range; the place carries exact path bytes, revision, and start/end lines | egui interaction and engine tests |
+| Change navigation | `[`/`]` and the visible buttons move between changed blocks in full mode and hunks in diff mode without changing files; the position and total are named | egui interaction and native review |
+| File navigation | `Alt+Up/Down` and **Prev file**/**Next file** change the selected file while staying in reading mode and preserving an approximate line position | egui interaction and native review |
+| File history | Path history follows renames, names the old path, and opens the full file at the selected commit with the place highlighted | Git oracle, egui interaction, and native review |
+| Line history | A line/range timeline keeps the place through renames and anchors deleted ranges to the before side | Git oracle, egui interaction, and native review |
+| Read-only safety | Reading, full-file loads, and history navigation never write objects, refs, the index, or working files | Repository snapshot comparison |
+
+Record native wide/narrow captures and verification in [verification](verification.md).
+
 ## UI-flow consolidation · pre-M7
 
 Goal: improve continuity, explicit decisions, and recovery feedback in the existing native workflows before adding M7 features.
