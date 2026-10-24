@@ -26,11 +26,28 @@ The native UI uses egui/eframe 0.37 on wgpu 30. wgpu enables Vulkan, Metal, DX12
 | --- | --- |
 | `GG_OFFLINE=1` | Use cached avatars and initials |
 | `GG_SCREENSHOT=/absolute/path.ppm` | Debug build: capture after loading, then exit |
+| `GG_SCREENSHOT_DELAY_MS=500` | Debug build: settle time before the screenshot |
 | `GG_WINDOW_SIZE=720x480` | Debug window size |
 | `GG_DETAILS=1` | Debug narrow-screen details view |
 | `GG_THEME=light` | Debug light-theme layout and contrast inspection |
 
 Use an isolated display for captures. Avatar cache: `git-good/avatars-v2-128` under the OS cache directory (XDG cache, macOS Library/Caches, or Windows LocalAppData).
+
+### Native screenshot hook
+
+Enable the tracked pre-commit hook once per clone:
+
+```sh
+git config core.hooksPath .githooks
+```
+
+When staged files under `apps/git-good/src`, `apps/git-good/assets`, or the workspace manifests change, the hook builds the debug app, captures `docs/screenshots/gg-native-wide.png` at 1120×740 on an isolated display, and stages the PNG. It needs Python 3; Linux also needs `xvfb-run`. macOS and Windows use the active desktop session.
+
+The hook skips during merge, rebase, cherry-pick, and revert operations and when `GG_SKIP_SCREENSHOT=1` or `CI` is set. It refuses to capture when the staged UI files also have unstaged or untracked edits, so the image matches the commit. Refresh manually with:
+
+```sh
+python3 scripts/capture_native_screenshot.py --force
+```
 
 Measure a packed 100,000-commit fixture:
 
