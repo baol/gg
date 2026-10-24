@@ -1,0 +1,17 @@
+#!/bin/sh
+set -eu
+
+root=$(git rev-parse --show-toplevel)
+python=${PYTHON:-}
+if [ -z "$python" ]; then
+    if command -v python3 >/dev/null 2>&1; then
+        python=python3
+    elif command -v python >/dev/null 2>&1; then
+        python=python
+    else
+        echo "pre-commit: Python 3 is required for the native screenshot" >&2
+        exit 1
+    fi
+fi
+
+exec "$python" "$root/scripts/capture_native_screenshot.py"

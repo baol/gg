@@ -521,6 +521,8 @@ struct Browser {
     mutation_error: Option<String>,
     outcome: Option<Outcome>,
     outcome_details_open: bool,
+    #[cfg(debug_assertions)]
+    screenshot_requested: bool,
     operation_worker: Option<std::sync::mpsc::Receiver<Result<OperationOutcome, String>>>,
     operation_restore_row: Option<usize>,
     merge_dialog: Option<MergeDialog>,
@@ -589,6 +591,8 @@ impl Browser {
             mutation_error: None,
             outcome: None,
             outcome_details_open: false,
+            #[cfg(debug_assertions)]
+            screenshot_requested: false,
             operation_worker: None,
             operation_restore_row: None,
             merge_dialog: None,
@@ -4306,8 +4310,17 @@ impl eframe::App for Browser {
         self.draw_ui(ui);
         #[cfg(debug_assertions)]
         if let Some(path) = std::env::var_os("GG_SCREENSHOT") {
+            let settle = std::env::var("GG_SCREENSHOT_DELAY_MS")
+                .ok()
+                .and_then(|value| value.parse::<f64>().ok())
+                .unwrap_or(500.0)
+                / 1000.0;
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
-            if self.pending.is_none() {
+            if !self.screenshot_requested
+                && self.pending.is_none()
+                && ctx.input(|input| input.time) >= settle
+            {
+                self.screenshot_requested = true;
                 let close = ctx.clone();
                 ctx.request_screenshot(move |image| {
                     use std::io::Write;

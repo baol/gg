@@ -438,3 +438,12 @@ Linux x86_64 · Rust 1.99.1 · local Git fixtures.
 - Tests render a conflict outcome summary with **Details…** and **Resolve conflicts…** at 720 and 1120 widths, open the selectable **Operation details** window, and click **Backups…** to open the recovery surface.
 - Rewrite outcomes include the saved backup ref and conflict paths in the details text.
 - Native wide/narrow interaction review remains pending for this increment.
+
+## Native screenshot hook · 2026-10-24
+
+Linux x86_64 · Rust 1.99.1 · Xvfb/llvmpipe.
+
+- The tracked pre-commit hook builds the debug app, captures 1120×740, converts the PPM to PNG with the standard library, and stages `docs/screenshots/gg-native-wide.png` when UI sources are staged.
+- The screenshot path requests one capture after a settle delay, so repeated repaints cannot interleave writes.
+- `python3 -m unittest discover -s scripts -p 'test_*.py'` covers PPM header and pixel parsing, comments, CRLF headers, and invalid input.
+- The hook skips during merge, rebase, cherry-pick, and revert operations and when staged UI files also have unstaged or untracked edits.
