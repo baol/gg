@@ -250,6 +250,26 @@ impl Review {
                 self.restore_files = true;
                 back = false;
             }
+            if self.show_diff && crate::navigation::activation_available(ctx) {
+                let mut file_step = 0isize;
+                if ctx.input_mut(|i| i.consume_key(egui::Modifiers::ALT, egui::Key::ArrowUp)) {
+                    file_step = -1;
+                } else if ctx
+                    .input_mut(|i| i.consume_key(egui::Modifiers::ALT, egui::Key::ArrowDown))
+                {
+                    file_step = 1;
+                }
+                if file_step != 0 && self.count > 0 {
+                    self.selected = Some(
+                        self.selected
+                            .unwrap_or(0)
+                            .saturating_add_signed(file_step)
+                            .min(self.count - 1),
+                    );
+                    reveal = true;
+                    crate::navigation::focus_content(ctx);
+                }
+            }
             if self.selected.is_some()
                 && crate::navigation::activation_available(ctx)
                 && ctx.input_mut(|i| {
@@ -317,6 +337,34 @@ impl Review {
                     }
                     ui.separator();
                     ui.strong("Changed files");
+                    if self.show_diff {
+                        if ui
+                            .add_enabled(
+                                self.count > 0 && self.selected.unwrap_or(0) > 0,
+                                egui::Button::new("Prev file"),
+                            )
+                            .clicked()
+                        {
+                            self.selected = Some(self.selected.unwrap_or(0).saturating_sub(1));
+                            reveal = true;
+                        }
+                        if ui
+                            .add_enabled(
+                                self.count > 0
+                                    && self.selected.map_or(0, |row| row + 1) < self.count,
+                                egui::Button::new("Next file"),
+                            )
+                            .clicked()
+                        {
+                            self.selected = Some(
+                                self.selected
+                                    .unwrap_or(0)
+                                    .saturating_add(1)
+                                    .min(self.count.saturating_sub(1)),
+                            );
+                            reveal = true;
+                        }
+                    }
                     if self.error.is_some() && ui.button("Retry").clicked() {
                         self.retry(ctx);
                     }
@@ -802,6 +850,81 @@ mod tests {
         }
         Ok(())
     }
+    #[test]
+    fn reading_mode_exposes_file_and_change_navigation_at_both_widths() {
+        for width in [720.0, 1120.0] {
+            let ctx = egui::Context::default();
+            let mut view = Review::fixture(&ctx);
+            view.worker = None;
+            view.selected = Some(0);
+            view.show_diff = true;
+            let frame = |view: &mut Review, events| {
+                let _ = crate::tests::run_ui(
+                    &ctx,
+                    crate::tests::frame_input(width, 480.0, events),
+                    |ctx| {
+                        view.draw_ui(ctx);
+                    },
+                );
+            };
+            let output = crate::tests::run_ui(
+                &ctx,
+                crate::tests::frame_input(width, 480.0, vec![]),
+                |ctx| {
+                    view.draw_ui(ctx);
+                },
+            );
+            let text = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            for label in [
+                "Prev file",
+                "Next file",
+                "Diff",
+                "Full file",
+                "No changes",
+                "< Prev change",
+                "Next change >",
+            ] {
+                assert!(
+                    text.iter().any(|line| line.contains(label)),
+                    "missing {label} at {width}: {text:?}"
+                );
+            }
+            crate::navigation::focus_content(&ctx);
+            frame(
+                &mut view,
+                vec![egui::Event::Key {
+                    key: egui::Key::ArrowDown,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::ALT,
+                }],
+            );
+            assert!(view.show_diff);
+            assert_eq!(view.selected, Some(1));
+            crate::navigation::focus_content(&ctx);
+            frame(
+                &mut view,
+                vec![egui::Event::Key {
+                    key: egui::Key::ArrowUp,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::ALT,
+                }],
+            );
+            assert!(view.show_diff);
+            assert_eq!(view.selected, Some(0));
+        }
+    }
+
     #[test]
     fn enter_and_left_open_and_return_to_files_at_both_widths() {
         for width in [720.0, 1120.0] {
