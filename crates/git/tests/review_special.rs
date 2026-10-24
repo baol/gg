@@ -238,3 +238,74 @@ fn arbitrary_base_comparison_uses_the_against_commit() -> Result {
     );
     Ok(())
 }
+
+#[test]
+fn full_file_reads_the_selected_side_and_marks_changed_lines() -> Result {
+    let dir = tempfile::tempdir()?;
+    git(dir.path(), &["init"], b"")?;
+    let old = git(dir.path(), &["hash-object", "-w", "--stdin"], b"one\ntwo\n")?;
+    let new = git(dir.path(), &["hash-object", "-w", "--stdin"], b"one\nnew\n")?;
+    let before = tree(dir.path(), &[(b"file.txt", "100644", &old)])?;
+    let after = tree(dir.path(), &[(b"file.txt", "100644", &new)])?;
+    let files = changes(dir.path(), &before, &after)?;
+    let diff = gg_git::diff::read(dir.path(), &files[0], || false)?;
+    let changed = gg_engine::file::changed_lines(&diff.rows, gg_engine::file::ReadingSide::After);
+    let file = gg_git::file::read(
+        dir.path(),
+        &files[0],
+        gg_engine::file::ReadingSide::After,
+        &changed,
+        || false,
+    )?;
+    assert_eq!(file.kind, gg_engine::file::FileKind::Text);
+    assert_eq!(file.lines.len(), 2);
+    assert_eq!(file.lines[0].text, "one");
+    assert!(file.lines[1].changed);
+    assert_eq!(file.lines[1].text, "new");
+    assert_eq!(file.changed_groups(), vec![(2, 2)]);
+    let before = gg_git::file::read(
+        dir.path(),
+        &files[0],
+        gg_engine::file::ReadingSide::Before,
+        &gg_engine::file::changed_lines(&diff.rows, gg_engine::file::ReadingSide::Before),
+        || false,
+    )?;
+    assert_eq!(before.lines[1].text, "two");
+    assert!(before.lines[1].changed);
+    Ok(())
+}
+
+#[test]
+fn full_file_absent_and_gitlink_sides_are_explicit() -> Result {
+    let dir = tempfile::tempdir()?;
+    git(dir.path(), &["init"], b"")?;
+    let blob = git(dir.path(), &["hash-object", "-w", "--stdin"], b"new\n")?;
+    let before = tree(dir.path(), &[])?;
+    let after = tree(dir.path(), &[(b"added.txt", "100644", &blob)])?;
+    let files = changes(dir.path(), &before, &after)?;
+    let missing = gg_git::file::read(
+        dir.path(),
+        &files[0],
+        gg_engine::file::ReadingSide::Before,
+        &Default::default(),
+        || false,
+    )?;
+    assert_eq!(missing.kind, gg_engine::file::FileKind::Empty);
+    assert!(missing.note.contains("does not exist"));
+    let linked = tree(dir.path(), &[(b"sub", "160000", &"1".repeat(40))])?;
+    let files = changes(dir.path(), &after, &linked)?;
+    let sub = files
+        .iter()
+        .find(|file| file.path == "sub")
+        .ok_or("missing gitlink change")?;
+    let gitlink = gg_git::file::read(
+        dir.path(),
+        sub,
+        gg_engine::file::ReadingSide::After,
+        &Default::default(),
+        || false,
+    )?;
+    assert_eq!(gitlink.kind, gg_engine::file::FileKind::Gitlink);
+    assert!(gitlink.note.contains("commit ID"));
+    Ok(())
+}

@@ -332,3 +332,29 @@ The native rewrite runs on a background worker so the window remains responsive.
 ### Backups and recovery
 
 `gg_git::backup::list` reads `refs/gg/backup/*` with `git for-each-ref`, newest first. The refs snapshot still excludes `refs/gg/`, so backups never appear as graph labels or ordinary ref rows. **Repository → Backups…**, and the **Backups…** button in the in-progress banner, open a window listing the label, short commit, subject, full private ref, and commit time. Selected backups offer **Open commit**, **Reset branch here** (Soft, Mixed, or Hard), **Create branch here…**, **Copy hash**, and **Copy ref**. Reset reuses the existing reset confirmation, including the Hard warning; branch creation reuses the confirmed branch dialog and never switches the current branch. No recovery action deletes user files or backup refs.
+
+## File reading and history · M7
+
+### Reading surface
+
+The selected-file view has one file identity and three navigation axes: change, file, and commit. **Diff** and **Full file** are two presentations of the same selected file, not separate viewers. Switching presentation keeps the exact path bytes, the Before/After side, and the reading position. The Before/After side applies to full-file reading; the unified diff always shows both sides.
+
+Read one full-file side on the same selected-file worker as the diff, keyed by generation and side. Reuse the diff document for changed-line markers so a mode or side change never recomputes the comparison. Check the blob header before allocating, refuse sides above 2 MiB, and split at most 100,000 source lines. Missing sides, binary content, gitlinks, symlinks, and budget limits return explicit summaries instead of empty text. Cancel before object reads and between projection steps; a superseded generation or side is never published.
+
+Full-file rows are fixed-height and virtualized with exact one-based line numbers. Added lines on the After side and deleted lines on the Before side carry a marker and the same semantic colors as the diff. Clicking a row sets the cursor; Shift-click extends the range. `Up`/`Down` and `j/k` move the cursor, `Shift+Up/Down` extends the range, `PgUp/PgDn` moves by a page, and every movement keeps the cursor visible. The cursor and range are the place used by history.
+
+`[` and `]` move to the previous or next change. In full-file mode a change is a contiguous run of marked lines; in diff mode it is a hunk. Visible **Prev change**/**Next change** buttons perform the same actions, name the current change and total, and stay disabled when the file has no changes. Jumping to a hunk requests the page that contains it from the retained diff document rather than scanning loaded rows.
+
+`Alt+Up` and `Alt+Down` change the selected file while staying in the reading view. The review header exposes **Prev file**/**Next file** for the same action. The selected file, presentation, and side survive the move; the line position is restored when the new file has that line and clamped otherwise. `Esc` still returns to the file list, and `Enter` opens the selected file.
+
+The place is `{ path bytes, revision, start_line, end_line }`, with one-based inclusive lines and exact path bytes. Engine `Place` stores that identity so path, blame, and line history all use one anchor. A deleted range keeps the before side explicit; history must not silently discard it.
+
+### File and line history
+
+Path history is worker-backed, read-only, and follows renames by default. Rows carry the change kind, commit, subject, author, date, and old path where the path changed. Selecting a row opens the full file at that commit with the place highlighted, using the same bounded reading surface. A range timeline uses the `Place` anchor and reports the commit that introduced, changed, or deleted that range. Added, deleted, and renamed files remain distinguishable, and absent commits are identified rather than replaced with empty content.
+
+`H` opens history for the current file or place and `B` opens blame. `Esc` backs out one level: history to the file, blame to the file, and the file to the list. Each action has a visible control. History and blame never move `HEAD`, write refs, or change the index or working files.
+
+### Deferred large-repository features
+
+Image diffs reuse the bounded preview and export rules. Worktrees keep drafts, selection, and filters isolated per canonical worktree. Submodules expose referenced commit IDs and require an explicit update action. Git LFS keeps pointer identity and fetch actions explicit. Signature verification reports the signer and status without changing repository configuration.

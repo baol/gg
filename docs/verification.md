@@ -447,3 +447,15 @@ Linux x86_64 · Rust 1.99.1 · Xvfb/llvmpipe.
 - The screenshot path requests one capture after a settle delay, so repeated repaints cannot interleave writes.
 - `python3 -m unittest discover -s scripts -p 'test_*.py'` covers PPM header and pixel parsing, comments, CRLF headers, and invalid input.
 - The hook skips during merge, rebase, cherry-pick, and revert operations and when staged UI files also have unstaged or untracked edits.
+
+## M7 file reading surface · 2026-10-24
+
+Linux x86_64 · Rust 1.99.1 · local Git fixtures.
+
+- 330 workspace tests pass (3 ignored); formatting and Clippy with `-D warnings` pass.
+- **Full file** reads one side on the selected-file worker, keyed by generation and side, bounded to 2 MiB and 100,000 source lines. Changed-line markers reuse the retained diff document, so toggling presentation or side never recomputes the comparison. Absent, binary, gitlink, symlink, and over-budget sides return explicit summaries.
+- Switching Diff/Full keeps the file, side, and approximate line. When no diff line is loaded yet, full mode adopts the first change; the mode row names the current or next change and the footer names the line/range/change/file bindings. Returning to diff or moving to another file requests the page centered on the reading line, so a distant place is not lost.
+- `[`/`]`, **Prev change**, and **Next change** move between changed blocks in full mode and hunks in diff mode. `Alt+Up/Down` and **Prev file**/**Next file** change the selected file without leaving reading mode.
+- Native X11 at 1120×740: [diff](screenshots/m7-file-wide-diff.png), [full file at the first change](screenshots/m7-file-wide-full.png), [second change](screenshots/m7-file-wide-change.png), [before side](screenshots/m7-file-wide-before.png), and [Alt+Down to the next file](screenshots/m7-file-wide-file.png).
+- Native X11 at 720×480: [full file](screenshots/m7-file-narrow-full.png) and [second change](screenshots/m7-file-narrow-change.png).
+- Full-file reads and reading navigation never write objects, refs, the index, or working files.

@@ -1,6 +1,6 @@
 //! Shared navigation keys; text editors and open menus retain their input.
 use eframe::egui;
-pub const READING_HINT: &str = "Up/Down / j k: scroll · PgUp/PgDn: page · Esc: files";
+pub const READING_HINT: &str = "Up/Down / j k: line · Shift+Up/Down: range · [ ]: change · Alt+Up/Down: file · PgUp/PgDn: page · Esc: files";
 pub fn available(ctx: &egui::Context) -> bool {
     !egui::Popup::is_any_open(ctx)
         && ctx
