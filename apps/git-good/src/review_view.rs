@@ -46,6 +46,8 @@ pub struct Review {
     open_history: bool,
     return_location: Option<crate::return_location::ReturnLocation>,
     saved_reader: Option<crate::reader::ReaderContext>,
+    history_entry_row: Option<usize>,
+    reveal_selection: bool,
 }
 impl Review {
     pub fn new(request: ReviewRequest, subject: String, ctx: &egui::Context) -> Self {
@@ -74,6 +76,8 @@ impl Review {
             open_history: false,
             return_location: None,
             saved_reader: None,
+            history_entry_row: None,
+            reveal_selection: false,
         };
         view.retry(ctx);
         view
@@ -110,10 +114,74 @@ impl Review {
     }
 
     fn open_history_now(&mut self, ctx: &egui::Context) {
+        if self.history.is_some() {
+            return;
+        }
         let Some(change) = self.selected.and_then(|row| self.rows.get(&row)) else {
             return;
         };
-        self.saved_reader = self.diff.save_context();
+        let entry_revision = self
+            .comparison
+            .as_ref()
+            .map(|comparison| comparison.commit.clone());
+        self.history_entry_row = self.selected;
+        self.saved_reader = self.diff.save_context().map(|context| {
+            if let Some(revision) = &entry_revision {
+                context.with_revision(revision.clone())
+            } else {
+                context
+            }
+        });
+        let revision = entry_revision.unwrap_or_else(|| self.request.revision.clone());
+        self.history = Some(crate::file_history_view::FileHistory::new(
+            self.request.path.clone(),
+            revision,
+            change.path.clone(),
+            change.path_bytes.clone(),
+            ctx,
+        ));
+    }
+
+    /// Close the history source and restore the captured entry context once.
+    fn close_history(&mut self, ctx: &egui::Context) {
+        self.history = None;
+        let entry_row = self.history_entry_row.take();
+        if let Some(context) = self.saved_reader.take() {
+            let row = entry_row.or_else(|| {
+                self.rows
+                    .iter()
+                    .find(|(_, change)| change.path_bytes == context.change.path_bytes)
+                    .map(|(row, _)| *row)
+            });
+            if let Some(row) = row {
+                self.selected = Some(row);
+                self.reveal_selection = true;
+            }
+            let same_revision = context.revision.as_ref().is_none_or(|revision| {
+                self.comparison
+                    .as_ref()
+                    .is_none_or(|comparison| &comparison.commit == revision)
+            });
+            if same_revision {
+                self.diff.open_context(&context, ctx);
+            }
+        }
+    }
+
+    /// Leave history because another file was selected. The previous path's
+    /// version cursor is never reused and the entry reader is not restored.
+    fn abandon_history(&mut self) {
+        self.history = None;
+        self.saved_reader = None;
+        self.history_entry_row = None;
+    }
+
+    /// Reset the version cursor when the file-list selection moves to another
+    /// path. The original entry context stays saved for Close history.
+    fn reset_history_for_selection(&mut self, ctx: &egui::Context) {
+        let Some(change) = self.selected.and_then(|row| self.rows.get(&row)) else {
+            return;
+        };
         let revision = self
             .comparison
             .as_ref()
@@ -126,6 +194,19 @@ impl Review {
             change.path_bytes.clone(),
             ctx,
         ));
+    }
+
+    /// Keep history active for the newly selected file and reset its cursor.
+    fn reconcile_history_selection(&mut self, ctx: &egui::Context) -> bool {
+        let Some(history) = &self.history else {
+            return false;
+        };
+        let selected = self.selected.and_then(|row| self.rows.get(&row));
+        if selected.is_some_and(|change| change.path_bytes == history.path_bytes()) {
+            return false;
+        }
+        self.reset_history_for_selection(ctx);
+        true
     }
     fn retry(&mut self, ctx: &egui::Context) {
         self.worker = None;
@@ -151,8 +232,11 @@ impl Review {
         if parent == 0 || parent > comparison.parents.len() {
             return;
         }
-        self.request.path = comparison.path.clone();
-        self.request.revision = comparison.commit.clone();
+        let path = comparison.path.clone();
+        let commit = comparison.commit.clone();
+        self.abandon_history();
+        self.request.path = path;
+        self.request.revision = commit;
         self.request.parent = Some(parent);
         self.retry(ctx);
     }
@@ -212,27 +296,53 @@ impl Review {
                 .copy_text(native_text.unwrap_or(&change.path).to_owned());
         }
     }
+    /// Draw the history strip above whichever reader path is active.
+    fn draw_reader(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, reading: bool) {
+        let mut message = None;
+        if let Some(history) = &mut self.history {
+            history.draw_strip(ui, ctx);
+            ui.separator();
+            message = history.prepare(&mut self.diff, ctx);
+        }
+        if let Some(message) = message {
+            bounded_text::field(ui, message, egui::FontId::proportional(12.0), 22.0);
+            return;
+        }
+        if reading || self.history.is_some() {
+            self.diff.draw_reading(ui);
+        } else {
+            self.diff.draw(ui);
+        }
+    }
     /// Return true when Back is explicitly requested.
     pub(crate) fn draw_ui(&mut self, ui: &mut egui::Ui) -> bool {
         let ctx = ui.ctx().clone();
         let ctx = &ctx;
-        let (before, after) = self.reader_endpoints();
-        self.diff.set_endpoints(before, after);
+        let narrow = ctx.content_rect().width() < 1040.0;
         if self.open_history {
             self.open_history = false;
             self.open_history_now(ctx);
         }
+        let mut history_closed = false;
+        let export_open = self.diff.export_open();
         if let Some(history) = &mut self.history {
-            let back = history.draw(ui);
-            if back {
-                self.history = None;
-                if let Some(context) = self.saved_reader.take() {
-                    self.diff.open_context(&context, ctx);
-                }
+            history.poll();
+            if !export_open && history.keys(ctx) {
+                history_closed = true;
             }
-            return false;
         }
-        if self.show_diff
+        if history_closed {
+            self.close_history(ctx);
+        }
+        self.reconcile_history_selection(ctx);
+        if self.history.is_none() {
+            let (before, after) = self.reader_endpoints();
+            self.diff.set_endpoints(before, after);
+        }
+        let history_available = self.selected.is_some() && (!narrow || self.show_diff);
+        if self.history.is_none()
+            && history_available
+            && !export_open
             && crate::navigation::activation_available(ctx)
             && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::H))
         {
@@ -317,20 +427,24 @@ impl Review {
                 break;
             }
         }
-        let narrow = ctx.content_rect().width() < 1040.0;
         let mut back = false;
-        let mut reveal = false;
+        let mut reveal = self.reveal_selection;
+        self.reveal_selection = false;
         if crate::navigation::available(ctx) && !self.diff.export_open() {
-            back = ctx.input_mut(|i| {
-                i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)
-                    || i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft)
-            });
-            if back && self.show_diff {
-                self.show_diff = false;
-                self.restore_files = true;
-                back = false;
+            if self.history.is_none() {
+                back = ctx.input_mut(|i| {
+                    i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)
+                        || i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft)
+                });
+                if back && self.show_diff {
+                    self.show_diff = false;
+                    self.restore_files = true;
+                    back = false;
+                }
             }
-            if self.show_diff && crate::navigation::activation_available(ctx) {
+            if (self.show_diff || self.history.is_some())
+                && crate::navigation::activation_available(ctx)
+            {
                 let mut file_step = 0isize;
                 if ctx.input_mut(|i| i.consume_key(egui::Modifiers::ALT, egui::Key::ArrowUp)) {
                     file_step = -1;
@@ -350,7 +464,8 @@ impl Review {
                     crate::navigation::focus_content(ctx);
                 }
             }
-            if self.selected.is_some()
+            if self.history.is_none()
+                && self.selected.is_some()
                 && crate::navigation::activation_available(ctx)
                 && ctx.input_mut(|i| {
                     i.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
@@ -372,6 +487,7 @@ impl Review {
                 (egui::Modifiers::NONE, egui::Key::PageDown, page),
             ] {
                 if !(self.show_diff)
+                    && self.history.is_none()
                     && ctx.input_mut(|i| i.consume_key(modifiers, key))
                     && self.count > 0
                 {
@@ -386,7 +502,8 @@ impl Review {
                 }
             }
         }
-        if (!narrow || self.show_diff)
+        if self.history.is_none()
+            && (!narrow || self.show_diff)
             && (self.selected.is_none()
                 || self.selected.is_some_and(|r| self.rows.contains_key(&r)))
         {
@@ -396,11 +513,16 @@ impl Review {
                 ctx,
             );
         }
+        let mut close_history = false;
         egui::Panel::top("review-header")
             .exact_size(42.0)
             .show(ui, |ui| {
                 ui.horizontal_centered(|ui| {
-                    if ui
+                    if self.history.is_some() {
+                        if ui.button("Close history").clicked() {
+                            close_history = true;
+                        }
+                    } else if ui
                         .button(if self.show_diff {
                             "Back to files"
                         } else {
@@ -444,14 +566,16 @@ impl Review {
                             );
                             reveal = true;
                         }
-                        if ui
-                            .add_enabled(self.selected.is_some(), egui::Button::new("History"))
+                    }
+                    if self.history.is_none()
+                        && (!narrow || self.show_diff)
+                        && ui
+                            .add_enabled(history_available, egui::Button::new("History"))
                             .on_disabled_hover_text("Select a file to follow its history")
                             .clicked()
-                        {
-                            self.open_history = true;
-                            ctx.request_repaint();
-                        }
+                    {
+                        self.open_history = true;
+                        ctx.request_repaint();
                     }
                     if self.error.is_some() && ui.button("Retry").clicked() {
                         self.retry(ctx);
@@ -497,11 +621,22 @@ impl Review {
                     }
                 });
             });
+        if close_history {
+            self.close_history(ctx);
+        }
+        let display_endpoints = if self.history.is_some() {
+            self.history
+                .as_ref()
+                .and_then(|history| history.endpoints())
+                .unwrap_or_else(|| self.reader_endpoints())
+        } else {
+            self.reader_endpoints()
+        };
         egui::Panel::top("review-identity")
             .exact_size(96.0)
             .show(ui, |ui| {
                 bounded_text::field(ui, &self.subject, egui::FontId::proportional(16.0), 24.0);
-                let (before, after) = self.reader_endpoints();
+                let (before, after) = &display_endpoints;
                 bounded_text::field(
                     ui,
                     &format!("Before  {before}"),
@@ -546,21 +681,35 @@ impl Review {
                         error.clone()
                     }
                 });
-                let text = failure.as_deref().unwrap_or(if self.replacing {
-                    &pending
-                } else if self.show_diff && self.diff.binary() {
-                    "Scroll to inspect · Export either side · Esc: files"
-                } else if self.show_diff {
-                    crate::navigation::READING_HINT
-                } else if self.complete {
-                    "Up/Down / j k: select · PgUp/PgDn: page · Esc: history"
+                let history_state = self
+                    .history
+                    .as_ref()
+                    .map(|history| (history.pending(), history.error().map(str::to_owned)));
+                let text = if let Some((pending, error)) = &history_state {
+                    if let Some(error) = error {
+                        error.as_str()
+                    } else if *pending {
+                        "Loading earlier versions…"
+                    } else {
+                        crate::navigation::HISTORY_HINT
+                    }
                 } else {
-                    "Reading changed files…"
-                });
+                    failure.as_deref().unwrap_or(if self.replacing {
+                        &pending
+                    } else if self.show_diff && self.diff.binary() {
+                        "Scroll to inspect · Export either side · Esc: files"
+                    } else if self.show_diff {
+                        crate::navigation::READING_HINT
+                    } else if self.complete {
+                        "Up/Down / j k: select · PgUp/PgDn: page · Esc: history"
+                    } else {
+                        "Reading changed files…"
+                    })
+                };
                 bounded_text::field(ui, text, egui::FontId::proportional(12.0), 18.0);
             });
         if self.show_diff {
-            egui::CentralPanel::default().show(ui, |ui| self.diff.draw_reading(ui));
+            egui::CentralPanel::default().show(ui, |ui| self.draw_reader(ui, ctx, true));
             bounded_text::show_disclosure(ctx);
             return back;
         }
@@ -568,7 +717,7 @@ impl Review {
             egui::Panel::right("review-file-diff")
                 .default_size(640.0)
                 .size_range(400.0..=(ctx.content_rect().width() - 320.0).max(400.0))
-                .show(ui, |ui| self.diff.draw(ui));
+                .show(ui, |ui| self.draw_reader(ui, ctx, false));
         } else {
             egui::Panel::bottom("review-file-info-narrow")
                 .exact_size(170.0)
@@ -674,7 +823,9 @@ impl Review {
             self.offset = result.state.clamped_offset().y;
             self.page = (result.inner_rect.height() / ROW).floor().max(1.0) as usize;
         });
-        if (!narrow || self.show_diff)
+        self.reconcile_history_selection(ctx);
+        if self.history.is_none()
+            && (!narrow || self.show_diff)
             && (self.selected.is_none()
                 || self.selected.is_some_and(|r| self.rows.contains_key(&r)))
         {
@@ -746,6 +897,94 @@ impl Review {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn key_event(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
+        egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        }
+    }
+
+    fn frame(
+        view: &mut Review,
+        ctx: &egui::Context,
+        width: f32,
+        height: f32,
+        events: Vec<egui::Event>,
+    ) -> (bool, Vec<String>) {
+        let mut back = false;
+        let output = crate::tests::run_ui(
+            ctx,
+            crate::tests::frame_input(width, height, events),
+            |ui| {
+                back = view.draw_ui(ui);
+            },
+        );
+        let text = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) => Some(text.galley.job.text.clone()),
+                _ => None,
+            })
+            .collect();
+        (back, text)
+    }
+
+    fn history_timeline(path_bytes: &[u8]) -> gg_engine::file_history::Timeline {
+        use gg_engine::{
+            file_history::{FileVersion, HistoryKind, Predecessor, Timeline},
+            review::FileSide,
+        };
+        let display = String::from_utf8_lossy(path_bytes).into_owned();
+        let side = |id: &str| FileSide {
+            id: id.into(),
+            mode: 0o100644,
+        };
+        let version = |id: &str, kind, old_path: Option<&str>, previous| FileVersion {
+            path_bytes: path_bytes.to_vec(),
+            path: display.clone(),
+            side: Some(side(id)),
+            commit: id.repeat(40),
+            subject: "History version".into(),
+            author: "Ada".into(),
+            time: 1_767_268_800,
+            kind: Some(kind),
+            old_path_bytes: old_path.map(|path| path.as_bytes().to_vec()),
+            old_path: old_path.map(str::to_owned),
+            previous,
+        };
+        Timeline::new(
+            vec![
+                version(
+                    "e",
+                    HistoryKind::Renamed,
+                    Some("old.rs"),
+                    Predecessor::Linked,
+                ),
+                version("d", HistoryKind::Added, None, Predecessor::Oldest),
+            ],
+            true,
+            None,
+        )
+    }
+
+    fn install_history(view: &mut Review) -> Result<crate::reader::ReaderContext, String> {
+        let selected = view.selected.ok_or("selected file")?;
+        let change = view.rows.get(&selected).ok_or("selected change")?.clone();
+        let saved = view.diff.save_context().ok_or("reader context")?;
+        view.saved_reader = Some(saved.clone());
+        view.history_entry_row = view.selected;
+        view.history = Some(crate::file_history_view::FileHistory::fixture(
+            change.path_bytes.clone(),
+            history_timeline(&change.path_bytes),
+            0,
+        ));
+        Ok(saved)
+    }
 
     #[test]
     fn against_comparison_names_before_and_after_sources() {
@@ -1106,78 +1345,286 @@ mod tests {
     }
 
     #[test]
-    fn history_opens_from_reading_and_escape_backs_out_one_level()
+    fn history_opens_in_the_reader_and_escape_restores_the_entry_context_once()
     -> Result<(), Box<dyn std::error::Error>> {
         let ctx = egui::Context::default();
         let mut view = Review::fixture(&ctx);
-        let frame = |view: &mut Review, events| {
-            let mut back = false;
-            let _ = crate::tests::run_ui(
-                &ctx,
-                crate::tests::frame_input(1120.0, 740.0, events),
-                |ui| {
-                    back = view.draw_ui(ui);
-                },
-            );
-            back
-        };
-        frame(&mut view, vec![]);
-        let selected = view.selected.ok_or("the fixture has no selected file")?;
-        assert!(view.rows.contains_key(&selected));
+        let _ = frame(&mut view, &ctx, 1120.0, 740.0, vec![]);
         view.show_diff = true;
-        assert!(!frame(
-            &mut view,
-            vec![egui::Event::Key {
-                key: egui::Key::H,
-                physical_key: None,
-                pressed: true,
-                repeat: false,
-                modifiers: egui::Modifiers::NONE,
-            }],
-        ));
-        assert!(view.open_history);
-        frame(&mut view, vec![]);
-        assert!(view.history.is_some());
-        assert!(view.show_diff);
-        let back = frame(
-            &mut view,
-            vec![egui::Event::Key {
-                key: egui::Key::Escape,
-                physical_key: None,
-                pressed: true,
-                repeat: false,
-                modifiers: egui::Modifiers::NONE,
-            }],
+        view.selected = Some(20);
+        view.offset = 300.0;
+        let location = crate::return_location::ReturnLocation::History(
+            crate::return_location::HistoryLocation {
+                selected: Some("caller".into()),
+                query: "fix".into(),
+                offset: 12.0,
+            },
         );
-        assert!(!back, "Esc in history stays inside the review");
-        assert!(view.history.is_none());
-        assert!(view.show_diff);
-        let back = frame(
+        view.set_return_location(location.clone());
+        let _ = frame(&mut view, &ctx, 1120.0, 740.0, vec![]);
+        let saved = install_history(&mut view)?;
+        let selected = view.selected;
+        let file_offset = view.offset;
+        let (_, text) = frame(&mut view, &ctx, 1120.0, 740.0, vec![]);
+        assert!(view.history.is_some());
+        for label in [
+            "File history",
+            "Older version",
+            "Newer version",
+            "Version 1 of 2",
+        ] {
+            assert!(
+                text.iter().any(|line| line.contains(label)),
+                "missing {label}: {text:?}"
+            );
+        }
+        let (back, _) = frame(
             &mut view,
-            vec![egui::Event::Key {
-                key: egui::Key::Escape,
-                physical_key: None,
-                pressed: true,
-                repeat: false,
-                modifiers: egui::Modifiers::NONE,
-            }],
+            &ctx,
+            1120.0,
+            740.0,
+            vec![key_event(egui::Key::ArrowLeft, egui::Modifiers::ALT)],
+        );
+        assert!(!back);
+        assert_eq!(
+            view.history.as_ref().map(|history| history.index()),
+            Some(1)
+        );
+        assert_eq!(
+            view.return_location.as_ref(),
+            Some(&location),
+            "a version step adds no Back/return-location entry"
+        );
+        let history_context = view.diff.save_context().ok_or("history context")?;
+        assert_ne!(
+            history_context.change.new, saved.change.new,
+            "the version step did not change the reader source"
+        );
+        let (back, _) = frame(
+            &mut view,
+            &ctx,
+            1120.0,
+            740.0,
+            vec![key_event(egui::Key::Escape, egui::Modifiers::NONE)],
+        );
+        assert!(!back, "closing history must not leave the review");
+        assert!(view.history.is_none());
+        assert!(view.saved_reader.is_none());
+        assert!(view.show_diff);
+        assert_eq!(view.selected, selected);
+        assert_eq!(view.offset, file_offset);
+        assert_eq!(
+            view.return_location.as_ref(),
+            Some(&location),
+            "closing history restores the reader without adding Back"
+        );
+        let restored = view.diff.save_context().ok_or("restored context")?;
+        assert_eq!(restored.change.path_bytes, saved.change.path_bytes);
+        assert_eq!(restored.change.old, saved.change.old);
+        assert_eq!(restored.change.new, saved.change.new);
+        assert_eq!(restored.before, saved.before);
+        assert_eq!(restored.after, saved.after);
+        assert_eq!(restored.place, saved.place);
+        // A later frame must not apply the saved context again.
+        let _ = frame(&mut view, &ctx, 1120.0, 740.0, vec![]);
+        assert_eq!(
+            view.diff.save_context().ok_or("context")?.place,
+            saved.place
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn history_opens_from_the_wide_reader_and_never_stacks() {
+        let ctx = egui::Context::default();
+        let mut view = Review::fixture(&ctx);
+        view.selected = Some(4);
+        let _ = frame(&mut view, &ctx, 1120.0, 740.0, vec![]);
+        assert!(!view.show_diff);
+        let file_offset = view.offset;
+        let (_, text) = frame(
+            &mut view,
+            &ctx,
+            1120.0,
+            740.0,
+            vec![key_event(egui::Key::H, egui::Modifiers::NONE)],
+        );
+        assert!(view.open_history, "H requests history on the next frame");
+        let (_, text2) = frame(&mut view, &ctx, 1120.0, 740.0, vec![]);
+        assert!(view.history.is_some());
+        assert!(!view.show_diff, "the wide file list keeps its place");
+        assert_eq!(view.selected, Some(4));
+        assert_eq!(view.offset, file_offset);
+        assert!(
+            text.iter()
+                .chain(text2.iter())
+                .any(|line| line == "History"),
+            "the visible History button remains reachable"
+        );
+        let saved = view.saved_reader.is_some();
+        assert_eq!(
+            view.saved_reader
+                .as_ref()
+                .and_then(|context| context.revision.as_deref()),
+            Some("commit"),
+            "opening history captures the entry revision"
+        );
+        let (_, _) = frame(
+            &mut view,
+            &ctx,
+            1120.0,
+            740.0,
+            vec![key_event(egui::Key::H, egui::Modifiers::NONE)],
+        );
+        assert!(!view.open_history);
+        assert!(view.history.is_some());
+        assert_eq!(view.saved_reader.is_some(), saved);
+    }
+
+    #[test]
+    fn narrow_history_uses_the_reading_layout_and_escape_closes_it_first()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        let mut view = Review::fixture(&ctx);
+        view.show_diff = true;
+        view.selected = Some(6);
+        let _ = frame(&mut view, &ctx, 720.0, 480.0, vec![]);
+        let saved = install_history(&mut view)?;
+        let (_, text) = frame(&mut view, &ctx, 720.0, 480.0, vec![]);
+        assert!(view.history.is_some());
+        assert!(text.iter().any(|line| line.contains("Older version")));
+        let (back, _) = frame(
+            &mut view,
+            &ctx,
+            720.0,
+            480.0,
+            vec![key_event(egui::Key::Escape, egui::Modifiers::NONE)],
+        );
+        assert!(!back);
+        assert!(view.history.is_none());
+        assert!(view.show_diff, "history returns to the reading layout");
+        assert_eq!(
+            view.diff.save_context().ok_or("restored context")?.place,
+            saved.place
+        );
+        let (back, _) = frame(
+            &mut view,
+            &ctx,
+            720.0,
+            480.0,
+            vec![key_event(egui::Key::Escape, egui::Modifiers::NONE)],
+        );
+        assert!(!back);
+        assert!(!view.show_diff, "the next Escape returns to the file list");
+        let (back, _) = frame(
+            &mut view,
+            &ctx,
+            720.0,
+            480.0,
+            vec![key_event(egui::Key::Escape, egui::Modifiers::NONE)],
+        );
+        assert!(back, "the last Escape leaves the review");
+        Ok(())
+    }
+
+    #[test]
+    fn selecting_another_file_resets_history_and_keeps_the_return_context()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        let mut view = Review::fixture(&ctx);
+        view.selected = Some(0);
+        let _ = frame(&mut view, &ctx, 1120.0, 740.0, vec![]);
+        let saved = install_history(&mut view)?;
+        view.history.as_mut().ok_or("history")?.set_index(1);
+        view.selected = Some(1);
+        let new_path = view.rows[&1].path_bytes.clone();
+        let _ = frame(&mut view, &ctx, 1120.0, 740.0, vec![]);
+        let history = view.history.as_ref().ok_or("history stays active")?;
+        assert_eq!(history.path_bytes(), new_path.as_slice());
+        assert_eq!(
+            history.index(),
+            0,
+            "the new file starts at its newest version"
         );
         assert!(
-            !back,
-            "the first Esc from the file returns to the file list"
+            view.saved_reader.is_some(),
+            "the original entry context stays saved"
         );
-        assert!(!view.show_diff);
-        let back = frame(
+        assert_ne!(saved.change.path_bytes, new_path);
+        // The entry row can fall outside the bounded row cache while history is
+        // open. Closing must still restore its selection and place by identity.
+        view.rows.remove(&0);
+
+        let _ = frame(
             &mut view,
-            vec![egui::Event::Key {
-                key: egui::Key::Escape,
-                physical_key: None,
-                pressed: true,
-                repeat: false,
-                modifiers: egui::Modifiers::NONE,
-            }],
+            &ctx,
+            1120.0,
+            740.0,
+            vec![key_event(egui::Key::Escape, egui::Modifiers::NONE)],
         );
-        assert!(back, "the second Esc leaves the review");
+        assert!(view.history.is_none(), "Escape closes history");
+        let restored = view.diff.save_context().ok_or("restored comparison")?;
+        assert_eq!(restored.change.path_bytes, saved.change.path_bytes);
+        Ok(())
+    }
+
+    #[test]
+    fn an_ambiguous_history_edge_keeps_full_content_and_disables_diff()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        let mut view = Review::fixture(&ctx);
+        view.show_diff = true;
+        view.selected = Some(2);
+        let _ = frame(&mut view, &ctx, 1120.0, 740.0, vec![]);
+        let change = view.rows.get(&2).ok_or("change")?.clone();
+        let saved = view.diff.save_context().ok_or("reader context")?;
+        view.saved_reader = Some(saved);
+        let candidate = gg_engine::file_history::VersionCandidate {
+            commit: "c".repeat(40),
+            path_bytes: change.path_bytes.clone(),
+            path: change.path.clone(),
+            side: change.new.clone(),
+            subject: "Older".into(),
+            author: "Ada".into(),
+            time: 1,
+            kind: gg_engine::file_history::HistoryKind::Modified,
+            old_path_bytes: None,
+            old_path: None,
+        };
+        let version = gg_engine::file_history::FileVersion {
+            path_bytes: change.path_bytes.clone(),
+            path: change.path.clone(),
+            side: change.new.clone(),
+            commit: "d".repeat(40),
+            subject: "Current".into(),
+            author: "Ada".into(),
+            time: 2,
+            kind: None,
+            old_path_bytes: None,
+            old_path: None,
+            previous: gg_engine::file_history::Predecessor::Candidates {
+                choices: vec![candidate],
+            },
+        };
+        view.history = Some(crate::file_history_view::FileHistory::fixture(
+            change.path_bytes.clone(),
+            gg_engine::file_history::Timeline::new(vec![version], true, None),
+            0,
+        ));
+        let (_, text) = frame(&mut view, &ctx, 1120.0, 740.0, vec![]);
+        assert!(view.history.is_some());
+        assert!(
+            text.iter()
+                .any(|line| line.contains("Choose the earlier version")),
+            "the chooser stays inside the version strip: {text:?}"
+        );
+        let capabilities = view.diff.capabilities();
+        assert!(!capabilities.diff, "Diff waits for the earlier edge");
+        assert_eq!(
+            view.diff.place().mode,
+            crate::diff_worker::Mode::Full,
+            "the current Full file stays readable"
+        );
         Ok(())
     }
 }

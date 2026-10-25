@@ -175,8 +175,8 @@ flowchart TD
 
 **Entry:** Reading → History/H. **Goal:** understand how the selected file evolved without moving history selection or HEAD.
 
-1. Open a full-screen review sub-view preserving the file/side/position behind it. Show version change kind, hash, subject, author, date, and old path for renames.
-2. Before moves one older content version and After one newer. Skip unchanged commits. Keep version navigation separate from Old/New inspection sides; Full file shows current content, Diff shows previous → current.
+1. Change the comparison source inside the shared reader while keeping the file list and entry context in place. Show a version strip with version change kind, hash, subject, author, date, and old path for renames.
+2. Older version moves one older content version and Newer version one newer. Skip unchanged commits. Keep version navigation separate from Before/After inspection sides; Full file shows current content, Diff shows previous → current.
 3. Follow a unique predecessor silently. For multiple genuinely ambiguous predecessors, show candidates with kind/hash/subject/author/date/old path and require a choice; until then current Full file remains available and Diff disables.
 4. Page earlier versions on demand. Distinguish Loading earlier versions, trace limit, failed page with retry, Oldest version, Newest version, and Only version; never wrap.
 5. A deletion is an absent version, not empty content; a re-add begins an added edge. Escape returns to the exact reading context, then the file list.

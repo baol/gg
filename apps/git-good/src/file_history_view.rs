@@ -1,4 +1,8 @@
-//! A bounded, newest-to-oldest content timeline for the selected file.
+//! A bounded newest-to-oldest content-version strip for the shared reader.
+//!
+//! History changes the reader's comparison source. It owns the worker-backed
+//! timeline and the current version, but it never renders a second content
+//! viewer: `prepare` hands the current edge to the review's `DiffView`.
 use crate::{
     bounded_text,
     diff_view::DiffView,
@@ -25,7 +29,6 @@ pub struct FileHistory {
     busy: bool,
     choosing: Option<usize>,
     error: Option<String>,
-    diff: DiffView,
 }
 
 impl FileHistory {
@@ -49,7 +52,6 @@ impl FileHistory {
             busy: true,
             choosing: None,
             error: None,
-            diff: DiffView::default(),
         };
         view.start(ctx);
         view
@@ -63,7 +65,6 @@ impl FileHistory {
         self.busy = true;
         self.choosing = None;
         self.error = None;
-        self.diff = DiffView::default();
         match Worker::start(ctx.clone()) {
             Ok(worker) => {
                 worker.open(
@@ -81,12 +82,31 @@ impl FileHistory {
         }
     }
 
+    /// Retry a failed page without discarding the versions already loaded.
+    ///
+    /// The worker keeps its session and pending boundary on failure, so asking
+    /// for more versions resumes from the same edge instead of restarting.
     fn retry(&mut self, ctx: &egui::Context) {
-        self.generation += 1;
-        self.start(ctx);
+        self.error = None;
+        if self.timeline.is_some() && self.worker.is_some() {
+            let target = self
+                .timeline
+                .as_ref()
+                .map_or(PRELOAD, |timeline| timeline.versions.len() + PRELOAD);
+            self.requested = self.requested.max(target);
+            self.busy = true;
+            if let Some(worker) = &self.worker {
+                worker.need(self.generation, self.requested);
+            }
+            ctx.request_repaint();
+        } else {
+            self.generation += 1;
+            self.start(ctx);
+        }
     }
 
-    fn poll(&mut self) {
+    /// Accept current worker output. History is polled while its strip is open.
+    pub fn poll(&mut self) {
         let Some(update) = self.worker.as_ref().and_then(Worker::poll) else {
             return;
         };
@@ -126,8 +146,18 @@ impl FileHistory {
         }
     }
 
-    fn pending(&self) -> bool {
+    pub fn pending(&self) -> bool {
         self.busy
+    }
+
+    pub fn error(&self) -> Option<&str> {
+        self.error.as_deref()
+    }
+
+    /// Exact bytes of the followed path. Review compares this with the file
+    /// list selection to decide whether another file was chosen.
+    pub fn path_bytes(&self) -> &[u8] {
+        &self.path_bytes
     }
 
     fn current(&self) -> Option<&FileVersion> {
@@ -138,7 +168,7 @@ impl FileHistory {
         self.timeline.as_ref()?.versions.last()
     }
 
-    fn can_before(&self) -> bool {
+    fn can_older(&self) -> bool {
         let Some(timeline) = &self.timeline else {
             return false;
         };
@@ -151,21 +181,21 @@ impl FileHistory {
         ) && !self.pending()
     }
 
-    fn can_after(&self) -> bool {
+    fn can_newer(&self) -> bool {
         self.index > 0
     }
 
-    fn before_reason(&self) -> Option<String> {
+    fn older_reason(&self) -> Option<String> {
         self.timeline
             .as_ref()?
             .before_reason(self.index, self.pending())
     }
 
-    fn after_reason(&self) -> Option<&'static str> {
+    fn newer_reason(&self) -> Option<&'static str> {
         self.timeline.as_ref()?.after_reason(self.index)
     }
 
-    fn before(&mut self, ctx: &egui::Context) {
+    fn older(&mut self, ctx: &egui::Context) {
         let Some(timeline) = &self.timeline else {
             return;
         };
@@ -181,7 +211,7 @@ impl FileHistory {
         }
     }
 
-    fn after(&mut self) {
+    fn newer(&mut self) {
         self.index = self.index.saturating_sub(1);
     }
 
@@ -204,7 +234,7 @@ impl FileHistory {
         ctx.request_repaint();
     }
 
-    /// Keep a short lookahead so a Before step is usually already loaded.
+    /// Keep a short lookahead so an Older step is usually already loaded.
     fn ensure_loaded(&mut self, ctx: &egui::Context) {
         let Some(timeline) = &self.timeline else {
             return;
@@ -298,65 +328,113 @@ impl FileHistory {
         Some((before, after))
     }
 
-    fn keys(&mut self, ctx: &egui::Context) -> bool {
+    /// Exact endpoint labels of the displayed history edge.
+    pub fn endpoints(&self) -> Option<(String, String)> {
+        self.edge_labels()
+    }
+
+    /// Hand the current version edge to the shared reader.
+    ///
+    /// Returns a visible message when there is no comparison to render, such
+    /// as a loading first page or an absent root version.
+    pub fn prepare(&mut self, diff: &mut DiffView, ctx: &egui::Context) -> Option<&'static str> {
+        let edge = self.edge();
+        if let Some((change, known)) = edge {
+            diff.set_side_labels("Before", "After");
+            if let Some((before, after)) = self.edge_labels() {
+                diff.set_endpoints(before, after);
+            }
+            diff.select_edge(self.repo.clone(), Some(change), known, ctx);
+            return None;
+        }
+        if self.timeline.is_none() {
+            return Some(if self.error.is_some() {
+                "File history unavailable"
+            } else {
+                "Loading file history…"
+            });
+        }
+        Some(match self.current() {
+            None => "No content versions are available.",
+            Some(version) if version.side.is_none() => "The file is absent in this version.",
+            Some(_) => "This version has no file content.",
+        })
+    }
+
+    /// Return true when Escape/Back closes the history source.
+    pub fn keys(&mut self, ctx: &egui::Context) -> bool {
         if !navigation::available(ctx) {
             return false;
         }
-        let back =
-            ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
-        if back {
-            return true;
-        }
-        let before =
+        // Match Alt+Left/Right before the plain Back key: egui ignores extra
+        // Alt modifiers when matching `Modifiers::NONE`.
+        let older =
             ctx.input_mut(|input| input.consume_key(egui::Modifiers::ALT, egui::Key::ArrowLeft));
-        if before {
-            self.before(ctx);
+        if older {
+            self.older(ctx);
         }
-        let after =
+        let newer =
             ctx.input_mut(|input| input.consume_key(egui::Modifiers::ALT, egui::Key::ArrowRight));
-        if after {
-            self.after();
+        if newer {
+            self.newer();
         }
-        false
+        ctx.input_mut(|input| {
+            input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)
+                || input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft)
+        })
     }
 
-    fn header(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) -> bool {
-        let mut back = false;
+    /// Draw the compact version strip directly above the shared reader.
+    pub fn draw_strip(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         ui.horizontal(|ui| {
-            if ui.button("Back to file").clicked() {
-                back = true;
-            }
-            ui.separator();
             ui.strong("File history");
             ui.weak(&self.file);
         });
         ui.horizontal_wrapped(|ui| {
             if ui
-                .add_enabled(self.can_before(), egui::Button::new("< Before"))
+                .add_enabled(self.can_older(), egui::Button::new("Older version"))
                 .on_disabled_hover_text(
-                    self.before_reason()
+                    self.older_reason()
                         .unwrap_or_else(|| "The earlier version is not available".into()),
                 )
                 .clicked()
             {
-                self.before(ctx);
+                self.older(ctx);
             }
             if ui
-                .add_enabled(self.can_after(), egui::Button::new("After >"))
+                .add_enabled(self.can_newer(), egui::Button::new("Newer version"))
+                .on_disabled_hover_text("Newest version")
                 .clicked()
             {
-                self.after();
+                self.newer();
             }
-            ui.separator();
+        });
+        ui.horizontal_wrapped(|ui| {
             if let Some(timeline) = &self.timeline {
                 ui.weak(timeline.position(self.index));
+            } else if self.error.is_some() {
+                ui.weak("History unavailable");
             } else {
                 ui.weak("Loading versions…");
             }
-            if let Some(reason) = self.before_reason() {
+            let reason = if !self.can_older() {
+                self.older_reason()
+            } else if !self.can_newer() {
+                self.newer_reason().map(str::to_owned)
+            } else {
+                None
+            };
+            if let Some(reason) = reason {
                 ui.weak(reason);
-            } else if let Some(reason) = self.after_reason() {
-                ui.weak(reason);
+            } else if self.can_older() && self.can_newer() {
+                ui.weak("Earlier version");
+            }
+            if let Some(note) = self
+                .timeline
+                .as_ref()
+                .and_then(|timeline| timeline.note.as_deref())
+            {
+                ui.weak(note);
             }
         });
         if let Some(version) = self.current() {
@@ -375,10 +453,35 @@ impl FileHistory {
             }
             bounded_text::field(ui, &detail, egui::FontId::monospace(11.0), 18.0);
         }
-        if self.error.is_some() && self.timeline.is_some() && ui.button("Retry").clicked() {
-            self.retry(ctx);
+        if let Some(error) = self.error.clone() {
+            let mut retry = false;
+            ui.horizontal(|ui| {
+                let retry_width = 64.0;
+                let width = (ui.available_width() - retry_width - 8.0).max(80.0);
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::vec2(width, 18.0), egui::Sense::hover());
+                bounded_text::paint(
+                    ui,
+                    rect,
+                    &format!("History page failed · {error}"),
+                    egui::FontId::proportional(12.0),
+                    ui.visuals().error_fg_color,
+                );
+                if ui.button("Retry").clicked() {
+                    retry = true;
+                }
+            });
+            if retry {
+                self.retry(ctx);
+            }
         }
-        back
+        if self
+            .timeline
+            .as_ref()
+            .is_some_and(|timeline| timeline.choices(self.index).is_some())
+        {
+            self.chooser(ui, ctx);
+        }
     }
 
     fn chooser(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
@@ -416,88 +519,35 @@ impl FileHistory {
                 }
             });
     }
+}
 
-    fn content(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        if self
-            .timeline
-            .as_ref()
-            .is_some_and(|timeline| timeline.choices(self.index).is_some())
-        {
-            ui.weak("Choose one of the earlier versions above to compare it with this version.");
-            return;
-        }
-        match self.edge() {
-            Some((change, known)) => {
-                self.diff.set_side_labels("Old", "New");
-                if let Some((before, after)) = self.edge_labels() {
-                    self.diff.set_endpoints(before, after);
-                }
-                self.diff
-                    .select_edge(self.repo.clone(), Some(change), known, ctx);
-                self.diff.draw_reading(ui);
-            }
-            None => {
-                let text = if self.current().is_some() {
-                    "This version has no file content."
-                } else {
-                    "The file is absent in this version."
-                };
-                ui.weak(text);
-            }
+#[cfg(test)]
+impl FileHistory {
+    /// A deterministic strip fixture with no worker session.
+    pub fn fixture(path_bytes: Vec<u8>, timeline: Timeline, index: usize) -> Self {
+        let file = String::from_utf8_lossy(&path_bytes).into_owned();
+        Self {
+            generation: 1,
+            repo: "/repo".into(),
+            revision: "HEAD".into(),
+            file,
+            path_bytes,
+            worker: None,
+            timeline: Some(timeline),
+            index,
+            requested: PRELOAD,
+            busy: false,
+            choosing: None,
+            error: None,
         }
     }
 
-    /// Return true when Back to file is requested.
-    pub fn draw(&mut self, ui: &mut egui::Ui) -> bool {
-        let ctx = ui.ctx().clone();
-        let ctx = &ctx;
-        self.poll();
-        if self.keys(ctx) {
-            return true;
-        }
-        let mut back = false;
-        egui::Panel::top("file-history-header")
-            .frame(egui::Frame::side_top_panel(ui.style().as_ref()).inner_margin(8.0))
-            .show(ui, |ui| {
-                back = self.header(ui, ctx);
-            });
-        if self
-            .timeline
-            .as_ref()
-            .is_some_and(|timeline| timeline.choices(self.index).is_some())
-        {
-            egui::Panel::top("file-history-chooser")
-                .frame(egui::Frame::side_top_panel(ui.style().as_ref()).inner_margin(8.0))
-                .show(ui, |ui| self.chooser(ui, ctx));
-        }
-        egui::Panel::bottom("file-history-status")
-            .exact_size(26.0)
-            .show(ui, |ui| {
-                let text = if let Some(error) = &self.error {
-                    error.as_str()
-                } else if self.pending() {
-                    "Loading earlier versions…"
-                } else {
-                    navigation::HISTORY_HINT
-                };
-                bounded_text::field(ui, text, egui::FontId::proportional(12.0), 18.0);
-            });
-        egui::CentralPanel::default().show(ui, |ui| {
-            if self.timeline.is_none() {
-                ui.weak(if self.error.is_some() {
-                    "File history unavailable"
-                } else {
-                    "Loading file history…"
-                });
-                if self.error.is_some() && ui.button("Retry").clicked() {
-                    self.retry(ctx);
-                }
-                return;
-            }
-            self.content(ui, ctx);
-        });
-        bounded_text::show_disclosure(ctx);
-        back
+    pub fn set_index(&mut self, index: usize) {
+        self.index = index;
+    }
+
+    pub fn index(&self) -> usize {
+        self.index
     }
 }
 
@@ -573,21 +623,7 @@ mod tests {
     }
 
     fn view(timeline: Timeline) -> FileHistory {
-        FileHistory {
-            generation: 1,
-            repo: "/repo".into(),
-            revision: "HEAD".into(),
-            file: "src/lib.rs".into(),
-            path_bytes: b"src/lib.rs".to_vec(),
-            worker: None,
-            timeline: Some(timeline),
-            index: 0,
-            requested: PRELOAD,
-            busy: false,
-            choosing: None,
-            error: None,
-            diff: DiffView::default(),
-        }
+        FileHistory::fixture(b"src/lib.rs".to_vec(), timeline, 0)
     }
 
     #[test]
@@ -601,38 +637,38 @@ mod tests {
             None,
         );
         let mut history = view(timeline);
-        assert!(history.can_before());
-        assert!(!history.can_after());
-        assert_eq!(history.after_reason(), Some("Newest version"));
-        assert_eq!(history.before_reason(), None);
+        assert!(history.can_older());
+        assert!(!history.can_newer());
+        assert_eq!(history.newer_reason(), Some("Newest version"));
+        assert_eq!(history.older_reason(), None);
 
         history.index = 1;
-        assert!(!history.can_before());
-        assert!(history.can_after());
-        assert_eq!(history.before_reason().as_deref(), Some("Oldest version"));
-        assert_eq!(history.after_reason(), None);
-        history.after();
+        assert!(!history.can_older());
+        assert!(history.can_newer());
+        assert_eq!(history.older_reason().as_deref(), Some("Oldest version"));
+        assert_eq!(history.newer_reason(), None);
+        history.newer();
         assert_eq!(history.index, 0);
-        history.after();
+        history.newer();
         assert_eq!(history.index, 0);
     }
 
     #[test]
-    fn a_loading_predecessor_disables_before_and_names_the_reason() {
+    fn a_loading_predecessor_disables_older_and_names_the_reason() {
         let mut history = view(Timeline::new(
             vec![version(Predecessor::More, Some(HistoryKind::Modified))],
             false,
             None,
         ));
         history.busy = true;
-        assert!(!history.can_before());
+        assert!(!history.can_older());
         assert_eq!(
-            history.before_reason().as_deref(),
+            history.older_reason().as_deref(),
             Some("Loading earlier versions…")
         );
         history.busy = false;
-        assert!(history.can_before());
-        assert_eq!(history.before_reason(), None);
+        assert!(history.can_older());
+        assert_eq!(history.older_reason(), None);
     }
 
     #[test]
@@ -654,15 +690,15 @@ mod tests {
             true,
             None,
         ));
-        assert!(!history.can_before());
+        assert!(!history.can_older());
         assert_eq!(
-            history.before_reason().as_deref(),
+            history.older_reason().as_deref(),
             Some("Choose one of 1 predecessors")
         );
     }
 
     #[test]
-    fn the_edge_uses_old_and_new_sides_and_an_unknown_edge_has_no_diff()
+    fn the_edge_uses_before_and_after_sides_and_an_unknown_edge_has_no_diff()
     -> Result<(), Box<dyn std::error::Error>> {
         let mut timeline = Timeline::new(
             vec![
@@ -699,6 +735,24 @@ mod tests {
     }
 
     #[test]
+    fn an_unresolved_edge_prepares_full_current_content_without_diff()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        let mut history = view(Timeline::new(
+            vec![version(Predecessor::More, Some(HistoryKind::Modified))],
+            false,
+            None,
+        ));
+        let mut diff = DiffView::default();
+        assert!(history.prepare(&mut diff, &ctx).is_none());
+        let capabilities = diff.capabilities();
+        assert!(!capabilities.diff);
+        assert!(capabilities.full_after);
+        assert_eq!(diff.place().mode, crate::diff_worker::Mode::Full);
+        Ok(())
+    }
+
+    #[test]
     fn dates_are_utc_and_handle_the_epoch() {
         assert_eq!(date(0), "1970-01-01 00:00 UTC");
         assert_eq!(date(1_767_268_800), "2026-01-01 12:00 UTC");
@@ -706,7 +760,7 @@ mod tests {
     }
 
     #[test]
-    fn the_rendered_header_names_the_version_and_old_path() {
+    fn the_rendered_strip_names_the_version_and_old_path() {
         let ctx = egui::Context::default();
         let mut timeline = Timeline::new(
             vec![
@@ -723,7 +777,7 @@ mod tests {
             &ctx,
             crate::tests::frame_input(1120.0, 740.0, vec![]),
             |ui| {
-                history.draw(ui);
+                history.draw_strip(ui, &ctx);
             },
         );
         let text = output
@@ -738,5 +792,159 @@ mod tests {
         assert!(text.iter().any(|line| line.contains("Renamed")));
         assert!(text.iter().any(|line| line.contains("from old.rs")));
         assert!(text.iter().any(|line| line.contains("Newest version")));
+        assert!(text.contains(&"Older version"));
+        assert!(text.contains(&"Newer version"));
+        assert!(!text.iter().any(|line| line.contains("< Before")));
+        assert!(!text.iter().any(|line| line.contains("After >")));
+    }
+
+    #[test]
+    fn a_failed_page_retry_keeps_the_loaded_timeline() -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        let timeline = Timeline::new(
+            vec![
+                version(Predecessor::Linked, Some(HistoryKind::Modified)),
+                version(Predecessor::More, Some(HistoryKind::Added)),
+            ],
+            false,
+            None,
+        );
+        let mut history = view(timeline);
+        history.worker = Some(Worker::start(ctx.clone())?);
+        history.error = Some("History page failed".into());
+        let before = history.timeline.as_ref().map(|t| t.versions.len());
+        history.retry(&ctx);
+        assert_eq!(history.timeline.as_ref().map(|t| t.versions.len()), before);
+        assert!(history.error.is_none());
+        assert_eq!(history.index, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn rapid_version_steps_stop_at_both_boundaries() {
+        let ctx = egui::Context::default();
+        let timeline = Timeline::new(
+            vec![
+                version(Predecessor::Linked, Some(HistoryKind::Modified)),
+                version(Predecessor::Linked, Some(HistoryKind::Modified)),
+                version(Predecessor::Oldest, Some(HistoryKind::Added)),
+            ],
+            true,
+            None,
+        );
+        let mut history = view(timeline);
+        history.older(&ctx);
+        history.older(&ctx);
+        assert_eq!(history.index, 2);
+        history.older(&ctx);
+        assert_eq!(history.index, 2);
+        history.newer();
+        history.newer();
+        assert_eq!(history.index, 0);
+        history.newer();
+        assert_eq!(history.index, 0);
+    }
+
+    #[test]
+    fn a_deleted_version_compares_the_absent_after_side() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let ctx = egui::Context::default();
+        let mut deleted = version(Predecessor::Linked, Some(HistoryKind::Deleted));
+        deleted.side = None;
+        let timeline = Timeline::new(
+            vec![
+                deleted,
+                version(Predecessor::Oldest, Some(HistoryKind::Added)),
+            ],
+            true,
+            None,
+        );
+        let mut history = view(timeline);
+        let mut diff = DiffView::default();
+        assert!(history.prepare(&mut diff, &ctx).is_none());
+        let capabilities = diff.capabilities();
+        assert!(capabilities.diff);
+        assert!(capabilities.full_before);
+        assert!(!capabilities.full_after);
+        let change = diff.change.as_ref().ok_or("deleted edge")?;
+        assert!(change.old.is_some());
+        assert!(change.new.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn an_absent_root_version_has_no_content_to_render() {
+        let ctx = egui::Context::default();
+        let mut absent = version(Predecessor::Oldest, Some(HistoryKind::Deleted));
+        absent.side = None;
+        let mut history = view(Timeline::new(vec![absent], true, None));
+        let mut diff = DiffView::default();
+        assert_eq!(
+            history.prepare(&mut diff, &ctx),
+            Some("The file is absent in this version.")
+        );
+    }
+
+    #[test]
+    fn the_strip_offers_every_predecessor_choice() {
+        let ctx = egui::Context::default();
+        let choices = vec![
+            VersionCandidate {
+                commit: "b".repeat(40),
+                path_bytes: b"src/lib.rs".to_vec(),
+                path: "src/lib.rs".into(),
+                side: Some(side("b")),
+                subject: "Older branch".into(),
+                author: "Ada".into(),
+                time: 1,
+                kind: HistoryKind::Modified,
+                old_path_bytes: None,
+                old_path: None,
+            },
+            VersionCandidate {
+                commit: "c".repeat(40),
+                path_bytes: b"src/new.rs".to_vec(),
+                path: "src/new.rs".into(),
+                side: Some(side("c")),
+                subject: "Renamed elsewhere".into(),
+                author: "Bob".into(),
+                time: 2,
+                kind: HistoryKind::Renamed,
+                old_path_bytes: Some(b"old.rs".to_vec()),
+                old_path: Some("old.rs".into()),
+            },
+        ];
+        let mut history = view(Timeline::new(
+            vec![version(Predecessor::Candidates { choices }, None)],
+            true,
+            None,
+        ));
+        let output = crate::tests::run_ui(
+            &ctx,
+            crate::tests::frame_input(720.0, 480.0, vec![]),
+            |ui| {
+                history.draw_strip(ui, &ctx);
+            },
+        );
+        let text = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            text.iter()
+                .any(|line| line.contains("Choose the earlier version"))
+        );
+        assert!(
+            text.iter()
+                .any(|line| line.contains("Older branch") && !line.contains("from old.rs"))
+        );
+        assert!(
+            text.iter()
+                .any(|line| line.contains("Renamed elsewhere") && line.contains("from old.rs"))
+        );
     }
 }

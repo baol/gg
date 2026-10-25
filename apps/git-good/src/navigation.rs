@@ -1,8 +1,7 @@
 //! Shared navigation keys; text editors and open menus retain their input.
 use eframe::egui;
 pub const READING_HINT: &str = "Up/Down / j k: line · Shift+Up/Down: range · [ ]: change · Alt+Up/Down: file · H: history · PgUp/PgDn: page · Esc: files";
-pub const HISTORY_HINT: &str =
-    "Alt+Left/Right: version · [ ]: change · Up/Down: line · Shift+Up/Down: range · Esc: file";
+pub const HISTORY_HINT: &str = "Alt+Left/Right: version · [ ]: change · Up/Down: line · Shift+Up/Down: range · Esc: close history";
 pub fn available(ctx: &egui::Context) -> bool {
     !egui::Popup::is_any_open(ctx)
         && ctx
