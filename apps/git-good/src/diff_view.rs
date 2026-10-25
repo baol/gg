@@ -46,6 +46,7 @@ pub struct DiffView {
     cursor: Option<usize>,
     anchor: Option<usize>,
     hunks: Vec<usize>,
+    groups: Vec<(usize, usize)>,
     jump: Option<usize>,
     restore_line: Option<usize>,
 }
@@ -85,6 +86,7 @@ impl Default for DiffView {
             cursor: None,
             anchor: None,
             hunks: vec![],
+            groups: vec![],
             jump: None,
             restore_line: None,
         }
@@ -134,6 +136,7 @@ impl DiffView {
         self.cursor = None;
         self.anchor = None;
         self.hunks.clear();
+        self.groups.clear();
         self.jump = None;
         if !self.side_available(self.side) {
             self.side = self.existing_side();
@@ -238,6 +241,7 @@ impl DiffView {
                 self.full = None;
                 self.cursor = None;
                 self.anchor = None;
+                self.groups.clear();
             }
             self.preview = None;
             match update.full {
@@ -249,12 +253,14 @@ impl DiffView {
                         .map(|line| line.text.chars().count())
                         .max()
                         .unwrap_or(0);
+                    self.groups = text.changed_groups();
                     self.full = Some(text);
                     self.error = None;
                     self.adopt_position();
                 }
                 Some(Err(error)) => {
                     self.full = None;
+                    self.groups.clear();
                     self.count = 0;
                     self.error = Some(error);
                 }
@@ -450,76 +456,87 @@ impl DiffView {
         ctx.request_repaint();
     }
 
-    fn change_position(&self) -> (usize, usize) {
-        if self.mode == Mode::Full {
-            let Some(full) = &self.full else {
-                return (0, 0);
-            };
-            let groups = full.changed_groups();
-            let line = self.cursor.map(|index| index + 1).unwrap_or(1);
-            let index = groups
-                .iter()
-                .position(|(start, end)| (*start..=*end).contains(&line))
-                .map(|position| position + 1)
-                .unwrap_or_else(|| {
-                    groups
-                        .iter()
-                        .filter(|(_, end)| *end < line)
-                        .count()
-                        .saturating_add(1)
-                        .min(groups.len())
-                });
-            return (index, groups.len());
+    /// One-based change number at or before the cursor. `None` means before the first change.
+    fn change_number(&self) -> Option<usize> {
+        let index = match self.mode {
+            Mode::Full => {
+                let line = self.cursor? + 1;
+                self.groups.iter().rposition(|(start, _)| *start <= line)?
+            }
+            Mode::Diff => {
+                let row = self.cursor?;
+                self.hunks.iter().rposition(|hunk| *hunk <= row)?
+            }
+        };
+        Some(index + 1)
+    }
+
+    fn change_total(&self) -> usize {
+        match self.mode {
+            Mode::Full => self.groups.len(),
+            Mode::Diff => self.hunks.len(),
         }
-        let total = self.hunks.len();
+    }
+
+    fn change_position(&self) -> (usize, usize) {
+        let total = self.change_total();
         if total == 0 {
             return (0, 0);
         }
-        let row = self.cursor.unwrap_or(self.range.start);
-        (
-            self.hunks
-                .iter()
-                .filter(|hunk| **hunk <= row)
-                .count()
-                .max(1),
-            total,
-        )
+        // Before the first change the next one is still change 1.
+        (self.change_number().unwrap_or(1), total)
     }
 
-    fn jump_change(&mut self, direction: isize, ctx: &egui::Context) {
-        if self.mode == Mode::Full {
-            let Some(full) = &self.full else {
-                return;
-            };
-            let groups = full.changed_groups();
-            let line = self.cursor.map(|index| index + 1).unwrap_or(1);
-            let target = if direction > 0 {
-                groups
+    fn next_change(&self) -> Option<usize> {
+        match self.mode {
+            Mode::Full => {
+                let Some(line) = self.cursor.map(|index| index + 1) else {
+                    return self.groups.first().map(|(start, _)| *start);
+                };
+                self.groups
                     .iter()
                     .find(|(start, _)| *start > line)
                     .map(|(start, _)| *start)
-            } else {
-                groups
+            }
+            Mode::Diff => {
+                let Some(row) = self.cursor else {
+                    return self.hunks.first().copied();
+                };
+                self.hunks.iter().find(|hunk| **hunk > row).copied()
+            }
+        }
+    }
+
+    fn previous_change(&self) -> Option<usize> {
+        match self.mode {
+            Mode::Full => {
+                let line = self.cursor? + 1;
+                self.groups
                     .iter()
                     .rev()
                     .find(|(_, end)| *end < line)
                     .map(|(start, _)| *start)
-            };
-            let Some(target) = target else {
-                return;
-            };
-            self.select_row(target.saturating_sub(1));
-            return;
+            }
+            Mode::Diff => {
+                let row = self.cursor?;
+                self.hunks.iter().rev().find(|hunk| **hunk < row).copied()
+            }
         }
-        let row = self.cursor.unwrap_or(self.range.start);
+    }
+
+    fn jump_change(&mut self, direction: isize, ctx: &egui::Context) {
         let target = if direction > 0 {
-            self.hunks.iter().find(|hunk| **hunk > row).copied()
+            self.next_change()
         } else {
-            self.hunks.iter().rev().find(|hunk| **hunk < row).copied()
+            self.previous_change()
         };
         let Some(target) = target else {
             return;
         };
+        if self.mode == Mode::Full {
+            self.select_row(target.saturating_sub(1));
+            return;
+        }
         self.cursor = Some(target);
         self.anchor = Some(target);
         self.jump = Some(target);
@@ -718,18 +735,22 @@ impl DiffView {
             let (index, total) = self.change_position();
             let label = if total == 0 {
                 "No changes".to_string()
-            } else {
+            } else if self.change_number().is_some() {
                 format!("Change {index} of {total}")
+            } else {
+                format!("Before change 1 of {total}")
             };
             ui.weak(label);
+            let previous = self.previous_change().is_some();
+            let next = self.next_change().is_some();
             if ui
-                .add_enabled(total > 0, egui::Button::new("< Prev change"))
+                .add_enabled(previous, egui::Button::new("< Prev change"))
                 .clicked()
             {
                 actions.push(Action::Change(-1));
             }
             if ui
-                .add_enabled(total > 0, egui::Button::new("Next change >"))
+                .add_enabled(next, egui::Button::new("Next change >"))
                 .clicked()
             {
                 actions.push(Action::Change(1));
@@ -1348,6 +1369,163 @@ mod tests {
         view.jump_change(-1, &ctx);
         assert_eq!(view.cursor, Some(1));
         assert_eq!(view.change_position(), (1, 2));
+    }
+
+    #[test]
+    fn diff_change_navigation_reaches_the_first_hunk_and_stops_at_the_ends() {
+        let ctx = egui::Context::default();
+        let mut view = DiffView {
+            count: 200,
+            hunks: vec![0, 40],
+            ..Default::default()
+        };
+        assert_eq!(view.change_position(), (1, 2));
+        assert_eq!(view.previous_change(), None);
+        assert_eq!(view.next_change(), Some(0));
+
+        view.jump_change(1, &ctx);
+        assert_eq!(view.cursor, Some(0));
+        assert_eq!(view.previous_change(), None);
+        assert_eq!(view.next_change(), Some(40));
+
+        view.jump_change(1, &ctx);
+        assert_eq!(view.cursor, Some(40));
+        assert_eq!(view.previous_change(), Some(0));
+        assert_eq!(view.next_change(), None);
+        view.jump_change(1, &ctx);
+        assert_eq!(view.cursor, Some(40));
+
+        view.jump_change(-1, &ctx);
+        assert_eq!(view.cursor, Some(0));
+        view.jump_change(-1, &ctx);
+        assert_eq!(view.cursor, Some(0));
+    }
+
+    #[test]
+    fn full_file_change_navigation_handles_both_boundaries() {
+        let ctx = egui::Context::default();
+        let mut view = DiffView {
+            change: Some(file("a", true, true)),
+            generation: 1,
+            mode: Mode::Full,
+            ..Default::default()
+        };
+        let body: Vec<u8> = (1..=50)
+            .map(|line| format!("line {line}\n"))
+            .collect::<String>()
+            .into_bytes();
+        let text =
+            FileText::from_bytes(ReadingSide::After, &body, &BTreeSet::from([4usize, 5, 40]));
+        view.accept(full_update(1, ReadingSide::After, text), None);
+
+        view.cursor = Some(2); // line 3, before the first change.
+        assert_eq!(view.change_position(), (1, 2));
+        assert_eq!(view.previous_change(), None);
+        assert_eq!(view.next_change(), Some(4));
+        view.jump_change(1, &ctx);
+        assert_eq!(view.cursor, Some(3));
+        view.jump_change(1, &ctx);
+        assert_eq!(view.cursor, Some(39));
+        assert_eq!(view.previous_change(), Some(4));
+        assert_eq!(view.next_change(), None);
+        view.jump_change(1, &ctx);
+        assert_eq!(view.cursor, Some(39));
+        view.jump_change(-1, &ctx);
+        assert_eq!(view.cursor, Some(3));
+        view.jump_change(-1, &ctx);
+        assert_eq!(view.cursor, Some(3));
+    }
+
+    #[test]
+    fn change_key_scrolls_to_an_offscreen_hunk() {
+        let ctx = egui::Context::default();
+        let mut view = DiffView {
+            change: Some(file("a", true, true)),
+            generation: 1,
+            ..Default::default()
+        };
+        let mut doc = FileDiff::summary(DiffKind::Text, 0, 200, "");
+        doc.rows = (0..200)
+            .map(|index| {
+                let hunk = index == 0 || index == 40;
+                DiffRow {
+                    kind: if hunk {
+                        RowKind::Hunk
+                    } else {
+                        RowKind::Context
+                    },
+                    old_line: (!hunk).then_some(index + 1),
+                    new_line: (!hunk).then_some(index + 1),
+                    text: if hunk { "@@" } else { "line" }.into(),
+                    bytes: vec![],
+                }
+            })
+            .collect();
+        view.accept(diff_update(1, doc), None);
+        view.change = None; // Isolate rendered input from asynchronous repository reads.
+        let frame = |view: &mut DiffView, events| {
+            let _ = crate::tests::run_ui(
+                &ctx,
+                crate::tests::frame_input(720.0, 480.0, events),
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| view.draw_reading(ui));
+                },
+            );
+        };
+        frame(&mut view, vec![]);
+        assert_eq!(view.cursor, None);
+        for target in [Some(0), Some(40)] {
+            frame(
+                &mut view,
+                vec![egui::Event::Key {
+                    key: egui::Key::CloseBracket,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+            );
+            assert_eq!(view.cursor, target, "offset {}", view.offset);
+        }
+        assert!(
+            view.offset >= 40.0 * HEIGHT - 1.0,
+            "second change must scroll into view, offset {}",
+            view.offset
+        );
+    }
+
+    #[test]
+    fn a_single_change_is_reachable_and_then_terminal_in_both_modes() {
+        let ctx = egui::Context::default();
+        let mut full = DiffView {
+            change: Some(file("a", true, true)),
+            generation: 1,
+            mode: Mode::Full,
+            ..Default::default()
+        };
+        let text = FileText::from_bytes(ReadingSide::After, b"one\ntwo\n", &BTreeSet::from([1]));
+        full.accept(full_update(1, ReadingSide::After, text), None);
+        full.cursor = None;
+        full.anchor = None;
+        assert_eq!(full.change_position(), (1, 1));
+        assert_eq!(full.previous_change(), None);
+        assert_eq!(full.next_change(), Some(1));
+        full.jump_change(1, &ctx);
+        assert_eq!(full.cursor, Some(0));
+        assert_eq!(full.previous_change(), None);
+        assert_eq!(full.next_change(), None);
+
+        let mut diff = DiffView {
+            count: 10,
+            hunks: vec![0],
+            ..Default::default()
+        };
+        assert_eq!(diff.previous_change(), None);
+        assert_eq!(diff.next_change(), Some(0));
+        diff.jump_change(1, &ctx);
+        assert_eq!(diff.cursor, Some(0));
+        assert_eq!(diff.previous_change(), None);
+        assert_eq!(diff.next_change(), None);
     }
 
     #[test]
