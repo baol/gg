@@ -1752,7 +1752,21 @@ mod tests {
             if done(view) {
                 return;
             }
-            assert!(std::time::Instant::now() < until, "working view timed out");
+            if std::time::Instant::now() >= until {
+                eprintln!(
+                    "pump state busy={} complete={} replacing={} commit_pending={} commit_done={:?} error={:?} identity={} stage_ready={} stage_mutating={}",
+                    view.busy(),
+                    view.complete,
+                    view.replacing,
+                    view.commit.is_some(),
+                    view.commit_done,
+                    view.error,
+                    view.identity.is_some(),
+                    view.stage.ready(),
+                    view.stage.mutating(),
+                );
+                panic!("working view timed out");
+            }
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
     }
