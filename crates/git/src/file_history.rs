@@ -439,6 +439,7 @@ impl Session {
             .stderr(Stdio::piped())
             .env_remove("GIT_DIR")
             .env_remove("GIT_WORK_TREE")
+            .env("GIT_OPTIONAL_LOCKS", "0")
             .output()
             .map_err(|error| {
                 format!("Could not inspect renames with Git: {error}. Install Git and retry.")
