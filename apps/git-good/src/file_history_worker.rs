@@ -291,6 +291,8 @@ mod tests {
         let dir = tempfile::tempdir()?;
         git(dir.path(), &["init", "-b", "main"])?;
         git(dir.path(), &["config", "core.autocrlf", "false"])?;
+        git(dir.path(), &["config", "gc.auto", "0"])?;
+        git(dir.path(), &["config", "maintenance.auto", "false"])?;
         std::fs::write(dir.path().join("f.txt"), "one\n")?;
         git(dir.path(), &["add", "-A"])?;
         git(dir.path(), &["commit", "-m", "Add"])?;
