@@ -2,8 +2,9 @@
 //!
 //! The reader is `diff_view::DiffView`. This module carries the values that
 //! consumers (review, staging, and history) exchange without owning another
-//! renderer. A saved context is exact: comparison identity, both endpoint
-//! labels, presentation, inspection side, cursor, anchor, and pixel offset.
+//! renderer. A saved context is exact: comparison identity, revision, both
+//! endpoint labels, presentation, inspection side, cursor, anchor, and pixel
+//! offset.
 
 use crate::diff_worker::Mode;
 use gg_engine::{file::ReadingSide, review::FileChange};
@@ -52,10 +53,14 @@ pub struct Capabilities {
 pub struct ReaderContext {
     /// Repository root used by the selected-file worker.
     pub repository: PathBuf,
+    /// Revision or comparison identity the entry reader was pinned to.
+    pub revision: Option<String>,
     pub change: FileChange,
     pub before: Endpoint,
     pub after: Endpoint,
     pub place: ReaderPlace,
+    /// Whether the edge into this content is resolved for Diff.
+    pub edge_known: bool,
 }
 
 impl ReaderContext {
@@ -70,8 +75,16 @@ impl ReaderContext {
             before: Endpoint::new(before),
             after: Endpoint::new(after),
             repository,
+            revision: None,
             change,
             place,
+            edge_known: true,
         }
+    }
+
+    /// Capture the exact revision that opened a comparison source.
+    pub fn with_revision(mut self, revision: impl Into<String>) -> Self {
+        self.revision = Some(revision.into());
+        self
     }
 }

@@ -181,7 +181,7 @@ impl DiffView {
         }
     }
 
-    /// Name the two inspection sides; history calls them Old and New.
+    /// Name the two inspection sides. History and review both use Before/After.
     pub fn set_side_labels(&mut self, old: &'static str, new: &'static str) {
         self.old_label = old;
         self.new_label = new;
@@ -212,7 +212,7 @@ impl DiffView {
             Some(side) => format!("{label} {}", side.id.chars().take(8).collect::<String>()),
             None => format!("{label} · absent"),
         };
-        Some(reader::ReaderContext::new(
+        let mut context = reader::ReaderContext::new(
             self.path.clone(),
             change.clone(),
             self.before_endpoint
@@ -222,11 +222,18 @@ impl DiffView {
                 .clone()
                 .unwrap_or_else(|| endpoint(self.new_label, &change.new)),
             self.place(),
-        ))
+        );
+        context.edge_known = self.edge_known;
+        Some(context)
     }
 
     /// Restore a captured context without inventing a second viewer.
     pub fn open_context(&mut self, context: &reader::ReaderContext, ctx: &egui::Context) {
+        // Restore the saved edge capability. Consumer-specific side labels are
+        // reset by the caller before selecting a new source.
+        self.edge_known = context.edge_known;
+        self.old_label = "Before";
+        self.new_label = "After";
         let same = self.path == context.repository
             && self
                 .change

@@ -254,7 +254,13 @@ fn emit(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{error::Error, path::Path, process::Command, time::Duration};
+    use std::{
+        collections::BTreeMap,
+        error::Error,
+        path::{Path, PathBuf},
+        process::Command,
+        time::Duration,
+    };
 
     type Result<T = ()> = std::result::Result<T, Box<dyn Error>>;
 
@@ -308,6 +314,50 @@ mod tests {
             }
             thread::sleep(Duration::from_millis(2));
         }
+    }
+
+    fn snapshot(root: &Path) -> Result<BTreeMap<PathBuf, Vec<u8>>> {
+        fn visit(root: &Path, dir: &Path, files: &mut BTreeMap<PathBuf, Vec<u8>>) -> Result {
+            for entry in std::fs::read_dir(dir)? {
+                let path = entry?.path();
+                if path.is_dir() {
+                    visit(root, &path, files)?;
+                } else {
+                    files.insert(path.strip_prefix(root)?.to_path_buf(), std::fs::read(path)?);
+                }
+            }
+            Ok(())
+        }
+        let mut files = BTreeMap::new();
+        visit(root, root, &mut files)?;
+        Ok(files)
+    }
+
+    #[test]
+    fn reading_versions_preserves_the_repository() -> Result {
+        let dir = fixture()?;
+        let before = snapshot(dir.path())?;
+        let worker = Worker::start(eframe::egui::Context::default())?;
+        worker.open(1, dir.path().into(), "HEAD".into(), b"f.txt".to_vec());
+        let update = wait(&worker, 1)?;
+        assert!(update.error.is_none(), "{:?}", update.error);
+        worker.need(1, timeline_versions(&update) + PRELOAD);
+        let update = wait(&worker, 1)?;
+        assert!(update.error.is_none(), "{:?}", update.error);
+        drop(worker);
+        assert_eq!(
+            snapshot(dir.path())?,
+            before,
+            "reading file history changed repository files"
+        );
+        Ok(())
+    }
+
+    fn timeline_versions(update: &Update) -> usize {
+        update
+            .timeline
+            .as_ref()
+            .map_or(0, |timeline| timeline.versions.len())
     }
 
     #[test]
