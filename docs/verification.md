@@ -2,6 +2,28 @@
 
 Purpose: record measured results and outstanding acceptance checks.
 
+## Coherence proposal and shared workspace · 2026-10-25
+
+Reviewed [cross-view interaction consistency](ui-coherence.md) and created a [shared-workspace prototype](ui-coherence.html). Local Changes incorporates the user's requested arrangement: Unstaged above Staged on the left, selected changes on the right, commit/amend at lower right. File selection determines the comparison; no second Staged/Unstaged switch is present.
+
+- Headless Chromium exercised all five starting scenarios at viewport widths 1120, 720, 390, and 320 pixels without root horizontal overflow or JavaScript runtime errors.
+- Geometry checks confirmed the two left-hand groups and the right-hand diff/commit alignment. Interaction checks covered a partially staged file in both groups, stage/unstage readiness, commit success, separate normal/amend drafts and amend base identity, in-place file history with bounded version navigation, restoration of side/attribution, return from commit inspection to the selected Reflog source, conflict-preview versus staging boundaries, continuation across navigation, and stash restore options.
+- Visually inspected light and dark layouts. Captures: [Local Changes, wide](screenshots/coherence-local-changes-wide.png), [file history in the shared reader, narrow](screenshots/coherence-file-history-narrow.png).
+- JavaScript syntax, local document file links, inline/source equality, and `git diff --check` passed. The editable prototype source is [ui-coherence.fragment.html](ui-coherence.fragment.html).
+
+These checks validate simulated browser interactions only. Production Rust, native Git behavior, accessibility certification, and release acceptance are unchanged; Cargo checks were not run for this design-only change.
+
+## User-flow design pack · 2026-10-25
+
+Reviewed the [documented features and roadmap](user-flows.md) and prepared 17 flows with [20 interactive mockup screens](ui-mockups.html). Existing behavior and proposed M7 interfaces are labeled separately. These are browser wireframes with fictional data and local state, not native application captures.
+
+- Headless Chromium opened the standalone mockups and exercised all 20 screens at viewport widths 1120, 390, and 320 pixels. No root horizontal overflow or JavaScript runtime errors were observed.
+- Simulated hunk staging, message editing, commit success, conflict Continue gating/resolution/completion, ambiguous-predecessor selection, push retry/success, rewrite/refresh completion, LFS object availability, and narrow conflict-side selection passed browser interaction checks.
+- Inspected captures: [light staging, wide](screenshots/flows-stage-wide.png), [file history, narrow](screenshots/flows-history-narrow.png), and [dark conflicts, narrow](screenshots/flows-conflicts-dark-narrow.png).
+- JavaScript syntax, local document file links, source/inline-copy equality, and `git diff --check` passed. Production Rust code was unchanged; Cargo checks were not run for this documentation and mockup change.
+
+Native widget behavior, Git mutations, assistive technology, display scaling, exhaustive contrast, performance, and cross-platform acceptance remain outside this mockup review. M7 delivery and release-gate status are unchanged.
+
 ## M0 baseline · 2026-10-18
 
 Linux x86_64 · Rust 1.94. M0 is the accepted browser baseline; M1 is planned. [Coverage and gaps](regression.md).

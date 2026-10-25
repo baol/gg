@@ -1,0 +1,186 @@
+<!-- Purpose: explore one shared gg workspace, scoped actions, and operation lifecycle. -->
+<div id="gg-coherence">
+  <div class="viz-controls">
+    <label class="form-label">Starting scenario<select class="form-select" id="gc-scenario"><option value="review">Commit review</option><option value="changes">Local changes</option><option value="conflict">Resolve conflicts</option><option value="stashes">Stashes</option><option value="recovery">Recovery</option></select></label>
+    <label class="form-check"><input class="form-check-input" id="gc-narrow" type="checkbox"><span class="form-check-label">Narrow layout</span></label>
+  </div>
+  <div class="viz-row"><span class="viz-badge">Coherence proposal</span><span>One file workspace · explicit actions · shared recovery</span></div>
+  <div class="gc-app" id="gc-app">
+    <header class="gc-chrome"><strong>gg · good git</strong><details class="gc-menu"><summary>Repository</summary><div class="gc-menu-content"><button type="button" data-action="stashes">Stashes…</button><button type="button" data-action="recovery">Recovery…</button></div></details><span class="gc-repo">atlas <span aria-hidden="true">/</span> <b>feature/cache</b></span></header>
+    <nav class="gc-navigation" aria-label="Primary navigation"><button type="button" data-action="changes" id="gc-nav-changes">Local Changes</button><button type="button" data-action="history" id="gc-nav-history">History</button><span class="gc-tracking">origin/feature/cache · 2 ahead</span></nav>
+    <div id="gc-operation" class="gc-operation" aria-live="polite" hidden></div>
+    <main id="gc-main"></main>
+    <footer class="gc-outcome"><span id="gc-status" role="status">Ready · fictional repository</span><details id="gc-details" hidden><summary>Details</summary><p id="gc-details-text"></p></details></footer>
+    <dialog id="gc-dialog" aria-labelledby="gc-dialog-title"></dialog>
+  </div>
+</div>
+<style>
+#gg-coherence .gc-app{--gc-bg:light-dark(#fafafa,#1c1d1f);--gc-panel:light-dark(#f0f1f3,#25272a);--gc-text:light-dark(#20242a,#ebedf0);--gc-muted:light-dark(#545d69,#b3bbc6);--gc-line:light-dark(#cdd2d9,#454b54);--gc-accent:light-dark(#dceef8,#163f54);--gc-accent-text:light-dark(#084766,#dcf3ff);--gc-button:light-dark(#155d80,#9ed9f4);--gc-button-text:light-dark(#fff,#102b39);--gc-add:light-dark(#dff0e5,#163d2b);--gc-del:light-dark(#fae1e1,#4b252c);--gc-attention:light-dark(#fff1d8,#42351c);color-scheme:light dark;background:var(--gc-bg);color:var(--gc-text);font:13px/1.5 system-ui,sans-serif;margin-top:16px;border:1px solid var(--gc-line);border-radius:8px;overflow:clip}
+#gg-coherence .gc-app *{box-sizing:border-box}
+#gg-coherence .gc-app button,#gg-coherence .gc-app select,#gg-coherence .gc-app input,#gg-coherence .gc-app textarea{font:inherit;color:var(--gc-text);background:var(--gc-panel);border:1px solid var(--gc-line);border-radius:5px;padding:6px 10px;max-width:100%}
+#gg-coherence .gc-app button,#gg-coherence .gc-app summary{cursor:pointer}
+#gg-coherence .gc-app button:hover:not(:disabled){background:var(--gc-accent);color:var(--gc-accent-text)}
+#gg-coherence .gc-app button:disabled{opacity:.55;cursor:default}
+#gg-coherence .gc-app button[aria-pressed=true]{background:var(--gc-accent);color:var(--gc-accent-text);border-color:var(--gc-button)}
+#gg-coherence .gc-app button.gc-primary{background:var(--gc-button);color:var(--gc-button-text);border-color:var(--gc-button)}
+#gg-coherence .gc-app :is(button,select,input,textarea,summary):focus-visible{outline:2px solid var(--gc-button);outline-offset:3px}
+#gg-coherence .gc-app h2{font-size:17px;line-height:1.4;margin:0;font-weight:600}
+#gg-coherence .gc-app h3{font-size:14px;line-height:1.4;margin:0;font-weight:600}
+#gg-coherence .gc-app p{margin:10px 0}
+#gg-coherence .gc-app code{font:12px/1.6 ui-monospace,monospace;white-space:normal;overflow-wrap:anywhere;color:inherit;background:transparent}
+#gg-coherence .gc-chrome,#gg-coherence .gc-navigation{display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding:12px 16px;border-bottom:1px solid var(--gc-line)}
+#gg-coherence .gc-chrome{background:var(--gc-panel)}
+#gg-coherence .gc-repo{margin-left:auto;overflow-wrap:anywhere}
+#gg-coherence .gc-tracking{margin-left:auto;color:var(--gc-muted);font-size:12px}
+#gg-coherence .gc-menu{position:relative}
+#gg-coherence .gc-menu summary{list-style:none;padding:5px}
+#gg-coherence .gc-menu-content{position:absolute;top:100%;left:0;z-index:3;min-width:160px;padding:8px;background:var(--gc-panel);border:1px solid var(--gc-line);border-radius:5px;display:grid;gap:6px}
+#gg-coherence .gc-operation{padding:12px 16px;background:var(--gc-attention);border-bottom:1px solid var(--gc-line)}
+#gg-coherence [hidden]{display:none!important}
+#gg-coherence .gc-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+#gg-coherence .gc-space{justify-content:space-between}
+#gg-coherence .gc-heading{padding:16px;border-bottom:1px solid var(--gc-line)}
+#gg-coherence .gc-muted{color:var(--gc-muted)}
+#gg-coherence .gc-small{font-size:12px}
+#gg-coherence .gc-section{padding:16px;min-height:330px}
+#gg-coherence .gc-list-row{display:flex;gap:14px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:14px 0;border-bottom:1px solid var(--gc-line)}
+#gg-coherence .gc-list-row>div{min-width:0;overflow-wrap:anywhere}
+#gg-coherence .gc-workspace{display:grid;grid-template-columns:190px minmax(0,1fr)}
+#gg-coherence .gc-file-list{padding:16px 12px;border-right:1px solid var(--gc-line);background:var(--gc-panel)}
+#gg-coherence .gc-detail-column{min-width:0;display:flex;flex-direction:column}
+#gg-coherence .gc-detail-column .gc-reader{flex:1}
+#gg-coherence .gc-staging-lists{display:grid;grid-template-rows:1fr 1fr;padding:0}
+#gg-coherence .gc-staging-lists section{padding:16px 12px;min-height:160px}
+#gg-coherence .gc-staging-lists section+section{border-top:1px solid var(--gc-line)}
+#gg-coherence .gc-staging-lists h3{margin-bottom:10px}
+#gg-coherence .gc-staging-lists button{display:block;width:100%;text-align:left;margin-bottom:6px;overflow-wrap:anywhere}
+#gg-coherence .gc-commit label.gc-amend{display:flex;gap:6px;align-items:center;margin:0}
+#gg-coherence .gc-amend-banner{background:var(--gc-attention);padding:8px}
+#gg-coherence .gc-narrow .gc-staging-lists section{min-height:0}
+#gg-coherence .gc-file-list label{display:grid;gap:10px}
+#gg-coherence .gc-file-list select{width:100%;padding:4px;background:var(--gc-bg)}
+#gg-coherence .gc-file-list option{padding:9px 4px}
+#gg-coherence .gc-reader{min-width:0;padding:16px}
+#gg-coherence .gc-source{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:12px 0;margin:10px 0;border-top:1px solid var(--gc-line);border-bottom:1px solid var(--gc-line)}
+#gg-coherence .gc-source>div{min-width:0;overflow-wrap:anywhere}
+#gg-coherence .gc-source span{display:block;font-size:12px;color:var(--gc-muted)}
+#gg-coherence .gc-source strong{font-weight:500}
+#gg-coherence .gc-controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:10px 0}
+#gg-coherence .gc-version{margin:12px 0;padding:12px;background:var(--gc-panel);border-left:3px solid var(--gc-button)}
+#gg-coherence .gc-code{margin:14px 0 0;min-height:184px;font:12px/1.8 ui-monospace,monospace}
+#gg-coherence .gc-code-line{display:flex;gap:12px;align-items:baseline;padding:4px 8px;min-width:0}
+#gg-coherence .gc-line-number{min-width:32px;color:var(--gc-muted)}
+#gg-coherence .gc-code-text{white-space:pre-wrap;overflow-wrap:anywhere;min-width:0}
+#gg-coherence .gc-added{background:var(--gc-add)}
+#gg-coherence .gc-removed{background:var(--gc-del)}
+#gg-coherence .gc-attribution{font-size:11px;color:var(--gc-muted);min-width:115px}
+#gg-coherence .gc-commit{padding:16px;border-top:1px solid var(--gc-line);background:var(--gc-panel)}
+#gg-coherence .gc-commit label{display:grid;gap:6px;margin-bottom:10px}
+#gg-coherence .gc-commit textarea{width:100%;background:var(--gc-bg);resize:vertical;min-height:65px}
+#gg-coherence .gc-outcome{border-top:1px solid var(--gc-line);padding:12px 16px;font-size:12px;min-height:44px;overflow-wrap:anywhere}
+#gg-coherence .gc-outcome details{margin-top:6px}
+#gg-coherence .gc-app dialog{color:var(--gc-text);background:var(--gc-bg);border:1px solid var(--gc-line);border-radius:8px;padding:20px;max-width:min(440px,calc(100% - 32px));width:100%}
+#gg-coherence .gc-app dialog::backdrop{background:rgb(0 0 0 / .4)}
+#gg-coherence .gc-app dialog label{display:block;margin:12px 0}
+#gg-coherence .gc-app dialog input[type=checkbox]{margin-right:8px}
+#gg-coherence .gc-app dialog .gc-row{justify-content:flex-end;margin-top:20px}
+#gg-coherence .gc-app.gc-narrow{max-width:470px;margin-inline:auto}
+#gg-coherence .gc-narrow .gc-workspace{grid-template-columns:minmax(0,1fr)}
+#gg-coherence .gc-narrow .gc-file-list{border-right:0;border-bottom:1px solid var(--gc-line)}
+#gg-coherence .gc-narrow .gc-repo,#gg-coherence .gc-narrow .gc-tracking{margin-left:0}
+#gg-coherence .gc-narrow .gc-attribution{min-width:0;flex-basis:100%}
+#gg-coherence .gc-narrow .gc-code-line{flex-wrap:wrap;gap:4px 8px}
+@media(max-width:650px){#gg-coherence .gc-workspace{grid-template-columns:minmax(0,1fr)}#gg-coherence .gc-file-list{border-right:0;border-bottom:1px solid var(--gc-line)}#gg-coherence .gc-staging-lists section{min-height:0}#gg-coherence .gc-repo,#gg-coherence .gc-tracking{margin-left:0}#gg-coherence .gc-attribution{min-width:0;flex-basis:100%}#gg-coherence .gc-code-line{flex-wrap:wrap;gap:4px 8px}#gg-coherence .gc-source{grid-template-columns:1fr}}
+@media(pointer:coarse){#gg-coherence .gc-app button,#gg-coherence .gc-app select,#gg-coherence .gc-app summary{min-height:44px}#gg-coherence .gc-app input,#gg-coherence .gc-app textarea{font-size:16px}}
+</style>
+<script>
+(() => {
+const root=document.getElementById('gg-coherence');
+const q=s=>root.querySelector(s);
+const files=[{path:'src/cache.rs',before:['fn load_cache(key: &str) {','    cache.get(key)','}'],after:['fn load_cache(key: &str) {','    cache.invalidate(key);','    cache.get_fresh(key)','}']},{path:'tests/cache.rs',before:['fn cache_test() {','    assert!(cache.exists());','}'],after:['fn cache_test() {','    assert!(cache.is_fresh());','}']}];
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const button=(label,action,{primary=false,disabled=false,pressed=null}={})=>`<button type="button" data-action="${action}"${primary?' class="gc-primary"':''}${disabled?' disabled':''}${pressed===null?'':` aria-pressed="${pressed}"`}>${label}</button>`;
+let view='reader',origin='history',toolOrigin='history',file=0,mode='diff',side='after',area='unstaged',attribution=false,timeline=false,version=0,snapshot=null;
+let heads=files.map(f=>f.before),parents=files.map(f=>f.before.map(t=>t.replace('cache.get(key)','cache.read(key)').replace('cache.exists()','cache.loaded()'))),indexes=files.map(f=>f.before),amend=false,normalDraft='Handle cache invalidation',amendDraft='Refine cache key',draft=normalDraft,operation=null,resolved=false,resultSource='incoming',recoverySource='backups',notice='Ready · fictional repository',detail='',stashPresent=true;
+const validScenarios=['review','changes','conflict','stashes','recovery'];
+function announce(text,extra=''){notice=text;detail=extra;q('#gc-status').textContent=text;q('#gc-details').hidden=!extra;q('#gc-details-text').textContent=extra;}
+function save(){window.openai?.setWidgetState?.({modelContent:{scenario:q('#gc-scenario').value,narrow:q('#gc-narrow').checked},privateContent:{scenario:q('#gc-scenario').value,narrow:q('#gc-narrow').checked}})?.catch(()=>{});}
+const equal=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
+const stagedAt=i=>!equal(indexes[i],amend?parents[i]:heads[i]);
+const unstagedAt=i=>!equal(indexes[i],files[i].after);
+const stagedCount=()=>files.filter((_,i)=>stagedAt(i)).length;
+const canCommit=()=>!operation&&!!draft.trim()&&(amend||stagedCount()>0);
+const readiness=()=>operation?'Finish the current operation first.':!draft.trim()?'Enter a commit message.':amend?'Amend is ready; message-only changes are allowed.':stagedCount()?'Ready to commit the index.':'Stage changes to enable Commit.';
+function sizeList(){const list=q('#gc-files');if(list)list.size=(q('#gc-app').clientWidth<650||q('#gc-narrow').checked)?1:files.length+1;}
+function scenario(name){view=name==='review'?'reader':name;origin='history';toolOrigin='history';file=0;mode=name==='conflict'?'full':'diff';side='after';area='unstaged';attribution=false;timeline=false;version=0;snapshot=null;heads=files.map(f=>f.before);indexes=files.map(f=>f.before);parents=files.map(f=>f.before.map(t=>t.replace('cache.get(key)','cache.read(key)').replace('cache.exists()','cache.loaded()')));amend=false;normalDraft='Handle cache invalidation';amendDraft='Refine cache key';draft=normalDraft;operation=name==='conflict'?'rebase':null;resolved=false;resultSource='incoming';stashPresent=true;notice='Ready · fictional repository';detail='';q('#gc-scenario').value=name;if(name==='changes')indexes[0]=[files[0].before[0],'    cache.invalidate(key);',files[0].before[1],'}'];render();}
+function navigate(next){if(timeline)closeTimeline();if(next==='recovery'||next==='stashes')toolOrigin=view==='changes'||view==='conflict'?'changes':'history';view=next==='changes'&&operation&&!resolved?'conflict':next;if(view==='conflict'){mode='full';side='after';}render();}
+function closeTimeline(){if(snapshot){({file,mode,side,attribution}=snapshot);}snapshot=null;timeline=false;}
+function operationMarkup(){if(!operation)return '';if(operation==='stash')return `<div class="gc-row gc-space"><strong>Stash restore · ${resolved?'resolution staged':'1 unresolved file'}</strong>${resolved?button('Finish review','finish-stash',{primary:true}):button('Resolve conflicts','resolve-open',{primary:true})}</div><div class="gc-small">Stash retained. No Git sequencer is active.</div>`;return `<div class="gc-row gc-space"><strong>Rebase onto main · ${resolved?'ready to continue':'1 unresolved file'}</strong><div class="gc-row">${!resolved&&view!=='conflict'?button('Resolve conflicts','resolve-open',{primary:true}):button('Continue rebase','continue',{primary:true,disabled:!resolved})}${button('Abort…','abort')}</div></div><div class="gc-small">Replaying a4e72f1 · ${resolved?'All resolutions are staged.':'Resolve and stage each path to enable Continue.'}</div>`;}
+function codeRows(before,after,attr=false){
+ let prefix=0,suffix=0;while(prefix<before.length&&prefix<after.length&&before[prefix]===after[prefix])prefix++;
+ while(suffix<before.length-prefix&&suffix<after.length-prefix&&before[before.length-1-suffix]===after[after.length-1-suffix])suffix++;
+ let rows=[];
+ if(mode==='full'){const values=side==='before'?before:after;rows=values.map((text,i)=>({text,line:i+41,type:i>=prefix&&i<values.length-suffix?(side==='before'?'gc-removed':'gc-added'):''}));}
+ else if(equal(before,after))return '<p class="gc-muted">No changes in this comparison.</p>';
+ else{rows=before.slice(0,prefix).map((text,i)=>({text,line:i+41,type:''}));rows.push(...before.slice(prefix,before.length-suffix).map((text,i)=>({text,line:'−'+(i+prefix+41),type:'gc-removed'})),...after.slice(prefix,after.length-suffix).map((text,i)=>({text,line:'+'+(i+prefix+41),type:'gc-added'})),...after.slice(after.length-suffix).map((text,i)=>({text,line:i+after.length-suffix+41,type:''})));}
+ return rows.map(r=>`<div class="gc-code-line ${r.type}">${attr?`<span class="gc-attribution">${r.type?'a4e72f1 · Avery':'91a4c20 · Jules'}</span>`:''}<span class="gc-line-number">${r.line}</span><span class="gc-code-text">${esc(r.text)}</span></div>`).join('');
+}
+function endpoints(){if(timeline)return ['Older version · '+['91a4c20','7d212b3','empty tree'][version],'Selected version · '+['a4e72f1','91a4c20','7d212b3'][version]];if(view==='changes')return area==='unstaged'?['Index','Working file']:[amend?'HEAD parent · 7d212b3':'HEAD · 91a4c20','Index'];return ['Parent · 91a4c20','Commit · a4e72f1'];}
+function reader(){const local=view==='changes';const conflict=view==='conflict';const f=files[file];let [beforeLabel,afterLabel]=endpoints();let before=f.before,after=f.after;if(timeline){before=version===2?[]:f.before;after=version===0?f.after:f.before;}else if(local){if(area==='unstaged'){before=indexes[file];after=f.after;}else{before=amend?parents[file]:heads[file];after=indexes[file];}}
+const title=local?'Local Changes':conflict?'Local Changes · Conflicts':'Handle cache invalidation';
+let top=!local&&!conflict?button('Back to '+(origin==='recovery'?'Recovery':'History'),'reader-back'):'';
+let header=`<div class="gc-heading"><div class="gc-row">${top}<h2>${title}</h2></div><p class="gc-muted gc-small">${local?'Scan complete · '+stagedCount()+' staged files':conflict?(operation==='stash'?'Stash restore · entry retained':'Rebase · feature/cache onto main'):'a4e72f1 · Avery Chen · 24 Oct 2026'}</p></div>`;
+let filelist=local?`<aside class="gc-file-list gc-staging-lists"><section aria-label="Unstaged files"><h3>Unstaged · ${files.filter((_,i)=>unstagedAt(i)).length}</h3>${files.map((f,i)=>unstagedAt(i)?button(esc(f.path),'select-unstaged-'+i,{pressed:area==='unstaged'&&file===i}):'').join('')}${files.some((_,i)=>unstagedAt(i))?'':'<p class="gc-muted gc-small">No unstaged files.</p>'}</section><section aria-label="Staged files"><h3>Staged · ${stagedCount()}</h3>${files.map((f,i)=>stagedAt(i)?button(esc(f.path),'select-staged-'+i,{pressed:area==='staged'&&file===i}):'').join('')}${stagedCount()?'':'<p class="gc-muted gc-small">No staged files.</p>'}</section></aside>`:`<aside class="gc-file-list"><label>Files<select id="gc-files" aria-label="Files">${files.map((f,i)=>`<option value="${i}"${i===file?' selected':''}${conflict&&i!==0?' disabled':''}>${f.path}</option>`).join('')}</select></label><p class="gc-small gc-muted">${conflict?'1 conflicted path':'2 changed files'}</p></aside>`;
+let main=`<section class="gc-reader"><div class="gc-row gc-space"><h3>${esc(f.path)}</h3>${!local&&!conflict?button(timeline?'Close file history':'File history',timeline?'timeline-close':'timeline-open'):''}</div>`;
+if(conflict){const result=resultSource==='current'?['fn load_cache(key: &str) {','    cache.refresh(key);','}']:resultSource==='external'?['fn load_cache(key: &str) {','    cache.refresh(key);','    cache.get_fresh(key)','}']:f.after;main+=`<div class="gc-source"><div><span>Current replay · ours</span><strong>main + replayed commits</strong></div><div><span>Incoming · theirs</span><strong>a4e72f1 · cache change</strong></div></div><label>Preview resolution from <select id="gc-resolution"${resolved?' disabled':''}><option value="current"${resultSource==='current'?' selected':''}>Current replay</option><option value="incoming"${resultSource==='incoming'?' selected':''}>Incoming commit</option><option value="external"${resultSource==='external'?' selected':''}>External working file</option></select></label><p class="gc-muted gc-small">Selecting a source changes the preview only.</p><div class="gc-code" aria-label="Resolution preview">${codeRows(f.before,result)}</div><div class="gc-controls">${button('Stage resolution','stage-resolution',{primary:true,disabled:resolved})}<span class="gc-small">${resolved?'Resolution written and staged.':'Writes this result to the working file and index.'}</span></div></section>`;}
+else{if(local)main+=`<p class="gc-muted gc-small">${area==='unstaged'?'Unstaged changes':'Staged changes'} · comparison follows the selected list</p>`;
+if(timeline)main+=`<div class="gc-version"><div class="gc-row">${button('Older version','older',{disabled:version===2})}${button('Newer version','newer',{disabled:version===0})}<span>Version ${version+1} of 3 · ${version===0?'Newest':version===2?'Oldest':'Earlier'}</span></div><p class="gc-small">${version===1?(file===0?'Renamed · src/store.rs → src/cache.rs':'Modified · tests/cache.rs'):version===2?'Added · 22 Oct 2026':'Modified · 24 Oct 2026'}</p></div>`;
+main+=`<div class="gc-source"><div><span>Before</span><strong>${beforeLabel}</strong></div><div><span>After</span><strong>${afterLabel}</strong></div></div><div class="gc-controls" aria-label="Presentation">${button('Diff','diff',{pressed:mode==='diff'})}${button('Full file','full',{pressed:mode==='full'})}${mode==='full'?button('Before','before',{pressed:side==='before',disabled:before.length===0})+button('After','after',{pressed:side==='after'})+(local?'':`<label><input type="checkbox" id="gc-attribution"${attribution?' checked':''}> Show attribution</label>`):''}</div><div class="gc-code" aria-label="File content">${codeRows(before,after,attribution&&mode==='full'&&!local)}</div>`;
+if(local)main+=`<div class="gc-controls">${area==='unstaged'?button('Stage hunk','stage',{primary:true,disabled:!unstagedAt(file)}):button('Unstage hunk','unstage',{primary:true,disabled:!stagedAt(file)})}<span class="gc-small gc-muted">${area==='unstaged'?'Working file → index':(amend?'HEAD parent → index':'HEAD → index')} · selected hunk</span></div>`;
+main+='</section>';}
+const commit=local?`<form class="gc-commit" id="gc-commit"><div class="gc-row gc-space"><h3>${amend?'Amend commit':'New commit'}</h3><label class="gc-amend"><input type="checkbox" id="gc-amend"${amend?' checked':''}> Amend latest commit</label></div>${amend?'<p class="gc-amend-banner">Amending 91a4c20 · Refine cache key. Staged shows HEAD parent → index. A backup is saved before publication.</p>':''}<label>Commit message<textarea id="gc-draft" rows="2">${esc(draft)}</textarea></label><div class="gc-row">${button(amend?'Amend commit':'Commit staged changes','commit',{primary:true,disabled:!canCommit()})}<span id="gc-readiness" class="gc-muted gc-small">${readiness()}</span></div></form>`:'';
+return header+`<div class="gc-workspace">${filelist}<div class="gc-detail-column">${main}${commit}</div></div>`;
+}
+function collections(){if(view==='history')return `<div class="gc-heading"><h2>History</h2><p class="gc-muted gc-small">Selected commit and current checkout are separate.</p></div><section class="gc-section"><div class="gc-list-row"><div><strong>Handle cache invalidation</strong><p class="gc-small gc-muted">feature/cache · a4e72f1 · Avery Chen</p></div>${button('Open commit','open-history',{primary:true})}</div><div class="gc-list-row"><div>Refine cache key<p class="gc-small gc-muted">main · 91a4c20 · Jules Martin</p></div></div></section>`;
+if(view==='stashes')return `<div class="gc-heading"><div class="gc-row">${button('Back to '+(toolOrigin==='changes'?'Local Changes':'History'),'tool-back')}<h2>Stashes</h2></div></div><section class="gc-section">${stashPresent?`<div class="gc-list-row"><div><strong>Cache experiment</strong><p class="gc-small gc-muted">stash@{0} · 7c41a10</p></div>${button('Restore stash…','restore',{primary:true})}</div><p class="gc-muted">One restore form specifies staged state and whether to retain the entry.</p>`:'<p>No stashes. The restored entry was removed after success.</p>'}</section>`;
+return `<div class="gc-heading"><div class="gc-row">${button('Back to '+(toolOrigin==='changes'?'Local Changes':'History'),'tool-back')}<h2>Recovery</h2></div><div class="gc-controls"><label>Source <select id="gc-recovery-source"><option value="backups"${recoverySource==='backups'?' selected':''}>Backups</option><option value="reflog"${recoverySource==='reflog'?' selected':''}>Reflog · HEAD</option></select></label></div></div><section class="gc-section"><div class="gc-list-row"><div><strong>Handle cache invalidation · a4e72f1</strong><p class="gc-small gc-muted">${recoverySource==='backups'?'Rewrite backup · 24 Oct 2026':'HEAD@{1} · commit · 24 Oct 2026'}</p></div>${button('Open commit','open-recovery',{primary:true})}</div><p><code>${recoverySource==='backups'?'refs/gg/backup/rewrite/20261025-101500':'HEAD@{1}'}</code></p>${button('Create branch here…','branch-create')}<p class="gc-muted">Opening a saved commit uses the same reader. Back returns here.</p></section>`;
+}
+function render(){q('#gc-main').innerHTML=['reader','changes','conflict'].includes(view)?reader():collections();const op=q('#gc-operation');op.hidden=!operation;op.innerHTML=operationMarkup();q('#gc-nav-changes').setAttribute('aria-pressed',String(view==='changes'||view==='conflict'));q('#gc-nav-history').setAttribute('aria-pressed',String(view==='history'||(view==='reader'&&origin==='history')));q('#gc-status').textContent=notice;q('#gc-details').hidden=!detail;q('#gc-details-text').textContent=detail;sizeList();}
+function modal(title,body,submitLabel,action){const d=q('#gc-dialog');d.innerHTML=`<h2 id="gc-dialog-title">${title}</h2>${body}<div class="gc-row">${button('Cancel','dialog-cancel')}${button(submitLabel,action,{primary:true})}</div>`;d.showModal();}
+root.addEventListener('click',e=>{const target=e.target.closest('button[data-action]');if(!target||target.disabled)return;const action=target.dataset.action;let focusAction=action;
+if(['history','changes','stashes','recovery'].includes(action)){root.querySelectorAll('.gc-menu').forEach(el=>el.open=false);navigate(action);}
+else if(action==='open-history'||action==='open-recovery'){origin=action==='open-recovery'?'recovery':'history';view='reader';file=0;mode='diff';timeline=false;attribution=false;render();}
+else if(action==='reader-back'){if(timeline)closeTimeline();view=origin;render();}
+else if(action==='tool-back'){view=toolOrigin;render();}
+else if(action==='timeline-open'){snapshot={file,mode,side,attribution};timeline=true;version=0;render();focusAction='timeline-close';}
+else if(action==='timeline-close'){closeTimeline();render();focusAction='timeline-open';}
+else if(action==='older'||action==='newer'){version+=action==='older'?1:-1;if(version===2&&side==='before')side='after';render();}
+else if(action==='full'||action==='diff'){mode=action;render();}
+else if(action==='before'||action==='after'){side=action;render();}
+else if(action.startsWith('select-')){const parts=action.split('-');area=parts[1];file=Number(parts[2]);render();}
+else if(action==='stage'||action==='unstage'){indexes[file]=action==='stage'?files[file].after:(amend?parents[file]:heads[file]);render();announce(action==='stage'?'Selected hunk staged · working file unchanged':'Selected hunk unstaged · working file unchanged');}
+else if(action==='commit'){const wasAmend=amend;if(!amend)parents=heads.slice();heads=indexes.slice();if(amend){amendDraft='';amend=false;draft=normalDraft;}else{normalDraft='';draft='';}render();announce(wasAmend?'Commit amended · backup retained · normal draft restored':'Commit created · a8f0312 · remaining changes stay here');}
+else if(action==='stage-resolution'){resolved=true;render();announce('src/cache.rs · chosen resolution written and staged');}
+else if(action==='continue'||action==='finish-stash'){operation=null;view='changes';heads=action==='continue'?files.map(f=>f.after):files.map(f=>f.before);indexes=heads.slice();render();announce(action==='continue'?'Rebase complete · history and status refreshed':'Stash conflict review finished · stash entry retained');}
+else if(action==='resolve-open'){view='conflict';mode='full';side='after';render();}
+else if(action==='abort'){modal('Abort rebase?', '<p>Stop replaying commits onto main and ask Git to restore the pre-rebase state.</p><p>Target: feature/cache. Any recovery failure will keep its details visible.</p>','Abort rebase','abort-confirm');}
+else if(action==='abort-confirm'){q('#gc-dialog').close();operation=null;view='changes';render();announce('Rebase aborted · current state refreshed');}
+else if(action==='restore'){modal('Restore stash', '<p>stash@{0} · Cache experiment</p><label><input type="checkbox" id="gc-restore-index">Restore staged state</label><label><input type="checkbox" id="gc-remove-stash">Remove stash after successful restore</label><p>Conflicts always retain the entry.</p>','Restore stash','restore-confirm');}
+else if(action==='restore-confirm'){const remove=q('#gc-remove-stash').checked,restoreIndex=q('#gc-restore-index').checked;q('#gc-dialog').close();stashPresent=!remove;heads=files.map(f=>f.before);indexes=restoreIndex?[files[0].after,files[1].before]:heads.slice();view='changes';render();announce(`Stash restored · ${restoreIndex?'staged state restored':'changes available to stage'} · entry ${remove?'removed after success':'retained'}`);}
+else if(action==='branch-create'){modal('Create branch at a4e72f1','<label>Branch name <input id="gc-branch-name" value="recover/cache"></label><p>Starting point: a4e72f1 · saved commit.</p><p>Switch after creation: off in this recovery example.</p>','Create branch','branch-confirm');}
+else if(action==='branch-confirm'){const name=q('#gc-branch-name').value.trim();if(!name){q('#gc-branch-name').setAttribute('aria-invalid','true');return;}q('#gc-dialog').close();announce('Recovery branch '+name+' created · current checkout unchanged · simulation');}
+else if(action==='dialog-cancel'){q('#gc-dialog').close();}
+const focus=root.querySelector(`[data-action="${focusAction}"]:not(:disabled)`);if(focus&&!q('#gc-dialog').open)focus.focus({preventScroll:true});});
+root.addEventListener('change',e=>{if(e.target.id==='gc-amend'){if(amend)amendDraft=draft;else normalDraft=draft;amend=e.target.checked;draft=amend?amendDraft:normalDraft;render();q('#gc-amend').focus({preventScroll:true});}if(e.target.id==='gc-files'){file=Number(e.target.value);if(timeline)version=0;render();q('#gc-files').focus({preventScroll:true});}if(e.target.id==='gc-resolution'){resultSource=e.target.value;render();q('#gc-resolution').focus({preventScroll:true});}if(e.target.id==='gc-attribution'){attribution=e.target.checked;render();q('#gc-attribution').focus({preventScroll:true});}if(e.target.id==='gc-recovery-source'){recoverySource=e.target.value;render();q('#gc-recovery-source').focus({preventScroll:true});}});
+root.addEventListener('input',e=>{if(e.target.id==='gc-draft'){draft=e.target.value;q('[data-action="commit"]').disabled=!canCommit();q('#gc-readiness').textContent=readiness();}});
+root.addEventListener('submit',e=>e.preventDefault());
+root.addEventListener('keydown',e=>{if(e.key!=='Escape'||q('#gc-dialog').open||['INPUT','TEXTAREA','SELECT'].includes(e.target.tagName)||e.target.closest('details'))return;if(timeline){closeTimeline();render();e.preventDefault();}else if(view==='reader'){view=origin;render();e.preventDefault();}else if(view==='stashes'||view==='recovery'){view=toolOrigin;render();e.preventDefault();}});
+q('#gc-scenario').onchange=e=>{scenario(e.target.value);save();};
+q('#gc-narrow').onchange=e=>{q('#gc-app').classList.toggle('gc-narrow',e.target.checked);sizeList();save();};
+const restored=window.openai?.widgetState?.privateContent;
+q('#gc-narrow').checked=!!restored?.narrow;q('#gc-app').classList.toggle('gc-narrow',!!restored?.narrow);
+scenario(validScenarios.includes(restored?.scenario)?restored.scenario:'changes');
+new ResizeObserver(sizeList).observe(q('#gc-app'));
+window.addEventListener('openai:set_globals',e=>{const s=e.detail?.globals?.widgetState?.privateContent;if(s&&validScenarios.includes(s.scenario)){if(s.scenario!==q('#gc-scenario').value)scenario(s.scenario);q('#gc-narrow').checked=!!s.narrow;q('#gc-app').classList.toggle('gc-narrow',!!s.narrow);sizeList();}});
+})();
+</script>
