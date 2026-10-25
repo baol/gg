@@ -9,21 +9,17 @@ use crate::diff_worker::Mode;
 use gg_engine::{file::ReadingSide, review::FileChange};
 use std::path::PathBuf;
 
-/// One endpoint label plus the exact content identity it names.
+/// One endpoint label for the exact comparison side it names.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Endpoint {
     /// Exact display label, such as `main (a1b2c3d)`, `Empty tree`, or `Absent`.
     pub label: String,
-    pub path_bytes: Vec<u8>,
-    pub path: String,
 }
 
 impl Endpoint {
-    pub fn new(label: impl Into<String>, change: &FileChange) -> Self {
+    pub fn new(label: impl Into<String>) -> Self {
         Self {
             label: label.into(),
-            path_bytes: change.path_bytes.clone(),
-            path: change.path.clone(),
         }
     }
 }
@@ -54,7 +50,8 @@ pub struct Capabilities {
 /// A complete reader context, including both exact endpoints and the place.
 #[derive(Clone, Debug)]
 pub struct ReaderContext {
-    pub path: PathBuf,
+    /// Repository root used by the selected-file worker.
+    pub repository: PathBuf,
     pub change: FileChange,
     pub before: Endpoint,
     pub after: Endpoint,
@@ -63,16 +60,16 @@ pub struct ReaderContext {
 
 impl ReaderContext {
     pub fn new(
-        path: PathBuf,
+        repository: PathBuf,
         change: FileChange,
         before: impl Into<String>,
         after: impl Into<String>,
         place: ReaderPlace,
     ) -> Self {
         Self {
-            before: Endpoint::new(before, &change),
-            after: Endpoint::new(after, &change),
-            path,
+            before: Endpoint::new(before),
+            after: Endpoint::new(after),
+            repository,
             change,
             place,
         }

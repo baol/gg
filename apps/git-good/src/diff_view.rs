@@ -55,6 +55,7 @@ pub struct DiffView {
     new_label: &'static str,
     before_endpoint: Option<String>,
     after_endpoint: Option<String>,
+    restoring: Option<reader::ReaderPlace>,
 }
 
 impl Default for DiffView {
@@ -100,6 +101,7 @@ impl Default for DiffView {
             new_label: "After",
             before_endpoint: None,
             after_endpoint: None,
+            restoring: None,
         }
     }
 }
@@ -131,6 +133,7 @@ impl DiffView {
         if same {
             return;
         }
+        self.restoring = None;
         if change.is_none() {
             *self = Self::default();
             return;
@@ -224,7 +227,7 @@ impl DiffView {
 
     /// Restore a captured context without inventing a second viewer.
     pub fn open_context(&mut self, context: &reader::ReaderContext, ctx: &egui::Context) {
-        let same = self.path == context.path
+        let same = self.path == context.repository
             && self
                 .change
                 .as_ref()
@@ -234,19 +237,55 @@ impl DiffView {
                     &context.change.old,
                     &context.change.new,
                 ));
+        let mut place = context.place.clone();
         if !same {
-            self.select(context.path.clone(), Some(context.change.clone()), ctx);
+            self.mode = place.mode;
+            self.side = place.side;
+            if !self.side_available(self.side) {
+                self.side = self.existing_side();
+                place.side = self.side;
+            }
+            self.select(
+                context.repository.clone(),
+                Some(context.change.clone()),
+                ctx,
+            );
+        } else {
+            let side_changed = self.side != place.side;
+            self.mode = place.mode;
+            self.side = place.side;
+            if !self.side_available(self.side) {
+                self.side = self.existing_side();
+                place.side = self.side;
+            }
+            self.full_side = self.side;
+            if side_changed || self.side != place.side {
+                self.full = None;
+            }
         }
         self.set_endpoints(context.before.label.clone(), context.after.label.clone());
-        self.mode = context.place.mode;
-        self.side = context.place.side;
-        self.full_side = self.side;
-        self.cursor = context.place.cursor;
-        self.anchor = context.place.anchor;
-        self.offset = context.place.offset;
+        self.cursor = place.cursor;
+        self.anchor = place.anchor;
+        self.offset = place.offset;
+        self.restoring = Some(place);
         self.sent = None;
         self.send(ctx);
         ctx.request_repaint();
+    }
+
+    /// Reapply the restored place after an asynchronous update settles.
+    fn apply_restoring(&mut self) {
+        let Some(place) = &self.restoring else {
+            return;
+        };
+        if place.mode != self.mode || place.side != self.side {
+            return;
+        }
+        self.cursor = place.cursor;
+        self.anchor = place.anchor;
+        self.offset = place.offset;
+        self.jump = None;
+        self.restore_line = None;
     }
 
     /// Capabilities the current comparison supports.
@@ -259,12 +298,17 @@ impl DiffView {
             .as_ref()
             .map(|change| (&change.old, &change.new))
             .unwrap_or((&None, &None));
+        let (displayed_old, displayed_new) = self
+            .displayed
+            .as_ref()
+            .map(|change| (&change.old, &change.new))
+            .unwrap_or((&None, &None));
         reader::Capabilities {
             diff: self.edge_known,
-            full_before: present(old),
-            full_after: present(new),
-            export_before: self.displayed.is_some() && present(old),
-            export_after: self.displayed.is_some() && present(new),
+            full_before: old.is_some(),
+            full_after: new.is_some(),
+            export_before: self.displayed.is_some() && present(displayed_old),
+            export_after: self.displayed.is_some() && present(displayed_new),
         }
     }
 
@@ -398,6 +442,7 @@ impl DiffView {
             if let Ok(info) = update.result {
                 self.info = Some(info);
             }
+            self.apply_restoring();
             return;
         }
         match update.result {
@@ -447,6 +492,7 @@ impl DiffView {
             }
             Err(e) => self.error = Some(e),
         }
+        self.apply_restoring();
     }
 
     fn adopt_position(&mut self) {
@@ -473,6 +519,7 @@ impl DiffView {
     }
 
     fn select_row(&mut self, index: usize) {
+        self.restoring = None;
         self.cursor = Some(index);
         self.anchor = Some(index);
         self.jump = Some(index);
@@ -531,6 +578,7 @@ impl DiffView {
         if self.mode == mode {
             return;
         }
+        self.restoring = None;
         let line = self.current_line();
         self.mode = mode;
         if mode == Mode::Full {
@@ -570,6 +618,7 @@ impl DiffView {
         if self.side == side || !self.side_available(side) {
             return;
         }
+        self.restoring = None;
         let line = self.current_line().unwrap_or(1);
         self.side = side;
         self.full = None;
@@ -666,6 +715,7 @@ impl DiffView {
             self.select_row(target.saturating_sub(1));
             return;
         }
+        self.restoring = None;
         self.cursor = Some(target);
         self.anchor = Some(target);
         self.jump = Some(target);
@@ -679,6 +729,7 @@ impl DiffView {
         let Some(full) = &self.full else {
             return;
         };
+        self.restoring = None;
         let count = full.lines.len();
         if count == 0 {
             return;
@@ -754,6 +805,7 @@ impl DiffView {
         });
         if active {
             self.last_scroll = now;
+            self.restoring = None;
         }
         let quiet = !active && now - self.last_scroll > 0.2;
         if !quiet {
@@ -797,7 +849,9 @@ impl DiffView {
             };
             bounded_text::field(ui, label, egui::FontId::proportional(12.0), 20.0);
         } else {
-            if let (Some(before), Some(after)) = (&self.before_endpoint, &self.after_endpoint) {
+            if self.displayed_generation == self.generation
+                && let (Some(before), Some(after)) = (&self.before_endpoint, &self.after_endpoint)
+            {
                 bounded_text::field(
                     ui,
                     &format!("{before} → {after}"),
@@ -857,9 +911,13 @@ impl DiffView {
             if self.mode == Mode::Full && self.edge_known {
                 ui.separator();
                 for side in [ReadingSide::Before, ReadingSide::After] {
+                    let available = match side {
+                        ReadingSide::Before => capabilities.full_before,
+                        ReadingSide::After => capabilities.full_after,
+                    };
                     if ui
                         .add_enabled(
-                            side != self.side && self.side_available(side),
+                            side != self.side && available,
                             egui::Button::new(self.side_label(side)),
                         )
                         .clicked()
@@ -1116,6 +1174,7 @@ impl DiffView {
                 let response = response
                     .on_hover_text("Click to set the place · Double-click to copy this line");
                 if response.clicked() && !response.double_clicked() {
+                    self.restoring = None;
                     cursor = Some(index);
                     if shift {
                         anchor = Some(anchor.unwrap_or(index));
@@ -1922,6 +1981,157 @@ mod tests {
             &shape.shape,
             egui::epaint::Shape::Text(text)
                 if text.galley.job.text == "main (11111111) → feature (22222222)"
+        )));
+    }
+
+    #[test]
+    fn restored_place_survives_a_settling_full_file_update() {
+        let mut view = DiffView {
+            change: Some(file("src/app.rs", true, true)),
+            path: "repo".into(),
+            generation: 1,
+            mode: Mode::Full,
+            side: ReadingSide::After,
+            restoring: Some(reader::ReaderPlace {
+                mode: Mode::Full,
+                side: ReadingSide::After,
+                cursor: Some(9),
+                anchor: Some(12),
+                offset: 240.0,
+            }),
+            ..Default::default()
+        };
+        let text = FileText::from_bytes(
+            ReadingSide::After,
+            b"01\n02\n03\n04\n05\n06\n07\n08\n09\n10\n11\n12\n13\n14\n15\n",
+            &BTreeSet::new(),
+        );
+        view.accept(full_update(1, ReadingSide::After, text), None);
+        assert_eq!(view.cursor, Some(9));
+        assert_eq!(view.anchor, Some(12));
+        assert_eq!(view.offset, 240.0);
+        assert_eq!(view.jump, None);
+    }
+
+    #[test]
+    fn open_context_keeps_place_when_the_identity_is_adopted() {
+        let ctx = egui::Context::default();
+        let mut view = DiffView {
+            change: Some(file("a.rs", true, true)),
+            path: "repo".into(),
+            generation: 1,
+            mode: Mode::Full,
+            side: ReadingSide::After,
+            ..Default::default()
+        };
+        let context = reader::ReaderContext::new(
+            "repo".into(),
+            file("b.rs", true, true),
+            "old version",
+            "new version",
+            reader::ReaderPlace {
+                mode: Mode::Full,
+                side: ReadingSide::After,
+                cursor: Some(40),
+                anchor: Some(45),
+                offset: 800.0,
+            },
+        );
+        view.open_context(&context, &ctx);
+        let text = FileText::from_bytes(
+            ReadingSide::After,
+            b"01\n02\n03\n04\n05\n06\n07\n08\n09\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n21\n22\n23\n24\n25\n26\n27\n28\n29\n30\n31\n32\n33\n34\n35\n36\n37\n38\n39\n40\n41\n42\n43\n44\n45\n46\n47\n48\n49\n50\n",
+            &BTreeSet::new(),
+        );
+        let generation = view.generation;
+        view.accept(full_update(generation, ReadingSide::After, text), None);
+        assert_eq!(view.change.as_ref().map(|c| c.path.as_str()), Some("b.rs"));
+        assert_eq!(view.cursor, Some(40));
+        assert_eq!(view.anchor, Some(45));
+        assert_eq!(view.offset, 800.0);
+        assert_eq!(view.jump, None);
+    }
+
+    #[test]
+    fn open_context_clears_full_content_from_the_other_side() {
+        let ctx = egui::Context::default();
+        let mut view = DiffView {
+            change: Some(file("a.rs", true, true)),
+            path: "repo".into(),
+            mode: Mode::Full,
+            side: ReadingSide::After,
+            full: Some(FileText::from_bytes(
+                ReadingSide::After,
+                b"after\n",
+                &BTreeSet::new(),
+            )),
+            ..Default::default()
+        };
+        let context = reader::ReaderContext::new(
+            "repo".into(),
+            file("a.rs", true, true),
+            "main",
+            "feature",
+            reader::ReaderPlace {
+                mode: Mode::Full,
+                side: ReadingSide::Before,
+                cursor: Some(0),
+                anchor: Some(0),
+                offset: 0.0,
+            },
+        );
+        view.open_context(&context, &ctx);
+        assert_eq!(view.side, ReadingSide::Before);
+        assert!(view.full.is_none());
+    }
+
+    #[test]
+    fn export_capabilities_follow_the_displayed_sides() {
+        let mut view = DiffView {
+            change: Some(file("src/app.rs", true, true)),
+            displayed: Some(file("src/app.rs", false, true)),
+            ..Default::default()
+        };
+        let capabilities = view.capabilities();
+        assert!(!capabilities.export_before);
+        assert!(capabilities.export_after);
+
+        view.displayed = Some(file("src/app.rs", true, false));
+        let capabilities = view.capabilities();
+        assert!(capabilities.export_before);
+        assert!(!capabilities.export_after);
+    }
+
+    #[test]
+    fn pending_endpoint_labels_wait_for_matching_content() {
+        let ctx = egui::Context::default();
+        let mut view = DiffView {
+            change: Some(file("src/app.rs", true, true)),
+            generation: 1,
+            ..Default::default()
+        };
+        view.set_endpoints("before version", "after version");
+        let draw = |view: &mut DiffView| {
+            crate::tests::run_ui(
+                &ctx,
+                crate::tests::frame_input(720.0, 480.0, vec![]),
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| view.draw(ui));
+                },
+            )
+        };
+        let output = draw(&mut view);
+        assert!(!output.shapes.iter().any(|shape| matches!(
+            &shape.shape,
+            egui::epaint::Shape::Text(text)
+                if text.galley.job.text == "before version → after version"
+        )));
+        view.displayed_generation = 1;
+        let output = draw(&mut view);
+        assert!(output.shapes.iter().any(|shape| matches!(
+            &shape.shape,
+            egui::epaint::Shape::Text(text)
+                if text.galley.job.text == "before version → after version"
         )));
     }
 }

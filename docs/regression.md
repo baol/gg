@@ -48,9 +48,9 @@ Before connecting M1 controls, test Review/Back anchor restoration, active-view 
 
 ## Coherence I2 shared reader
 
-- The shared reader context carries the requested path, exact `FileChange`, both endpoint labels, presentation, inspection side, cursor, anchor, and pixel offset. Tests save a context, change presentation and place, restore it, and assert every value and endpoint label.
-- Commit review supplies resolved parent/reference and commit labels to the reader header; file history supplies the older and current content-version labels. The header also retains exact modes and blob IDs.
-- Reader capabilities gate Diff, full sides, and export from the actual comparison. An absent or gitlink side cannot export, and an unresolved history edge cannot open Diff.
+- The shared reader context carries the requested file identity, exact `FileChange`, both endpoint labels, presentation, inspection side, cursor, anchor, and pixel offset. Tests save a context, change presentation and place, restore it, assert every value and endpoint label, and confirm the place survives identity adoption and asynchronous updates.
+- Commit review supplies resolved parent/reference and commit labels to the reader header; file history supplies the older and current content-version labels. Endpoint labels appear only when displayed content matches the requested identity, and the header retains exact modes and blob IDs.
+- Reader capabilities gate Diff, full-side selection, and export from the actual comparison. Export uses the displayed sides; absent and gitlink sides cannot export, and an unresolved history edge cannot open Diff.
 - Requested and displayed identities remain separate: generation, mode, and side still reject stale worker results. Existing 2 MiB and 100,000-line limits, binary preview, and export budgets remain covered by their owning tests.
 - Review captures the reader context when opening file history and restores it once on return; the same value is the staging/history integration API for I3/I4. No blame or line-history control is added.
 
