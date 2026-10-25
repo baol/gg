@@ -1,6 +1,8 @@
 //! Shared navigation keys; text editors and open menus retain their input.
 use eframe::egui;
-pub const READING_HINT: &str = "Up/Down / j k: line · Shift+Up/Down: range · [ ]: change · Alt+Up/Down: file · PgUp/PgDn: page · Esc: files";
+pub const READING_HINT: &str = "Up/Down / j k: line · Shift+Up/Down: range · [ ]: change · Alt+Up/Down: file · H: history · PgUp/PgDn: page · Esc: files";
+pub const HISTORY_HINT: &str =
+    "Alt+Left/Right: version · [ ]: change · Up/Down: line · Shift+Up/Down: range · Esc: file";
 pub fn available(ctx: &egui::Context) -> bool {
     !egui::Popup::is_any_open(ctx)
         && ctx
@@ -59,6 +61,7 @@ mod tests {
                 let font = egui::FontId::new(12.0, family);
                 for text in [
                     READING_HINT,
+                    HISTORY_HINT,
                     crate::colors::change(
                         &egui::Visuals::dark(),
                         &gg_engine::review::ChangeKind::TypeChanged,

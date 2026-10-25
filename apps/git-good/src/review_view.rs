@@ -42,6 +42,8 @@ pub struct Review {
     show_diff: bool,
     restore_files: bool,
     replacing: bool,
+    history: Option<crate::file_history_view::FileHistory>,
+    open_history: bool,
 }
 impl Review {
     pub fn new(request: ReviewRequest, subject: String, ctx: &egui::Context) -> Self {
@@ -66,9 +68,29 @@ impl Review {
             show_diff: false,
             restore_files: false,
             replacing: false,
+            history: None,
+            open_history: false,
         };
         view.retry(ctx);
         view
+    }
+
+    fn open_history_now(&mut self, ctx: &egui::Context) {
+        let Some(change) = self.selected.and_then(|row| self.rows.get(&row)) else {
+            return;
+        };
+        let revision = self
+            .comparison
+            .as_ref()
+            .map(|comparison| comparison.commit.clone())
+            .unwrap_or_else(|| self.request.revision.clone());
+        self.history = Some(crate::file_history_view::FileHistory::new(
+            self.request.path.clone(),
+            revision,
+            change.path.clone(),
+            change.path_bytes.clone(),
+            ctx,
+        ));
     }
     fn retry(&mut self, ctx: &egui::Context) {
         self.worker = None;
@@ -159,6 +181,24 @@ impl Review {
     pub(crate) fn draw_ui(&mut self, ui: &mut egui::Ui) -> bool {
         let ctx = ui.ctx().clone();
         let ctx = &ctx;
+        if self.open_history {
+            self.open_history = false;
+            self.open_history_now(ctx);
+        }
+        if let Some(history) = &mut self.history {
+            let back = history.draw(ui);
+            if back {
+                self.history = None;
+            }
+            return false;
+        }
+        if self.show_diff
+            && crate::navigation::activation_available(ctx)
+            && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::H))
+        {
+            self.open_history = true;
+            ctx.request_repaint();
+        }
         let (point, active, now) = ctx.input(|i| {
             (
                 i.pointer.hover_pos(),
@@ -363,6 +403,14 @@ impl Review {
                                     .min(self.count.saturating_sub(1)),
                             );
                             reveal = true;
+                        }
+                        if ui
+                            .add_enabled(self.selected.is_some(), egui::Button::new("History"))
+                            .on_disabled_hover_text("Select a file to follow its history")
+                            .clicked()
+                        {
+                            self.open_history = true;
+                            ctx.request_repaint();
                         }
                     }
                     if self.error.is_some() && ui.button("Retry").clicked() {
@@ -1037,6 +1085,82 @@ mod tests {
             frame(&mut view, vec![egui::Event::PointerGone], 1.4);
             assert!(view.rows.contains_key(&2));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn history_opens_from_reading_and_escape_backs_out_one_level()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        let mut view = Review::fixture(&ctx);
+        let frame = |view: &mut Review, events| {
+            let mut back = false;
+            let _ = crate::tests::run_ui(
+                &ctx,
+                crate::tests::frame_input(1120.0, 740.0, events),
+                |ui| {
+                    back = view.draw_ui(ui);
+                },
+            );
+            back
+        };
+        frame(&mut view, vec![]);
+        let selected = view.selected.ok_or("the fixture has no selected file")?;
+        assert!(view.rows.contains_key(&selected));
+        view.show_diff = true;
+        assert!(!frame(
+            &mut view,
+            vec![egui::Event::Key {
+                key: egui::Key::H,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        ));
+        assert!(view.open_history);
+        frame(&mut view, vec![]);
+        assert!(view.history.is_some());
+        assert!(view.show_diff);
+        let back = frame(
+            &mut view,
+            vec![egui::Event::Key {
+                key: egui::Key::Escape,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+        assert!(!back, "Esc in history stays inside the review");
+        assert!(view.history.is_none());
+        assert!(view.show_diff);
+        let back = frame(
+            &mut view,
+            vec![egui::Event::Key {
+                key: egui::Key::Escape,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+        assert!(
+            !back,
+            "the first Esc from the file returns to the file list"
+        );
+        assert!(!view.show_diff);
+        let back = frame(
+            &mut view,
+            vec![egui::Event::Key {
+                key: egui::Key::Escape,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+        assert!(back, "the second Esc leaves the review");
         Ok(())
     }
 }

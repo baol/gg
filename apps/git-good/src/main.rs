@@ -11,6 +11,8 @@ mod details_view;
 mod diff_view;
 mod diff_worker;
 mod export;
+mod file_history_view;
+mod file_history_worker;
 mod graph;
 mod history_view;
 #[cfg(test)]

@@ -178,6 +178,7 @@ pub mod conflict;
 pub mod diff;
 pub mod drop;
 pub mod file;
+pub mod file_history;
 pub mod merge;
 pub mod mutation;
 pub mod patch;

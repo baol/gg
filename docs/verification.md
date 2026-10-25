@@ -460,3 +460,18 @@ Linux x86_64 · Rust 1.99.1 · local Git fixtures.
 - Native X11 at 1120×740: [diff](screenshots/m7-file-wide-diff.png), [full file at the first change](screenshots/m7-file-wide-full.png), [second change](screenshots/m7-file-wide-change.png), [before side](screenshots/m7-file-wide-before.png), and [Alt+Down to the next file](screenshots/m7-file-wide-file.png).
 - Native X11 at 720×480: [full file](screenshots/m7-file-narrow-full.png) and [second change](screenshots/m7-file-narrow-change.png).
 - Full-file reads and reading navigation never write objects, refs, the index, or working files.
+
+## M7 file history · 2026-10-25
+
+Linux x86_64 · Rust 1.99.1 · local Git fixtures.
+
+- 358 workspace tests pass (3 ignored); formatting and Clippy with `-D warnings` pass.
+- History is a cursor over content versions. Git oracle fixtures confirm that commits carrying an unchanged state are skipped, an unchanged commit resolves to the commit that introduced the content, a rename names the old path, delete/re-add produces an explicit absent version, a root addition is the only version, and non-UTF8 path bytes survive. Cancellation and a failed step keep the loaded versions and the pending boundary so a retry resumes.
+- A one-sided merge follows the parent that carries the content silently. A two-sided merge with no same-state carrier offers both predecessors newest first and follows the chosen one; the engine exposes the choice so the view can stop and ask instead of taking the first parent. The chosen edge then shows the chosen base with Old/New labels.
+- Boundaries are explicit and never wrap: the newest version disables After with `Newest version`, the oldest disables Before with `Oldest version` or `Only version`, and an in-flight page disables Before with `Loading earlier versions…` until the result arrives. A limit or a pending choice names its own reason.
+- The file-history worker preloads a bounded page and pages older versions on demand, is generation-scoped, cancels superseded work, and reports busy and error updates. Opening another file discards the previous session.
+- The view renders the version header (kind, commit, subject, author, date, old path), the version counter, boundaries, and the predecessor chooser. The embedded reading surface keeps Diff/Full and the line place, uses Old/New labels, and falls back to Full-only with Diff disabled while the earlier side is unknown.
+- `H` opens history from reading and `Esc` backs out one level: history to the file, then the file list, while the comparison and reading state stay intact behind the history sub-view.
+- Native X11 at 1120×740: [newest version with Diff](screenshots/m7-history-wide-diff.png), [Full file with Old/New](screenshots/m7-history-wide-full.png), [oldest boundary](screenshots/m7-history-oldest.png), [predecessor chooser](screenshots/m7-history-chooser.png), and [the chosen predecessor edge](screenshots/m7-history-chosen.png).
+- Native X11 at 720×480: [narrow history](screenshots/m7-history-narrow.png).
+- History navigation reads objects and never writes objects, refs, the index, or working files.
