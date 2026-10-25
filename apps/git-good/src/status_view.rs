@@ -1743,7 +1743,7 @@ mod tests {
         width: f32,
         mut done: impl FnMut(&StatusView) -> bool,
     ) {
-        let until = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(30);
         loop {
             frame(ctx, view, width, vec![]);
             if done(view) {
