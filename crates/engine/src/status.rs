@@ -11,7 +11,7 @@ pub struct StatusIdentity {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base_tree: Option<String>,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Area {
     Staged,

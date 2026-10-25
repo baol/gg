@@ -527,6 +527,8 @@ struct Browser {
     outcome_details_open: bool,
     #[cfg(debug_assertions)]
     screenshot_requested: bool,
+    #[cfg(debug_assertions)]
+    open_local: bool,
     operation_worker: Option<std::sync::mpsc::Receiver<Result<OperationOutcome, String>>>,
     operation_restore_row: Option<usize>,
     merge_dialog: Option<MergeDialog>,
@@ -597,6 +599,8 @@ impl Browser {
             outcome_details_open: false,
             #[cfg(debug_assertions)]
             screenshot_requested: false,
+            #[cfg(debug_assertions)]
+            open_local: std::env::var_os("GG_LOCAL_CHANGES").is_some(),
             operation_worker: None,
             operation_restore_row: None,
             merge_dialog: None,
@@ -1912,6 +1916,15 @@ impl Browser {
         let ctx = ui.ctx().clone();
         let ctx = &ctx;
         colors::apply(ctx);
+        #[cfg(debug_assertions)]
+        if self.open_local
+            && self.working.is_none()
+            && self.review.is_none()
+            && self.state.history.is_some()
+        {
+            self.open_local = false;
+            self.open_working(ctx);
+        }
         if let Some(result) = self.branch.as_ref().and_then(|rx| match rx.try_recv() {
             Ok(result) => Some(result),
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {

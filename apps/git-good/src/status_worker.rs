@@ -1,6 +1,7 @@
-//! Bounded scan delivery and disk-backed viewport pages.
-use gg_engine::status::{StatusEntry, StatusIdentity};
+//! Bounded scan delivery and disk-backed viewport pages for both Local Changes lists.
+use gg_engine::status::{Area, StatusEntry, StatusIdentity};
 use std::{
+    collections::HashMap,
     ops::Range,
     path::PathBuf,
     sync::{
@@ -11,17 +12,34 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Ranges {
+    /// Visible rows in the Unstaged group (Unstaged, Untracked, and Conflict entries).
+    pub unstaged: Range<usize>,
+    /// Visible rows in the Staged group.
+    pub staged: Range<usize>,
+    /// Selected comparison, searched across the completed scan.
+    pub selected: Option<(Vec<u8>, Area)>,
+}
 #[derive(Clone)]
 pub struct Update {
     pub identity: StatusIdentity,
-    pub rows: Vec<(usize, StatusEntry)>,
+    /// Pages in list coordinates: `[Unstaged group, Staged group]`.
+    pub rows: [Vec<(usize, StatusEntry)>; 2],
     pub count: usize,
     pub staged: usize,
     pub complete: bool,
     pub error: Option<String>,
+    /// Selected comparison as `(list, row, entry)` once the scan reaches it.
+    pub selection: Option<(usize, usize, StatusEntry)>,
+}
+impl Update {
+    pub fn unstaged_count(&self) -> usize {
+        self.count.saturating_sub(self.staged)
+    }
 }
 pub struct Worker {
-    input: Arc<Mutex<Range<usize>>>,
+    input: Arc<Mutex<Ranges>>,
     output: Arc<Mutex<Option<Result<Update, String>>>>,
     stop: Arc<AtomicBool>,
     thread: thread::Thread,
@@ -52,7 +70,11 @@ impl Worker {
         ctx: eframe::egui::Context,
         base_tree: Option<String>,
     ) -> Result<Self, String> {
-        let input = Arc::new(Mutex::new(0..64));
+        let input = Arc::new(Mutex::new(Ranges {
+            unstaged: 0..64,
+            staged: 0..64,
+            selected: None,
+        }));
         let output = Arc::new(Mutex::new(None));
         let stop = Arc::new(AtomicBool::new(false));
         let (i, o, s) = (input.clone(), output.clone(), stop.clone());
@@ -76,11 +98,11 @@ impl Worker {
             thread: handle.thread().clone(),
         })
     }
-    pub fn request(&self, range: Range<usize>) {
+    pub fn request(&self, ranges: Ranges) {
         if let Ok(mut slot) = self.input.lock()
-            && *slot != range
+            && *slot != ranges
         {
-            *slot = range;
+            *slot = ranges;
             self.thread.unpark();
         }
     }
@@ -97,7 +119,7 @@ impl Drop for Worker {
 fn run(
     path: PathBuf,
     base_tree: Option<String>,
-    input: &Mutex<Range<usize>>,
+    input: &Mutex<Ranges>,
     output: &Mutex<Option<Result<Update, String>>>,
     stop: &Arc<AtomicBool>,
     ctx: &eframe::egui::Context,
@@ -121,18 +143,30 @@ fn run(
     let mut staged = 0;
     let mut done = false;
     let mut error = None;
+    let mut positions: HashMap<(Vec<u8>, Area), usize> = HashMap::new();
+    let mut saw_working = false;
     while !stop.load(Ordering::Relaxed) {
-        let range = input.lock().map_err(|e| e.to_string())?.clone();
+        let ranges = input.lock().map_err(|e| e.to_string())?.clone();
         if !done {
             let started = Instant::now();
             for _ in 0..32 {
                 match rx.recv_timeout(Duration::from_millis(4)) {
                     Ok(Event::Identity(value)) => identity = Some(value),
                     Ok(Event::Entry(entry)) => {
-                        if entry.area == gg_engine::status::Area::Staged {
+                        if entry.area == Area::Staged {
+                            debug_assert!(
+                                !saw_working,
+                                "staged rows must precede every working row"
+                            );
                             staged += 1;
+                        } else {
+                            saw_working = true;
                         }
                         store.append(&entry)?;
+                        positions.insert(
+                            (entry.path_bytes.clone(), entry.area),
+                            store.count.saturating_sub(1),
+                        );
                     }
                     Ok(Event::Done(result)) => {
                         done = true;
@@ -152,13 +186,51 @@ fn run(
             }
         }
         if let Some(identity) = &identity {
+            let staged_end = staged.min(store.count);
+            let staged_start = ranges.staged.start.min(staged_end);
+            let staged_range = staged_start..ranges.staged.end.min(staged_end).max(staged_start);
+            let working_start = staged
+                .saturating_add(ranges.unstaged.start)
+                .min(store.count);
+            let working_end = staged
+                .saturating_add(ranges.unstaged.end)
+                .min(store.count)
+                .max(working_start);
+            let selection = ranges
+                .selected
+                .as_ref()
+                .and_then(|key| positions.get(key).copied())
+                .and_then(|global| {
+                    store
+                        .page(global..global + 1)
+                        .ok()?
+                        .into_iter()
+                        .next()
+                        .map(|(_, entry)| {
+                            let list = if entry.area == Area::Staged { 1 } else { 0 };
+                            let row = if list == 1 {
+                                global
+                            } else {
+                                global.saturating_sub(staged)
+                            };
+                            (list, row, entry)
+                        })
+                });
             *output.lock().map_err(|e| e.to_string())? = Some(Ok(Update {
                 identity: identity.clone(),
-                rows: store.page(range.clone())?,
+                rows: [
+                    store
+                        .page(working_start..working_end)?
+                        .into_iter()
+                        .map(|(row, entry)| (row.saturating_sub(staged), entry))
+                        .collect(),
+                    store.page(staged_range)?,
+                ],
                 count: store.count,
                 staged,
                 complete: done && error.is_none(),
                 error: error.clone(),
+                selection,
             }));
             ctx.request_repaint();
         } else if let Some(error) = &error {
@@ -166,7 +238,7 @@ fn run(
         }
         if done {
             while !stop.load(Ordering::Relaxed)
-                && *input.lock().map_err(|e| e.to_string())? == range
+                && *input.lock().map_err(|e| e.to_string())? == ranges
             {
                 thread::park();
             }
@@ -206,14 +278,25 @@ mod tests {
             std::fs::write(dir.path().join(format!("file-{i:04}")), b"content")?;
         }
         let worker = Worker::start(dir.path().into(), eframe::egui::Context::default(), None)?;
-        let wait = |complete: bool, row: usize| -> Result<Update, Box<dyn std::error::Error>> {
+        let ranges = |unstaged: Range<usize>, staged: Range<usize>| Ranges {
+            unstaged,
+            staged,
+            selected: None,
+        };
+        let wait = |ranges: Ranges,
+                    complete: bool,
+                    list: usize,
+                    row: usize|
+         -> Result<Update, Box<dyn std::error::Error>> {
+            worker.request(ranges);
             let deadline = std::time::Instant::now() + Duration::from_secs(15);
             loop {
                 if let Some(result) = worker.poll() {
                     let update = result?;
-                    assert!(update.rows.len() <= 256);
+                    assert!(update.rows.iter().all(|rows| rows.len() <= 256));
                     assert!(update.error.is_none(), "{:?}", update.error);
-                    if (!complete || update.complete) && update.rows.iter().any(|(i, _)| *i == row)
+                    if (!complete || update.complete)
+                        && update.rows[list].iter().any(|(index, _)| *index == row)
                     {
                         return Ok(update);
                     }
@@ -224,12 +307,104 @@ mod tests {
                 thread::sleep(Duration::from_millis(2));
             }
         };
-        let first = wait(false, 0)?;
-        assert!(first.count <= 1000);
-        worker.request(990..1000);
-        assert_eq!(wait(true, 999)?.count, 1000);
-        worker.request(0..32);
-        assert_eq!(wait(true, 0)?.rows[0].1, first.rows[0].1);
+        let first = wait(ranges(0..32, 0..32), false, 0, 0)?;
+        assert!(first.unstaged_count() <= 1000);
+        assert!(first.rows[1].is_empty());
+        let far = wait(ranges(990..1000, 0..32), true, 0, 999)?;
+        assert_eq!(far.unstaged_count(), 1000);
+        let staged = wait(ranges(0..32, 0..32), true, 0, 0)?;
+        assert_eq!(staged.rows[0][0].1, first.rows[0][0].1);
+        Ok(())
+    }
+    #[test]
+    fn staged_and_unstaged_requests_page_independently() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let git = |args: &[&str]| -> Result<(), Box<dyn std::error::Error>> {
+            let out = std::process::Command::new("git")
+                .arg("-C")
+                .arg(dir.path())
+                .args(args)
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env(
+                    "GIT_CONFIG_GLOBAL",
+                    if cfg!(windows) { "NUL" } else { "/dev/null" },
+                )
+                .env("GIT_AUTHOR_NAME", "Test")
+                .env("GIT_COMMITTER_NAME", "Test")
+                .env("GIT_AUTHOR_EMAIL", "test@example.org")
+                .env("GIT_COMMITTER_EMAIL", "test@example.org")
+                .output()?;
+            assert!(
+                out.status.success(),
+                "{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            Ok(())
+        };
+        git(&["init", "-q"])?;
+        std::fs::write(dir.path().join("a"), b"base\n")?;
+        git(&["add", "a"])?;
+        git(&["commit", "-qm", "base"])?;
+        std::fs::write(dir.path().join("a"), b"staged\n")?;
+        git(&["add", "a"])?;
+        std::fs::write(dir.path().join("a"), b"working\n")?;
+        std::fs::write(dir.path().join("new"), b"untracked\n")?;
+        let worker = Worker::start(dir.path().into(), eframe::egui::Context::default(), None)?;
+        worker.request(Ranges {
+            unstaged: 0..2,
+            staged: 0..1,
+            selected: None,
+        });
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        'outer: loop {
+            if let Some(result) = worker.poll() {
+                let update = result?;
+                if !update.complete || update.rows[0].is_empty() || update.rows[1].is_empty() {
+                    if std::time::Instant::now() > deadline {
+                        return Err("status timed out".into());
+                    }
+                    thread::sleep(Duration::from_millis(2));
+                    continue;
+                }
+                assert_eq!((update.count, update.staged), (3, 1));
+                assert_eq!(
+                    update.rows[0]
+                        .iter()
+                        .map(|(index, _)| *index)
+                        .collect::<Vec<_>>(),
+                    vec![0, 1],
+                    "working pages use their own list coordinates"
+                );
+                assert_eq!(update.rows[1][0].1.area, Area::Staged);
+                assert_eq!(update.rows[0][0].1.area, Area::Unstaged);
+                assert_eq!(update.rows[0][1].1.area, Area::Untracked);
+                worker.request(Ranges {
+                    unstaged: 0..1,
+                    staged: 0..1,
+                    selected: Some((b"new".to_vec(), Area::Untracked)),
+                });
+                let deadline = std::time::Instant::now() + Duration::from_secs(5);
+                loop {
+                    if let Some(result) = worker.poll() {
+                        let update = result?;
+                        if let Some((list, row, entry)) = update.selection {
+                            assert_eq!(list, 0);
+                            assert_eq!(row, 1);
+                            assert_eq!(entry.path, "new");
+                            break 'outer;
+                        }
+                    }
+                    if std::time::Instant::now() > deadline {
+                        return Err("selected row was not found".into());
+                    }
+                    thread::sleep(Duration::from_millis(2));
+                }
+            }
+            if std::time::Instant::now() > deadline {
+                return Err("status timed out".into());
+            }
+            thread::sleep(Duration::from_millis(2));
+        }
         Ok(())
     }
 }

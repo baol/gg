@@ -197,6 +197,7 @@ fn post_commit_failure_is_a_warning_after_the_commit_exists() -> Result {
     assert!(!receipt.warnings.is_empty());
     assert!(receipt.warnings[0].contains("post-commit"));
     assert!(receipt.warnings[0].contains("warning"));
+    assert!(!receipt.warnings[0].contains("Commit aborted"));
     assert_eq!(
         git(p, &["show", "-s", "--format=%s", "HEAD"])?,
         b"created\n"

@@ -245,6 +245,15 @@ pub fn head_message(path: &Path) -> std::result::Result<String, String> {
     Ok(decoded.message.to_str_lossy().trim_end().to_string())
 }
 
+/// Read the first parent of HEAD without changing repository state.
+pub fn head_parent(path: &Path) -> std::result::Result<Option<String>, String> {
+    let repo = gix::discover(path).map_err(|e| format!("Read repository: {e}"))?;
+    let commit = repo
+        .head_commit()
+        .map_err(|e| format!("Read HEAD commit: {e}"))?;
+    Ok(commit.parent_ids().next().map(|id| id.detach().to_string()))
+}
+
 fn head_id(repo: &gix::Repository) -> Result<Option<String>> {
     Ok(repo.head()?.id().map(|id| id.detach().to_string()))
 }
@@ -432,8 +441,13 @@ fn run_hook_input(
     } else {
         format!("\n{detail}")
     };
+    let recovery = if name.starts_with("post-") {
+        "The commit exists; fix the hook before retrying."
+    } else {
+        "Commit aborted; the index and working tree are preserved. Fix the hook and retry."
+    };
     Err(format!(
-        "The {name} hook failed ({}). Commit aborted; the index and working tree are preserved. Fix the hook and retry.{detail}",
+        "The {name} hook failed ({}). {recovery}{detail}",
         output.status
     )
     .into())
