@@ -2151,6 +2151,8 @@ mod tests {
         let dir = tempfile::tempdir()?;
         let p = dir.path();
         git(p, &["init", "-q"])?;
+        git(p, &["config", "user.name", "Test"])?;
+        git(p, &["config", "user.email", "test@example.org"])?;
         std::fs::write(p.join("a"), b"base\n")?;
         git(p, &["add", "a"])?;
         git(p, &["commit", "-qm", "base"])?;
