@@ -283,6 +283,21 @@ impl FileHistory {
         }
     }
 
+    fn edge_labels(&self) -> Option<(String, String)> {
+        let timeline = self.timeline.as_ref()?;
+        let version = timeline.current(self.index)?;
+        let after = format!("{} · {}", version.short_commit(), version.path);
+        let before = match &version.previous {
+            Predecessor::Linked => timeline
+                .current(self.index + 1)
+                .map(|older| format!("{} · {}", older.short_commit(), older.path))
+                .unwrap_or_else(|| "Earlier version".into()),
+            Predecessor::Oldest => "Absent".into(),
+            _ => "Earlier version not loaded".into(),
+        };
+        Some((before, after))
+    }
+
     fn keys(&mut self, ctx: &egui::Context) -> bool {
         if !navigation::available(ctx) {
             return false;
@@ -414,6 +429,9 @@ impl FileHistory {
         match self.edge() {
             Some((change, known)) => {
                 self.diff.set_side_labels("Old", "New");
+                if let Some((before, after)) = self.edge_labels() {
+                    self.diff.set_endpoints(before, after);
+                }
                 self.diff
                     .select_edge(self.repo.clone(), Some(change), known, ctx);
                 self.diff.draw_reading(ui);
