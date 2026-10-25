@@ -2,6 +2,7 @@
 use crate::{
     bounded_text,
     diff_worker::{Mode, Update, Worker},
+    reader,
 };
 use eframe::egui;
 use gg_engine::{
@@ -52,6 +53,8 @@ pub struct DiffView {
     edge_known: bool,
     old_label: &'static str,
     new_label: &'static str,
+    before_endpoint: Option<String>,
+    after_endpoint: Option<String>,
 }
 
 impl Default for DiffView {
@@ -95,6 +98,8 @@ impl Default for DiffView {
             edge_known: true,
             old_label: "Before",
             new_label: "After",
+            before_endpoint: None,
+            after_endpoint: None,
         }
     }
 }
@@ -177,6 +182,90 @@ impl DiffView {
     pub fn set_side_labels(&mut self, old: &'static str, new: &'static str) {
         self.old_label = old;
         self.new_label = new;
+    }
+
+    /// Name both exact comparison endpoints for the header.
+    pub fn set_endpoints(&mut self, before: impl Into<String>, after: impl Into<String>) {
+        self.before_endpoint = Some(before.into());
+        self.after_endpoint = Some(after.into());
+    }
+
+    /// The current presentation and place, independent of the comparison.
+    pub fn place(&self) -> reader::ReaderPlace {
+        reader::ReaderPlace {
+            mode: self.mode,
+            side: self.side,
+            cursor: self.cursor,
+            anchor: self.anchor,
+            offset: self.offset,
+        }
+    }
+
+    /// Capture everything a consumer must restore when returning to this file.
+    pub fn save_context(&self) -> Option<reader::ReaderContext> {
+        let change = self.change.clone()?;
+        let endpoint = |label: &'static str, side: &Option<gg_engine::review::FileSide>| match side
+        {
+            Some(side) => format!("{label} {}", side.id.chars().take(8).collect::<String>()),
+            None => format!("{label} · absent"),
+        };
+        Some(reader::ReaderContext::new(
+            self.path.clone(),
+            change.clone(),
+            self.before_endpoint
+                .clone()
+                .unwrap_or_else(|| endpoint(self.old_label, &change.old)),
+            self.after_endpoint
+                .clone()
+                .unwrap_or_else(|| endpoint(self.new_label, &change.new)),
+            self.place(),
+        ))
+    }
+
+    /// Restore a captured context without inventing a second viewer.
+    pub fn open_context(&mut self, context: &reader::ReaderContext, ctx: &egui::Context) {
+        let same = self.path == context.path
+            && self
+                .change
+                .as_ref()
+                .map(|c| (&c.path_bytes, &c.old, &c.new))
+                == Some((
+                    &context.change.path_bytes,
+                    &context.change.old,
+                    &context.change.new,
+                ));
+        if !same {
+            self.select(context.path.clone(), Some(context.change.clone()), ctx);
+        }
+        self.set_endpoints(context.before.label.clone(), context.after.label.clone());
+        self.mode = context.place.mode;
+        self.side = context.place.side;
+        self.full_side = self.side;
+        self.cursor = context.place.cursor;
+        self.anchor = context.place.anchor;
+        self.offset = context.place.offset;
+        self.sent = None;
+        self.send(ctx);
+        ctx.request_repaint();
+    }
+
+    /// Capabilities the current comparison supports.
+    pub fn capabilities(&self) -> reader::Capabilities {
+        let present = |side: &Option<gg_engine::review::FileSide>| {
+            side.as_ref().is_some_and(|side| side.mode != 0o160000)
+        };
+        let (old, new) = self
+            .change
+            .as_ref()
+            .map(|change| (&change.old, &change.new))
+            .unwrap_or((&None, &None));
+        reader::Capabilities {
+            diff: self.edge_known,
+            full_before: present(old),
+            full_after: present(new),
+            export_before: self.displayed.is_some() && present(old),
+            export_after: self.displayed.is_some() && present(new),
+        }
     }
 
     fn side_label(&self, side: ReadingSide) -> &'static str {
@@ -708,6 +797,14 @@ impl DiffView {
             };
             bounded_text::field(ui, label, egui::FontId::proportional(12.0), 20.0);
         } else {
+            if let (Some(before), Some(after)) = (&self.before_endpoint, &self.after_endpoint) {
+                bounded_text::field(
+                    ui,
+                    &format!("{before} → {after}"),
+                    egui::FontId::monospace(11.0),
+                    20.0,
+                );
+            }
             let side = |s: &Option<gg_engine::review::FileSide>| {
                 s.as_ref()
                     .map(|s| format!("{:06o} {}", s.mode, s.id))
@@ -719,18 +816,14 @@ impl DiffView {
                 egui::FontId::monospace(10.0),
                 20.0,
             );
+            let capabilities = self.capabilities();
             ui.horizontal(|ui| {
-                for (label, side) in [
-                    ("Export before", &change.old),
-                    ("Export after", &change.new),
+                for (label, side, enabled) in [
+                    ("Export before", &change.old, capabilities.export_before),
+                    ("Export after", &change.new, capabilities.export_after),
                 ] {
                     if ui
-                        .add_enabled(
-                            self.displayed.is_some()
-                                && side.as_ref().is_some_and(|s| s.mode != 0o160000)
-                                && !self.export.busy(),
-                            egui::Button::new(label),
-                        )
+                        .add_enabled(enabled && !self.export.busy(), egui::Button::new(label))
                         .clicked()
                         && let Some(side) = side
                     {
@@ -744,10 +837,11 @@ impl DiffView {
             });
         }
         let mut actions = vec![];
+        let capabilities = self.capabilities();
         ui.horizontal_wrapped(|ui| {
             let diff = ui
                 .add_enabled(
-                    self.edge_known,
+                    capabilities.diff,
                     egui::Button::new("Diff").selected(self.mode == Mode::Diff),
                 )
                 .on_disabled_hover_text("Choose an earlier version to compare");
@@ -1748,6 +1842,87 @@ mod tests {
         assert!(view.rows.is_empty());
         view.accept(update, None);
         assert_eq!(view.rows[&0].text, "new");
+    }
+
+    #[test]
+    fn saved_reader_context_restores_place_and_endpoints() -> Result<(), String> {
+        let ctx = egui::Context::default();
+        let mut view = DiffView::default();
+        let change = file("src/app.rs", true, true);
+        view.change = Some(change);
+        view.path = "repo".into();
+        view.generation = 4;
+        view.set_endpoints("main (11111111)", "feature (22222222)");
+        view.mode = Mode::Full;
+        view.side = ReadingSide::Before;
+        view.cursor = Some(4);
+        view.anchor = Some(7);
+        view.offset = 88.0;
+        let saved = view.save_context().ok_or("context")?;
+        assert_eq!(saved.before.label, "main (11111111)");
+        assert_eq!(saved.after.label, "feature (22222222)");
+        assert_eq!(saved.change.path, "src/app.rs");
+        assert_eq!(saved.place.mode, Mode::Full);
+        assert_eq!(saved.place.side, ReadingSide::Before);
+        assert_eq!(saved.place.cursor, Some(4));
+        assert_eq!(saved.place.anchor, Some(7));
+        assert_eq!(saved.place.offset, 88.0);
+
+        view.mode = Mode::Diff;
+        view.side = ReadingSide::After;
+        view.cursor = None;
+        view.anchor = None;
+        view.offset = 0.0;
+        view.open_context(&saved, &ctx);
+        assert_eq!(view.mode, Mode::Full);
+        assert_eq!(view.side, ReadingSide::Before);
+        assert_eq!(view.cursor, Some(4));
+        assert_eq!(view.anchor, Some(7));
+        assert_eq!(view.offset, 88.0);
+        assert_eq!(view.before_endpoint.as_deref(), Some("main (11111111)"));
+        assert_eq!(view.after_endpoint.as_deref(), Some("feature (22222222)"));
+        Ok(())
+    }
+
+    #[test]
+    fn reader_capabilities_follow_the_exact_sides() {
+        let mut view = DiffView {
+            change: Some(file("src/app.rs", false, true)),
+            ..Default::default()
+        };
+        let capabilities = view.capabilities();
+        assert!(capabilities.diff);
+        assert!(!capabilities.full_before);
+        assert!(capabilities.full_after);
+        assert!(!capabilities.export_before);
+        assert!(!capabilities.export_after);
+
+        view.displayed = view.change.clone();
+        let capabilities = view.capabilities();
+        assert!(capabilities.export_after);
+        assert!(!capabilities.export_before);
+    }
+
+    #[test]
+    fn the_reader_header_names_both_exact_endpoints() {
+        let ctx = egui::Context::default();
+        let mut view = DiffView {
+            change: Some(file("src/app.rs", true, true)),
+            ..Default::default()
+        };
+        view.set_endpoints("main (11111111)", "feature (22222222)");
+        let output = crate::tests::run_ui(
+            &ctx,
+            crate::tests::frame_input(720.0, 480.0, vec![]),
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| view.draw(ui));
+            },
+        );
+        assert!(output.shapes.iter().any(|shape| matches!(
+            &shape.shape,
+            egui::epaint::Shape::Text(text)
+                if text.galley.job.text == "main (11111111) → feature (22222222)"
+        )));
     }
 }
 

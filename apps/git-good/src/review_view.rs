@@ -45,6 +45,7 @@ pub struct Review {
     history: Option<crate::file_history_view::FileHistory>,
     open_history: bool,
     return_location: Option<crate::return_location::ReturnLocation>,
+    saved_reader: Option<crate::reader::ReaderContext>,
 }
 impl Review {
     pub fn new(request: ReviewRequest, subject: String, ctx: &egui::Context) -> Self {
@@ -72,6 +73,7 @@ impl Review {
             history: None,
             open_history: false,
             return_location: None,
+            saved_reader: None,
         };
         view.retry(ctx);
         view
@@ -86,10 +88,32 @@ impl Review {
         self.return_location.take()
     }
 
+    /// Exact endpoint labels shared by the identity strip and the reader.
+    fn reader_endpoints(&self) -> (String, String) {
+        let after_id = self
+            .comparison
+            .as_ref()
+            .map(|c| c.commit.as_str())
+            .unwrap_or(self.request.revision.as_str());
+        let parent = self.comparison.as_ref().and_then(|c| c.parent.as_deref());
+        if let Some(against) = self.request.against.as_deref() {
+            (
+                review_source(Some(against), parent, "resolving…"),
+                review_source(None, Some(after_id), "resolving…"),
+            )
+        } else {
+            (
+                review_source(None, parent, "empty tree"),
+                review_source(None, Some(after_id), "resolving…"),
+            )
+        }
+    }
+
     fn open_history_now(&mut self, ctx: &egui::Context) {
         let Some(change) = self.selected.and_then(|row| self.rows.get(&row)) else {
             return;
         };
+        self.saved_reader = self.diff.save_context();
         let revision = self
             .comparison
             .as_ref()
@@ -192,6 +216,8 @@ impl Review {
     pub(crate) fn draw_ui(&mut self, ui: &mut egui::Ui) -> bool {
         let ctx = ui.ctx().clone();
         let ctx = &ctx;
+        let (before, after) = self.reader_endpoints();
+        self.diff.set_endpoints(before, after);
         if self.open_history {
             self.open_history = false;
             self.open_history_now(ctx);
@@ -200,6 +226,9 @@ impl Review {
             let back = history.draw(ui);
             if back {
                 self.history = None;
+                if let Some(context) = self.saved_reader.take() {
+                    self.diff.open_context(&context, ctx);
+                }
             }
             return false;
         }
@@ -469,33 +498,10 @@ impl Review {
                 });
             });
         egui::Panel::top("review-identity")
-            .exact_size(88.0)
+            .exact_size(96.0)
             .show(ui, |ui| {
                 bounded_text::field(ui, &self.subject, egui::FontId::proportional(16.0), 24.0);
-                let after_id = self
-                    .comparison
-                    .as_ref()
-                    .map(|c| c.commit.as_str())
-                    .unwrap_or(self.request.revision.as_str());
-                let (before, after) = if let Some(against) = self.request.against.as_deref() {
-                    (
-                        review_source(
-                            Some(against),
-                            self.comparison.as_ref().and_then(|c| c.parent.as_deref()),
-                            "resolving…",
-                        ),
-                        review_source(None, Some(after_id), "resolving…"),
-                    )
-                } else {
-                    (
-                        review_source(
-                            None,
-                            self.comparison.as_ref().and_then(|c| c.parent.as_deref()),
-                            "empty tree",
-                        ),
-                        review_source(None, Some(after_id), "resolving…"),
-                    )
-                };
+                let (before, after) = self.reader_endpoints();
                 bounded_text::field(
                     ui,
                     &format!("Before  {before}"),

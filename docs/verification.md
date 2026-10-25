@@ -17,6 +17,20 @@ Linux x86_64 · Rust 1.99.1 · Xvfb/llvmpipe · disposable Git fixtures.
 - Native X11 captures: [wide history with the stable strip and scoped menu](screenshots/coherence-i1-history-wide.png), [narrow history](screenshots/coherence-i1-history-narrow.png), and [narrow details with Commit actions](screenshots/coherence-i1-details-narrow.png).
 - Limitations: the screenshot hook opens History directly, so no native Local Changes capture was automated; its strip is the same panel verified through geometry/interaction tests. Only the dark theme, Linux/X11, and llvmpipe rendering were inspected. Independent verification remains pending.
 
+## Coherence I2 shared reader · 2026-10-25
+
+Linux x86_64 · Rust 1.99.1 · Xvfb/llvmpipe · disposable Git fixtures.
+
+- `cargo fmt --all -- --check` passed.
+- `cargo test --workspace --locked` passed: 370 tests, 0 failures, 3 ignored opt-in performance checks. This includes 179 `git-good` unit tests and 33 CLI tests.
+- `cargo clippy --workspace --all-targets --locked -- -D warnings` passed.
+- `reader::ReaderContext` carries the requested path, exact `FileChange`, both endpoint labels, presentation, inspection side, cursor, anchor, and pixel offset. A unit test saves a context, changes mode/side/place, restores it, and asserts every value and endpoint label.
+- Commit review supplies resolved parent/reference and commit labels to the reader header; file history supplies the older/current content-version labels. The header keeps the exact modes and blob IDs. Review captures the context when opening file history and restores it once on return.
+- `reader::Capabilities` derives Diff, full-side, and export availability from the actual sides; absent and gitlink sides cannot export, and an unresolved history edge cannot open Diff. Existing 2 MiB/100,000-line, binary preview, and export budgets remain covered by their owning tests.
+- Requested and displayed identities remain separate through generation, mode, and side checks; existing stale-result tests still pass.
+- Native X11 at 1120×740: [shared reader with exact endpoints](screenshots/coherence-i2-reader-wide.png). At 720×480: [narrow shared reader](screenshots/coherence-i2-reader-narrow.png).
+- Limitations: commit review and file history consume the shared reader; staging migration and blame/line-history remain I3/I4 and later work. Native evidence is Linux/X11 dark theme only.
+
 
 ## Coherence proposal and shared workspace · 2026-10-25
 

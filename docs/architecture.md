@@ -351,6 +351,14 @@ Full-file rows are fixed-height and virtualized with exact one-based line number
 
 The place is `{ path bytes, revision, start_line, end_line }`, with one-based inclusive lines and exact path bytes. Engine `Place` stores that identity so path, blame, and line history all use one anchor. A deleted range keeps the before side explicit; history must not silently discard it.
 
+### Shared reader
+
+One reader owns the displayed comparison identity, exact path, both endpoint labels, presentation, inspection side, cursor, anchor, and pixel offset across commit review, staging, and file history. The concrete renderer is the existing `DiffView`; `reader::ReaderContext` is the value consumers exchange. Endpoint labels name the resolved sides (`main (a1b2c3d)`, the parent commit, `Empty tree`, or an older content version) and are shown in the reader header together with the exact modes and blob IDs.
+
+Requested and displayed identities stay separate. A new path, side, mode, or source request increments the generation and cancels superseded work; metadata and rows are adopted together only for the matching identity. `reader::Capabilities` reports what the current comparison actually supports for Diff, Full file, and export, so a label never grants an action. Presentation and side controls never change the comparison; changing the comparison never silently changes the file.
+
+`DiffView::save_context` captures the requested identity, endpoint labels, and place, and `open_context` restores them without creating a second viewer. Commit review uses the context when it leaves for file history and restores it once on return. The same value is the integration point for staging and later history migration; blame and line-history algorithms remain a separate, unimplemented extension point.
+
 ### File and line history
 
 History is a cursor over **content versions**, not over commits. A version is one content state of the followed path; commits that carry an unchanged state are skipped, so the timeline never shows a row that changed nothing. The newest version is the content state the selected revision carries, which may have been introduced by an older commit than the one the review opened. **Full file** shows the current version alone; **Diff** shows the edge `previous → current`. The two Old/New inspection sides remain a separate control from the version control.

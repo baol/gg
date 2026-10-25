@@ -46,6 +46,14 @@ Before connecting M1 controls, test Review/Back anchor restoration, active-view 
 - The selected commit has one **Commit actions** menu in wide details and narrow details, sharing `commit_action_menu`, `apply_commit_command`, and `run_commit_action` with the row context menu and Alt+A. The global Actions menu, separate Commit actions window, and their Help entry are absent; all commands and readiness rules remain.
 - Review records the caller's selected commit, filter, pixel offset, and narrow-details state. Closing with Back, Escape, or the History destination restores it once; presentation changes add no Back step. Opening another repository clears the stale Review and caller location. Recovery's source variant is an explicit extension point for I7.
 
+## Coherence I2 shared reader
+
+- The shared reader context carries the requested path, exact `FileChange`, both endpoint labels, presentation, inspection side, cursor, anchor, and pixel offset. Tests save a context, change presentation and place, restore it, and assert every value and endpoint label.
+- Commit review supplies resolved parent/reference and commit labels to the reader header; file history supplies the older and current content-version labels. The header also retains exact modes and blob IDs.
+- Reader capabilities gate Diff, full sides, and export from the actual comparison. An absent or gitlink side cannot export, and an unresolved history edge cannot open Diff.
+- Requested and displayed identities remain separate: generation, mode, and side still reject stale worker results. Existing 2 MiB and 100,000-line limits, binary preview, and export budgets remain covered by their owning tests.
+- Review captures the reader context when opening file history and restores it once on return; the same value is the staging/history integration API for I3/I4. No blame or line-history control is added.
+
 ## M1 changed files
 
 - Git-oracle fixtures cover root/first-parent changes, merge-parent selection, nested paths, additions/deletions, IDs/modes, file-to-directory replacement, empty comparisons, invalid parents/revisions, and pinned comparisons with unavailable blobs.

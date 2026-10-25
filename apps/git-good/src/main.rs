@@ -22,6 +22,7 @@ mod mutation_cli;
 mod navigation;
 mod network;
 mod phosphor;
+mod reader;
 mod rebase_cli;
 mod records;
 mod reflog_cli;
