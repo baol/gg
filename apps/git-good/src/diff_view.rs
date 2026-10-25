@@ -49,6 +49,9 @@ pub struct DiffView {
     groups: Vec<(usize, usize)>,
     jump: Option<usize>,
     restore_line: Option<usize>,
+    edge_known: bool,
+    old_label: &'static str,
+    new_label: &'static str,
 }
 
 impl Default for DiffView {
@@ -89,6 +92,9 @@ impl Default for DiffView {
             groups: vec![],
             jump: None,
             restore_line: None,
+            edge_known: true,
+            old_label: "Before",
+            new_label: "After",
         }
     }
 }
@@ -144,6 +150,40 @@ impl DiffView {
         self.full_side = self.side;
         self.send(ctx);
         ctx.request_repaint();
+    }
+
+    /// Select a version edge. When `known` is false the earlier side is not
+    /// resolved yet, so only the full current content is meaningful.
+    pub fn select_edge(
+        &mut self,
+        path: PathBuf,
+        change: Option<FileChange>,
+        known: bool,
+        ctx: &egui::Context,
+    ) {
+        let changed = self.edge_known != known;
+        self.edge_known = known;
+        self.select(path, change, ctx);
+        if !known && self.mode != Mode::Full {
+            self.set_mode(Mode::Full, ctx);
+        }
+        if changed {
+            self.sent = None;
+            self.send(ctx);
+        }
+    }
+
+    /// Name the two inspection sides; history calls them Old and New.
+    pub fn set_side_labels(&mut self, old: &'static str, new: &'static str) {
+        self.old_label = old;
+        self.new_label = new;
+    }
+
+    fn side_label(&self, side: ReadingSide) -> &'static str {
+        match side {
+            ReadingSide::Before => self.old_label,
+            ReadingSide::After => self.new_label,
+        }
     }
 
     fn side_available(&self, side: ReadingSide) -> bool {
@@ -705,10 +745,13 @@ impl DiffView {
         }
         let mut actions = vec![];
         ui.horizontal_wrapped(|ui| {
-            if ui
-                .selectable_label(self.mode == Mode::Diff, "Diff")
-                .clicked()
-            {
+            let diff = ui
+                .add_enabled(
+                    self.edge_known,
+                    egui::Button::new("Diff").selected(self.mode == Mode::Diff),
+                )
+                .on_disabled_hover_text("Choose an earlier version to compare");
+            if diff.clicked() {
                 actions.push(Action::Mode(Mode::Diff));
             }
             if ui
@@ -717,13 +760,13 @@ impl DiffView {
             {
                 actions.push(Action::Mode(Mode::Full));
             }
-            if self.mode == Mode::Full {
+            if self.mode == Mode::Full && self.edge_known {
                 ui.separator();
                 for side in [ReadingSide::Before, ReadingSide::After] {
                     if ui
                         .add_enabled(
                             side != self.side && self.side_available(side),
-                            egui::Button::new(side.label()),
+                            egui::Button::new(self.side_label(side)),
                         )
                         .clicked()
                     {
@@ -732,28 +775,34 @@ impl DiffView {
                 }
             }
             ui.separator();
-            let (index, total) = self.change_position();
-            let label = if total == 0 {
-                "No changes".to_string()
-            } else if self.change_number().is_some() {
-                format!("Change {index} of {total}")
+            if !self.edge_known {
+                ui.weak("Earlier version not loaded");
+                ui.add_enabled(false, egui::Button::new("< Prev change"));
+                ui.add_enabled(false, egui::Button::new("Next change >"));
             } else {
-                format!("Before change 1 of {total}")
-            };
-            ui.weak(label);
-            let previous = self.previous_change().is_some();
-            let next = self.next_change().is_some();
-            if ui
-                .add_enabled(previous, egui::Button::new("< Prev change"))
-                .clicked()
-            {
-                actions.push(Action::Change(-1));
-            }
-            if ui
-                .add_enabled(next, egui::Button::new("Next change >"))
-                .clicked()
-            {
-                actions.push(Action::Change(1));
+                let (index, total) = self.change_position();
+                let label = if total == 0 {
+                    "No changes".to_string()
+                } else if self.change_number().is_some() {
+                    format!("Change {index} of {total}")
+                } else {
+                    format!("Before change 1 of {total}")
+                };
+                ui.weak(label);
+                let previous = self.previous_change().is_some();
+                let next = self.next_change().is_some();
+                if ui
+                    .add_enabled(previous, egui::Button::new("< Prev change"))
+                    .clicked()
+                {
+                    actions.push(Action::Change(-1));
+                }
+                if ui
+                    .add_enabled(next, egui::Button::new("Next change >"))
+                    .clicked()
+                {
+                    actions.push(Action::Change(1));
+                }
             }
         });
         for action in actions {
@@ -797,7 +846,7 @@ impl DiffView {
                     ui,
                     &format!(
                         "{} side · {} bytes{}",
-                        full.side.label(),
+                        self.side_label(full.side),
                         full.size,
                         if full.complete { "" } else { " · bounded" }
                     ),
@@ -826,8 +875,10 @@ impl DiffView {
             bounded_text::field(
                 ui,
                 &format!(
-                    "Before: {} bytes · After: {} bytes{}",
+                    "{}: {} bytes · {}: {} bytes{}",
+                    self.old_label,
                     info.old_size,
+                    self.new_label,
                     info.new_size,
                     if info.complete {
                         ""
