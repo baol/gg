@@ -9,8 +9,6 @@ pub const MIN_WIDTH: f32 = 610.0;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RefAction {
     Select,
-    Switch { name: String, full_name: String },
-    Jump(String),
 }
 
 pub fn columns(rect: egui::Rect) -> [egui::Rect; 5] {
@@ -131,11 +129,9 @@ fn paint_refs_and_subject(
         );
         let current = Some(item.full_name.as_str()) == head_name;
         let hint = if current {
-            "Current branch"
-        } else if item.kind == gg_engine::refs::RefKind::Branch {
-            "Double-click to switch branch"
+            "Current branch · click to inspect this commit"
         } else {
-            "Double-click to jump to this commit"
+            "Click to inspect this commit"
         };
         let response = ui
             .interact(
@@ -152,17 +148,7 @@ fn paint_refs_and_subject(
                 format!("{:?} {}", item.kind, item.name),
             )
         });
-        if response.double_clicked() && !current {
-            action = Some(match item.kind {
-                gg_engine::refs::RefKind::Branch => RefAction::Switch {
-                    name: item.name.clone(),
-                    full_name: item.full_name.clone(),
-                },
-                gg_engine::refs::RefKind::Remote | gg_engine::refs::RefKind::Tag => {
-                    RefAction::Jump(item.commit.clone())
-                }
-            });
-        } else if response.clicked() {
+        if response.clicked() {
             action = Some(RefAction::Select);
         }
         x = pill.right() + 4.0;
@@ -477,7 +463,7 @@ mod tests {
     }
 
     #[test]
-    fn double_clicking_a_branch_pill_switches_to_it() {
+    fn clicking_a_branch_pill_selects_its_commit_without_switching() {
         let id = "a".repeat(40);
         let refs = [gg_engine::refs::RefItem {
             name: "main".into(),
@@ -487,17 +473,11 @@ mod tests {
         }];
         let (_, first, second) = click_pill_twice(&refs, None);
         assert_eq!(first, Some(RefAction::Select));
-        assert_eq!(
-            second,
-            Some(RefAction::Switch {
-                name: "main".into(),
-                full_name: "refs/heads/main".into(),
-            })
-        );
+        assert_eq!(second, Some(RefAction::Select));
     }
 
     #[test]
-    fn double_clicking_a_tag_pill_jumps_to_its_commit() {
+    fn clicking_a_tag_pill_selects_its_commit() {
         let id = "b".repeat(40);
         let refs = [gg_engine::refs::RefItem {
             name: "v1.0".into(),
@@ -507,11 +487,11 @@ mod tests {
         }];
         let (_, first, second) = click_pill_twice(&refs, None);
         assert_eq!(first, Some(RefAction::Select));
-        assert_eq!(second, Some(RefAction::Jump(id)));
+        assert_eq!(second, Some(RefAction::Select));
     }
 
     #[test]
-    fn double_clicking_the_current_branch_pill_only_selects_it() {
+    fn clicking_the_current_branch_pill_only_selects_it() {
         let id = "a".repeat(40);
         let refs = [gg_engine::refs::RefItem {
             name: "main".into(),

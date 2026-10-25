@@ -34,6 +34,35 @@ Contracts: [file reading and history](architecture.md#file-reading-and-history--
 
 Record native wide/narrow captures and verification in [verification](verification.md).
 
+## Coherent native interface · staged
+
+Goal: consolidate navigation, reading, scoped commands, operations, and recovery into one interaction model without reducing Git capability. The [coherence proposal](ui-coherence.md) owns the design; this plan sequences delivery. Every increment updates its owning architecture section before or with the behavior change.
+
+### Increments
+
+1. **Stable navigation and scoped commands · complete.** Keep Local Changes and History in one stable navigation strip at every width with ref browsing reachable. Make ref selection read-only everywhere, including sidebar rows, menus, and graph pills, and move switching to an explicit **Switch to branch…** command. Give each selected object one visible scoped action surface sharing definitions, targets, readiness reasons, and confirmations with context menus and shortcuts. Retire the global Actions menu and the separate Commit actions window once replacements work. Add a return-location contract so opening a commit from a tool returns to that tool's selected item and viewport.
+2. **Shared file workspace and reader · planned.** Extract one reader for comparison identity, exact path, presentation, inspection side, and reading place; migrate commit review first and keep file enumeration and selection workers independent. Full-width reading remains a layout, not another viewer.
+3. **Local Changes layout and commit/amend · planned.** Unstaged files upper left and Staged files lower left, one selected comparison on the right, and commit/amend below it. A partially staged path appears in both lists and each entry selects its own comparison. Remove the duplicate Staged/Unstaged reader switch and obsolete stacked layouts while keeping whole-file, hunk, and selected-line safety.
+4. **File history inside the reader · planned.** File history becomes a comparison-source mode in the shared reader with Older/Newer version navigation; Before/After remains an inspection-side control. Closing history restores the captured entry context once, and version steps do not add Back entries.
+5. **One operation area and responsive rewrite · planned.** One operation area owns running, refreshing, needs-attention, and supported continuation controls across views. Validated submission closes configuration; rewrite stops blocking browsing while retained old history is labeled until replacement data is accepted.
+6. **Conflict preview followed by Stage resolution · planned.** Conflicts use the shared file workspace and name Base, ours, theirs, and the result. Choosing a source is read-only; **Stage resolution** is the single publication step and validates original bytes, operation, path, and stale content.
+7. **Repository tools, recovery, and pending intent · planned.** Consolidate Backups and Reflog under **Repository → Recovery**, add one **Restore stash…** form, share branch creation with an explicit switch choice, and retain blocked-action intent for revalidation without auto-execution.
+
+### Acceptance
+
+| Scenario | Expected result | Method |
+| --- | --- | --- |
+| Stable navigation | Local Changes and History appear in the same order and position at wide and narrow widths; ref browsing remains reachable and destination changes preserve the other view's state | egui geometry and interaction, native review |
+| Read-only refs | Clicking a sidebar ref, menu item, or graph pill inspects its target without moving HEAD; switching is an explicit command with the existing dirty-worktree and hook-warning behavior | egui interaction, Git oracle, native review |
+| Scoped commands | The visible commit, branch, and file action surfaces, context menus, and shortcuts share target, readiness reason, and confirmation; the global Actions menu and Commit actions window are gone | egui interaction, native review |
+| Return locations | Opening a commit from History or a tool returns to that tool's selected item, filter, and viewport; presentation changes do not add Back entries | egui interaction, native review |
+| Shared reader | One set of comparison, path, presentation, side, and place controls serves review, staging, and history; late results never appear under a new identity | Worker tests, egui interaction, native review |
+| Local Changes layout | Unstaged and Staged groups stay visible on the left, the selected comparison is on the right, and commit/amend sits below it; both entries of a partially staged path select distinct comparisons | egui geometry and interaction, Git oracle, native review |
+| Operations and conflicts | One operation area owns progress and supported recovery; source preview never stages, and Stage resolution validates original bytes and stale state | Worker tests, Git oracle, native review |
+| Recovery and intent | Recovery shares one source selector and returns to its selected entry; stash restore options and branch-creation switch choice are explicit; blocked intent is reoffered and revalidated, never auto-executed | egui interaction, Git oracle, native review |
+
+Implementation handoff: [phased implementation and verification prompts](implementation-prompts.md). These increments change no deferred M7 scope: blame/line history, image diffs, worktrees, submodules, LFS, signing, and force push remain planned.
+
 ## UI-flow consolidation · pre-M7
 
 Goal: improve continuity, explicit decisions, and recovery feedback in the existing native workflows before adding M7 features.
@@ -61,7 +90,7 @@ Contracts: [working status, committing, and amend](architecture.md#committing).
 | Comparison direction and scope | Compare with current HEAD names the Before ref and resolved commit; parent, root, and merge comparisons name their exact base and target; Stage file, Unstage file, and Discard file never imply repository scope; Discard confirms the exact file and scope and states the index is unchanged | egui interaction, Git oracle, and native review |
 | Commit readiness and amend mode | Commit enables only after the scan with a nonempty message and staged files; message-only amend stays valid; disabled states explain why; the amend banner names the affected commit and subject; the message editor expands and collapses | egui interaction, Git fixture, and native review |
 | Responsive staging | Narrow widths switch between Staged and Unstaged with counts, focus the nonempty pane by default, and can stack both panes with Split; both panes stay discoverable and preserve selection and scroll across layout changes | egui geometry, Git fixture, and native review |
-| Action discoverability | A visible Actions menu and Commit actions window share the context-menu definitions, group inspect/integrate/rewrite/recovery commands, use target-aware labels, explain disabled commands, open with Alt+A, and provide a Help shortcut window; keyboard-only users can inspect, compare, switch a branch from Refs, and reach recovery | egui interaction, Git fixture, and native review |
+| Action discoverability | The visible **Commit actions** menu beside the selected commit identity shares the context-menu definitions, groups inspect/integrate/rewrite/recovery commands, uses target-aware labels, explains disabled commands, and opens with Alt+A; the Help shortcut window remains, and keyboard-only users can inspect, compare, switch a branch explicitly from Refs, and reach recovery | egui interaction, Git fixture, and native review |
 | Readable outcomes | Merge, rebase, recovery, rewrite, push, fetch, and stash outcomes keep a concise status summary with optional selectable Details and one recovery action; errors outrank success notices; a remaining conflict or worker failure stays visible | egui interaction, Git fixture, and native review |
 
 Implementation and verification: [commit drafts](verification.md#pre-m7-commit-draft-retention--2026-10-23), [operation workers](verification.md#pre-m7-operation-workers--2026-10-23).
@@ -84,7 +113,7 @@ Contracts: [history rewrites and recovery](architecture.md#history-rewrites-and-
 
 | Scenario | Expected result | Method |
 | --- | --- | --- |
-| Local Changes navigation | Local Changes and All Commits are peers in the sidebar, the toolbar and refs stay visible, and a narrow-window fallback switches between them | egui layout and native review |
+| Local Changes navigation | Local Changes and History share one stable navigation strip in that order at wide and narrow widths, the toolbar and refs stay visible, and switching preserves history selection/filter/offset and the Local Changes draft | egui layout and native review |
 | Amend contents | Amend mode shows the parent-to-index changes as staged; Stage adds working changes, Unstage removes files/hunks/lines from the amended commit without touching working files, and the rewritten commit carries the edited message | Git oracle, CLI, and native review |
 | Amend identity and hooks | The original author is preserved, the committer is current, hooks run in Git order, and `post-rewrite` receives the old and new IDs | Git oracle and hook fixtures |
 | Amend safety | The previous tip is reachable through a private `refs/gg/backup/...` ref, backup refs stay out of the refs sidebar, and backup failure aborts | Git oracle and refs snapshot |
