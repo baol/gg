@@ -1,6 +1,6 @@
 use gg_engine::file_history::{HistoryKind, Predecessor};
 use gg_git::file_history::Session;
-use std::{error::Error, ffi::OsStr, path::Path, process::Command};
+use std::{error::Error, path::Path, process::Command};
 
 type Result<T = ()> = std::result::Result<T, Box<dyn Error>>;
 
@@ -294,9 +294,12 @@ fn a_root_addition_is_the_only_version() -> Result {
     Ok(())
 }
 
-#[cfg(unix)]
+// macOS worktree APIs reject byte paths that are not valid UTF-8, so the
+// fixture can only exist on filesystems that accept exact byte names.
+#[cfg(all(unix, not(target_os = "macos")))]
 #[test]
 fn non_utf8_paths_keep_their_exact_bytes() -> Result {
+    use std::ffi::OsStr;
     use std::os::unix::ffi::OsStrExt;
     let dir = init()?;
     let name = OsStr::from_bytes(b"a/\xff");
