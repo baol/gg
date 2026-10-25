@@ -162,6 +162,9 @@ impl StatusView {
         match Worker::start(self.path.clone(), ctx.clone(), self.amend_base.clone()) {
             Ok(worker) => {
                 if replacing {
+                    // A refresh supersedes the previous scan; do not wait for a
+                    // parked worker that may never publish another update.
+                    self.worker = None;
                     self.pending = Some(worker);
                 } else {
                     self.worker = Some(worker);
