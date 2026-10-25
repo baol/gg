@@ -22,11 +22,12 @@ Linux x86_64 · Rust 1.99.1 · Xvfb/llvmpipe · disposable Git fixtures.
 Linux x86_64 · Rust 1.99.1 · Xvfb/llvmpipe · disposable Git fixtures.
 
 - `cargo fmt --all -- --check` passed.
-- `cargo test --workspace --locked` passed: 370 tests, 0 failures, 3 ignored opt-in performance checks. This includes 179 `git-good` unit tests and 33 CLI tests.
+- `cargo test --workspace --locked` passed: 375 tests, 0 failures, 3 ignored opt-in performance checks. This includes 184 `git-good` unit tests and 33 CLI tests.
 - `cargo clippy --workspace --all-targets --locked -- -D warnings` passed.
-- `reader::ReaderContext` carries the requested path, exact `FileChange`, both endpoint labels, presentation, inspection side, cursor, anchor, and pixel offset. A unit test saves a context, changes mode/side/place, restores it, and asserts every value and endpoint label.
-- Commit review supplies resolved parent/reference and commit labels to the reader header; file history supplies the older/current content-version labels. The header keeps the exact modes and blob IDs. Review captures the context when opening file history and restores it once on return.
-- `reader::Capabilities` derives Diff, full-side, and export availability from the actual sides; absent and gitlink sides cannot export, and an unresolved history edge cannot open Diff. Existing 2 MiB/100,000-line, binary preview, and export budgets remain covered by their owning tests.
+- Independent V1 review found five candidate issues before acceptance; the candidate now fixes them: the restored place survives a settling full-file update, export readiness follows the displayed sides, identity adoption and side changes preserve/clear the right place and content, endpoint labels wait for matching content in history, and the reader API no longer exposes unused endpoint paths or a capability mismatch.
+- `reader::ReaderContext` carries the repository root, exact `FileChange`, both endpoint labels, presentation, inspection side, cursor, anchor, and pixel offset. Unit tests save a context, change mode/side/place, restore it, assert every value and endpoint label, and confirm the place survives identity adoption and asynchronous updates.
+- Commit review supplies resolved parent/reference and commit labels to the reader header; file history supplies the older/current content-version labels. The header keeps the exact modes and blob IDs, and endpoint labels only appear once displayed content matches the requested identity.
+- `reader::Capabilities` derives Diff, full-side selection, and export availability from the actual comparison; export uses the displayed sides, absent and gitlink sides cannot export, and an unresolved history edge cannot open Diff. Existing 2 MiB/100,000-line, binary preview, and export budgets remain covered by their owning tests.
 - Requested and displayed identities remain separate through generation, mode, and side checks; existing stale-result tests still pass.
 - Native X11 at 1120×740: [shared reader with exact endpoints](screenshots/coherence-i2-reader-wide.png). At 720×480: [narrow shared reader](screenshots/coherence-i2-reader-narrow.png).
 - Limitations: commit review and file history consume the shared reader; staging migration and blame/line-history remain I3/I4 and later work. Native evidence is Linux/X11 dark theme only.
