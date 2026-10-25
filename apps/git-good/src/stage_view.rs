@@ -1,4 +1,4 @@
-//! Side-by-side staged/unstaged diffs with inline hunk and line actions.
+//! Active staged/working comparison with inline hunk, line, and whole-file actions.
 use crate::bounded_text;
 use eframe::egui;
 use gg_engine::{
@@ -127,14 +127,14 @@ enum Action {
 pub struct StageView {
     path: String,
     panes: [Pane; 2],
+    active: usize,
     load: Option<Load>,
     mutation: Option<Receiver<Result<StatusIdentity, String>>>,
     mutation_label: Option<String>,
     drop_confirm: Option<Action>,
     error: Option<String>,
     changed: bool,
-    narrow_focus: usize,
-    narrow_split: bool,
+    missing: Option<String>,
 }
 
 impl StageView {
@@ -146,6 +146,7 @@ impl StageView {
         ctx: &egui::Context,
     ) {
         self.path = entry.path.clone();
+        self.active = if entry.area == Area::Staged { 0 } else { 1 };
         self.panes = [
             Pane {
                 request: Some(WorkingRequest {
@@ -168,9 +169,30 @@ impl StageView {
         self.mutation = None;
         self.mutation_label = None;
         self.drop_confirm = None;
-        self.narrow_focus = 0;
-        self.narrow_split = false;
+        self.missing = None;
         self.reload(ctx);
+    }
+
+    /// Keep a reviewed path visible after its list entry disappears.
+    pub fn select_missing(
+        &mut self,
+        _repository: StatusIdentity,
+        path_bytes: Vec<u8>,
+        area: Area,
+        ctx: &egui::Context,
+    ) {
+        let entry = StatusEntry::new(area, Kind::Modified, &path_bytes);
+        self.path = entry.path;
+        self.active = if area == Area::Staged { 0 } else { 1 };
+        self.panes = [Pane::default(), Pane::default()];
+        self.load = None;
+        self.mutation = None;
+        self.mutation_label = None;
+        self.drop_confirm = None;
+        self.error = None;
+        self.changed = false;
+        self.missing = Some("This entry is no longer present. Select another entry.".into());
+        ctx.request_repaint();
     }
 
     pub fn reload(&mut self, ctx: &egui::Context) {
@@ -189,6 +211,7 @@ impl StageView {
         let thread_cancel = cancel.clone();
         let (tx, rx) = std::sync::mpsc::channel();
         let repaint = ctx.clone();
+        let active = self.active;
         match thread::Builder::new()
             .name("gg-stage-diff".into())
             .spawn(move || {
@@ -196,20 +219,19 @@ impl StageView {
                     let cancel = thread_cancel.clone();
                     move || cancel.load(Ordering::Relaxed)
                 };
-                let result = gg_git::working_diff::read(&staged, &cancelled);
-                if cancelled() {
-                    return;
+                // Read the visible comparison first; the other pane stays available
+                // for the same path when the lists switch selection.
+                for pane in [active, 1 - active] {
+                    let request = if pane == 0 { &staged } else { &unstaged };
+                    let result = gg_git::working_diff::read(request, &cancelled);
+                    if cancelled() {
+                        return;
+                    }
+                    if tx.send(Part { pane, result }).is_err() {
+                        return;
+                    }
+                    repaint.request_repaint();
                 }
-                if tx.send(Part { pane: 0, result }).is_err() {
-                    return;
-                }
-                repaint.request_repaint();
-                let result = gg_git::working_diff::read(&unstaged, &cancelled);
-                if cancelled() {
-                    return;
-                }
-                let _ = tx.send(Part { pane: 1, result });
-                repaint.request_repaint();
             }) {
             Ok(_) => {
                 self.load = Some(Load {
@@ -227,11 +249,36 @@ impl StageView {
         }
     }
 
+    /// Repository identity currently requested by the two comparisons.
+    pub fn repository(&self) -> Option<&StatusIdentity> {
+        self.panes[0]
+            .request
+            .as_ref()
+            .map(|request| &request.repository)
+    }
+
+    #[cfg(test)]
+    pub fn active_pane(&self) -> usize {
+        self.active
+    }
+
+    #[cfg(test)]
     pub fn path(&self) -> &str {
         &self.path
     }
 
+    #[cfg(test)]
+    pub fn pane_rows(&self, pane: usize) -> usize {
+        self.panes.get(pane).map_or(0, Pane::rows)
+    }
+
+    #[cfg(test)]
     pub fn pending(&self) -> bool {
+        self.mutation.is_some() || self.load.is_some()
+    }
+
+    /// A stage, unstage, or discard publication is pending.
+    pub fn mutating(&self) -> bool {
         self.mutation.is_some()
     }
 
@@ -408,7 +455,6 @@ impl StageView {
                 self.mutation = Some(rx);
                 self.mutation_label = Some(label.into());
                 self.error = None;
-                self.changed = true;
             }
             Err(e) => self.error = Some(format!("Start mutation: {e}")),
         }
@@ -424,6 +470,11 @@ impl StageView {
         }
         if let Some(error) = &self.error {
             bounded_text::field(ui, error, egui::FontId::proportional(12.0), 22.0);
+        }
+        if let Some(missing) = &self.missing {
+            bounded_text::field(ui, &self.path, egui::FontId::proportional(13.0), 24.0);
+            bounded_text::field(ui, missing, egui::FontId::proportional(12.0), 22.0);
+            return;
         }
         let mut action = self.drop_confirm.take();
         let mut confirmed = false;
@@ -469,111 +520,52 @@ impl StageView {
         } else {
             self.drop_confirm = action;
         }
-        let mut action = None;
-        if ui.available_width() >= 860.0 {
-            ui.columns(2, |columns| {
-                draw_pane(
-                    &mut self.panes[0],
-                    PaneKind::Staged,
-                    &mut columns[0],
-                    blocked,
-                    &mut action,
-                );
-                draw_pane(
-                    &mut self.panes[1],
-                    PaneKind::Unstaged,
-                    &mut columns[1],
-                    blocked,
-                    &mut action,
-                );
-            });
-        } else {
-            let staged_changes = self.panes[0].hunks.len();
-            let unstaged_changes = self.panes[1].hunks.len();
-            if staged_changes == 0 && unstaged_changes > 0 {
-                self.narrow_focus = 1;
-            } else if unstaged_changes == 0 && staged_changes > 0 {
-                self.narrow_focus = 0;
-            }
-            ui.horizontal(|ui| {
-                ui.selectable_value(
-                    &mut self.narrow_focus,
-                    0,
-                    format!("Staged ({staged_changes})"),
-                );
-                ui.selectable_value(
-                    &mut self.narrow_focus,
-                    1,
-                    format!("Unstaged ({unstaged_changes})"),
-                );
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui
-                        .small_button(if self.narrow_split { "Focus" } else { "Split" })
-                        .on_hover_text(if self.narrow_split {
-                            "Show only the active comparison"
-                        } else {
-                            "Show both comparisons stacked"
-                        })
-                        .clicked()
-                    {
-                        self.narrow_split = !self.narrow_split;
-                    }
-                });
-            });
-            if self.narrow_split {
-                let height = ui.available_height();
-                let half = ((height - 8.0) / 2.0).max(72.0);
-                ui.allocate_ui_with_layout(
-                    egui::vec2(ui.available_width(), half),
-                    egui::Layout::top_down(egui::Align::Min),
-                    |ui| {
-                        draw_pane(
-                            &mut self.panes[0],
-                            PaneKind::Staged,
-                            ui,
-                            blocked,
-                            &mut action,
-                        );
-                    },
-                );
-                ui.separator();
-                ui.allocate_ui_with_layout(
-                    egui::vec2(ui.available_width(), ui.available_height()),
-                    egui::Layout::top_down(egui::Align::Min),
-                    |ui| {
-                        draw_pane(
-                            &mut self.panes[1],
-                            PaneKind::Unstaged,
-                            ui,
-                            blocked,
-                            &mut action,
-                        );
-                    },
-                );
-            } else if self.narrow_focus == 0 {
-                draw_pane(
-                    &mut self.panes[0],
-                    PaneKind::Staged,
-                    ui,
-                    blocked,
-                    &mut action,
-                );
-            } else {
-                draw_pane(
-                    &mut self.panes[1],
-                    PaneKind::Unstaged,
-                    ui,
-                    blocked,
-                    &mut action,
-                );
-            }
+        if self.path.is_empty() {
+            ui.weak("Select an Unstaged or Staged entry to read its comparison.");
+            return;
         }
+        ui.horizontal(|ui| {
+            bounded_text::field(ui, &self.path, egui::FontId::proportional(13.0), 24.0);
+        });
+        let mut action = None;
+        draw_pane(
+            &mut self.panes[self.active],
+            if self.active == 0 {
+                PaneKind::Staged
+            } else {
+                PaneKind::Unstaged
+            },
+            ui,
+            blocked,
+            &mut action,
+        );
         if let Some(action) = action {
             match action {
                 Action::Drop { .. } => self.drop_confirm = Some(action),
                 _ => self.apply(action, ctx),
             }
         }
+    }
+}
+
+fn route(_pane: usize, pane_state: &Pane) -> &'static str {
+    match pane_state
+        .request
+        .as_ref()
+        .map(|request| request.entry.area)
+    {
+        Some(Area::Conflict) => "unmerged path",
+        Some(Area::Untracked) => "empty -> working file",
+        Some(Area::Staged)
+            if pane_state
+                .request
+                .as_ref()
+                .is_some_and(|request| request.repository.base_tree.is_some()) =>
+        {
+            "HEAD parent -> index (amend)"
+        }
+        Some(Area::Staged) => "HEAD -> index",
+        _ => "index -> working file",
     }
 }
 
@@ -640,25 +632,21 @@ fn draw_pane(
         PaneKind::Staged => 0,
         PaneKind::Unstaged => 1,
     };
-    let (title, route, verb) = match kind {
-        PaneKind::Staged => (
-            "Staged",
-            if pane
-                .request
-                .as_ref()
-                .is_some_and(|request| request.repository.base_tree.is_some())
-            {
-                "parent to index"
-            } else {
-                "HEAD to index"
-            },
-            "Unstage",
-        ),
-        PaneKind::Unstaged => ("Unstaged", "index to working", "Stage"),
+    let title = match pane.request.as_ref().map(|request| request.entry.area) {
+        Some(Area::Conflict) => "Conflict",
+        Some(Area::Untracked) => "Untracked",
+        Some(Area::Staged) => "Staged",
+        _ => "Unstaged",
+    };
+    let route_text = route(index, pane);
+    let verb = if kind == PaneKind::Staged {
+        "Unstage"
+    } else {
+        "Stage"
     };
     ui.horizontal(|ui| {
         ui.strong(title);
-        ui.weak(route);
+        ui.weak(route_text);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if pane.can_whole_edit(kind)
                 && ui
@@ -700,7 +688,9 @@ fn draw_pane(
         }
     } else if let Some(diff) = &pane.diff {
         if diff.rows.is_empty() {
-            if kind == PaneKind::Staged {
+            if !diff.note.is_empty() {
+                diff.note.clone()
+            } else if kind == PaneKind::Staged {
                 "No staged changes".into()
             } else {
                 "No unstaged changes".into()

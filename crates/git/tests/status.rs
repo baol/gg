@@ -107,6 +107,48 @@ fn snapshot(path: &Path) -> Result<Vec<(std::path::PathBuf, Vec<u8>)>> {
     Ok(out)
 }
 #[test]
+fn scan_emits_every_staged_entry_before_working_entries() -> Result {
+    let dir = tempfile::tempdir()?;
+    let p = dir.path();
+    git(p, &["init", "-q"])?;
+    for name in ["a", "b", "c"] {
+        std::fs::write(p.join(name), format!("{name} base\n"))?;
+    }
+    git(p, &["add", "."])?;
+    git(p, &["commit", "-qm", "base"])?;
+    for name in ["a", "b", "c"] {
+        std::fs::write(p.join(name), format!("{name} staged\n"))?;
+    }
+    git(p, &["add", "a", "b"])?;
+    std::fs::write(p.join("a"), b"a working\n")?;
+    std::fs::write(p.join("untracked-1"), b"new\n")?;
+    std::fs::write(p.join("untracked-2"), b"new\n")?;
+    let rows = scan(p)?;
+    let boundary = rows
+        .iter()
+        .position(|entry| entry.area != Area::Staged)
+        .unwrap_or(rows.len());
+    assert_eq!(
+        rows.iter()
+            .filter(|entry| entry.area == Area::Staged)
+            .count(),
+        boundary,
+        "every staged row must precede the working, untracked, and conflict rows"
+    );
+    assert!(
+        rows[..boundary]
+            .iter()
+            .all(|entry| entry.area == Area::Staged)
+    );
+    assert!(
+        rows[boundary..]
+            .iter()
+            .all(|entry| entry.area != Area::Staged)
+    );
+    Ok(())
+}
+
+#[test]
 fn status_matches_git_and_preserves_repository() -> Result {
     let dir = tempfile::tempdir()?;
     let p = dir.path();
