@@ -1752,21 +1752,16 @@ mod tests {
             if done(view) {
                 return;
             }
-            if std::time::Instant::now() >= until {
-                eprintln!(
-                    "pump state busy={} complete={} replacing={} commit_pending={} commit_done={:?} error={:?} identity={} stage_ready={} stage_mutating={}",
-                    view.busy(),
-                    view.complete,
-                    view.replacing,
-                    view.commit.is_some(),
-                    view.commit_done,
-                    view.error,
-                    view.identity.is_some(),
-                    view.stage.ready(),
-                    view.stage.mutating(),
-                );
-                panic!("working view timed out");
-            }
+            assert!(
+                std::time::Instant::now() < until,
+                "working view timed out: busy={} complete={} replacing={} commit={} done={:?} error={:?}",
+                view.busy(),
+                view.complete,
+                view.replacing,
+                view.commit.is_some(),
+                view.commit_done,
+                view.error
+            );
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
     }
@@ -1783,6 +1778,8 @@ mod tests {
     fn generated(path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
         git(path, &["init", "-q"])?;
         git(path, &["config", "core.autocrlf", "false"])?;
+        git(path, &["config", "user.name", "Test"])?;
+        git(path, &["config", "user.email", "test@example.org"])?;
         std::fs::write(
             path.join("a"),
             b"one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\ntwelve\n",
