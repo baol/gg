@@ -38,6 +38,14 @@ Run the full [development checks](development.md) for every increment. Use offli
 
 Before connecting M1 controls, test Review/Back anchor restoration, active-view shortcuts, independent worker cancellation, and late-result isolation. Run these alongside the M0 suite.
 
+## Coherence I1 navigation and scoped commands
+
+- Geometry and interaction tests find **Local Changes** and **History** in one navigation strip in that order at 720 and 1120 widths, switch both destinations, and preserve history selection, filter, pixel offset, and the Local Changes draft. The wide sidebar no longer repeats navigation; the Refs toolbar menu keeps ref browsing reachable at narrow widths.
+- Egui pointer tests click sidebar branch, remote, and current-branch rows and graph pills. They assert inspection only, no double-click mutation, and a real Git fixture confirms HEAD, index bytes, worktree status, and branch refs are unchanged.
+- The sidebar context menu and Refs menu expose **Switch to \<branch\>**; current-branch and busy states disable it with a visible reason. Existing Git fixtures continue to cover dirty-worktree rejection, checkout, and post-checkout warnings.
+- The selected commit has one **Commit actions** menu in wide details and narrow details, sharing `commit_action_menu`, `apply_commit_command`, and `run_commit_action` with the row context menu and Alt+A. The global Actions menu, separate Commit actions window, and their Help entry are absent; all commands and readiness rules remain.
+- Review records the caller's selected commit, filter, pixel offset, and narrow-details state. Closing with Back, Escape, or the History destination restores it once; presentation changes add no Back step. Opening another repository clears the stale Review and caller location. Recovery's source variant is an explicit extension point for I7.
+
 ## M1 changed files
 
 - Git-oracle fixtures cover root/first-parent changes, merge-parent selection, nested paths, additions/deletions, IDs/modes, file-to-directory replacement, empty comparisons, invalid parents/revisions, and pinned comparisons with unavailable blobs.
@@ -106,7 +114,7 @@ Ref snapshots: compare HEAD, local branches, remote branches, and annotated/ligh
 
 Graph layout: unit tests cover linear history, merge parents, lane reuse, joins, lane retirement, single-parent lane colors, and downward starts for only the row's own lane. Worker tests verify graph rows stay aligned with commits when the query filters rows, and egui tests require the graph column and ref labels at 720 and 1120 widths. Long or numerous refs must remain single-line with an explicit overflow count. History traversal includes commit targets from every local branch, remote branch, and tag; a `git rev-list --all` oracle and a parent-after-child assertion protect the all-ref set and topological order.
 
-Ref navigation: the Refs sidebar groups branches, remotes, and tags as collapsible trees at wide widths; the Refs menu remains the narrow fallback. Both mark the symbolic HEAD branch, filter by ref name, switch local branches, and select a remote/tag commit without mutating the repository. Jumping must clear a hiding filter, recover the correct row after traversal completion, preserve the selected anchor, and reveal deep targets. History labels render as pills with the current branch first, icons, width-aware overflow, and a readable subject. A single pill click selects its commit; a double-click switches to a local branch or jumps to a tag/remote commit. Duplicate loose/packed refs must appear once. Native wide/narrow review verifies graph lanes, labels, sidebar, menus, and selection.
+Ref navigation: the Refs sidebar groups branches, remotes, and tags as collapsible trees at wide widths; the Refs menu remains the narrow fallback. Both mark the symbolic HEAD branch, filter by ref name, inspect branch/remote/tag commits without mutating the repository, and expose an explicit **Switch to \<branch\>** command for local branches with the current branch disabled. Clicking any ref inspects its target; double-clicks have no mutating meaning. Jumping must clear a hiding filter, recover the correct row after traversal completion, preserve the selected anchor, and reveal deep targets. History labels render as pills with the current branch first, icons, width-aware overflow, and a readable subject. A pill click selects its commit without switching branches; tag and remote inspection never moves HEAD. Duplicate loose/packed refs must appear once. Native wide/narrow review verifies graph lanes, labels, sidebar, menus, and selection.
 
 ## M3 branch switching and creation
 
@@ -163,7 +171,7 @@ Native review: the refs sidebar and status line show the current branch upstream
 - Git oracle tests cover soft, mixed, and hard reset and reject option-shaped or missing targets.
 - CLI tests cover `git good reset --soft|--mixed|--hard COMMIT` receipts and missing-mode errors.
 - egui tests render the reset confirmation, including the hard-reset warning, at 720 and 1120 widths.
-- The visible **Actions** menu and **Commit actions** window share the commit-row context-menu definitions, grouped as Inspect, Integrate, Rewrite and destructive, and Recovery. Tests cover grouped rendering at 720 and 1120 widths, the Alt+A shortcut, the Help shortcut window, and the shared menu returning the clicked command.
+- The visible **Commit actions** menu beside the selected commit identity shares the commit-row context-menu definitions, grouped as Inspect, Integrate, Rewrite and destructive, and Recovery. Tests cover grouped rendering at 720 and 1120 widths, the Alt+A shortcut opening the narrow details overlay when needed, the Help shortcut window, and the shared menu returning the clicked command. The global **Actions** menu and separate **Commit actions** window are gone.
 
 ## Compare to local
 
@@ -181,7 +189,7 @@ Native review: the refs sidebar and status line show the current branch upstream
 
 ## M6 amend and navigation
 
-- egui tests open Local Changes from the sidebar at 1120 px and from the toolbar at 720 px, keep the global toolbar and refs visible, return through All Commits, and confirm the old Status button is gone.
+- egui tests find Local Changes and History in one navigation strip in that order at 1120 px and 720 px, keep the global toolbar and refs visible, switch destinations without losing history selection/filter/offset or the Local Changes draft, and confirm the old Status button is gone.
 - Draft tests retain a multiline normal commit message and the selected path/area across history/review navigation, keep normal and amend drafts separate when toggling amend, and never transfer a draft between worktrees. Hook-failure tests verify a failed commit keeps the message.
 - Git oracle tests rewrite HEAD with the staged index, preserve the original author and parents, allow a message-only amend with an unchanged tree, and keep the previous commit reachable through `refs/gg/backup/...`.
 - Hook fixtures verify `pre-commit`, `prepare-commit-msg` with the `commit` source and old ID, `commit-msg`, and `post-rewrite amend` stdin. A failing `post-rewrite` returns a warning after the rewrite; other hook failures leave HEAD unchanged.

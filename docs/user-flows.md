@@ -29,7 +29,7 @@ The existing product has a coherent center: history → review → reading, and 
 
 ## Shared screen and interaction model
 
-Keep Repository, Refs, View, Stash, Actions, and Help in the toolbar. At wide widths retain Local Changes, All Commits, and grouped refs at the left. At narrow widths use the documented navigation/Refs fallbacks; do not force the sidebar into the reading area. Place file actions next to their selected file. An operation banner persists above content; the fixed-height status line shows severity, summary, Details, and at most one recovery action.
+Keep Repository, Refs, View, Stash, and Help in the toolbar. Keep Local Changes and History in one stable navigation strip at every width; at wide widths retain grouped refs at the left, and at narrow widths use the Refs toolbar menu. Place file actions and commit actions beside their selected identity. An operation banner persists above content; the fixed-height status line shows severity, summary, Details, and at most one recovery action.
 
 Retain selected commit, file, side, reading position, and filters through back navigation where the owning contracts specify them. Keep normal/amend drafts separately per canonical worktree. A pending worker disables duplicate/incompatible writes while browsing stays available, except the existing rewrite modal, which stays blocking through its refresh. Never publish an old file's result under a new file's label.
 
@@ -41,7 +41,7 @@ The mockup selector is review tooling outside the product shell. Each screen is 
 
 ```mermaid
 flowchart TD
-    Open[Open repository] --> History[All Commits]
+    Open[Open repository] --> History[History]
     History --> Review[Commit files and comparison]
     Review --> Read[Diff or Full file]
     Read --> Timeline[File or line history]
@@ -64,11 +64,11 @@ flowchart TD
 
 ### F01 · Open, find, and inspect history
 
-**Entry:** launch in a repository, use Repository → Open, or return through All Commits. **Goal:** identify a change without mutating the repository.
+**Entry:** launch in a repository, use Repository → Open, or return through History. **Goal:** identify a change without mutating the repository.
 
 1. Resolve the containing repository and show its path, current branch, refs, and streamed history. Retain stable row slots while more history arrives.
 2. Filter history; select a matching commit by pointer or keyboard. Selection reveals bounded subject/identity metadata; open complete text separately with Copy.
-3. Select a ref pill to jump to its commit. Double-click a local branch pill to request switching through F05; tags/remotes only jump.
+3. Select a ref pill to inspect its commit. Switching is explicit through the sidebar context menu or the Refs menu's **Switch to branch** command; tags and remotes are read-only inspections.
 4. Press Enter to open changed files in F02. Escape restores the original row and viewport. Actions → Compare with current HEAD names Before and After with resolved IDs and the requested HEAD ref.
 
 **Alternatives:** empty history/filter results state why no rows appear; a read error keeps an actionable Details view. Detached HEAD is named as such; no branch is inferred. Narrow layouts retain Refs access. **Completion:** the chosen commit is selected, with no objects, refs, index, or worktree writes. **Mockup:** History → Review.
@@ -93,7 +93,7 @@ flowchart TD
 2. Select a file and View diff. At wide widths show Staged (HEAD → index) and Unstaged (index → working file). At narrow widths show counted tabs, default to the nonempty pane, and offer Split to stack both.
 3. Stage file for a whole path, Stage hunk for one hunk, or select changed lines and Stage selected. Unstage mirrors those scopes. Refresh both panes in place and preserve independent selections/scroll.
 4. Return to files and enter a message. Enable Commit only when the validated scan is complete, the message is nonempty, and staged changes exist. Name any blocking conflict or unsupported index state.
-5. Commit the index through hooks. On success clear only the submitted draft; All Commits refreshes and selects the new commit.
+5. Commit the index through hooks. On success clear only the submitted draft; History refreshes and selects the new commit.
 
 **Alternatives:** partial staging is for supported regular text modifications; offer whole-file actions for other supported kinds rather than imply line staging works. A stale diff rejects without publishing and reloads; preserve the draft. A hook failure keeps index/worktree/message and exposes hook output through Details; refresh status because hooks may have staged edits. A post-commit hook failure states that the commit already exists. **Completion:** the new commit contains the reviewed index; unrelated working changes remain. **Mockup:** Stage → commit success or Hook failure → Stage.
 

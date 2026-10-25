@@ -19,6 +19,6 @@ Screen layouts and streaming contracts: [architecture](architecture.md).
 
 Journey review and proposed M7 interfaces: [user flows](user-flows.md) and [interactive mockups](ui-mockups.html). Proposals do not change shipped behavior or milestone status.
 
-Proposed consolidation across views: [coherent interaction model](ui-coherence.md), including the shared reader and the requested Local Changes layout. Keep these proposed changes separate from the current architecture contracts until implementation is scheduled.
+Proposed consolidation across views: [coherent interaction model](ui-coherence.md), including the shared reader and the requested Local Changes layout. Increment 1 (stable navigation, read-only ref selection, scoped commit actions, return locations) is implemented; later increments remain proposals. Update the owning architecture contracts as each later increment is scheduled.
 
 Retain the labeled displayed diff while a newly selected file loads. Replace identity, metadata, preview, and rows together after interaction settles. Keep loading and metadata slots fixed in height.

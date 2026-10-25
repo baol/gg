@@ -2,6 +2,22 @@
 
 Purpose: record measured results and outstanding acceptance checks.
 
+## Coherence I1 · Stable navigation and scoped commands · 2026-10-25
+
+Linux x86_64 · Rust 1.99.1 · Xvfb/llvmpipe · disposable Git fixtures.
+
+- `cargo fmt --all -- --check` passed.
+- `cargo test --workspace --locked` passed: 367 tests, 0 failures, 3 ignored opt-in performance checks. This includes 176 `git-good` unit tests and 33 CLI tests.
+- `cargo clippy --workspace --all-targets --locked -- -D warnings` passed.
+- Independent V1 review found and the candidate fixed three gaps before acceptance: the History strip now leaves the narrow Details overlay, closing Review through the History strip restores the recorded caller location, and the Refs-menu switch readiness matches the sidebar (network and mutation block it). Repository open/clone now drops a stale Review so an old return location cannot be applied to new history.
+- **Local Changes** and **History** render in one compact strip beneath the toolbar in that order at 1120×740 and 720×480. The wide refs sidebar no longer repeats navigation, the toolbar no longer carries a narrow-only destination fallback, and **History** replaces the old destination/filter title. Geometry and interaction tests switch destinations at both widths and verify that history selection, filter, pixel offset, and the Local Changes draft survive.
+- Clicking a sidebar ref row, a toolbar Refs item, or a history graph pill inspects its target commit. A real Git fixture test uses egui pointer input on the sidebar and confirms HEAD, index bytes, worktree status, and branch refs are unchanged. The sidebar context menu and the toolbar Refs menu expose **Switch to \<branch\>** with the current branch disabled; backend branch fixtures continue to cover dirty rejection, checkout, and post-checkout warnings.
+- The selected commit has one **Commit actions** menu beside its identity in the wide details pane and the narrow details overlay. It uses the existing `commit_action_menu` definition and `run_commit_action` dispatch; the global **Actions** menu, separate **Commit actions** window, and Help entry that opened it are gone. Alt+A opens the narrow details overlay when needed and then the same popup. Tests render all command groups at both widths and exercise the shared menu command result.
+- Review records a return location with the caller's commit selection, filter, and pixel offset, plus whether narrow Details was the caller. Closing Review restores it exactly; presentation changes add no Back step. Recovery-specific sources remain unimplemented.
+- Native X11 captures: [wide history with the stable strip and scoped menu](screenshots/coherence-i1-history-wide.png), [narrow history](screenshots/coherence-i1-history-narrow.png), and [narrow details with Commit actions](screenshots/coherence-i1-details-narrow.png).
+- Limitations: the screenshot hook opens History directly, so no native Local Changes capture was automated; its strip is the same panel verified through geometry/interaction tests. Only the dark theme, Linux/X11, and llvmpipe rendering were inspected. Independent verification remains pending.
+
+
 ## Coherence proposal and shared workspace · 2026-10-25
 
 Reviewed [cross-view interaction consistency](ui-coherence.md) and created a [shared-workspace prototype](ui-coherence.html). Local Changes incorporates the user's requested arrangement: Unstaged above Staged on the left, selected changes on the right, commit/amend at lower right. File selection determines the comparison; no second Staged/Unstaged switch is present.

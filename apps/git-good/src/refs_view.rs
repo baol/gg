@@ -222,111 +222,128 @@ fn render_leaf(
     action: &mut Option<Action>,
 ) {
     let current = Some(item.full_name.as_str()) == head_name;
-    let enabled = !busy && !current;
-    let response = row(ui, label, item.kind, current, enabled).on_hover_text(if current {
-        format!("{} · current branch", item.full_name)
-    } else if busy {
-        format!("{} · operation in progress", item.full_name)
-    } else if item.kind == RefKind::Branch {
-        format!("Switch to {}\n{}", item.full_name, short(&item.commit))
-    } else if item.kind == RefKind::Remote {
+    let inspect = format!("Inspect {}\n{}", item.full_name, short(&item.commit));
+    let hover = if current {
         format!(
-            "Jump to {}\n{}\nDouble-click to create a tracking branch",
+            "{} · current branch\nClick to inspect {}",
             item.full_name,
             short(&item.commit)
         )
     } else {
-        format!("Jump to {}\n{}", item.full_name, short(&item.commit))
+        format!("{inspect}\nRight-click for ref actions")
+    };
+    let response = row(ui, label, item.kind, current).on_hover_text(hover);
+    if response.clicked() {
+        *action = Some(Action::Jump(item.commit.clone()));
+    }
+    response.context_menu(|ui| {
+        match item.kind {
+            RefKind::Branch => {
+                if ui
+                    .add_enabled(
+                        !current && !busy,
+                        egui::Button::new(format!("Switch to {}", item.name)),
+                    )
+                    .on_hover_text(if current {
+                        "Already on this branch"
+                    } else if busy {
+                        "Wait for the current operation to finish."
+                    } else {
+                        "Switch the worktree after a clean-worktree check"
+                    })
+                    .clicked()
+                {
+                    *action = Some(Action::Switch(item.name.clone()));
+                    ui.close();
+                }
+                if ui
+                    .add_enabled(!current && !busy, egui::Button::new("Merge into current"))
+                    .clicked()
+                {
+                    *action = Some(Action::Merge(item.name.clone()));
+                    ui.close();
+                }
+                if ui
+                    .add_enabled(
+                        !current && !busy,
+                        egui::Button::new("Rebase current onto this"),
+                    )
+                    .clicked()
+                {
+                    *action = Some(Action::Rebase(item.name.clone()));
+                    ui.close();
+                }
+                if ui
+                    .add_enabled(!current && !busy, egui::Button::new("Delete branch…"))
+                    .clicked()
+                {
+                    *action = Some(Action::DeleteBranch(item.name.clone()));
+                    ui.close();
+                }
+            }
+            RefKind::Remote => {
+                if ui
+                    .add_enabled(!busy, egui::Button::new("Create tracking branch…"))
+                    .clicked()
+                {
+                    *action = Some(Action::Track(item.name.clone()));
+                    ui.close();
+                }
+                if ui
+                    .add_enabled(!busy, egui::Button::new("Merge into current"))
+                    .clicked()
+                {
+                    *action = Some(Action::Merge(item.name.clone()));
+                    ui.close();
+                }
+                if ui
+                    .add_enabled(!busy, egui::Button::new("Rebase current onto this"))
+                    .clicked()
+                {
+                    *action = Some(Action::Rebase(item.name.clone()));
+                    ui.close();
+                }
+            }
+            RefKind::Tag => {
+                if ui
+                    .add_enabled(!busy, egui::Button::new("Merge into current"))
+                    .clicked()
+                {
+                    *action = Some(Action::Merge(item.name.clone()));
+                    ui.close();
+                }
+                if ui
+                    .add_enabled(!busy, egui::Button::new("Rebase current onto this"))
+                    .clicked()
+                {
+                    *action = Some(Action::Rebase(item.name.clone()));
+                    ui.close();
+                }
+                if ui
+                    .add_enabled(!busy, egui::Button::new("Delete tag…"))
+                    .clicked()
+                {
+                    *action = Some(Action::DeleteTag(item.name.clone()));
+                    ui.close();
+                }
+            }
+        }
+        ui.separator();
+        if ui.button("Copy name").clicked() {
+            ui.ctx().copy_text(item.name.clone());
+            ui.close();
+        }
+        if ui.button("Copy hash").clicked() {
+            ui.ctx().copy_text(item.commit.clone());
+            ui.close();
+        }
     });
-    if item.kind == RefKind::Remote && enabled && response.double_clicked() {
-        *action = Some(Action::Track(item.name.clone()));
-    } else if response.clicked() && enabled {
-        *action = Some(match item.kind {
-            RefKind::Branch => Action::Switch(item.name.clone()),
-            RefKind::Remote | RefKind::Tag => Action::Jump(item.commit.clone()),
-        });
-    }
-    if enabled {
-        response.context_menu(|ui| {
-            match item.kind {
-                RefKind::Branch => {
-                    if ui.button("Switch to branch").clicked() {
-                        *action = Some(Action::Switch(item.name.clone()));
-                        ui.close();
-                    }
-                    if ui.button("Merge into current").clicked() {
-                        *action = Some(Action::Merge(item.name.clone()));
-                        ui.close();
-                    }
-                    if ui.button("Rebase current onto this").clicked() {
-                        *action = Some(Action::Rebase(item.name.clone()));
-                        ui.close();
-                    }
-                    if ui.button("Delete branch…").clicked() {
-                        *action = Some(Action::DeleteBranch(item.name.clone()));
-                        ui.close();
-                    }
-                }
-                RefKind::Remote => {
-                    if ui.button("Create tracking branch…").clicked() {
-                        *action = Some(Action::Track(item.name.clone()));
-                        ui.close();
-                    }
-                    if ui.button("Merge into current").clicked() {
-                        *action = Some(Action::Merge(item.name.clone()));
-                        ui.close();
-                    }
-                    if ui.button("Rebase current onto this").clicked() {
-                        *action = Some(Action::Rebase(item.name.clone()));
-                        ui.close();
-                    }
-                }
-                RefKind::Tag => {
-                    if ui.button("Jump to commit").clicked() {
-                        *action = Some(Action::Jump(item.commit.clone()));
-                        ui.close();
-                    }
-                    if ui.button("Merge into current").clicked() {
-                        *action = Some(Action::Merge(item.name.clone()));
-                        ui.close();
-                    }
-                    if ui.button("Rebase current onto this").clicked() {
-                        *action = Some(Action::Rebase(item.name.clone()));
-                        ui.close();
-                    }
-                    if ui.button("Delete tag…").clicked() {
-                        *action = Some(Action::DeleteTag(item.name.clone()));
-                        ui.close();
-                    }
-                }
-            }
-            ui.separator();
-            if ui.button("Copy name").clicked() {
-                ui.ctx().copy_text(item.name.clone());
-                ui.close();
-            }
-            if ui.button("Copy hash").clicked() {
-                ui.ctx().copy_text(item.commit.clone());
-                ui.close();
-            }
-        });
-    }
 }
 
-fn row(
-    ui: &mut egui::Ui,
-    label: &str,
-    kind: RefKind,
-    current: bool,
-    enabled: bool,
-) -> egui::Response {
+fn row(ui: &mut egui::Ui, label: &str, kind: RefKind, current: bool) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), ROW_HEIGHT),
-        if enabled {
-            egui::Sense::click()
-        } else {
-            egui::Sense::hover()
-        },
+        egui::Sense::click(),
     );
     response.widget_info(|| {
         egui::WidgetInfo::labeled(
@@ -345,16 +362,14 @@ fn row(
             5.0,
             ui.visuals().selection.bg_fill.gamma_multiply(0.32),
         );
-    } else if response.hovered() && enabled {
+    } else if response.hovered() {
         ui.painter()
             .rect_filled(rect, 5.0, ui.visuals().widgets.hovered.weak_bg_fill);
     }
     let color = if current {
         ui.visuals().strong_text_color()
-    } else if enabled {
-        ui.visuals().text_color()
     } else {
-        ui.visuals().weak_text_color()
+        ui.visuals().text_color()
     };
     let icon = egui::Rect::from_center_size(
         egui::pos2(rect.left() + 9.0, rect.center().y),
@@ -384,11 +399,7 @@ fn row(
             stroke,
         );
     }
-    if enabled {
-        response.on_hover_cursor(egui::CursorIcon::PointingHand)
-    } else {
-        response
-    }
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 pub(crate) fn paint_icon(
@@ -629,5 +640,98 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(text.iter().any(|line| line.contains("No matching refs")));
         assert!(!text.iter().any(|line| line.contains("Branches  1")));
+    }
+
+    fn click_label(query: &str, label: &str, clicks: usize) -> Option<Action> {
+        let ctx = egui::Context::default();
+        crate::phosphor::install(&ctx);
+        let refs = snapshot();
+        let mut filter = query.to_owned();
+        let mut action = None;
+        let mut run = |events: Vec<egui::Event>, time: f64| {
+            crate::tests::run_ui(
+                &ctx,
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(190.0, 480.0),
+                    )),
+                    time: Some(time),
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        action = show(ui, &refs, &mut filter, false);
+                    });
+                },
+            )
+        };
+        let output = run(vec![], 1.0);
+        let position = output.shapes.iter().find_map(|shape| match &shape.shape {
+            egui::epaint::Shape::Text(text)
+                if text.galley.job.text == label && text.pos.y > 100.0 =>
+            {
+                Some(text.pos + egui::vec2(8.0, text.galley.size().y / 2.0))
+            }
+            _ => None,
+        })?;
+        for index in 0..clicks {
+            let time = 1.1 + index as f64 * 0.2;
+            run(
+                vec![
+                    egui::Event::PointerMoved(position),
+                    egui::Event::PointerButton {
+                        pos: position,
+                        button: egui::PointerButton::Primary,
+                        pressed: true,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+                time,
+            );
+            run(
+                vec![egui::Event::PointerButton {
+                    pos: position,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+                time + 0.05,
+            );
+        }
+        action
+    }
+
+    #[test]
+    fn clicking_a_branch_row_inspects_its_commit() {
+        let commit = "a".repeat(40);
+        assert_eq!(
+            click_label("feature", "feature/nested", 1),
+            Some(Action::Jump(commit))
+        );
+    }
+
+    #[test]
+    fn clicking_the_current_branch_row_inspects_it_without_switching() {
+        assert_eq!(
+            click_label("mai", "main", 1),
+            Some(Action::Jump("a".repeat(40)))
+        );
+    }
+
+    #[test]
+    fn clicking_a_remote_row_inspects_its_commit() {
+        assert_eq!(
+            click_label("origin", "origin/main", 1),
+            Some(Action::Jump("a".repeat(40)))
+        );
+    }
+
+    #[test]
+    fn double_clicking_a_remote_row_never_creates_a_tracking_branch() {
+        let action = click_label("origin", "origin/main", 2);
+        assert_ne!(action, Some(Action::Track("origin/main".into())));
+        assert_ne!(action, Some(Action::Switch("origin/main".into())));
     }
 }

@@ -44,6 +44,7 @@ pub struct Review {
     replacing: bool,
     history: Option<crate::file_history_view::FileHistory>,
     open_history: bool,
+    return_location: Option<crate::return_location::ReturnLocation>,
 }
 impl Review {
     pub fn new(request: ReviewRequest, subject: String, ctx: &egui::Context) -> Self {
@@ -70,9 +71,19 @@ impl Review {
             replacing: false,
             history: None,
             open_history: false,
+            return_location: None,
         };
         view.retry(ctx);
         view
+    }
+
+    /// Record the exact caller state before a tool opens this review.
+    pub fn set_return_location(&mut self, location: crate::return_location::ReturnLocation) {
+        self.return_location = Some(location);
+    }
+
+    pub fn take_return_location(&mut self) -> Option<crate::return_location::ReturnLocation> {
+        self.return_location.take()
     }
 
     fn open_history_now(&mut self, ctx: &egui::Context) {

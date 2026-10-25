@@ -29,6 +29,7 @@ mod reflog_view;
 mod refs_cli;
 mod refs_view;
 mod reset_cli;
+mod return_location;
 mod review_cli;
 mod review_view;
 mod review_worker;
@@ -812,6 +813,12 @@ impl Browser {
             Ok(network::Outcome::Clone(receipt)) => {
                 self.network_error = None;
                 self.network_notice = Some(format!("Cloned {}", receipt.path.display()));
+                if let Some(working) = &self.working {
+                    self.working_drafts
+                        .insert(working.repository_key(), working.capture_draft());
+                }
+                self.working = None;
+                self.review = None;
                 self.path = receipt.path.to_string_lossy().into_owned();
                 self.state.history = None;
                 self.state.rows.clear();
@@ -999,6 +1006,10 @@ impl Browser {
                 .insert(working.repository_key(), working.capture_draft());
         }
         let had_working = self.working.take().is_some();
+        let review_location = self
+            .review
+            .as_mut()
+            .and_then(|review| review.take_return_location());
         let had_review = self.review.take().is_some();
         if !had_working && !had_review {
             return;
@@ -1011,9 +1022,14 @@ impl Browser {
             self.load(ctx);
             self.refresh_reflog();
             self.refresh_backups();
+        } else if let Some(location) = review_location {
+            self.restore_return_location(ctx, location);
         } else {
             self.restore_offset = Some(self.scroll_offset);
         }
+        // The History destination always shows the list, even when the
+        // recorded caller was the narrow Details overlay.
+        self.narrow_details = false;
         ctx.request_repaint();
     }
 
@@ -1201,10 +1217,11 @@ impl Browser {
     }
 
     fn run_commit_action(&mut self, ctx: &egui::Context, id: String, action: CommitAction) {
+        let return_location = self.capture_return_location();
         self.state.selected = Some(id.clone());
         self.state.reconcile_selection();
         match action {
-            CommitAction::Review => self.open_review(ctx),
+            CommitAction::Review => self.open_review(ctx, return_location),
             CommitAction::CherryPick => {
                 if let Err(error) =
                     self.start_mutation(ctx, gg_engine::mutation::Operation::CherryPick)
@@ -1224,8 +1241,62 @@ impl Browser {
                     self.mutation_error = Some(error);
                 }
             }
-            CommitAction::Compare => self.open_compare(ctx, id),
+            CommitAction::Compare => self.open_compare(ctx, id, return_location),
         }
+    }
+
+    fn apply_commit_command(
+        &mut self,
+        ctx: &egui::Context,
+        id: &str,
+        subject: &str,
+        command: CommitCommand,
+    ) {
+        match command {
+            CommitCommand::Action(action) => self.run_commit_action(ctx, id.to_string(), action),
+            CommitCommand::CopyHash => ctx.copy_text(id.to_string()),
+            CommitCommand::CopySubject => ctx.copy_text(subject.to_string()),
+            CommitCommand::OpenBackups => {
+                if let Some(history) = &self.state.history {
+                    self.backups = Some(backups_view::BackupsView::new(history.path.clone()));
+                }
+            }
+        }
+    }
+
+    fn capture_return_location(&self) -> return_location::ReturnLocation {
+        let location = return_location::HistoryLocation {
+            selected: self.state.selected.clone(),
+            query: self.state.query.clone(),
+            offset: self.scroll_offset,
+        };
+        if self.narrow_details {
+            return_location::ReturnLocation::Details(location)
+        } else {
+            return_location::ReturnLocation::History(location)
+        }
+    }
+
+    fn restore_return_location(
+        &mut self,
+        ctx: &egui::Context,
+        location: return_location::ReturnLocation,
+    ) {
+        let shows_details = location.shows_details();
+        let location = location.location().clone();
+        let query_changed = self.state.query != location.query;
+        if query_changed {
+            self.state.query = location.query;
+            self.state.start_filter();
+        }
+        if query_changed || self.state.selected != location.selected {
+            self.state.selected = location.selected;
+            self.state.reconcile_selection();
+        }
+        self.scroll_offset = location.offset;
+        self.restore_offset = Some(location.offset);
+        self.narrow_details = shows_details;
+        ctx.request_repaint();
     }
 
     fn start_operation(
@@ -1740,14 +1811,18 @@ impl Browser {
         self.scroll_to_selection = false;
     }
 
-    fn open_review(&mut self, ctx: &egui::Context) {
+    fn open_review(
+        &mut self,
+        ctx: &egui::Context,
+        return_location: return_location::ReturnLocation,
+    ) {
         if let (Some(history), Some(id)) = (&self.state.history, &self.state.selected) {
             let subject = self
                 .state
                 .displayed_details()
                 .map(|c| c.subject().to_owned())
                 .unwrap_or_default();
-            self.review = Some(review_view::Review::new(
+            let mut review = review_view::Review::new(
                 gg_engine::review::ReviewRequest {
                     path: history.path.clone(),
                     revision: id.clone(),
@@ -1756,7 +1831,9 @@ impl Browser {
                 },
                 subject,
                 ctx,
-            ));
+            );
+            review.set_return_location(return_location);
+            self.review = Some(review);
         }
     }
 
@@ -1776,7 +1853,12 @@ impl Browser {
         ));
     }
 
-    fn open_compare(&mut self, ctx: &egui::Context, id: String) {
+    fn open_compare(
+        &mut self,
+        ctx: &egui::Context,
+        id: String,
+        return_location: return_location::ReturnLocation,
+    ) {
         if let Some(path) = self
             .state
             .history
@@ -1790,7 +1872,7 @@ impl Browser {
                 .displayed_details()
                 .map(|c| c.subject().to_owned())
                 .unwrap_or_default();
-            self.review = Some(review_view::Review::new(
+            let mut review = review_view::Review::new(
                 gg_engine::review::ReviewRequest {
                     path,
                     revision: id,
@@ -1799,7 +1881,9 @@ impl Browser {
                 },
                 subject,
                 ctx,
-            ));
+            );
+            review.set_return_location(return_location);
+            self.review = Some(review);
         }
     }
 
@@ -2062,7 +2146,8 @@ impl Browser {
                             || i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight)
                     })
                 {
-                    self.open_review(ctx);
+                    let location = self.capture_return_location();
+                    self.open_review(ctx, location);
                 }
                 if crate::navigation::activation_available(ctx)
                     && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Space))
@@ -2074,7 +2159,7 @@ impl Browser {
                     }
                 }
                 if ctx.input_mut(|i| i.consume_key(egui::Modifiers::ALT, egui::Key::A)) {
-                    self.commit_actions = !self.commit_actions;
+                    self.commit_actions = true;
                 }
                 let page = self.page_rows.saturating_sub(1).max(1) as i32;
                 for (modifiers, key, distance) in [
@@ -2110,6 +2195,17 @@ impl Browser {
                 {
                     ctx.copy_text(id.clone());
                 }
+            }
+        }
+        if self.commit_actions {
+            self.commit_actions = false;
+            if self.state.selected.is_some() {
+                if narrow {
+                    self.narrow_details = true;
+                } else {
+                    self.details_visible = true;
+                }
+                egui::Popup::open_id(ctx, details_view::commit_actions_popup_id());
             }
         }
         let mut go_local = false;
@@ -2213,34 +2309,16 @@ impl Browser {
                     }
                 });
                 let refs = self.state.refs.clone();
-                let branch_pending = self.branch.is_some() || self.operation_busy();
+                let branch_pending = self.branch.is_some()
+                    || self.network.is_some()
+                    || self.mutation.is_some()
+                    || self.operation_busy();
                 let mut jump = None;
                 let mut switch = None;
                 let mut new_branch = false;
                 let mut track_branch = false;
                 let mut merge = false;
                 let mut rebase = false;
-                let mut section = |ui: &mut egui::Ui, title: &str, kind| {
-                    let filtered = refs
-                        .items
-                        .iter()
-                        .filter(|item| item.kind == kind)
-                        .collect::<Vec<_>>();
-                    if filtered.is_empty() {
-                        return;
-                    }
-                    ui.menu_button(title, |ui| {
-                        for item in filtered {
-                            if ui
-                                .add_enabled(!branch_pending, egui::Button::new(item.name.clone()))
-                                .clicked()
-                            {
-                                jump = Some(item.commit.clone());
-                                ui.close();
-                            }
-                        }
-                    });
-                };
                 ui.menu_button("Refs", |ui| {
                     let head_name = refs.head.as_ref().and_then(|head| head.name.as_deref());
                     if ui
@@ -2303,22 +2381,31 @@ impl Browser {
                         .collect::<Vec<_>>();
                     if !branches.is_empty() {
                         ui.menu_button("Branches", |ui| {
-                            for item in branches {
+                            for item in &branches {
                                 let current = Some(item.full_name.as_str()) == head_name;
                                 let label = if current {
                                     format!("{}  ·  HEAD", item.name)
                                 } else {
                                     item.name.clone()
                                 };
+                                if ui.button(label).clicked() {
+                                    jump = Some(item.commit.clone());
+                                    ui.close();
+                                }
+                            }
+                        });
+                        ui.menu_button("Switch to branch", |ui| {
+                            for item in &branches {
+                                let current = Some(item.full_name.as_str()) == head_name;
                                 if ui
                                     .add_enabled(
                                         !current && !branch_pending,
-                                        egui::Button::new(label),
+                                        egui::Button::new(format!("Switch to {}", item.name)),
                                     )
                                     .on_hover_text(if current {
                                         "Already on this branch"
                                     } else {
-                                        "Switch to this branch (requires a clean worktree)"
+                                        "Switch the worktree after a clean-worktree check"
                                     })
                                     .clicked()
                                 {
@@ -2328,8 +2415,27 @@ impl Browser {
                             }
                         });
                     }
-                    section(ui, "Remotes", gg_engine::refs::RefKind::Remote);
-                    section(ui, "Tags", gg_engine::refs::RefKind::Tag);
+                    for (title, kind) in [
+                        ("Remotes", gg_engine::refs::RefKind::Remote),
+                        ("Tags", gg_engine::refs::RefKind::Tag),
+                    ] {
+                        let filtered = refs
+                            .items
+                            .iter()
+                            .filter(|item| item.kind == kind)
+                            .collect::<Vec<_>>();
+                        if filtered.is_empty() {
+                            continue;
+                        }
+                        ui.menu_button(title, |ui| {
+                            for item in filtered {
+                                if ui.button(item.name.clone()).clicked() {
+                                    jump = Some(item.commit.clone());
+                                    ui.close();
+                                }
+                            }
+                        });
+                    }
                     if refs.items.is_empty() {
                         ui.weak("No branches or tags");
                     }
@@ -2416,53 +2522,14 @@ impl Browser {
                         ui.close();
                     }
                 });
-                if let Some(id) = self.state.selected.clone() {
-                    ui.menu_button("Actions", |ui| {
-                        if let Some(command) = commit_action_menu(
-                            ui,
-                            &id,
-                            self.mutation_ready(),
-                            self.mutation_reason(),
-                        ) {
-                            match command {
-                                CommitCommand::Action(action) => {
-                                    self.run_commit_action(ctx, id.clone(), action);
-                                }
-                                CommitCommand::CopyHash => ui.ctx().copy_text(id.clone()),
-                                CommitCommand::CopySubject => {
-                                    if let Some(subject) = self
-                                        .state
-                                        .displayed_details()
-                                        .map(|commit| commit.subject().to_owned())
-                                    {
-                                        ui.ctx().copy_text(subject);
-                                    }
-                                }
-                                CommitCommand::OpenBackups => {
-                                    if let Some(history) = &self.state.history {
-                                        self.backups = Some(backups_view::BackupsView::new(
-                                            history.path.clone(),
-                                        ));
-                                    }
-                                }
-                            }
-                            ui.close();
-                        }
-                    });
-                }
                 ui.menu_button("Help", |ui| {
                     if ui.button("Keyboard shortcuts…").clicked() {
                         self.help_shortcuts = true;
                         ui.close();
                     }
-                    if ui.button("Selected commit actions…").clicked() {
-                        self.commit_actions = true;
-                        ui.close();
-                    }
                 });
                 ui.separator();
-                let trailing = if self.network.is_some() { 40.0 } else { 0.0 }
-                    + if wide_refs { 0.0 } else { 110.0 };
+                let trailing = if self.network.is_some() { 40.0 } else { 0.0 };
                 let identity_width = (ui.available_width() - trailing).max(80.0);
                 let (identity, path) = if let Some(history) = &self.state.history {
                     let tracking = self
@@ -2504,24 +2571,6 @@ impl Browser {
                         );
                     },
                 );
-                if !wide_refs {
-                    if self.working.is_some() || self.review.is_some() {
-                        if ui
-                            .add(egui::Button::new("All Commits").min_size(egui::vec2(92.0, 26.0)))
-                            .clicked()
-                        {
-                            go_history = true;
-                        }
-                    } else if ui
-                        .add_enabled(
-                            self.state.history.is_some(),
-                            egui::Button::new("Local Changes").min_size(egui::vec2(100.0, 26.0)),
-                        )
-                        .clicked()
-                    {
-                        go_local = true;
-                    }
-                }
                 if let Some(worker) = &self.network {
                     let cancelled = worker.is_cancelled();
                     let button = egui::Button::new(phosphor::icon(phosphor::X).size(13.0))
@@ -2536,6 +2585,36 @@ impl Browser {
                 }
             });
         });
+        egui::Panel::top("navigation")
+            .exact_size(32.0)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    let has_repo = self.state.history.is_some();
+                    let local_selected = self.working.is_some();
+                    if ui
+                        .add_enabled(
+                            has_repo,
+                            egui::Button::selectable(local_selected, "Local Changes")
+                                .min_size(egui::vec2(112.0, 24.0)),
+                        )
+                        .on_hover_text("Stage, unstage, commit, and amend in one view")
+                        .clicked()
+                    {
+                        go_local = true;
+                    }
+                    if ui
+                        .add_enabled(
+                            has_repo,
+                            egui::Button::selectable(!local_selected, "History")
+                                .min_size(egui::vec2(84.0, 24.0)),
+                        )
+                        .on_hover_text("Browse commit history")
+                        .clicked()
+                    {
+                        go_history = true;
+                    }
+                });
+            });
         let mut mutation_action = None;
         let mut resolve_conflicts = false;
         let mut open_backups = false;
@@ -2626,6 +2705,12 @@ impl Browser {
                     {
                         self.reflog = None;
                         self.backups = None;
+                        if let Some(working) = &self.working {
+                            self.working_drafts
+                                .insert(working.repository_key(), working.capture_draft());
+                        }
+                        self.working = None;
+                        self.review = None;
                         self.load(ctx);
                         self.edit_path = false;
                     }
@@ -2639,33 +2724,15 @@ impl Browser {
                 || self.mutation.is_some()
                 || self.operation_busy();
             let has_repo = self.state.history.is_some();
-            let local_selected = self.working.is_some();
             let mut action = None;
             egui::Panel::left("refs-sidebar")
                 .exact_size(190.0)
                 .resizable(false)
                 .frame(egui::Frame::side_top_panel(ui.style().as_ref()).inner_margin(8.0))
                 .show(ui, |ui| {
-                    ui.add_space(2.0);
                     ui.add_enabled_ui(has_repo, |ui| {
-                        if ui
-                            .selectable_label(local_selected, "Local Changes")
-                            .on_hover_text("Stage, unstage, commit, and amend in one view")
-                            .clicked()
-                        {
-                            go_local = true;
-                        }
-                        if ui
-                            .selectable_label(!local_selected, "All Commits")
-                            .on_hover_text("Browse commit history")
-                            .clicked()
-                        {
-                            go_history = true;
-                        }
+                        action = refs_view::show(ui, &refs, &mut self.refs_query, busy);
                     });
-                    ui.add_space(4.0);
-                    ui.separator();
-                    action = refs_view::show(ui, &refs, &mut self.refs_query, busy);
                 });
             match action {
                 Some(refs_view::Action::Switch(name)) => self.start_branch(ctx, name, false),
@@ -2702,6 +2769,7 @@ impl Browser {
         }
         if go_history {
             self.close_to_history(ctx);
+            self.narrow_details = false;
         }
         let new_branch_pending = self.branch.is_some() || self.operation_busy();
         if let Some(name) = &mut self.new_branch {
@@ -3336,52 +3404,6 @@ impl Browser {
         if conflict_recovery.is_none() && self.conflict_view.is_some() && !conflict_open {
             self.conflict_view = None;
         }
-        if self.commit_actions {
-            let id = self.state.selected.clone();
-            let subject = self
-                .state
-                .displayed_details()
-                .map(|commit| commit.subject().to_owned())
-                .unwrap_or_default();
-            let ready = self.mutation_ready();
-            let reason = self.mutation_reason();
-            let mut command = None;
-            let mut open = true;
-            egui::Window::new("Commit actions")
-                .id(egui::Id::unique("commit-actions"))
-                .open(&mut open)
-                .collapsible(false)
-                .resizable(false)
-                .default_width(340.0)
-                .default_pos(ctx.content_rect().center())
-                .pivot(egui::Align2::CENTER_CENTER)
-                .show(ctx, |ui| {
-                    if let Some(id) = &id {
-                        command = commit_action_menu(ui, id, ready, reason);
-                    } else {
-                        ui.label("Select a commit first.");
-                    }
-                });
-            if let Some(command) = command
-                && let Some(id) = id
-            {
-                match command {
-                    CommitCommand::Action(action) => self.run_commit_action(ctx, id, action),
-                    CommitCommand::CopyHash => ctx.copy_text(id),
-                    CommitCommand::CopySubject => ctx.copy_text(subject),
-                    CommitCommand::OpenBackups => {
-                        if let Some(history) = &self.state.history {
-                            self.backups =
-                                Some(backups_view::BackupsView::new(history.path.clone()));
-                        }
-                    }
-                }
-                self.commit_actions = false;
-            }
-            if !open {
-                self.commit_actions = false;
-            }
-        }
         if self.help_shortcuts {
             let mut open = true;
             egui::Window::new("Keyboard shortcuts")
@@ -3403,8 +3425,8 @@ impl Browser {
                             "Ctrl/Cmd+R: refresh · Ctrl/Cmd+F: filter · Ctrl/Cmd+C: copy ID",
                         ),
                         (
-                            "Actions",
-                            "Alt+A: selected commit actions · menus: Repository, Refs, View, Stash, Help",
+                            "Commit actions",
+                            "Alt+A: actions for the selected commit · menus: Repository, Refs, View, Stash, Help",
                         ),
                     ] {
                         ui.strong(group);
@@ -3866,8 +3888,16 @@ impl Browser {
                 .as_mut()
                 .is_some_and(|review| review.draw_ui(ui));
             if close {
+                let location = self
+                    .review
+                    .as_mut()
+                    .and_then(|review| review.take_return_location());
                 self.review = None;
-                self.restore_offset = Some(self.scroll_offset);
+                if let Some(location) = location {
+                    self.restore_return_location(ctx, location);
+                } else {
+                    self.restore_offset = Some(self.scroll_offset);
+                }
                 ctx.request_repaint();
             }
             return;
@@ -3881,14 +3911,14 @@ impl Browser {
             } else if let Some(error) = &self.branch_error {
                 (format!("Branch · {error}"), ui.visuals().error_fg_color)
             } else if let Some(error) = &self.mutation_error {
-                (format!("All Commits · {error}"), ui.visuals().error_fg_color)
+                (format!("History · {error}"), ui.visuals().error_fg_color)
             } else if let Some(outcome) = &self.outcome {
                 let color = match outcome.severity {
                     OutcomeSeverity::Info => ui.visuals().text_color(),
                     OutcomeSeverity::Warning => ui.visuals().warn_fg_color,
                     OutcomeSeverity::Error => ui.visuals().error_fg_color,
                 };
-                (format!("All Commits · {}", outcome.summary), color)
+                (format!("History · {}", outcome.summary), color)
             } else if let Some(worker) = &self.network {
                 if worker.is_cancelled() {
                     ("Cancelling network operation…".into(), ui.visuals().text_color())
@@ -3912,7 +3942,7 @@ impl Browser {
             } else if let Some(notice) = &self.stash_notice {
                 (format!("Stash · {notice}"), ui.visuals().text_color())
             } else if let Some(notice) = &self.mutation_notice {
-                (format!("All Commits · {notice}"), ui.visuals().text_color())
+                (format!("History · {notice}"), ui.visuals().text_color())
             } else if self.pending.is_some() {
                 (format!("Reading {}{}", self.state.requested.as_deref().unwrap_or(std::path::Path::new(".")).display(), if self.state.history.is_some() { " · showing previous results" } else { "" }), ui.visuals().text_color())
             } else if !self.state.finished && self.worker.is_some() {
@@ -4004,7 +4034,7 @@ impl Browser {
             egui::Panel::top("filter").exact_size(40.0).show(ui, |ui| {
                 ui.add_space(5.0);
                 ui.horizontal(|ui| {
-                    ui.strong("All Commits");
+                    ui.strong("History");
                     let count = format!(
                         "{}{}",
                         self.state.count,
@@ -4061,12 +4091,26 @@ impl Browser {
                     ui.weak("DETAILS");
                     ui.add_space(8.0);
                     let commit = self.state.displayed_details();
-                    details_view::show(ui, commit, self.state.details.is_none(), &mut self.avatars);
+                    let loading = self.state.details.is_none();
+                    let ready = self.mutation_ready();
+                    let reason = self.mutation_reason();
+                    let command =
+                        details_view::show(ui, commit, loading, &mut self.avatars, |ui| {
+                            commit.and_then(|commit| {
+                                commit_action_menu(ui, &commit.id, ready, reason)
+                            })
+                        });
+                    if let Some(command) = command
+                        && let Some(commit) = commit
+                    {
+                        let id = commit.id.clone();
+                        let subject = commit.subject().to_owned();
+                        self.apply_commit_command(ctx, &id, &subject, command);
+                    }
                 });
             self.details_rect = details.response.rect;
         }
-        let mut pending_commit_action: Option<(String, CommitAction)> = None;
-        let mut open_commit_backups = false;
+        let mut pending_commit_command: Option<(String, String, CommitCommand)> = None;
         egui::CentralPanel::default().show(ui, |ui| {
             if narrow && self.narrow_details {
                 self.history_rect = egui::Rect::NOTHING;
@@ -4076,7 +4120,19 @@ impl Browser {
                 }
                 ui.add_space(8.0);
                 let commit = self.state.displayed_details();
-                details_view::show(ui, commit, self.state.details.is_none(), &mut self.avatars);
+                let loading = self.state.details.is_none();
+                let ready = self.mutation_ready();
+                let reason = self.mutation_reason();
+                let command = details_view::show(ui, commit, loading, &mut self.avatars, |ui| {
+                    commit.and_then(|commit| commit_action_menu(ui, &commit.id, ready, reason))
+                });
+                if let Some(command) = command
+                    && let Some(commit) = commit
+                {
+                    let id = commit.id.clone();
+                    let subject = commit.subject().to_owned();
+                    self.apply_commit_command(ctx, &id, &subject, command);
+                }
                 return;
             }
             if self.state.history.is_some() {
@@ -4167,23 +4223,11 @@ impl Browser {
                                                 self.mutation_ready(),
                                                 self.mutation_reason(),
                                             ) {
-                                                match command {
-                                                    CommitCommand::Action(action) => {
-                                                        pending_commit_action =
-                                                            Some((id.clone(), action));
-                                                    }
-                                                    CommitCommand::CopyHash => {
-                                                        ui.ctx().copy_text(id.clone());
-                                                    }
-                                                    CommitCommand::CopySubject => {
-                                                        ui.ctx().copy_text(
-                                                            commit.subject().to_string(),
-                                                        );
-                                                    }
-                                                    CommitCommand::OpenBackups => {
-                                                        open_commit_backups = true;
-                                                    }
-                                                }
+                                                pending_commit_command = Some((
+                                                    id.clone(),
+                                                    commit.subject().to_owned(),
+                                                    command,
+                                                ));
                                                 ui.close();
                                             }
                                         });
@@ -4196,24 +4240,6 @@ impl Browser {
                                             }
                                             match action {
                                                 history_view::RefAction::Select => {}
-                                                history_view::RefAction::Switch {
-                                                    name,
-                                                    full_name,
-                                                } => {
-                                                    let current = self
-                                                        .state
-                                                        .refs
-                                                        .head
-                                                        .as_ref()
-                                                        .and_then(|head| head.name.as_deref())
-                                                        == Some(full_name.as_str());
-                                                    if !current && self.branch.is_none() {
-                                                        self.start_branch(ctx, name, false);
-                                                    }
-                                                }
-                                                history_view::RefAction::Jump(id) => {
-                                                    self.jump_to_ref(id)
-                                                }
                                             }
                                         } else {
                                             if response.clicked() {
@@ -4261,11 +4287,8 @@ impl Browser {
                 ui.label("Choose Open… to enter a repository path.");
             }
         });
-        if let Some((id, action)) = pending_commit_action {
-            self.run_commit_action(ctx, id, action);
-        }
-        if open_commit_backups && let Some(history) = &self.state.history {
-            self.backups = Some(backups_view::BackupsView::new(history.path.clone()));
+        if let Some((id, subject, command)) = pending_commit_command {
+            self.apply_commit_command(ctx, &id, &subject, command);
         }
         if self.pending_filter_edit
             && let Some(pending) = &self.pending
@@ -5001,7 +5024,7 @@ mod tests {
             );
             Ok(())
         };
-        git(&["init", "-q"])?;
+        git(&["init", "-q", "-b", "main"])?;
         git(&["config", "user.name", "Test"])?;
         git(&["config", "user.email", "test@example.org"])?;
         std::fs::write(repo.join("a"), b"base\n")?;
@@ -5162,15 +5185,19 @@ mod tests {
     }
 
     #[test]
-    fn commit_actions_window_lists_grouped_actions() {
+    fn scoped_commit_actions_menu_lists_grouped_actions() {
         for width in [720.0, 1120.0] {
             let ctx = egui::Context::default();
             let mut app = layout_fixture();
             app.state.selected = Some("a".repeat(40));
-            app.commit_actions = true;
-            let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
-                app.draw_ui(ctx)
-            });
+            let _ = crate::tests::run_ui(
+                &ctx,
+                frame_input(width, 740.0, vec![key(egui::Key::A, egui::Modifiers::ALT)]),
+                |ctx| app.draw_ui(ctx),
+            );
+            if width < 1040.0 {
+                assert!(app.narrow_details, "narrow details must open first");
+            }
             let output = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
                 app.draw_ui(ctx)
             });
@@ -5183,7 +5210,6 @@ mod tests {
                 })
                 .collect::<Vec<_>>();
             for label in [
-                "Commit actions",
                 "Inspect",
                 "Integrate",
                 "Rewrite and destructive",
@@ -5196,11 +5222,19 @@ mod tests {
                 text.iter().any(|line| line.starts_with("Cherry-pick ")),
                 "missing target-aware cherry-pick at {width}"
             );
+            assert_eq!(
+                text.iter()
+                    .filter(|line| **line == "Commit actions")
+                    .count(),
+                1,
+                "the scoped menu replaces the separate window at {width}"
+            );
+            assert!(!text.contains(&"Selected commit actions…"));
         }
     }
 
     #[test]
-    fn actions_shortcut_opens_the_window() {
+    fn actions_shortcut_opens_the_scoped_menu() {
         let ctx = egui::Context::default();
         let mut app = layout_fixture();
         app.state.selected = Some("a".repeat(40));
@@ -5209,13 +5243,14 @@ mod tests {
             frame_input(1120.0, 740.0, vec![key(egui::Key::A, egui::Modifiers::ALT)]),
             |ctx| app.draw_ui(ctx),
         );
-        assert!(app.commit_actions);
+        assert!(app.details_visible);
+        assert!(!app.commit_actions, "the request is consumed once");
         let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
             app.draw_ui(ctx)
         });
         assert!(output.shapes.iter().any(|shape| matches!(
             &shape.shape,
-            egui::epaint::Shape::Text(text) if text.galley.job.text == "Commit actions"
+            egui::epaint::Shape::Text(text) if text.galley.job.text == "Integrate"
         )));
     }
 
@@ -5294,7 +5329,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(text.contains(&"Keyboard shortcuts"));
         assert!(text.contains(&"Navigation"));
-        assert!(text.contains(&"Actions"));
+        assert!(text.contains(&"Commit actions"));
         assert!(text.iter().any(|line| line.contains("Alt+A")));
     }
 
@@ -5741,7 +5776,7 @@ mod tests {
                     app.history_rect,
                     app.details_rect
                 );
-                assert!(app.history_rect.top() <= 100.0);
+                assert!(app.history_rect.top() <= 130.0);
                 assert!(app.history_rect.bottom() <= height - 20.0);
                 if width >= 1040.0 {
                     assert!(!app.history_rect.intersects(app.details_rect));
@@ -5828,28 +5863,53 @@ mod tests {
     }
 
     #[test]
-    fn local_changes_and_all_commits_share_one_navigation_entry() {
+    fn local_changes_and_history_share_one_navigation_strip_at_every_width()
+    -> Result<(), Box<dyn std::error::Error>> {
         for width in [720.0, 1120.0] {
             let ctx = egui::Context::default();
             let mut app = layout_fixture();
+            app.state.query = "Subject".into();
+            app.restore_offset = Some(123.0);
             let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
                 app.draw_ui(ctx)
             });
+            let selected = app.state.selected.clone();
+            let query = app.state.query.clone();
+            let offset = app.scroll_offset;
+            app.open_working(&ctx);
+            let working = app.working.as_mut().ok_or("missing working view")?;
+            working.set_draft("strip draft".into());
+            app.close_to_history(&ctx);
             let output = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
                 app.draw_ui(ctx)
             });
-            let text = |needle: &str| {
+            let nav = |label: &str| {
                 output.shapes.iter().find_map(|shape| match &shape.shape {
-                    egui::epaint::Shape::Text(text) if text.galley.job.text == needle => {
+                    egui::epaint::Shape::Text(text)
+                        if text.galley.job.text == label && text.pos.y < 80.0 =>
+                    {
                         Some(text.pos)
                     }
                     _ => None,
                 })
             };
-            assert!(text("Local Changes").is_some());
-            assert!(text("Status").is_none());
-            assert!(text("Local Changes").is_some(), "width {width}");
-            let local = text("Local Changes").unwrap_or(egui::Pos2::ZERO);
+            let local = nav("Local Changes").ok_or("missing Local Changes")?;
+            let history = nav("History").ok_or("missing History")?;
+            assert!(
+                local.x < history.x,
+                "Local Changes must stay first at {width}: {local:?} {history:?}"
+            );
+            assert!(
+                (local.y - history.y).abs() < 1.0,
+                "destinations share one strip at {width}: {local:?} {history:?}"
+            );
+            assert!(
+                output.shapes.iter().any(|shape| matches!(
+                    &shape.shape,
+                    egui::epaint::Shape::Text(text) if text.galley.job.text == "Refs"
+                )),
+                "ref browsing stays reachable at {width}"
+            );
             let click = |ctx: &egui::Context, app: &mut Browser, pos: egui::Pos2| {
                 let press = egui::Event::PointerButton {
                     pos,
@@ -5871,14 +5931,13 @@ mod tests {
             };
             click(&ctx, &mut app, local + egui::vec2(8.0, 6.0));
             assert!(app.working.is_some(), "width {width}");
+            assert_eq!(app.state.selected, selected);
+            assert_eq!(app.state.query, query);
+
             let output = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
                 app.draw_ui(ctx)
             });
-            assert!(output.shapes.iter().any(|shape| matches!(
-                &shape.shape,
-                egui::epaint::Shape::Text(text) if text.galley.job.text == "Repository"
-            )));
-            for label in ["Local Changes", "Commit", "Amend"] {
+            for label in ["Repository", "Local Changes", "Commit", "Amend"] {
                 assert!(
                     output.shapes.iter().any(|shape| matches!(
                         &shape.shape,
@@ -5900,24 +5959,369 @@ mod tests {
                         _ => None,
                     })
                     .collect::<Vec<_>>();
+                assert_eq!(
+                    positions.len(),
+                    2,
+                    "one strip entry plus the workspace heading at {width}: {positions:?}"
+                );
                 assert!(positions.iter().any(|x| *x < 190.0), "{positions:?}");
-                assert!(positions.iter().any(|x| *x >= 190.0), "{positions:?}");
-                assert!(output.shapes.iter().any(|shape| matches!(
-                    &shape.shape,
-                    egui::epaint::Shape::Text(text) if text.galley.job.text == "Refs"
-                )));
             }
-            let history = output.shapes.iter().find_map(|shape| match &shape.shape {
-                egui::epaint::Shape::Text(text) if text.galley.job.text == "All Commits" => {
-                    Some(text.pos)
+            let history = output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text)
+                        if text.galley.job.text == "History" && text.pos.y < 80.0 =>
+                    {
+                        Some(text.pos)
+                    }
+                    _ => None,
+                })
+                .ok_or("missing History strip entry")?;
+            click(&ctx, &mut app, history + egui::vec2(8.0, 6.0));
+            assert!(app.working.is_none(), "width {width}");
+            assert_eq!(app.state.selected, selected);
+            assert_eq!(app.state.query, query);
+            assert!(
+                (app.scroll_offset - offset).abs() < 1.0,
+                "offset {} != {offset} at {width}",
+                app.scroll_offset
+            );
+            app.open_working(&ctx);
+            assert_eq!(
+                app.working
+                    .as_ref()
+                    .map(status_view::StatusView::draft)
+                    .unwrap_or_default(),
+                "strip draft"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn review_close_restores_the_recorded_history_location() {
+        for action in [CommitAction::Review, CommitAction::Compare] {
+            let ctx = egui::Context::default();
+            let mut app = layout_fixture();
+            app.state.query = "Subject".into();
+            app.restore_offset = Some(321.0);
+            let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let selected = app.state.selected.clone();
+            let query = app.state.query.clone();
+            let offset = app.scroll_offset;
+            let target = format!("{:040x}", 10);
+            app.run_commit_action(&ctx, target.clone(), action);
+            assert!(app.review.is_some());
+            assert_eq!(app.state.selected.as_deref(), Some(target.as_str()));
+            let _ = crate::tests::run_ui(
+                &ctx,
+                frame_input(
+                    1120.0,
+                    740.0,
+                    vec![key(egui::Key::Escape, egui::Modifiers::NONE)],
+                ),
+                |ctx| app.draw_ui(ctx),
+            );
+            assert!(app.review.is_none());
+            assert_eq!(app.state.selected, selected);
+            assert_eq!(app.state.query, query);
+            assert!((app.scroll_offset - offset).abs() < 1.0);
+        }
+    }
+
+    fn click_navigation(label: &str, app: &mut Browser, ctx: &egui::Context, width: f32) {
+        let output = crate::tests::run_ui(ctx, frame_input(width, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        let Some(position) = output.shapes.iter().find_map(|shape| match &shape.shape {
+            egui::epaint::Shape::Text(text)
+                if text.galley.job.text == label && text.pos.y < 80.0 =>
+            {
+                Some(text.pos + egui::vec2(8.0, 6.0))
+            }
+            _ => None,
+        }) else {
+            return;
+        };
+        for event in [
+            egui::Event::PointerMoved(position),
+            egui::Event::PointerButton {
+                pos: position,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ] {
+            let _ = crate::tests::run_ui(ctx, frame_input(width, 740.0, vec![event]), |ctx| {
+                app.draw_ui(ctx)
+            });
+        }
+        let _ = crate::tests::run_ui(
+            ctx,
+            frame_input(
+                width,
+                740.0,
+                vec![egui::Event::PointerButton {
+                    pos: position,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+            ),
+            |ctx| app.draw_ui(ctx),
+        );
+    }
+
+    #[test]
+    fn history_strip_leaves_the_narrow_details_overlay() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        app.state.selected = Some(format!("{:040x}", 10));
+        let _ = crate::tests::run_ui(
+            &ctx,
+            frame_input(
+                720.0,
+                740.0,
+                vec![key(egui::Key::Space, egui::Modifiers::NONE)],
+            ),
+            |ctx| app.draw_ui(ctx),
+        );
+        assert!(app.narrow_details);
+        click_navigation("History", &mut app, &ctx, 720.0);
+        assert!(
+            !app.narrow_details,
+            "the History destination must leave the details overlay"
+        );
+    }
+
+    #[test]
+    fn closing_review_from_the_history_strip_restores_the_caller() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        app.state.query = "Subject".into();
+        app.restore_offset = Some(321.0);
+        let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        let selected = app.state.selected.clone();
+        let query = app.state.query.clone();
+        let offset = app.scroll_offset;
+        app.run_commit_action(&ctx, format!("{:040x}", 10), CommitAction::Review);
+        assert!(app.review.is_some());
+        click_navigation("History", &mut app, &ctx, 1120.0);
+        assert!(app.review.is_none());
+        assert_eq!(app.state.selected, selected);
+        assert_eq!(app.state.query, query);
+        assert!((app.scroll_offset - offset).abs() < 1.0);
+    }
+
+    #[test]
+    fn refs_menu_offers_the_explicit_switch_command_at_both_widths() {
+        for width in [720.0, 1120.0] {
+            let ctx = egui::Context::default();
+            let mut app = layout_fixture();
+            app.state.refs = gg_engine::refs::Snapshot {
+                head: Some(gg_engine::refs::Head {
+                    name: Some("refs/heads/main".into()),
+                    detached: false,
+                    commit: Some("a".repeat(40)),
+                }),
+                items: vec![
+                    gg_engine::refs::RefItem {
+                        name: "main".into(),
+                        full_name: "refs/heads/main".into(),
+                        kind: gg_engine::refs::RefKind::Branch,
+                        commit: "a".repeat(40),
+                    },
+                    gg_engine::refs::RefItem {
+                        name: "feature".into(),
+                        full_name: "refs/heads/feature".into(),
+                        kind: gg_engine::refs::RefKind::Branch,
+                        commit: "c".repeat(40),
+                    },
+                ],
+                ..Default::default()
+            };
+            let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let output = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let refs = output.shapes.iter().find_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text)
+                    if text.galley.job.text == "Refs" && text.pos.y < 42.0 =>
+                {
+                    Some(text.pos + egui::vec2(8.0, text.galley.size().y / 2.0))
                 }
                 _ => None,
             });
-            assert!(history.is_some(), "width {width}");
-            let history = history.unwrap_or(egui::Pos2::ZERO);
-            click(&ctx, &mut app, history + egui::vec2(8.0, 6.0));
-            assert!(app.working.is_none(), "width {width}");
+            let Some(refs) = refs else {
+                continue;
+            };
+            for event in [
+                egui::Event::PointerMoved(refs),
+                egui::Event::PointerButton {
+                    pos: refs,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::PointerButton {
+                    pos: refs,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ] {
+                let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![event]), |ctx| {
+                    app.draw_ui(ctx)
+                });
+            }
+            let mut text = Vec::new();
+            for _ in 0..3 {
+                let output = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                    app.draw_ui(ctx)
+                });
+                text = output
+                    .shapes
+                    .iter()
+                    .filter_map(|shape| match &shape.shape {
+                        egui::epaint::Shape::Text(text) => Some(text.galley.job.text.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                if text.iter().any(|line| line == "Switch to branch") {
+                    break;
+                }
+            }
+            assert!(
+                text.iter().any(|line| line == "Switch to branch"),
+                "missing explicit switch route at {width}: {text:?}"
+            );
+            assert!(
+                text.iter().any(|line| line == "Branches"),
+                "missing read-only branch browsing at {width}"
+            );
         }
+    }
+
+    #[test]
+    fn ref_sidebar_click_preserves_head_index_worktree_and_refs()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let repo = dir.path();
+        let git = |args: &[&str]| -> Result<String, Box<dyn std::error::Error>> {
+            let output = std::process::Command::new("git")
+                .arg("-C")
+                .arg(repo)
+                .args(args)
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_AUTHOR_NAME", "Test")
+                .env("GIT_AUTHOR_EMAIL", "test@example.org")
+                .env("GIT_COMMITTER_NAME", "Test")
+                .env("GIT_COMMITTER_EMAIL", "test@example.org")
+                .output()?;
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+        };
+        git(&["init", "-q", "-b", "main"])?;
+        git(&["config", "user.name", "Test"])?;
+        git(&["config", "user.email", "test@example.org"])?;
+        std::fs::write(repo.join("a"), b"base\n")?;
+        git(&["add", "a"])?;
+        git(&["commit", "-qm", "base"])?;
+        git(&["checkout", "-qb", "feature"])?;
+        std::fs::write(repo.join("b"), b"feature\n")?;
+        git(&["add", "b"])?;
+        git(&["commit", "-qm", "feature"])?;
+        git(&["checkout", "-q", "main"])?;
+
+        let head = git(&["rev-parse", "HEAD"])?;
+        let feature = git(&["rev-parse", "feature"])?;
+        let status = git(&["status", "--porcelain=v1"])?;
+        let index = std::fs::read(repo.join(".git/index"))?;
+        let branches = git(&[
+            "for-each-ref",
+            "--format=%(refname) %(objectname)",
+            "refs/heads",
+        ])?;
+
+        let ctx = egui::Context::default();
+        let mut app = Browser::new(repo.to_path_buf());
+        app.load(&ctx);
+        for _ in 0..500 {
+            let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            if app.state.finished && app.state.error.is_none() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(
+            app.state.finished,
+            "history did not load: {:?}",
+            app.state.error
+        );
+        let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        let feature_pos = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text)
+                    if text.galley.job.text == "feature" && text.pos.x < 190.0 =>
+                {
+                    Some(text.pos + egui::vec2(8.0, text.galley.size().y / 2.0))
+                }
+                _ => None,
+            })
+            .ok_or("feature branch is not visible in the sidebar")?;
+        for event in [
+            egui::Event::PointerMoved(feature_pos),
+            egui::Event::PointerButton {
+                pos: feature_pos,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+            egui::Event::PointerButton {
+                pos: feature_pos,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ] {
+            let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![event]), |ctx| {
+                app.draw_ui(ctx)
+            });
+        }
+        assert_eq!(app.state.selected.as_deref(), Some(feature.as_str()));
+        assert_eq!(git(&["rev-parse", "HEAD"])?, head);
+        assert_eq!(git(&["status", "--porcelain=v1"])?, status);
+        assert_eq!(std::fs::read(repo.join(".git/index"))?, index);
+        assert_eq!(
+            git(&[
+                "for-each-ref",
+                "--format=%(refname) %(objectname)",
+                "refs/heads"
+            ])?,
+            branches
+        );
+        Ok(())
     }
 
     #[test]
