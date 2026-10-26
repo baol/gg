@@ -55,6 +55,13 @@ impl BackupsView {
         }
     }
 
+    pub fn select_commit(&mut self, commit: &str) {
+        if let Some(index) = self.entries.iter().position(|entry| entry.commit == commit) {
+            self.selected = Some(index);
+        }
+    }
+
+    #[cfg(test)]
     pub fn draw(&mut self, ctx: &egui::Context, open: &mut bool) -> Option<Action> {
         let mut action = None;
         egui::Window::new("Backups")
@@ -67,87 +74,94 @@ impl BackupsView {
             .default_pos(ctx.content_rect().center())
             .pivot(egui::Align2::CENTER_CENTER)
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label("Private refs saved before history rewrites. They stay out of the refs sidebar.");
-                    if ui.button("Refresh").clicked() {
-                        self.load();
-                    }
-                });
-                ui.separator();
-                if let Some(error) = &self.error {
-                    ui.colored_label(ui.visuals().error_fg_color, error);
-                }
-                if self.entries.is_empty() {
-                    if self.error.is_none() {
-                        ui.label("No rewrite backups.");
-                    }
-                    return;
-                }
-                egui::ScrollArea::vertical()
-                    .id_salt("rewrite-backup-entries")
-                    .max_height(300.0)
-                    .show(ui, |ui| {
-                        for (index, entry) in self.entries.iter().enumerate() {
-                            let selected = self.selected == Some(index);
-                            let text = format!(
-                                "{}  {}  {}",
-                                entry.label,
-                                entry.commit.get(..8).unwrap_or(&entry.commit),
-                                entry.subject
-                            );
-                            if ui.selectable_label(selected, text).clicked() {
-                                self.selected = Some(index);
-                            }
-                        }
-                    });
-                ui.separator();
-                let Some(entry) = self.selected.and_then(|index| self.entries.get(index)) else {
-                    ui.label("Select a backup to inspect it.");
-                    return;
-                };
-                ui.label(egui::RichText::new(&entry.reference).monospace());
-                ui.label(format!(
-                    "{} · {} · {}",
-                    entry.label,
-                    entry.commit,
-                    entry.time
-                ));
-                ui.horizontal(|ui| {
-                    if ui.button("Open commit").clicked() {
-                        action = Some(Action::Open {
-                            commit: entry.commit.clone(),
-                            subject: entry.subject.clone(),
-                        });
-                    }
-                    ui.menu_button("Reset branch here", |ui| {
-                        for (label, mode) in [
-                            ("Soft", gg_engine::reset::Mode::Soft),
-                            ("Mixed", gg_engine::reset::Mode::Mixed),
-                            ("Hard", gg_engine::reset::Mode::Hard),
-                        ] {
-                            if ui.button(label).clicked() {
-                                action = Some(Action::Reset {
-                                    commit: entry.commit.clone(),
-                                    mode,
-                                });
-                                ui.close();
-                            }
-                        }
-                    });
-                    if ui.button("Create branch here…").clicked() {
-                        action = Some(Action::CreateBranch {
-                            commit: entry.commit.clone(),
-                            selector: entry.reference.clone(),
-                        });
-                    }
-                    if ui.button("Copy hash").clicked() {
-                        ui.ctx().copy_text(entry.commit.clone());
-                    }
-                    if ui.button("Copy ref").clicked() {
-                        ui.ctx().copy_text(entry.reference.clone());
-                    }
-                });
+                action = self.content(ui);
             });
+        action
+    }
+
+    /// Render the backup body without creating a window.
+    pub fn content(&mut self, ui: &mut egui::Ui) -> Option<Action> {
+        let mut action = None;
+        ui.horizontal(|ui| {
+            ui.label(
+                "Private refs saved before history rewrites. They stay out of the refs sidebar.",
+            );
+            if ui.button("Refresh").clicked() {
+                self.load();
+            }
+        });
+        ui.separator();
+        if let Some(error) = &self.error {
+            ui.colored_label(ui.visuals().error_fg_color, error);
+        }
+        if self.entries.is_empty() {
+            if self.error.is_none() {
+                ui.label("No rewrite backups.");
+            }
+            return action;
+        }
+        egui::ScrollArea::vertical()
+            .id_salt("rewrite-backup-entries")
+            .max_height(300.0)
+            .show(ui, |ui| {
+                for (index, entry) in self.entries.iter().enumerate() {
+                    let selected = self.selected == Some(index);
+                    let text = format!(
+                        "{}  {}  {}",
+                        entry.label,
+                        entry.commit.get(..8).unwrap_or(&entry.commit),
+                        entry.subject
+                    );
+                    if ui.selectable_label(selected, text).clicked() {
+                        self.selected = Some(index);
+                    }
+                }
+            });
+        ui.separator();
+        let Some(entry) = self.selected.and_then(|index| self.entries.get(index)) else {
+            ui.label("Select a backup to inspect it.");
+            return action;
+        };
+        ui.label(egui::RichText::new(&entry.reference).monospace());
+        ui.label(format!(
+            "{} · {} · {}",
+            entry.label, entry.commit, entry.time
+        ));
+        ui.horizontal(|ui| {
+            if ui.button("Open commit").clicked() {
+                action = Some(Action::Open {
+                    commit: entry.commit.clone(),
+                    subject: entry.subject.clone(),
+                });
+            }
+            ui.menu_button("Reset branch here", |ui| {
+                for (label, mode) in [
+                    ("Soft", gg_engine::reset::Mode::Soft),
+                    ("Mixed", gg_engine::reset::Mode::Mixed),
+                    ("Hard", gg_engine::reset::Mode::Hard),
+                ] {
+                    if ui.button(label).clicked() {
+                        action = Some(Action::Reset {
+                            commit: entry.commit.clone(),
+                            mode,
+                        });
+                        ui.close();
+                    }
+                }
+            });
+            if ui.button("Create branch here…").clicked() {
+                action = Some(Action::CreateBranch {
+                    commit: entry.commit.clone(),
+                    selector: entry.reference.clone(),
+                });
+            }
+            if ui.button("Copy hash").clicked() {
+                ui.ctx().copy_text(entry.commit.clone());
+            }
+            if ui.button("Copy ref").clicked() {
+                ui.ctx().copy_text(entry.reference.clone());
+            }
+        });
         action
     }
 }

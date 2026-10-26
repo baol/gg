@@ -3,6 +3,12 @@
 //! Presentation changes inside a tool never create a location. Recovery adds
 //! its own source variant here when it is implemented; do not invent one.
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RecoverySource {
+    Backups,
+    Reflog,
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct HistoryLocation {
     pub selected: Option<String>,
@@ -14,12 +20,17 @@ pub struct HistoryLocation {
 pub enum ReturnLocation {
     History(HistoryLocation),
     Details(HistoryLocation),
+    Recovery {
+        source: RecoverySource,
+        commit: String,
+    },
 }
 
 impl ReturnLocation {
-    pub fn location(&self) -> &HistoryLocation {
+    pub fn location(&self) -> Option<&HistoryLocation> {
         match self {
-            Self::History(location) | Self::Details(location) => location,
+            Self::History(location) | Self::Details(location) => Some(location),
+            Self::Recovery { .. } => None,
         }
     }
 

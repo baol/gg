@@ -107,12 +107,12 @@ flowchart TD
 
 **Entry:** Refs sidebar/menu or ref context menu.
 
-1. Select a local branch and Switch, or use New branch with a name and starting point. Tracking a remote explicitly names both the new local branch and remote ref.
-2. Validate the name, existence, target, and clean-worktree precondition before switching. A blocked switch names local changes and offers navigation to Local Changes/Stash; it never silently discards them.
+1. Select a local branch and Switch, or use New branch with a name, starting point, and **Switch after creation**. Tracking a remote explicitly names both the new local branch and remote ref.
+2. Validate the name, existence, target, and clean-worktree precondition before switching. A blocked switch names local changes, keeps the target as intent, and offers **Retry switch**; it never silently discards changes or re-queues the switch automatically. Retrying revalidates from the current state.
 3. On success update HEAD check, graph, refs, and tracking together. Ref selection and branch switching remain distinct gestures.
 4. Delete branch tries safe deletion first; an unmerged branch offers an explicitly confirmed force-delete path. Tag deletion confirms its exact target. A failed action leaves the selected ref and failure detail visible.
 
-**Completion:** branch identity and checkout outcome are clear. Creating a recovery branch at a saved commit does not switch. **Mockup:** Branch shows a dirty-worktree block and route to Stage.
+**Completion:** branch identity and checkout outcome are clear. Branch creation and switching are one form with one explicit switch choice; creating a recovery branch at a saved commit defaults to staying and does not switch. **Mockup:** Branch shows a dirty-worktree block and route to Stage.
 
 ### F06 · Clone, fetch, and push
 
@@ -129,7 +129,7 @@ flowchart TD
 **Entry:** Stash → Stash changes or Manage stashes.
 
 1. Enter a message; explicitly choose Include untracked and Keep index. A clean worktree reports no changes to stash.
-2. Create the stash on the serialized worker and refresh status. Manage stashes shows exact stash ref, commit, and message.
+2. Create the stash on the serialized worker and refresh status. The Stashes window shows the exact stash ref, commit, and message.
 3. Select Apply to retain the entry, or Pop to remove it only after a conflict-free apply; explicitly choose Restore index where offered.
 4. On conflict retain the entry, report unmerged paths, and route to conflict resolution. A stash conflict is not a sequencer operation: do not invent Continue/Skip/Abort buttons for it.
 5. Drop confirms the exact stash and leaves working files untouched.
@@ -166,8 +166,8 @@ flowchart TD
 1. Resolve the inclusive linear range oldest first; reject merge ranges. Show every commit exactly once, Up/Down, and Pick/Squash. The first row always remains Pick.
 2. Review the plan, clean-worktree/autostash choice, and private-backup notice; confirm the rewrite.
 3. Close the plan on submission. The operation area shows Rewriting commits, then Refreshing history until the replacement history is accepted; browsing stays available and the old history remains labeled. Conflicts use F09.
-4. From Repository → Backups inspect private refs, kind, subject, and commit time; Open commit to verify content before recovery. Reflog is a separate newest-first HEAD/local-branch entry point.
-5. Create branch here recovers without switching. Reset branch here offers Soft (move tip), Mixed (also reset index), or Hard (also discard staged/working changes), with exact-target confirmation and Hard warning. Copy hash/ref is read-only. Keep backups after recovery.
+4. From Repository → Recovery choose Backups or Reflog, then inspect the source, kind, subject, and commit time. **Open commit** verifies content in the ordinary reader; Back returns to that source and selected entry.
+5. **Create branch here…** opens the shared branch form with **Switch after creation** off. Reset branch here offers Soft (move tip), Mixed (also reset index), or Hard (also discard staged/working changes), with exact-target confirmation and Hard warning. Copy hash/ref is read-only. Keep backups after recovery.
 
 **Completion:** rewritten history or a recovered tip is reachable and selection restores. **Mockup:** Rewrite → Recovery; primary Create branch here demonstrates the nondestructive route.
 

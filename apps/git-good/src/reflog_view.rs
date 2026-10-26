@@ -7,6 +7,11 @@ use std::{
 };
 
 pub enum Action {
+    Open {
+        commit: String,
+        subject: String,
+        selector: String,
+    },
     Reset {
         commit: String,
         mode: gg_engine::reset::Mode,
@@ -58,12 +63,19 @@ impl ReflogView {
         }
     }
 
+    pub fn select_commit(&mut self, commit: &str) {
+        if let Some(index) = self.entries.iter().position(|entry| entry.id == commit) {
+            self.selected = Some(index);
+        }
+    }
+
     pub fn notice(&mut self, notice: String) {
         self.notice = Some(notice);
         self.error = None;
         self.load();
     }
 
+    #[cfg(test)]
     pub fn draw(
         &mut self,
         ctx: &egui::Context,
@@ -81,94 +93,108 @@ impl ReflogView {
             .default_pos(ctx.content_rect().center())
             .pivot(egui::Align2::CENTER_CENTER)
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label("Reference");
-                    let mut reference = self.reference.clone();
-                    egui::ComboBox::from_id_salt("reflog-reference")
-                        .selected_text(&reference)
-                        .width(200.0)
-                        .show_ui(ui, |ui| {
-                            for candidate in references {
-                                ui.selectable_value(&mut reference, candidate.clone(), candidate);
-                            }
-                        });
-                    if reference != self.reference {
-                        self.reference = reference;
-                        self.selected = None;
-                        self.load();
-                    }
-                    if ui.button("Refresh").clicked() {
-                        self.load();
-                    }
-                });
-                ui.separator();
-                if let Some(notice) = &self.notice {
-                    ui.colored_label(ui.visuals().hyperlink_color, notice);
-                }
-                if let Some(error) = &self.error {
-                    ui.colored_label(ui.visuals().error_fg_color, error);
-                }
-                if self.entries.is_empty() {
-                    if self.error.is_none() {
-                        ui.label("No reflog entries.");
-                    }
-                    return;
-                }
-                egui::ScrollArea::vertical()
-                    .id_salt("reflog-entries")
-                    .max_height(300.0)
-                    .show(ui, |ui| {
-                        for (index, entry) in self.entries.iter().enumerate() {
-                            let selected = self.selected == Some(index);
-                            let text = format!(
-                                "{}  {}  {}",
-                                entry.selector,
-                                entry.id.get(..8).unwrap_or(&entry.id),
-                                summary(entry)
-                            );
-                            if ui.selectable_label(selected, text).clicked() {
-                                self.selected = Some(index);
-                            }
-                        }
-                    });
-                ui.separator();
-                let Some(entry) = self.selected.and_then(|index| self.entries.get(index)) else {
-                    ui.label("Select an entry to inspect it.");
-                    return;
-                };
-                ui.label(egui::RichText::new(&entry.id).monospace());
-                ui.label(format!(
-                    "{} · {}",
-                    relative_time(entry.time),
-                    summary(entry)
-                ));
-                ui.horizontal(|ui| {
-                    ui.menu_button("Reset branch here", |ui| {
-                        for (label, mode) in [
-                            ("Soft", gg_engine::reset::Mode::Soft),
-                            ("Mixed", gg_engine::reset::Mode::Mixed),
-                            ("Hard", gg_engine::reset::Mode::Hard),
-                        ] {
-                            if ui.button(label).clicked() {
-                                action = Some(Action::Reset {
-                                    commit: entry.id.clone(),
-                                    mode,
-                                });
-                                ui.close();
-                            }
-                        }
-                    });
-                    if ui.button("Create branch here…").clicked() {
-                        action = Some(Action::CreateBranch {
-                            commit: entry.id.clone(),
-                            selector: entry.selector.clone(),
-                        });
-                    }
-                    if ui.button("Copy hash").clicked() {
-                        ui.ctx().copy_text(entry.id.clone());
-                    }
-                });
+                action = self.content(ui, references);
             });
+        action
+    }
+
+    /// Render the reflog body without creating a window.
+    pub fn content(&mut self, ui: &mut egui::Ui, references: &[String]) -> Option<Action> {
+        let mut action = None;
+        ui.horizontal(|ui| {
+            ui.label("Reference");
+            let mut reference = self.reference.clone();
+            egui::ComboBox::from_id_salt("reflog-reference")
+                .selected_text(&reference)
+                .width(200.0)
+                .show_ui(ui, |ui| {
+                    for candidate in references {
+                        ui.selectable_value(&mut reference, candidate.clone(), candidate);
+                    }
+                });
+            if reference != self.reference {
+                self.reference = reference;
+                self.selected = None;
+                self.load();
+            }
+            if ui.button("Refresh").clicked() {
+                self.load();
+            }
+        });
+        ui.separator();
+        if let Some(notice) = &self.notice {
+            ui.colored_label(ui.visuals().hyperlink_color, notice);
+        }
+        if let Some(error) = &self.error {
+            ui.colored_label(ui.visuals().error_fg_color, error);
+        }
+        if self.entries.is_empty() {
+            if self.error.is_none() {
+                ui.label("No reflog entries.");
+            }
+            return action;
+        }
+        egui::ScrollArea::vertical()
+            .id_salt("reflog-entries")
+            .max_height(300.0)
+            .show(ui, |ui| {
+                for (index, entry) in self.entries.iter().enumerate() {
+                    let selected = self.selected == Some(index);
+                    let text = format!(
+                        "{}  {}  {}",
+                        entry.selector,
+                        entry.id.get(..8).unwrap_or(&entry.id),
+                        summary(entry)
+                    );
+                    if ui.selectable_label(selected, text).clicked() {
+                        self.selected = Some(index);
+                    }
+                }
+            });
+        ui.separator();
+        let Some(entry) = self.selected.and_then(|index| self.entries.get(index)) else {
+            ui.label("Select an entry to inspect it.");
+            return action;
+        };
+        ui.label(egui::RichText::new(&entry.id).monospace());
+        ui.label(format!(
+            "{} · {}",
+            relative_time(entry.time),
+            summary(entry)
+        ));
+        ui.horizontal(|ui| {
+            if ui.button("Open commit").clicked() {
+                action = Some(Action::Open {
+                    commit: entry.id.clone(),
+                    subject: summary(entry),
+                    selector: entry.selector.clone(),
+                });
+            }
+            ui.menu_button("Reset branch here", |ui| {
+                for (label, mode) in [
+                    ("Soft", gg_engine::reset::Mode::Soft),
+                    ("Mixed", gg_engine::reset::Mode::Mixed),
+                    ("Hard", gg_engine::reset::Mode::Hard),
+                ] {
+                    if ui.button(label).clicked() {
+                        action = Some(Action::Reset {
+                            commit: entry.id.clone(),
+                            mode,
+                        });
+                        ui.close();
+                    }
+                }
+            });
+            if ui.button("Create branch here…").clicked() {
+                action = Some(Action::CreateBranch {
+                    commit: entry.id.clone(),
+                    selector: entry.selector.clone(),
+                });
+            }
+            if ui.button("Copy hash").clicked() {
+                ui.ctx().copy_text(entry.id.clone());
+            }
+        });
         action
     }
 }

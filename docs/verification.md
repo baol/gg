@@ -121,6 +121,22 @@ Linux x86_64 · Rust 1.99.1 · Xvfb/llvmpipe · disposable conflict fixtures (`/
 - Independent V1 review blocked on invisible publication failures, unreported partial worktree writes, and non-exact oversized-file validation. The candidate fixed them across `f993f21` and `20126a7`; a focused re-review accepted `20126a7` after reproducing the stale-byte rejection, oversized-side publication, partial-write report, and all gates.
 - Limitations: the conflict preview remains a dedicated resizable workspace rather than a panel inside the Local Changes two-list layout; it uses the same source/preview/publication grammar and operation area. At 720×480 the window can cover the operation area; it is movable and the area returns when the workspace closes. Only Linux/X11, the dark theme, and llvmpipe were inspected natively.
 
+## Coherence I7 · Repository tools, recovery, and pending intent · 2026-10-26
+
+Linux x86_64 · Rust 1.99.1 · Xvfb/llvmpipe · disposable Git fixture (`/tmp/opencode/gg-i7`: one stash entry, a dirty tracked file, and two commits).
+
+- `cargo fmt --all -- --check` passed.
+- `cargo test --workspace --locked` passed: 419 tests, 0 failures, 3 ignored opt-in performance checks. This includes 216 `git-good` unit tests and 33 CLI tests.
+- `cargo clippy --workspace --all-targets --locked -- -D warnings` passed.
+- **Repository → Recovery…** replaces the separate Reflog and Backups windows. One window exposes a **Source** selector for Backups or Reflog and keeps each source's provenance, identifiers, and readers. The idle operation, mutation, and fetch menus now point at the same entry.
+- Reflog and Backups both offer **Open commit**. Opening one runs the ordinary commit review and records the recovery source plus selected commit in the return-location contract; closing Review returns to that Recovery source and entry instead of History.
+- Branch creation is one shared form for **New branch** and recovery **Create branch here…**. It names the starting commit and selector, validates the name, and exposes **Switch after creation**. New branch defaults the choice on; recovery creation defaults it off. Create always creates first and switches only after success.
+- A blocked switch now retains the target as intent and reports a warning outcome with **Retry switch**. The intent is revalidated only when the user invokes Retry and never executes automatically; the created branch survives a blocked follow-up switch.
+- The stash window replaces adjacent Apply and Pop controls with one **Restore…** form exposing **Restore staged state** and **Remove stash after successful restore**. Drop remains a separate confirmed destructive action. Failed restores keep the form, the entry, and its inputs.
+- Tests cover the single Recovery window and source selector, the shared branch form with the switch choice at both widths, the stash restore form and both options, and a blocked-switch intent that stays reofferable without auto-execution.
+- Native X11 at 1120×740: [Repository menu with one Recovery entry](screenshots/coherence-i7-menu.png), [Recovery · Backups](screenshots/coherence-i7-recovery.png), [Recovery · Reflog](screenshots/coherence-i7-reflog.png), [Stashes with Restore…](screenshots/coherence-i7-stash.png), [Restore stash form](screenshots/coherence-i7-restore.png), and [shared branch form with Switch after creation](screenshots/coherence-i7-branch.png).
+- Limitations: only Linux/X11, the dark theme, and llvmpipe were inspected natively. Recovery remains a resizable window rather than a primary destination; it is reachable from Repository and the outcome recovery action. Independent V1/V2 verification remains pending.
+
 ## Coherence proposal and shared workspace · 2026-10-25
 
 Reviewed [cross-view interaction consistency](ui-coherence.md) and created a [shared-workspace prototype](ui-coherence.html). Local Changes incorporates the user's requested arrangement: Unstaged above Staged on the left, selected changes on the right, commit/amend at lower right. File selection determines the comparison; no second Staged/Unstaged switch is present.

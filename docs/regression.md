@@ -103,6 +103,15 @@ Before connecting M1 controls, test Review/Back anchor restoration, active-view 
 - Publication runs on the operation worker and refreshes mutation state, conflict listing, history, and status; the next unresolved path is selected after success. Path traversal, absent sides, and mode/symlink/submodule publication fail explicitly without writing. Oversized regular working files use an exact streaming hash over every byte without a text preview; oversized side blobs publish and pass the same post-write verification. Symlink, directory, and submodule worktree paths keep side previews but disable a Working preview with a reason.
 - Git oracles cover read-only preview, Base/Ours/Working publication, stale stage and working data, exact staged output, and path rejection. The egui integration opens a real conflicted merge, previews both sides without writing, then stages and verifies the file and index.
 
+## Coherence I7 repository tools and pending intent
+
+- One **Repository → Recovery…** window owns a Backups/Reflog source selector. The separate Reflog and Backups windows are not reachable from the product; each source keeps its identifiers, provenance, confirmation routes, and worker behavior.
+- **Open commit** from either recovery source opens the ordinary commit review. Closing Review restores that recovery source and selected entry; it does not navigate to History. Reset still routes through the shared confirmation, and branch creation still routes through the shared branch form.
+- One shared branch form serves New branch and recovery Create branch here. It names the start commit/selector, validates the full local ref, and exposes an explicit Switch after creation. New branch defaults on; recovery defaults off. Creation happens before any switch.
+- A blocked switch keeps its target as intent and shows a warning outcome with Retry switch. Retry revalidates by starting the switch again; the intent never fires automatically, and a branch created before a blocked switch remains.
+- The stash window offers one Restore… form with Restore staged state and Remove stash after successful restore; Drop stays a separate confirmed action. Failed restores keep the form and entry, and stash conflicts add no sequencer controls.
+- Tests render the Recovery source selector and branch/stash forms at both widths, and reproduce a blocked switch retaining intent through an idle frame before an explicit retry starts a new worker.
+
 ## M1 changed files
 
 - Git-oracle fixtures cover root/first-parent changes, merge-parent selection, nested paths, additions/deletions, IDs/modes, file-to-directory replacement, empty comparisons, invalid parents/revisions, and pinned comparisons with unavailable blobs.
