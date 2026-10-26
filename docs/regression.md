@@ -91,8 +91,8 @@ Before connecting M1 controls, test Review/Back anchor restoration, active-view 
 - Merge shows Resolve conflicts, a gated Continue, and Abort without Skip. Cherry-pick, revert, and rebase show Skip. Continue stays disabled until no unmerged paths remain. Stash conflicts never add sequencer controls. The conflict window owns source inspection, side choice, and Stage resolved only.
 - Rewrite submission closes the plan. The area reports Rewriting commits, then Refreshing history until the replacement generation loads; browsing remains available, and the filter header labels the retained rows **Refreshing · showing previous history**. Replacement rows wait for the hover/scroll-safe boundary. Failures clear the area and report an error outcome whose **Backups…** action remains reachable.
 - Network operations show phase/percent/message with Cancel in the area; branch operations show their label there. Duplicate submission is refused and incompatible mutations stay disabled for the duration.
-- Opening a repository with an existing operation detects it on the first completed history load. Switching repositories drops the previous workers, notices, conflict view, and refresh state; late results are ignored and the new repository is detected independently. Open is disabled while work owns the area.
-- Local Changes disables staging, discard, commit, amend, and duplicate mutations while the area owns a rewrite, operation worker, network, or branch operation. Network work cannot start during an in-progress merge/rebase; cancellation lives only in the area.
+- Opening a repository with an existing operation detects it on the first completed history load. Switching repositories drops the previous workers, notices, outcome, conflict view, and refresh state; old operations are not re-detected while the requested history is still loading, late results are ignored, and the new repository is detected independently. Open is disabled while work owns the area, including the path-field Enter route.
+- Local Changes disables staging, discard, commit, amend, and duplicate mutations while the area owns a rewrite, operation worker, network, or branch operation, but keeps list selection, scrolling, Back, and Refresh available for browsing. Network work cannot start during an in-progress merge/rebase; cancellation lives only in the area.
 - Geometry/interaction tests cover the area at 720×480 and 1120×740, the merge-without-Skip rule, one-area ownership, rewrite lifecycle, network cancel, and outcome/recovery behavior.
 
 ## M1 changed files
@@ -193,13 +193,13 @@ Native review: the refs sidebar and status line show the current branch upstream
 
 - Git oracle tests cover a clean cherry-pick with the expected parent, cherry-pick conflicts with abort and continue, revert with a conflict and skip, a clean revert, and option-shaped or missing revisions.
 - CLI tests cover JSON receipts for cherry-pick and revert, conflict reporting, `--abort`, `--continue`, and unknown-option stderr.
-- egui tests render the in-progress banner with Continue, Skip, and Abort at 720 and 1120 widths.
+- egui tests render the operation area with Continue, Skip, and Abort at 720 and 1120 widths.
 
 ## M5 merge and conflicts
 
 - Git oracle tests cover fast-forward, already-up-to-date, diverged merge commits, forced `--no-ff` merge commits, conflict detection with abort and continue, and option-shaped or missing references.
 - CLI tests cover JSON receipts for merge, fast-forward and merge-commit kinds, conflict reporting, `--abort`, `--continue`, `--no-ff`, and unknown-option stderr.
-- egui tests render the **Merge branch…** dialog and the merge in-progress banner at 720 and 1120 widths; merges hide the unsupported Skip action.
+- egui tests render the **Merge branch…** dialog and the merge operation area at 720 and 1120 widths; merges hide the unsupported Skip action.
 
 ## M5 conflict resolution
 
@@ -210,7 +210,7 @@ Native review: the refs sidebar and status line show the current branch upstream
 ## M5 recovery and operation state
 
 - Git and CLI tests cover continue, skip, and abort for cherry-pick, revert, and merge, including merge's unsupported skip and restored HEAD/worktree on abort.
-- The native in-progress banner exposes Continue, Skip, and Abort, hides Skip for merges, and shows the conflict count.
+- The native operation area exposes Continue, Skip, and Abort, hides Skip for merges, and shows the conflict count.
 - Recovery refreshes history, refs, and an open Local Changes view at a safe boundary; the conflict window closes once no operation remains.
 - Merge, rebase, and recovery use one background operation worker. The UI test blocks the worker behind a channel gate, proves the start call returns and a frame still renders and names the pending operation, rejects a duplicate submission, then releases the gate and accepts one result. Mutation actions are disabled while the worker is pending, and a failure or disconnection reports an actionable error.
 - Operation outcomes render a severity-colored summary with **Details…** and one recovery button such as **Resolve conflicts…** or **Backups…** at 720 and 1120 widths. The details window shows selectable full text, and the recovery button opens the matching surface.
@@ -260,7 +260,7 @@ Native review: the refs sidebar and status line show the current branch upstream
 - Conflict fixtures verify `rebase-merge`/`rebase-apply` detection, `REBASE_HEAD` operation state, conflict paths, abort restoring the original tip and worktree, continue after staging, and skip completing without the conflicting commit.
 - Dirty tracked worktrees are rejected unless autostash is explicitly enabled; `rebase.autoStash=true` does not override the backend's `--no-autostash` decision. Option-shaped and missing references are rejected.
 - CLI tests cover `git good rebase REF [--autostash]`, receipt fields, the backup ref, dirty/autostash behavior, conflict abort/continue, and unknown-option errors.
-- egui tests render the **Rebase branch** dialog with the autostash choice and backup warning, plus the in-progress banner with Continue, Skip, Abort, and Backups… at 720 and 1120 widths.
+- egui tests render the **Rebase branch** dialog with the autostash choice and backup warning, plus the operation area with Continue, Skip, and Abort at 720 and 1120 widths. Backups remains in Repository and in outcome recovery.
 
 ## M6 reorder, squash, and backups
 
@@ -269,7 +269,7 @@ Native review: the refs sidebar and status line show the current branch upstream
 - Conflict fixtures verify the rewrite leaves Git rebase state, lists unmerged paths, aborts back to the previous tip and worktree, and skips the conflicting commit to complete the remaining range. Dirty tracked worktrees are rejected unless autostash is explicit, even with `rebase.autoStash=true`; autostash restores the working change afterward.
 - CLI tests cover `git good rewrite --from COMMIT --pick COMMIT... --squash COMMIT...`, reorder and squash receipts, the backup ref, conflict abort, skip, and unknown-option errors. `git good rewrite --continue|--skip|--abort` targets the same Git rebase state.
 - Backup tests assert `gg_git::backup::list` returns the private reference, kind, commit, subject, and commit time while the refs snapshot continues to exclude `refs/gg/`.
-- egui tests render the **Reorder and squash** modal with ordered rows, up/down icon controls, Squash choices, autostash, and the backup warning at 720 and 1120 widths. A pending rewrite keeps the modal open with **Rewriting commits…** and ignores Escape; a pending refresh shows **Refreshing history…** and the modal closes only after the replacement history generation is accepted. The Backups window renders the entry list, Open commit, Reset branch here, Create branch here…, Copy hash, and Copy ref at 1120 width. The in-progress banner exposes Backups… and names an in-progress rebase.
+- egui tests render the **Reorder and squash** modal with ordered rows, up/down icon controls, Squash choices, autostash, and the backup warning at 720 and 1120 widths. A submitted rewrite closes the configuration; the operation area shows **Rewriting commits…**, then **Refreshing history…** until the replacement history generation is accepted, and Escape is no longer needed to dismiss a blocking modal. The Backups window renders the entry list, Open commit, Reset branch here, Create branch here…, Copy hash, and Copy ref at 1120 width. The operation area names an in-progress rebase; Backups stays in Repository and outcome recovery.
 
 ## M7 file reading surface
 

@@ -429,7 +429,12 @@ impl StatusView {
         self.prune_rows(pinned);
     }
     fn busy(&self) -> bool {
-        self.stage.mutating() || self.commit.is_some() || self.external_busy.is_some()
+        self.stage.mutating() || self.commit.is_some()
+    }
+
+    /// Mutations must wait while another view owns an operation, but browsing stays live.
+    fn mutations_blocked(&self) -> bool {
+        self.busy() || self.external_busy.is_some()
     }
 
     /// Disable incompatible mutations while another view owns an operation.
@@ -526,7 +531,7 @@ impl StatusView {
 
     /// Enable amend mode, load the current HEAD message, and compare the index with HEAD's parent.
     pub fn start_amend(&mut self, ctx: &egui::Context) -> Result<(), String> {
-        if self.busy() || self.replacing {
+        if self.mutations_blocked() || self.replacing {
             return Err("Wait for the current operation to finish.".into());
         }
         let base = gg_git::status::amend_base_tree(&self.path)?;
@@ -559,7 +564,7 @@ impl StatusView {
 
     fn start_commit(&mut self, ctx: &egui::Context) {
         if commit_reason(
-            self.busy(),
+            self.mutations_blocked(),
             self.replacing || !self.complete || self.identity.is_none(),
             &self.message,
             self.amend,
@@ -911,13 +916,13 @@ impl StatusView {
                     ),
                 );
                 if ui
-                    .add_enabled(!self.stage.mutating(), egui::Button::new("Discard"))
+                    .add_enabled(!self.mutations_blocked(), egui::Button::new("Discard"))
                     .clicked()
                 {
                     confirmed = true;
                 }
                 if ui
-                    .add_enabled(!self.stage.mutating(), egui::Button::new("Cancel"))
+                    .add_enabled(!self.mutations_blocked(), egui::Button::new("Cancel"))
                     .clicked()
                 {
                     confirm = None;
@@ -940,11 +945,13 @@ impl StatusView {
             "Stage"
         };
         self.reader
-            .set_staging(verb, discard, self.stage.mutating());
+            .set_staging(verb, discard, self.mutations_blocked());
         self.reader.draw(ui);
         self.reader.clear_staging();
         if let Some(edit) = self.reader.take_stage_edit() {
-            if edit.discard {
+            if self.mutations_blocked() {
+                // Another view owns the repository; drop the stale edit.
+            } else if edit.discard {
                 self.drop_confirm = Some(edit);
             } else {
                 self.stage.apply(edit, ctx);
@@ -980,7 +987,7 @@ impl StatusView {
         let top = ui.cursor().top();
         let left = ui.max_rect().left();
         let right = ui.max_rect().right();
-        let busy = self.busy() || self.replacing;
+        let busy = self.mutations_blocked() || self.replacing;
         let scanning = self.replacing || !self.complete || self.identity.is_none();
         let reason = commit_reason(
             busy,
@@ -2224,7 +2231,8 @@ mod tests {
         frame(&ctx, &mut view, 1120.0, vec![]);
         assert!(!view.busy());
         view.set_external_busy(Some("Wait for the history rewrite to finish".into()));
-        assert!(view.busy());
+        assert!(!view.busy(), "browsing stays available");
+        assert!(view.mutations_blocked());
         assert!(
             view.status_text()
                 .contains("Wait for the history rewrite to finish")
@@ -2233,6 +2241,36 @@ mod tests {
             commit_reason(true, false, "message", false, 1),
             Some("Wait for the current operation")
         );
+    }
+    #[test]
+    fn external_operation_keeps_browsing_but_blocks_file_actions()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        generated(dir.path())?;
+        let ctx = egui::Context::default();
+        let mut view = StatusView::new(dir.path().into(), &ctx);
+        settle(&ctx, &mut view, 1120.0);
+        select_area(&mut view, &ctx, Area::Unstaged);
+        ready(&ctx, &mut view, 1120.0);
+        view.set_external_busy(Some("Wait for the history rewrite to finish".into()));
+        let output = run(&ctx, &mut view, 1120.0, vec![]);
+        let menu = text_pos(&output, "File actions").ok_or("missing File actions")?;
+        click(&ctx, &mut view, 1120.0, menu + egui::vec2(5.0, 0.0));
+        let output = run(&ctx, &mut view, 1120.0, vec![]);
+        let text = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(text.contains(&"Copy path"));
+        assert!(!text.contains(&"Stage file"));
+        assert!(!text.contains(&"Discard file…"));
+        assert!(!view.busy(), "selection and navigation stay available");
+        assert!(view.mutations_blocked());
+        Ok(())
     }
     #[test]
     fn commit_readiness_explains_disabled_states() {
