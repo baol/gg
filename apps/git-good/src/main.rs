@@ -286,7 +286,18 @@ enum ConflictSide {
 
 enum ConflictUpdate {
     Paths(Vec<String>),
-    Content(gg_engine::conflict::Content),
+    Content {
+        content: gg_engine::conflict::Content,
+        snapshot: gg_engine::conflict::Snapshot,
+    },
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ConflictTab {
+    Base,
+    Ours,
+    Theirs,
+    Result,
 }
 
 struct ConflictView {
@@ -298,7 +309,9 @@ struct ConflictView {
     error: Option<String>,
     loading: bool,
     worker: Option<std::sync::mpsc::Receiver<Result<ConflictUpdate, String>>>,
-    tab: ConflictSide,
+    snapshot: Option<gg_engine::conflict::Snapshot>,
+    preview: gg_engine::conflict::Resolution,
+    tab: ConflictTab,
 }
 
 fn next_conflict_selection(paths: &[String], keep: Option<&str>, previous: usize) -> usize {
@@ -323,6 +336,37 @@ fn conflict_side_hint(operation: Option<gg_engine::mutation::Operation>) -> &'st
         }
         None => "Ours is stage 2. Theirs is stage 3.",
     }
+}
+
+fn conflict_resolution_label(resolution: gg_engine::conflict::Resolution) -> &'static str {
+    match resolution {
+        gg_engine::conflict::Resolution::Base => "Base",
+        gg_engine::conflict::Resolution::Ours => "Ours",
+        gg_engine::conflict::Resolution::Theirs => "Theirs",
+        gg_engine::conflict::Resolution::Working => "Working file",
+    }
+}
+
+fn conflict_preview_text(
+    content: &gg_engine::conflict::Content,
+    snapshot: &gg_engine::conflict::Snapshot,
+    resolution: gg_engine::conflict::Resolution,
+) -> String {
+    let side = match resolution {
+        gg_engine::conflict::Resolution::Base => content.base.as_deref(),
+        gg_engine::conflict::Resolution::Ours => content.ours.as_deref(),
+        gg_engine::conflict::Resolution::Theirs => content.theirs.as_deref(),
+        gg_engine::conflict::Resolution::Working => {
+            return match &snapshot.working {
+                Some(bytes) if bytes.contains(&0) => {
+                    format!("[binary working file, {} bytes]", bytes.len())
+                }
+                Some(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+                None => "(working file absent)".into(),
+            };
+        }
+    };
+    side.unwrap_or("(absent)").to_string()
 }
 
 fn conflict_side_label(
@@ -1788,7 +1832,9 @@ impl Browser {
             error: None,
             loading: false,
             worker: None,
-            tab: ConflictSide::Ours,
+            snapshot: None,
+            preview: gg_engine::conflict::Resolution::Working,
+            tab: ConflictTab::Ours,
         });
         view.keep = keep.map(str::to_string);
         view.previous_selected = view.selected;
@@ -1836,11 +1882,15 @@ impl Browser {
                         next_conflict_selection(&paths, keep.as_deref(), view.previous_selected);
                     view.paths = paths;
                     view.content = None;
+                    view.snapshot = None;
                     view.error = None;
                     load_content = !view.paths.is_empty();
                 }
-                Ok(ConflictUpdate::Content(content)) => {
+                Ok(ConflictUpdate::Content { content, snapshot }) => {
                     view.content = Some(content);
+                    view.snapshot = Some(snapshot);
+                    view.preview = gg_engine::conflict::Resolution::Working;
+                    view.tab = ConflictTab::Result;
                     view.error = None;
                 }
                 Err(error) => {
@@ -1871,7 +1921,11 @@ impl Browser {
         if std::thread::Builder::new()
             .name("gg-conflict-content".into())
             .spawn(move || {
-                let result = gg_git::conflict::read(&path, &file).map(ConflictUpdate::Content);
+                let result = (|| {
+                    let content = gg_git::conflict::read(&path, &file)?;
+                    let snapshot = gg_git::conflict::snapshot(&path, &file)?;
+                    Ok(ConflictUpdate::Content { content, snapshot })
+                })();
                 let _ = tx.send(result);
                 repaint.request_repaint();
             })
@@ -1886,11 +1940,7 @@ impl Browser {
         view.worker = Some(rx);
     }
 
-    fn resolve_conflict(
-        &mut self,
-        ctx: &egui::Context,
-        side: Option<gg_engine::conflict::Side>,
-    ) -> Result<(), String> {
+    fn stage_conflict_resolution(&mut self, ctx: &egui::Context) -> Result<(), String> {
         let path = self
             .stash_path()
             .ok_or("Open a repository before resolving conflicts.")?;
@@ -1900,15 +1950,19 @@ impl Browser {
             .and_then(|view| view.paths.get(view.selected))
             .cloned()
             .ok_or("Select a conflicted path first.")?;
-        let label = match side {
-            Some(_) => format!("Resolving {file}…"),
-            None => format!("Staging {file}…"),
-        };
+        let snapshot = self
+            .conflict_view
+            .as_ref()
+            .and_then(|view| view.snapshot.clone())
+            .ok_or("Load the conflict before staging its resolution.")?;
+        let resolution = self
+            .conflict_view
+            .as_ref()
+            .map(|view| view.preview)
+            .unwrap_or(gg_engine::conflict::Resolution::Working);
+        let label = format!("Staging {file}…");
         self.start_operation(ctx, label, move || {
-            match side {
-                Some(side) => gg_git::conflict::use_side(&path, &file, side)?,
-                None => gg_git::conflict::stage(&path, &file)?,
-            }
+            gg_git::conflict::publish(&path, &file, &snapshot, resolution)?;
             Ok(OperationOutcome::Conflict { file })
         })
     }
@@ -3412,7 +3466,8 @@ impl Browser {
 
         let conflict_mutation = self.mutation.clone();
         let mut conflict_select = None;
-        let mut conflict_action = None;
+        let mut stage_resolution = false;
+        let mut refresh_content = false;
         let mut conflict_open = true;
         if let Some(view) = &mut self.conflict_view {
             let operation = conflict_mutation.as_ref().map(|state| state.operation);
@@ -3425,7 +3480,7 @@ impl Browser {
                 .open(&mut conflict_open)
                 .collapsible(false)
                 .resizable(true)
-                .default_width(760.0)
+                .default_width(900.0)
                 .default_pos(ctx.content_rect().center())
                 .pivot(egui::Align2::CENTER_CENTER)
                 .show(ctx, |ui| {
@@ -3479,41 +3534,33 @@ impl Browser {
                                 }
                                 return;
                             };
-                            ui.horizontal(|ui| {
-                                if ui
-                                    .button(format!(
-                                        "Use ours · {}",
-                                        if operation == Some(gg_engine::mutation::Operation::Rebase)
-                                        {
-                                            "base"
-                                        } else {
-                                            "current branch"
-                                        }
-                                    ))
-                                    .clicked()
-                                {
-                                    conflict_action = Some(Some(gg_engine::conflict::Side::Ours));
+                            let snapshot = view.snapshot.clone();
+                            let preview_text = snapshot
+                                .as_ref()
+                                .map(|snapshot| conflict_preview_text(content, snapshot, view.preview))
+                                .unwrap_or_default();
+                            ui.horizontal_wrapped(|ui| {
+                                ui.weak("Preview source");
+                                for (resolution, label) in [
+                                    (gg_engine::conflict::Resolution::Base, "Base"),
+                                    (gg_engine::conflict::Resolution::Ours, "Ours"),
+                                    (gg_engine::conflict::Resolution::Theirs, "Theirs"),
+                                    (gg_engine::conflict::Resolution::Working, "Working file"),
+                                ] {
+                                    if ui
+                                        .selectable_label(view.preview == resolution, label)
+                                        .clicked()
+                                    {
+                                        view.preview = resolution;
+                                        view.tab = ConflictTab::Result;
+                                    }
                                 }
-                                if ui
-                                    .button(format!(
-                                        "Use theirs · {}",
-                                        if operation == Some(gg_engine::mutation::Operation::Rebase)
-                                        {
-                                            "replayed commit"
-                                        } else {
-                                            "incoming"
-                                        }
-                                    ))
-                                    .clicked()
-                                {
-                                    conflict_action = Some(Some(gg_engine::conflict::Side::Theirs));
-                                }
-                                if ui.button("Stage resolved").clicked() {
-                                    conflict_action = Some(None);
+                                if ui.button("Refresh external edits").clicked() {
+                                    refresh_content = true;
                                 }
                             });
                             ui.weak(
-                                "Choosing a side replaces the whole file and stages it. Stage resolved stages external or manually edited content.",
+                                "Choosing a source only changes this preview. Stage resolution publishes it once.",
                             );
                             if content.binary {
                                 ui.colored_label(ui.visuals().warn_fg_color, "Binary content");
@@ -3531,41 +3578,78 @@ impl Browser {
                                         column.label(title);
                                         egui::ScrollArea::both()
                                             .id_salt(title)
-                                            .max_height(360.0)
+                                            .max_height(240.0)
                                             .show(column, |ui| {
                                                 ui.monospace(text.as_deref().unwrap_or("(absent)"));
                                             });
                                     }
                                 });
+                                ui.separator();
+                                ui.horizontal(|ui| {
+                                    ui.strong(format!(
+                                        "Result · {} · preview, not staged",
+                                        conflict_resolution_label(view.preview)
+                                    ));
+                                    if ui
+                                        .add_enabled(
+                                            snapshot.is_some(),
+                                            egui::Button::new("Stage resolution"),
+                                        )
+                                        .clicked()
+                                    {
+                                        stage_resolution = true;
+                                    }
+                                });
+                                egui::ScrollArea::both()
+                                    .id_salt("conflict-result")
+                                    .max_height(150.0)
+                                    .show(ui, |ui| {
+                                        ui.monospace(&preview_text);
+                                    });
                             } else {
                                 ui.horizontal(|ui| {
-                                    ui.selectable_value(&mut view.tab, ConflictSide::Base, "Base");
-                                    ui.selectable_value(&mut view.tab, ConflictSide::Ours, "Ours");
+                                    ui.selectable_value(&mut view.tab, ConflictTab::Base, "Base");
+                                    ui.selectable_value(&mut view.tab, ConflictTab::Ours, "Ours");
                                     ui.selectable_value(
                                         &mut view.tab,
-                                        ConflictSide::Theirs,
+                                        ConflictTab::Theirs,
                                         "Theirs",
                                     );
+                                    ui.selectable_value(
+                                        &mut view.tab,
+                                        ConflictTab::Result,
+                                        "Result",
+                                    );
                                 });
-                                let (title, text) = match view.tab {
-                                    ConflictSide::Base => {
-                                        (conflict_side_label(operation, ConflictSide::Base), &content.base)
+                                let text = match view.tab {
+                                    ConflictTab::Base => content.base.as_deref().unwrap_or("(absent)"),
+                                    ConflictTab::Ours => content.ours.as_deref().unwrap_or("(absent)"),
+                                    ConflictTab::Theirs => {
+                                        content.theirs.as_deref().unwrap_or("(absent)")
                                     }
-                                    ConflictSide::Ours => {
-                                        (conflict_side_label(operation, ConflictSide::Ours), &content.ours)
-                                    }
-                                    ConflictSide::Theirs => (
-                                        conflict_side_label(operation, ConflictSide::Theirs),
-                                        &content.theirs,
-                                    ),
+                                    ConflictTab::Result => &preview_text,
                                 };
-                                ui.strong(title);
                                 egui::ScrollArea::both()
                                     .id_salt("conflict-side")
-                                    .max_height(320.0)
+                                    .max_height(280.0)
                                     .show(ui, |ui| {
-                                        ui.monospace(text.as_deref().unwrap_or("(absent)"));
+                                        ui.monospace(text);
                                     });
+                                ui.horizontal(|ui| {
+                                    ui.weak(format!(
+                                        "Result · {} · preview, not staged",
+                                        conflict_resolution_label(view.preview)
+                                    ));
+                                    if ui
+                                        .add_enabled(
+                                            snapshot.is_some(),
+                                            egui::Button::new("Stage resolution"),
+                                        )
+                                        .clicked()
+                                    {
+                                        stage_resolution = true;
+                                    }
+                                });
                             }
                         });
                     });
@@ -3576,11 +3660,11 @@ impl Browser {
         {
             view.selected = index;
         }
-        if conflict_select.is_some() {
+        if conflict_select.is_some() || refresh_content {
             self.load_conflict_content(ctx);
         }
-        if let Some(side) = conflict_action
-            && let Err(error) = self.resolve_conflict(ctx, side)
+        if stage_resolution
+            && let Err(error) = self.stage_conflict_resolution(ctx)
             && let Some(view) = &mut self.conflict_view
         {
             view.error = Some(error);
@@ -4843,7 +4927,14 @@ mod tests {
                 error: None,
                 loading: false,
                 worker: None,
-                tab: ConflictSide::Ours,
+                snapshot: Some(gg_engine::conflict::Snapshot {
+                    base: Some("1".repeat(40)),
+                    ours: Some("2".repeat(40)),
+                    theirs: Some("3".repeat(40)),
+                    working: Some(b"<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> x\n".to_vec()),
+                }),
+                preview: gg_engine::conflict::Resolution::Working,
+                tab: ConflictTab::Ours,
             });
             let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
                 app.draw_ui(ctx)
@@ -4864,9 +4955,9 @@ mod tests {
             assert!(text.iter().any(|line| line.contains("Base")));
             assert!(text.iter().any(|line| line.contains("Ours")));
             assert!(text.iter().any(|line| line.contains("Theirs")));
-            assert!(text.iter().any(|line| line.contains("Use ours")));
-            assert!(text.iter().any(|line| line.contains("Use theirs")));
-            assert!(text.iter().any(|line| line.contains("Stage resolved")));
+            assert!(text.iter().any(|line| line.contains("Preview source")));
+            assert!(text.iter().any(|line| line.contains("Working file")));
+            assert!(text.iter().any(|line| line.contains("Stage resolution")));
         }
     }
 
@@ -5413,21 +5504,31 @@ mod tests {
             error: None,
             loading: true,
             worker: Some(rx),
-            tab: ConflictSide::Ours,
+            snapshot: None,
+            preview: gg_engine::conflict::Resolution::Working,
+            tab: ConflictTab::Ours,
         });
         let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
             app.draw_ui(ctx)
         });
         assert!(app.conflict_view.as_ref().is_some_and(|view| view.loading));
         assert!(
-            tx.send(Ok(ConflictUpdate::Content(gg_engine::conflict::Content {
-                path: "a".into(),
-                base: Some("base\n".into()),
-                ours: Some("ours\n".into()),
-                theirs: Some("theirs\n".into()),
-                binary: false,
-                truncated: false,
-            })))
+            tx.send(Ok(ConflictUpdate::Content {
+                content: gg_engine::conflict::Content {
+                    path: "a".into(),
+                    base: Some("base\n".into()),
+                    ours: Some("ours\n".into()),
+                    theirs: Some("theirs\n".into()),
+                    binary: false,
+                    truncated: false,
+                },
+                snapshot: gg_engine::conflict::Snapshot {
+                    base: Some("1".repeat(40)),
+                    ours: Some("2".repeat(40)),
+                    theirs: Some("3".repeat(40)),
+                    working: Some(b"ours\n".to_vec()),
+                },
+            }))
             .is_ok()
         );
         let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
@@ -5445,7 +5546,124 @@ mod tests {
     }
 
     #[test]
-    fn conflict_resolution_runs_on_the_operation_worker() {
+    fn conflict_preview_is_read_only_until_stage_resolution()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::process::Command;
+        let run = |path: &std::path::Path, args: &[&str]| -> Result<(), String> {
+            let output = Command::new("git")
+                .arg("-C")
+                .arg(path)
+                .args(args)
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env(
+                    "GIT_CONFIG_GLOBAL",
+                    if cfg!(windows) { "NUL" } else { "/dev/null" },
+                )
+                .env("GIT_AUTHOR_NAME", "Test")
+                .env("GIT_AUTHOR_EMAIL", "test@example.org")
+                .env("GIT_COMMITTER_NAME", "Test")
+                .env("GIT_COMMITTER_EMAIL", "test@example.org")
+                .output()
+                .map_err(|error| error.to_string())?;
+            if output.status.success() {
+                Ok(())
+            } else {
+                Err(String::from_utf8_lossy(&output.stderr).into_owned())
+            }
+        };
+        let dir = tempfile::tempdir()?;
+        let path = dir.path();
+        run(path, &["init", "-b", "main"])?;
+        run(path, &["config", "user.name", "Test"])?;
+        run(path, &["config", "user.email", "test@example.org"])?;
+        run(path, &["config", "core.autocrlf", "false"])?;
+        std::fs::write(path.join("a"), b"base\n")?;
+        run(path, &["add", "a"])?;
+        run(path, &["commit", "-qm", "base"])?;
+        run(path, &["switch", "-qc", "feature"])?;
+        std::fs::write(path.join("a"), b"feature\n")?;
+        run(path, &["commit", "-qam", "feature"])?;
+        run(path, &["switch", "-q", "main"])?;
+        std::fs::write(path.join("a"), b"main\n")?;
+        run(path, &["commit", "-qam", "main"])?;
+        let _ = gg_git::merge::merge(path, "feature", false);
+        let original = std::fs::read(path.join("a"))?;
+        assert!(String::from_utf8_lossy(&original).contains("<<<<<<<"));
+
+        let ctx = egui::Context::default();
+        let mut app = Browser::new(path.to_path_buf());
+        app.load(&ctx);
+        for _ in 0..400 {
+            let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            if app.state.history.is_some() && app.mutation.is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        app.open_conflict_view(&ctx);
+        for _ in 0..400 {
+            let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            if app
+                .conflict_view
+                .as_ref()
+                .is_some_and(|view| view.content.is_some() && view.snapshot.is_some())
+            {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let (preview, working_text, snapshot) = {
+            let view = app.conflict_view.as_ref().ok_or("missing conflict view")?;
+            let snapshot = view.snapshot.clone().ok_or("missing snapshot")?;
+            let content = view.content.as_ref().ok_or("missing content")?;
+            (
+                view.preview,
+                conflict_preview_text(content, &snapshot, gg_engine::conflict::Resolution::Working),
+                snapshot,
+            )
+        };
+        assert_eq!(preview, gg_engine::conflict::Resolution::Working);
+        assert!(working_text.contains("<<<<<<<"));
+        assert_eq!(std::fs::read(path.join("a"))?, original);
+
+        {
+            let view = app.conflict_view.as_mut().ok_or("missing conflict view")?;
+            view.preview = gg_engine::conflict::Resolution::Ours;
+        }
+        let ours = {
+            let view = app.conflict_view.as_ref().ok_or("missing conflict view")?;
+            let content = view.content.as_ref().ok_or("missing content")?;
+            conflict_preview_text(content, &snapshot, view.preview)
+        };
+        assert_eq!(ours, "main\n");
+        assert_eq!(
+            std::fs::read(path.join("a"))?,
+            original,
+            "choosing a preview source is read-only"
+        );
+
+        app.stage_conflict_resolution(&ctx)?;
+        for _ in 0..400 {
+            let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            if !app.operation_busy() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(!app.operation_busy());
+        assert_eq!(std::fs::read(path.join("a"))?, b"main\n");
+        assert!(gg_git::conflict::unmerged(path)?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn conflict_staging_uses_the_operation_worker() {
         let ctx = egui::Context::default();
         let mut app = layout_fixture();
         app.conflict_view = Some(ConflictView {
@@ -5464,12 +5682,16 @@ mod tests {
             error: None,
             loading: false,
             worker: None,
-            tab: ConflictSide::Ours,
+            snapshot: Some(gg_engine::conflict::Snapshot {
+                base: Some("1".repeat(40)),
+                ours: Some("2".repeat(40)),
+                theirs: Some("3".repeat(40)),
+                working: Some(b"ours\n".to_vec()),
+            }),
+            preview: gg_engine::conflict::Resolution::Working,
+            tab: ConflictTab::Ours,
         });
-        assert!(
-            app.resolve_conflict(&ctx, Some(gg_engine::conflict::Side::Ours))
-                .is_ok()
-        );
+        assert!(app.stage_conflict_resolution(&ctx).is_ok());
         assert!(app.operation_busy());
         for _ in 0..200 {
             let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
@@ -5846,7 +6068,9 @@ mod tests {
             error: None,
             loading: false,
             worker: None,
-            tab: ConflictSide::Base,
+            snapshot: None,
+            preview: gg_engine::conflict::Resolution::Working,
+            tab: ConflictTab::Base,
         });
         let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
             app.draw_ui(ctx)

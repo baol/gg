@@ -117,3 +117,72 @@ fn rejects_unknown_paths_and_base_selection() -> Result {
     assert!(error.contains("Base content"), "{error}");
     Ok(())
 }
+
+#[test]
+fn previewed_sides_publish_only_after_validation() -> Result {
+    let dir = repo()?;
+    let p = dir.path();
+    conflicting(p)?;
+    let snapshot = gg_git::conflict::snapshot(p, "a")?;
+    assert!(snapshot.base.is_some());
+    assert!(snapshot.ours.is_some());
+    assert!(snapshot.theirs.is_some());
+    assert_eq!(
+        std::fs::read(p.join("a"))?,
+        b"<<<<<<< HEAD\nmain\n=======\nfeature\n>>>>>>> feature\n"
+    );
+
+    gg_git::conflict::publish(p, "a", &snapshot, gg_engine::conflict::Resolution::Ours)?;
+    assert_eq!(std::fs::read(p.join("a"))?, b"main\n");
+    assert!(gg_git::conflict::unmerged(p)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn publish_rejects_changed_stages_or_working_bytes() -> Result {
+    let dir = repo()?;
+    let p = dir.path();
+    conflicting(p)?;
+    let stale = gg_git::conflict::snapshot(p, "a")?;
+    gg_git::conflict::use_side(p, "a", gg_engine::conflict::Side::Theirs)?;
+    assert!(
+        gg_git::conflict::publish(p, "a", &stale, gg_engine::conflict::Resolution::Ours,).is_err()
+    );
+    assert_eq!(std::fs::read(p.join("a"))?, b"feature\n");
+
+    let dir = repo()?;
+    let p = dir.path();
+    conflicting(p)?;
+    let stale = gg_git::conflict::snapshot(p, "a")?;
+    std::fs::write(p.join("a"), b"external\n")?;
+    assert!(
+        gg_git::conflict::publish(p, "a", &stale, gg_engine::conflict::Resolution::Working,)
+            .is_err()
+    );
+    let fresh = gg_git::conflict::snapshot(p, "a")?;
+    gg_git::conflict::publish(p, "a", &fresh, gg_engine::conflict::Resolution::Working)?;
+    assert_eq!(std::fs::read(p.join("a"))?, b"external\n");
+    assert!(gg_git::conflict::unmerged(p)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn base_resolution_writes_the_common_ancestor() -> Result {
+    let dir = repo()?;
+    let p = dir.path();
+    conflicting(p)?;
+    let snapshot = gg_git::conflict::snapshot(p, "a")?;
+    gg_git::conflict::publish(p, "a", &snapshot, gg_engine::conflict::Resolution::Base)?;
+    assert_eq!(std::fs::read(p.join("a"))?, b"base\n");
+    assert!(gg_git::conflict::unmerged(p)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn snapshot_rejects_paths_outside_the_repository() -> Result {
+    let dir = repo()?;
+    let p = dir.path();
+    conflicting(p)?;
+    assert!(gg_git::conflict::snapshot(p, "../a").is_err());
+    Ok(())
+}

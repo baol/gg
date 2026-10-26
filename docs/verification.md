@@ -105,6 +105,20 @@ Linux x86_64 · Rust 1.99.1 · Xvfb/llvmpipe · disposable Git fixtures (`/tmp/o
 - Independent V1 review blocked on repository-scoped results, refresh-failure recovery, continuation labels, retained-history labeling, safe adoption, and Local Changes gating. The candidate fixed them across `a6b2553` and `d8a06ef`; a focused re-review accepted `d8a06ef` after re-running the gates and native checks. The final P3 follow-up in `d967f2b` clears a stale outcome and notices after a successful clone and names the blocking rewrite/refresh in Local Changes.
 - Limitations: only Linux/X11, the dark theme, and llvmpipe were inspected natively; a running rewrite/refresh was too short-lived to capture on the fixture, so its area is covered by the unit lifecycle test and the merge capture of the same component.
 
+## Coherence I6 · Conflict preview and Stage resolution · 2026-10-26
+
+Linux x86_64 · Rust 1.99.1 · Xvfb/llvmpipe · disposable conflict fixtures (`/tmp/opencode/gg-i5b-merge` and `/tmp/opencode/gg-i6-preview`: a real two-parent merge conflict).
+
+- `cargo fmt --all -- --check` passed.
+- `cargo test --workspace --locked` passed: 413 tests, 0 failures, 3 ignored opt-in performance checks. This includes 214 `git-good` unit tests and 33 CLI tests.
+- `cargo clippy --workspace --all-targets --locked -- -D warnings` passed.
+- Conflict resolution is preview-first. Base, Ours, Theirs, and the working file are preview sources; selecting one changes only the **Result** preview and never writes or stages. The working file is the default preview so external edits are inspectable. Wide layouts keep the three side panes with a bounded Result preview beneath them; narrow layouts use Base/Ours/Theirs/Result tabs.
+- **Stage resolution** is the single publication step. It revalidates the exact conflict stage object IDs and working bytes captured by the preview, then writes the chosen result (or stages the unchanged working file) and stages the path. A changed stage or working file returns an actionable stale-preview error; **Refresh external edits** recaptures the content and snapshot.
+- Publication runs on the operation worker. Success refreshes mutation state, conflicts, history, and working status, selects the next unresolved path, and updates the operation area. Invalid path geometry, absent sides, oversized previews, and mode/symlink/submodule conflicts return explicit errors without writing.
+- Git oracles cover a read-only preview, Ours/Base/Working publication, stale stage IDs, stale working bytes, exact staged output, and path traversal rejection. An egui integration test opens a real conflicted merge, confirms the default Working preview and unchanged working file, switches to Ours without writing, then stages the resolution and verifies the file and index.
+- Native X11 at 1120×740: [wide conflict workspace with the working-file result preview](screenshots/coherence-i6-conflict-wide.png), [Theirs selected as a read-only preview while the file remains unmerged](screenshots/coherence-i6-conflict-preview.png), and [after Stage resolution with no unmerged paths](screenshots/coherence-i6-conflict-staged.png). At 720×480: [narrow conflict tabs and result preview](screenshots/coherence-i6-conflict-narrow.png).
+- Limitations: the conflict preview remains a dedicated resizable workspace rather than a panel inside the Local Changes two-list layout; it uses the same source/preview/publication grammar and operation area. Only Linux/X11, the dark theme, and llvmpipe were inspected natively. Independent V1/V2 verification remains pending.
+
 ## Coherence proposal and shared workspace · 2026-10-25
 
 Reviewed [cross-view interaction consistency](ui-coherence.md) and created a [shared-workspace prototype](ui-coherence.html). Local Changes incorporates the user's requested arrangement: Unstaged above Staged on the left, selected changes on the right, commit/amend at lower right. File selection determines the comparison; no second Staged/Unstaged switch is present.

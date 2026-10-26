@@ -95,6 +95,14 @@ Before connecting M1 controls, test Review/Back anchor restoration, active-view 
 - Local Changes disables staging, discard, commit, amend, and duplicate mutations while the area owns a rewrite, operation worker, network, or branch operation, but keeps list selection, scrolling, Back, and Refresh available for browsing. Network work cannot start during an in-progress merge/rebase; cancellation lives only in the area.
 - Geometry/interaction tests cover the area at 720×480 and 1120×740, the merge-without-Skip rule, one-area ownership, rewrite lifecycle, network cancel, and outcome/recovery behavior.
 
+## Coherence I6 conflict preview and Stage resolution
+
+- Base, Ours, Theirs, and the working file select only the Result preview; no selection writes the working file or index. The working file is the default preview and external edits require **Refresh external edits**.
+- **Stage resolution** is the only publication control. It validates the conflict stage IDs and exact working bytes captured at preview time, writes the chosen result or stages the unchanged working file, and stages the path. Stale stages or working bytes reject without publishing.
+- Wide layouts keep Base/Ours/Theirs columns with a bounded Result preview; narrow layouts use Base/Ours/Theirs/Result tabs. The operation area owns Continue/Skip/Abort; the conflict workspace owns source inspection and publication.
+- Publication runs on the operation worker and refreshes mutation state, conflict listing, history, and status; the next unresolved path is selected after success. Path traversal, absent sides, oversized previews, and mode/symlink/submodule conflicts fail explicitly without writes.
+- Git oracles cover read-only preview, Base/Ours/Working publication, stale stage and working data, exact staged output, and path rejection. The egui integration opens a real conflicted merge, previews both sides without writing, then stages and verifies the file and index.
+
 ## M1 changed files
 
 - Git-oracle fixtures cover root/first-parent changes, merge-parent selection, nested paths, additions/deletions, IDs/modes, file-to-directory replacement, empty comparisons, invalid parents/revisions, and pinned comparisons with unavailable blobs.
