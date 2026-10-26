@@ -184,10 +184,10 @@ Tests: real Git fixtures prove both full-file sides, exact endpoint labels, one 
 Retain the shared reader/strip interfaces for I5b-I7. Do not implement the operation area, conflicts, or recovery here.
 ~~~
 
-## I5 · One operation area and responsive rewrite
+## I5b · One operation area and responsive rewrite
 
 ~~~text
-Apply the shared brief. Implement I5 after I5a is accepted.
+Apply the shared brief. Implement I5b after I5a is accepted.
 
 Starting points: apps/git-good/src/main.rs (operation_busy, start_operation, finish_operation, begin_rewrite, finish_rewrite, RewriteJob, OperationOutcome), network.rs, and native worker tests. Read Architecture: outcomes, network progress/cancellation, M5 operation state, rebase, reorder/squash.
 

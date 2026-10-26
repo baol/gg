@@ -29,9 +29,9 @@ The existing product has a coherent center: history → review → reading, and 
 
 ## Shared screen and interaction model
 
-Keep Repository, Refs, View, Stash, and Help in the toolbar. Keep Local Changes and History in one stable navigation strip at every width; at wide widths retain grouped refs at the left, and at narrow widths use the Refs toolbar menu. Place file actions and commit actions beside their selected identity. An operation banner persists above content; the fixed-height status line shows severity, summary, Details, and at most one recovery action.
+Keep Repository, Refs, View, Stash, and Help in the toolbar. Keep Local Changes and History in one stable navigation strip at every width; at wide widths retain grouped refs at the left, and at narrow widths use the Refs toolbar menu. Place file actions and commit actions beside their selected identity. One operation area sits directly beneath navigation, hidden when idle; the fixed-height status line shows severity, summary, Details, and at most one recovery action.
 
-Retain selected commit, file, side, reading position, and filters through back navigation where the owning contracts specify them. Keep normal/amend drafts separately per canonical worktree. A pending worker disables duplicate/incompatible writes while browsing stays available, except the existing rewrite modal, which stays blocking through its refresh. Never publish an old file's result under a new file's label.
+Retain selected commit, file, side, reading position, and filters through back navigation where the owning contracts specify them. Keep normal/amend drafts separately per canonical worktree. A pending worker disables duplicate/incompatible writes while browsing stays available; rewrite configuration closes on submission and its progress stays in the operation area. Never publish an old file's result under a new file's label.
 
 Keyboard paths mirror visible controls: arrows or j/k select; Enter/Right opens; Escape/Left returns one level; Alt+A opens Actions; H opens file history; B is planned for blame; brackets move changes; Alt+Up/Down moves files; Alt+Left/Right moves history versions. Editors retain their text keys. Keep focus visible, give disabled actions visible reasons, accompany color with text/symbols, and follow the design's 4.5:1 contrast requirement in both themes.
 
@@ -142,14 +142,14 @@ flowchart TD
 
 1. Name current branch, target ref/commit, and direction: merge target **into** current; rebase current **onto** target; cherry-pick applies selected change; revert creates its inverse.
 2. Merge offers Always create a merge commit; rebase explicitly offers Automatically stash working changes and warns about rewritten IDs/private backup. Require clean tracked worktree unless the specific operation permits chosen autostash.
-3. Submit once. Merge/rebase dialogs close immediately, the pending operation is named, and incompatible writes disable while browsing remains usable.
+3. Submit once. Merge/rebase dialogs close immediately, the operation area names the pending phase, and incompatible writes disable while browsing remains usable.
 4. Success reports fast-forward, already-up-to-date, merge commit, or rewritten tip as appropriate. Refresh relevant views once. Conflict enters F09; failure retains Git's recoverable state and Details.
 
 **Completion:** the user sees the operation's outcome and updated branch. **Mockup:** Integrate → Conflicts is a deliberately conflicted merge example. Rebase follows the same recovery shell with operation-aware labels.
 
 ### F09 · Resolve conflicts and finish or abort
 
-**Entry:** persistent operation banner → Resolve conflicts. **Precondition:** actual unmerged paths, or an externally detected operation on launch.
+**Entry:** operation area → Resolve conflicts. **Precondition:** actual unmerged paths, or an externally detected operation on launch.
 
 1. Name operation, unresolved count, and operation commit. Select an unresolved path; load Base/Ours/Theirs on workers.
 2. Explain side identities for that operation. For rebase, Ours is the rebased destination/current replay state and Theirs the commit being replayed; never equate Ours with 'my branch' universally.
@@ -157,7 +157,7 @@ flowchart TD
 4. Keep Continue disabled until unresolved paths reach zero; then run it on the operation worker. A later conflict returns to this flow.
 5. Abort requests Git's recovery and refreshes; report any failure rather than promise removal of all user edits. Skip exists only for supporting operations (rebase/cherry-pick/revert), never merge. Narrow layouts show side tabs with bounded content.
 
-**Alternatives:** absent sides/deletion, binary files, stale reads, external changes, and worker failure require explicit states; keep the operation banner until Git says it ended. **Completion:** operation completes or aborts, refs/history/status/reflog/backups refresh, and prior selection/Local Changes context returns. **Mockup:** Conflicts → resolved → Continue; merge has no Skip.
+**Alternatives:** absent sides/deletion, binary files, stale reads, external changes, and worker failure require explicit states; keep the operation area until Git says it ended. **Completion:** operation completes or aborts, refs/history/status/reflog/backups refresh, and prior selection/Local Changes context returns. **Mockup:** Conflicts → resolved → Continue; merge has no Skip.
 
 ### F10 · Rewrite and recover a previous tip
 
@@ -165,7 +165,7 @@ flowchart TD
 
 1. Resolve the inclusive linear range oldest first; reject merge ranges. Show every commit exactly once, Up/Down, and Pick/Squash. The first row always remains Pick.
 2. Review the plan, clean-worktree/autostash choice, and private-backup notice; confirm the rewrite.
-3. Disable the plan during Rewriting commits, then show Refreshing history. Keep the modal open until replacement history is accepted. Conflicts use F09.
+3. Close the plan on submission. The operation area shows Rewriting commits, then Refreshing history until the replacement history is accepted; browsing stays available and the old history remains labeled. Conflicts use F09.
 4. From Repository → Backups inspect private refs, kind, subject, and commit time; Open commit to verify content before recovery. Reflog is a separate newest-first HEAD/local-branch entry point.
 5. Create branch here recovers without switching. Reset branch here offers Soft (move tip), Mixed (also reset index), or Hard (also discard staged/working changes), with exact-target confirmation and Hard warning. Copy hash/ref is read-only. Keep backups after recovery.
 

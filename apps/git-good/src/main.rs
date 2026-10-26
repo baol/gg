@@ -361,6 +361,28 @@ enum MutationAction {
     Abort,
 }
 
+enum OperationArea {
+    Mutation {
+        operation: gg_engine::mutation::Operation,
+        conflicts: usize,
+        pending: bool,
+    },
+    Rewrite {
+        refreshing: bool,
+    },
+    Worker {
+        label: String,
+    },
+    Network {
+        operation: gg_engine::sync::Operation,
+        progress: Option<gg_engine::sync::Progress>,
+        cancelling: bool,
+    },
+    Branch {
+        label: String,
+    },
+}
+
 enum OperationOutcome {
     Merge(gg_engine::merge::Receipt),
     Rebase(gg_engine::rebase::Receipt),
@@ -523,6 +545,7 @@ struct Browser {
     mutation: Option<gg_engine::mutation::OperationState>,
     mutation_notice: Option<String>,
     mutation_error: Option<String>,
+    mutation_path: Option<PathBuf>,
     outcome: Option<Outcome>,
     outcome_details_open: bool,
     #[cfg(debug_assertions)]
@@ -595,6 +618,7 @@ impl Browser {
             mutation: None,
             mutation_notice: None,
             mutation_error: None,
+            mutation_path: None,
             outcome: None,
             outcome_details_open: false,
             #[cfg(debug_assertions)]
@@ -1038,6 +1062,26 @@ impl Browser {
         ctx.request_repaint();
     }
 
+    /// Detect an operation already in progress when a repository is opened.
+    fn sync_mutation(&mut self) {
+        let path = self
+            .state
+            .history
+            .as_ref()
+            .map(|history| history.path.clone());
+        if path == self.mutation_path {
+            return;
+        }
+        if self.mutation_path.is_some() {
+            self.mutation = None;
+            self.mutation_error = None;
+        }
+        self.mutation_path = path;
+        if self.mutation.is_none() {
+            self.refresh_mutation();
+        }
+    }
+
     fn refresh_mutation(&mut self) {
         let Some(path) = self.stash_path() else {
             return;
@@ -1163,6 +1207,45 @@ impl Browser {
 
     fn operation_busy(&self) -> bool {
         self.operation_worker.is_some()
+            || self.rewrite_job.is_some()
+            || self.rewrite_refresh.is_some()
+    }
+
+    /// The one operation currently owning the strip beneath navigation.
+    fn operation_area(&self) -> Option<OperationArea> {
+        if let Some(state) = &self.mutation {
+            return Some(OperationArea::Mutation {
+                operation: state.operation,
+                conflicts: state.conflicts.len(),
+                pending: self.operation_worker.is_some(),
+            });
+        }
+        if self.rewrite_job.is_some() {
+            return Some(OperationArea::Rewrite { refreshing: false });
+        }
+        if self.rewrite_refresh.is_some() {
+            return Some(OperationArea::Rewrite { refreshing: true });
+        }
+        if self.operation_worker.is_some() {
+            return Some(OperationArea::Worker {
+                label: self
+                    .mutation_notice
+                    .clone()
+                    .unwrap_or_else(|| "Working…".into()),
+            });
+        }
+        if let Some(worker) = &self.network {
+            return Some(OperationArea::Network {
+                operation: worker.operation,
+                progress: self.network_progress.clone(),
+                cancelling: worker.is_cancelled(),
+            });
+        }
+        self.branch_label
+            .as_ref()
+            .map(|label| OperationArea::Branch {
+                label: label.clone(),
+            })
     }
 
     fn set_outcome(
@@ -1558,6 +1641,9 @@ impl Browser {
         if self.mutation.is_some() {
             return Err("Recover the operation in progress before rewriting history.".into());
         }
+        if self.operation_worker.is_some() || self.network.is_some() || self.branch.is_some() {
+            return Err("Wait for the current operation to finish before rewriting.".into());
+        }
         let path = self
             .stash_path()
             .ok_or("Open a repository before rewriting history.")?;
@@ -1576,6 +1662,7 @@ impl Browser {
             receiver,
             restore_row,
         });
+        self.rewrite_dialog = None;
         Ok(())
     }
 
@@ -1913,6 +2000,7 @@ impl Browser {
     }
 
     fn draw_ui(&mut self, ui: &mut egui::Ui) {
+        self.sync_mutation();
         let ctx = ui.ctx().clone();
         let ctx = &ctx;
         colors::apply(ctx);
@@ -1996,9 +2084,13 @@ impl Browser {
                 }
                 Err(error) => {
                     self.refresh_mutation();
-                    if let Some(dialog) = &mut self.rewrite_dialog {
-                        dialog.error = Some(error);
-                    }
+                    self.set_outcome(
+                        OutcomeSeverity::Error,
+                        error.clone(),
+                        None,
+                        Some(RecoveryAction::Backups),
+                    );
+                    self.mutation_error = Some(error);
                 }
             }
         }
@@ -2585,18 +2677,6 @@ impl Browser {
                         );
                     },
                 );
-                if let Some(worker) = &self.network {
-                    let cancelled = worker.is_cancelled();
-                    let button = egui::Button::new(phosphor::icon(phosphor::X).size(13.0))
-                        .min_size(egui::vec2(26.0, 26.0));
-                    if ui
-                        .add_enabled(!cancelled, button)
-                        .on_hover_text("Cancel network operation")
-                        .clicked()
-                    {
-                        worker.cancel();
-                    }
-                }
             });
         });
         egui::Panel::top("navigation")
@@ -2629,67 +2709,135 @@ impl Browser {
                     }
                 });
             });
+        if let Some(generation) = self.rewrite_refresh {
+            if self.state.loaded_generation >= generation {
+                self.rewrite_refresh = None;
+                self.rewrite_dialog = None;
+            } else if let Some(error) = self.state.error.clone() {
+                self.rewrite_refresh = None;
+                let summary = format!("History refresh failed: {error}");
+                self.set_outcome(
+                    OutcomeSeverity::Error,
+                    summary.clone(),
+                    None,
+                    Some(RecoveryAction::Backups),
+                );
+                self.mutation_error = Some(summary);
+            }
+        }
         let mut mutation_action = None;
         let mut resolve_conflicts = false;
-        let mut open_backups = false;
-        let operation_pending = self.operation_busy();
-        if let Some(state) = &self.mutation {
-            let conflicts_remain = !state.conflicts.is_empty();
-            egui::Panel::top("mutation")
-                .exact_size(30.0)
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label(format!("{} in progress", state.operation.as_str()));
-                        if !state.conflicts.is_empty() {
-                            ui.label(format!("· {} conflict(s)", state.conflicts.len()));
-                            if ui
-                                .add_enabled(
-                                    !operation_pending,
-                                    egui::Button::new("Resolve conflicts…"),
-                                )
-                                .clicked()
-                            {
-                                resolve_conflicts = true;
+        let mut cancel_network = false;
+        if let Some(area) = self.operation_area() {
+            egui::Panel::top("operation-area").show(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    match &area {
+                        OperationArea::Mutation {
+                            operation,
+                            conflicts,
+                            pending,
+                        } => {
+                            ui.strong(format!("{} in progress", operation.as_str()));
+                            if *conflicts > 0 {
+                                ui.label(format!(
+                                    "· {conflicts} conflict{}",
+                                    if *conflicts == 1 { "" } else { "s" }
+                                ));
+                                if ui
+                                    .add_enabled(
+                                        !pending,
+                                        egui::Button::new("Resolve conflicts…"),
+                                    )
+                                    .clicked()
+                                {
+                                    resolve_conflicts = true;
+                                }
                             }
-                        }
-                        if ui
-                            .add_enabled(
-                                !operation_pending && !conflicts_remain,
-                                egui::Button::new("Continue"),
-                            )
-                            .on_hover_text(if conflicts_remain {
+                            let reason = if *conflicts > 0 {
                                 "Resolve every unmerged path first."
                             } else {
                                 "Continue the in-progress operation."
-                            })
-                            .clicked()
-                        {
-                            mutation_action = Some(MutationAction::Continue);
-                        }
-                        if state.operation != gg_engine::mutation::Operation::Merge
-                            && ui
-                                .add_enabled(!operation_pending, egui::Button::new("Skip"))
+                            };
+                            if ui
+                                .add_enabled(
+                                    !pending && *conflicts == 0,
+                                    egui::Button::new("Continue"),
+                                )
+                                .on_hover_text(reason)
                                 .clicked()
-                        {
-                            mutation_action = Some(MutationAction::Skip);
+                            {
+                                mutation_action = Some(MutationAction::Continue);
+                            }
+                            if *operation != gg_engine::mutation::Operation::Merge
+                                && ui
+                                    .add_enabled(!pending, egui::Button::new("Skip"))
+                                    .on_hover_text("Skip the current commit and continue.")
+                                    .clicked()
+                            {
+                                mutation_action = Some(MutationAction::Skip);
+                            }
+                            if ui
+                                .add_enabled(!pending, egui::Button::new("Abort"))
+                                .on_hover_text("Abort the operation and restore the previous tip.")
+                                .clicked()
+                            {
+                                mutation_action = Some(MutationAction::Abort);
+                            }
                         }
-                        if ui
-                            .add_enabled(!operation_pending, egui::Button::new("Abort"))
-                            .clicked()
-                        {
-                            mutation_action = Some(MutationAction::Abort);
+                        OperationArea::Rewrite { refreshing } => {
+                            ui.spinner();
+                            ui.strong(if *refreshing {
+                                "Refreshing history…"
+                            } else {
+                                "Rewriting commits…"
+                            });
+                            ui.weak(
+                                "Browsing stays available; the old history is labeled until the replacement is accepted.",
+                            );
                         }
-                        if ui.button("Backups…").clicked() {
-                            open_backups = true;
+                        OperationArea::Worker { label } => {
+                            ui.spinner();
+                            ui.strong(label);
                         }
-                    });
+                        OperationArea::Network {
+                            operation,
+                            progress,
+                            cancelling,
+                        } => {
+                            ui.spinner();
+                            if let Some(progress) = progress {
+                                ui.strong(progress.operation.as_str());
+                                ui.label(format!(
+                                    "· {} {}{}",
+                                    progress.phase,
+                                    progress
+                                        .percent
+                                        .map(|percent| format!("{percent}% "))
+                                        .unwrap_or_default(),
+                                    progress.message
+                                ));
+                            } else {
+                                ui.strong(format!("Starting {}…", operation.as_str()));
+                            }
+                            if *cancelling {
+                                ui.weak("Cancelling…");
+                            } else if ui.button("Cancel").clicked() {
+                                cancel_network = true;
+                            }
+                        }
+                        OperationArea::Branch { label } => {
+                            ui.spinner();
+                            ui.strong(label);
+                        }
+                    }
                 });
+            });
         }
         if resolve_conflicts {
             self.open_conflict_view(ctx);
         }
-        if open_backups && let Some(history) = &self.state.history {
-            self.backups = Some(backups_view::BackupsView::new(history.path.clone()));
+        if cancel_network && let Some(worker) = &self.network {
+            worker.cancel();
         }
         if let Some(action) = mutation_action
             && let Some(operation) = self.mutation.as_ref().map(|state| state.operation)
@@ -3197,10 +3345,8 @@ impl Browser {
         }
 
         let conflict_mutation = self.mutation.clone();
-        let conflict_operation_busy = self.operation_busy();
         let mut conflict_select = None;
         let mut conflict_action = None;
-        let mut conflict_recovery = None;
         let mut conflict_open = true;
         if let Some(view) = &mut self.conflict_view {
             let operation = conflict_mutation.as_ref().map(|state| state.operation);
@@ -3208,7 +3354,6 @@ impl Browser {
                 .as_ref()
                 .map(|state| state.conflicts.len())
                 .unwrap_or(view.paths.len());
-            let conflicts_remain = unresolved > 0;
             egui::Window::new("Resolve conflicts")
                 .id(egui::Id::unique("resolve-conflicts"))
                 .open(&mut conflict_open)
@@ -3358,41 +3503,6 @@ impl Browser {
                             }
                         });
                     });
-                    ui.separator();
-                    ui.horizontal(|ui| {
-                        if ui
-                            .add_enabled(
-                                !conflicts_remain && !conflict_operation_busy,
-                                egui::Button::new("Continue"),
-                            )
-                            .on_hover_text(if conflicts_remain {
-                                "Resolve every unmerged path first."
-                            } else {
-                                "Continue the in-progress operation."
-                            })
-                            .clicked()
-                        {
-                            conflict_recovery = Some(MutationAction::Continue);
-                        }
-                        if operation != Some(gg_engine::mutation::Operation::Merge)
-                            && ui
-                                .add_enabled(
-                                    !conflict_operation_busy,
-                                    egui::Button::new("Skip"),
-                                )
-                                .on_hover_text("Skip the current commit and continue.")
-                                .clicked()
-                        {
-                            conflict_recovery = Some(MutationAction::Skip);
-                        }
-                        if ui
-                            .add_enabled(!conflict_operation_busy, egui::Button::new("Abort"))
-                            .on_hover_text("Abort the operation and restore the previous tip.")
-                            .clicked()
-                        {
-                            conflict_recovery = Some(MutationAction::Abort);
-                        }
-                    });
                 });
         }
         if let Some(index) = conflict_select
@@ -3409,13 +3519,7 @@ impl Browser {
         {
             view.error = Some(error);
         }
-        if let Some(action) = conflict_recovery
-            && let Some(operation) = conflict_mutation.as_ref().map(|state| state.operation)
-            && let Err(error) = self.recover_mutation(ctx, operation, action)
-        {
-            self.mutation_error = Some(error);
-        }
-        if conflict_recovery.is_none() && self.conflict_view.is_some() && !conflict_open {
+        if self.conflict_view.is_some() && !conflict_open {
             self.conflict_view = None;
         }
         if self.help_shortcuts {
@@ -3573,16 +3677,6 @@ impl Browser {
             self.rebase_dialog = None;
         }
 
-        if let Some(generation) = self.rewrite_refresh {
-            if self.state.loaded_generation >= generation {
-                self.rewrite_refresh = None;
-                self.rewrite_dialog = None;
-            } else if let Some(error) = self.state.error.clone() {
-                self.rewrite_refresh = None;
-                self.rewrite_dialog = None;
-                self.mutation_error = Some(format!("History refresh failed: {error}"));
-            }
-        }
         let rewrite_busy = self.rewrite_job.is_some();
         let rewrite_refreshing = self.rewrite_refresh.is_some();
         let mut rewrite_submit = None;
@@ -3595,18 +3689,6 @@ impl Browser {
                 ui.set_width(width);
                 ui.heading("Reorder and squash");
                 ui.add_space(4.0);
-                if rewrite_busy || rewrite_refreshing {
-                    ui.horizontal(|ui| {
-                        ui.spinner();
-                        ui.label(if rewrite_busy {
-                            "Rewriting commits…"
-                        } else {
-                            "Refreshing history…"
-                        });
-                    });
-                    ui.weak("This dialog closes when the refreshed history is ready.");
-                    ui.add_space(8.0);
-                }
                 ui.add_enabled_ui(!(rewrite_busy || rewrite_refreshing), |ui| {
                     ui.label(
                         "Reorder commits from the selected commit through HEAD. Squash combines a commit into the row above. Merge commits are not supported.",
@@ -3720,15 +3802,19 @@ impl Browser {
                     });
                 });
             });
-            if !(rewrite_busy || rewrite_refreshing) && modal.should_close() {
+            if modal.should_close() {
                 rewrite_cancel = true;
             }
         }
-        if let Some((from, steps, autostash)) = rewrite_submit
-            && let Err(error) = self.begin_rewrite(ctx, from, steps, autostash)
-            && let Some(dialog) = &mut self.rewrite_dialog
-        {
-            dialog.error = Some(error);
+        if let Some((from, steps, autostash)) = rewrite_submit {
+            match self.begin_rewrite(ctx, from, steps, autostash) {
+                Ok(()) => self.rewrite_dialog = None,
+                Err(error) => {
+                    if let Some(dialog) = &mut self.rewrite_dialog {
+                        dialog.error = Some(error);
+                    }
+                }
+            }
         }
         if rewrite_cancel {
             self.rewrite_dialog = None;
@@ -3917,6 +4003,7 @@ impl Browser {
             return;
         }
 
+        let operation_active = self.operation_area().is_some();
         egui::Panel::bottom("status").exact_size(25.0).show(ui, |ui| {
             let (message, color) = if let Some(error) = &self.network_error {
                 (format!("Network · {error}"), ui.visuals().error_fg_color)
@@ -3926,14 +4013,14 @@ impl Browser {
                 (format!("Branch · {error}"), ui.visuals().error_fg_color)
             } else if let Some(error) = &self.mutation_error {
                 (format!("History · {error}"), ui.visuals().error_fg_color)
-            } else if let Some(outcome) = &self.outcome {
+            } else if !operation_active && let Some(outcome) = &self.outcome {
                 let color = match outcome.severity {
                     OutcomeSeverity::Info => ui.visuals().text_color(),
                     OutcomeSeverity::Warning => ui.visuals().warn_fg_color,
                     OutcomeSeverity::Error => ui.visuals().error_fg_color,
                 };
                 (format!("History · {}", outcome.summary), color)
-            } else if let Some(worker) = &self.network {
+            } else if !operation_active && let Some(worker) = &self.network {
                 if worker.is_cancelled() {
                     ("Cancelling network operation…".into(), ui.visuals().text_color())
                 } else if let Some(progress) = &self.network_progress {
@@ -3947,15 +4034,15 @@ impl Browser {
                 } else {
                     (format!("Starting {}…", worker.operation.as_str()), ui.visuals().text_color())
                 }
-            } else if let Some(notice) = &self.network_notice {
+            } else if !operation_active && let Some(notice) = &self.network_notice {
                 (format!("Network · {notice}"), ui.visuals().text_color())
-            } else if let Some(warning) = &self.branch_warning {
+            } else if !operation_active && let Some(warning) = &self.branch_warning {
                 (format!("Branch · {warning}"), ui.visuals().text_color())
-            } else if let Some(label) = &self.branch_label {
+            } else if !operation_active && let Some(label) = &self.branch_label {
                 (label.clone(), ui.visuals().text_color())
-            } else if let Some(notice) = &self.stash_notice {
+            } else if !operation_active && let Some(notice) = &self.stash_notice {
                 (format!("Stash · {notice}"), ui.visuals().text_color())
-            } else if let Some(notice) = &self.mutation_notice {
+            } else if !operation_active && let Some(notice) = &self.mutation_notice {
                 (format!("History · {notice}"), ui.visuals().text_color())
             } else if self.pending.is_some() {
                 (format!("Reading {}{}", self.state.requested.as_deref().unwrap_or(std::path::Path::new(".")).display(), if self.state.history.is_some() { " · showing previous results" } else { "" }), ui.visuals().text_color())
@@ -3970,7 +4057,8 @@ impl Browser {
                     .unwrap_or_default();
                 (format!("{tracking}Up/Down / j k: select   ·   PgUp/PgDn: page   ·   Enter: review   ·   Space: details   ·   Esc: history   ·   Ctrl/Cmd+F: filter   ·   Ctrl/Cmd+C: copy ID"), ui.visuals().weak_text_color())
             };
-            let outcome_active = self.network_error.is_none()
+            let outcome_active = !operation_active
+                && self.network_error.is_none()
                 && self.state.error.is_none()
                 && self.branch_error.is_none()
                 && self.mutation_error.is_none()
@@ -4875,37 +4963,21 @@ mod tests {
     }
 
     #[test]
-    fn rewrite_dialog_stays_open_while_rewriting() {
+    fn rewrite_progress_lives_once_in_the_operation_area() {
         let ctx = egui::Context::default();
         let mut app = layout_fixture();
-        app.rewrite_dialog = Some(RewriteDialog {
-            from: "a".repeat(40),
-            rows: vec![RewriteRow {
-                id: "a".repeat(40),
-                subject: "first change".into(),
-                action: gg_engine::rewrite::Action::Pick,
-            }],
-            autostash: false,
-            error: None,
-        });
         let (_sender, receiver) = std::sync::mpsc::channel();
         app.rewrite_job = Some(RewriteJob {
             receiver,
             restore_row: None,
         });
-        let _ = crate::tests::run_ui(
-            &ctx,
-            frame_input(
-                1120.0,
-                740.0,
-                vec![key(egui::Key::Escape, egui::Modifiers::NONE)],
-            ),
-            |ctx| app.draw_ui(ctx),
-        );
+        let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
         let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
             app.draw_ui(ctx)
         });
-        assert!(app.rewrite_dialog.is_some());
+        assert!(app.rewrite_dialog.is_none(), "configuration is closed");
         let text = output
             .shapes
             .iter()
@@ -4914,28 +4986,28 @@ mod tests {
                 _ => None,
             })
             .collect::<Vec<_>>();
-        assert!(text.iter().any(|line| line.contains("Rewriting commits")));
+        assert_eq!(
+            text.iter()
+                .filter(|line| line.contains("Rewriting commits"))
+                .count(),
+            1,
+            "one operation area reports the rewrite: {text:?}"
+        );
+        assert!(
+            text.iter()
+                .any(|line| line.contains("Browsing stays available"))
+        );
+        assert!(!text.iter().any(|line| line.contains("Reorder and squash")));
     }
 
     #[test]
-    fn rewrite_dialog_closes_after_history_refresh_is_loaded() {
+    fn rewrite_refresh_clears_the_operation_area() {
         let ctx = egui::Context::default();
         let mut app = layout_fixture();
-        app.rewrite_dialog = Some(RewriteDialog {
-            from: "a".repeat(40),
-            rows: vec![RewriteRow {
-                id: "a".repeat(40),
-                subject: "first change".into(),
-                action: gg_engine::rewrite::Action::Pick,
-            }],
-            autostash: false,
-            error: None,
-        });
         app.rewrite_refresh = Some(app.state.loaded_generation + 1);
         let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
             app.draw_ui(ctx)
         });
-        assert!(app.rewrite_dialog.is_some());
         let text = output
             .shapes
             .iter()
@@ -4944,14 +5016,24 @@ mod tests {
                 _ => None,
             })
             .collect::<Vec<_>>();
-        assert!(text.iter().any(|line| line.contains("Refreshing history")));
+        assert_eq!(
+            text.iter()
+                .filter(|line| line.contains("Refreshing history"))
+                .count(),
+            1,
+            "one operation area reports the refresh: {text:?}"
+        );
 
         app.state.loaded_generation = app.rewrite_refresh.unwrap_or_default();
-        let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+        let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
             app.draw_ui(ctx)
         });
-        assert!(app.rewrite_dialog.is_none());
         assert!(app.rewrite_refresh.is_none());
+        assert!(!output.shapes.iter().any(|shape| matches!(
+            &shape.shape,
+            egui::epaint::Shape::Text(text)
+                if text.galley.job.text.contains("Refreshing history")
+        )));
     }
 
     #[test]
@@ -5489,12 +5571,99 @@ mod tests {
             assert!(text.iter().any(|line| line.contains("Continue")));
             assert!(text.iter().any(|line| line.contains("Skip")));
             assert!(text.iter().any(|line| line.contains("Abort")));
-            assert!(text.iter().any(|line| line.contains("Backups…")));
+            assert!(
+                !text.iter().any(|line| line.contains("Backups…")),
+                "recovery destinations stay out of the continuation controls"
+            );
         }
     }
 
     #[test]
-    fn rebase_banner_surfaces_backups() {
+    fn merge_operation_area_has_no_skip_at_either_width() {
+        for width in [720.0, 1120.0] {
+            let ctx = egui::Context::default();
+            let mut app = layout_fixture();
+            app.mutation = Some(gg_engine::mutation::OperationState {
+                operation: gg_engine::mutation::Operation::Merge,
+                commit: Some("abc123".into()),
+                conflicts: vec!["a".into()],
+            });
+            let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let output = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let text = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                text.iter()
+                    .filter(|line| line.contains("merge in progress"))
+                    .count(),
+                1,
+                "one operation area at {width}: {text:?}"
+            );
+            assert!(text.iter().any(|line| line.contains("Continue")));
+            assert!(text.iter().any(|line| line.contains("Abort")));
+            assert!(!text.iter().any(|line| line.contains("Skip")));
+        }
+    }
+
+    #[test]
+    fn conflict_window_leaves_continuation_to_the_operation_area() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        app.mutation = Some(gg_engine::mutation::OperationState {
+            operation: gg_engine::mutation::Operation::CherryPick,
+            commit: Some("abc123".into()),
+            conflicts: vec!["a".into()],
+        });
+        app.conflict_view = Some(ConflictView {
+            paths: vec!["a".into()],
+            selected: 0,
+            previous_selected: 0,
+            keep: None,
+            content: None,
+            error: None,
+            loading: false,
+            worker: None,
+            tab: ConflictSide::Base,
+        });
+        let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        let text = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(text.iter().any(|line| line.contains("Resolve conflicts")));
+        assert_eq!(
+            text.iter().filter(|line| line.contains("Continue")).count(),
+            1,
+            "only the operation area offers Continue: {text:?}"
+        );
+        assert_eq!(
+            text.iter().filter(|line| line.contains("Skip")).count(),
+            1,
+            "only the operation area offers Skip: {text:?}"
+        );
+    }
+
+    #[test]
+    fn rebase_operation_area_keeps_recovery_out_of_continuation() {
         let ctx = egui::Context::default();
         let mut app = layout_fixture();
         app.mutation = Some(gg_engine::mutation::OperationState {
@@ -5517,11 +5686,14 @@ mod tests {
             })
             .collect::<Vec<_>>();
         assert!(text.iter().any(|line| line.contains("rebase in progress")));
-        assert!(text.iter().any(|line| line.contains("Backups…")));
+        assert!(text.iter().any(|line| line.contains("Continue")));
+        assert!(text.iter().any(|line| line.contains("Skip")));
+        assert!(text.iter().any(|line| line.contains("Abort")));
+        assert!(!text.iter().any(|line| line.contains("Backups…")));
     }
 
     #[test]
-    fn network_cancel_button_stays_inside_the_toolbar() {
+    fn network_cancel_button_stays_inside_the_operation_area() {
         for width in [720.0, 1120.0] {
             let ctx = egui::Context::default();
             let mut app = layout_fixture();
@@ -5536,10 +5708,10 @@ mod tests {
                 output.shapes.iter().any(|shape| matches!(
                     &shape.shape,
                     egui::epaint::Shape::Text(text)
-                        if text.galley.job.text == phosphor::X
+                        if text.galley.job.text == "Cancel"
                             && text.pos.x + text.galley.size().x <= width
                 )),
-                "cancel icon missing or clipped at width {width}"
+                "cancel control missing or clipped at width {width}"
             );
         }
     }
