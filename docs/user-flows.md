@@ -126,12 +126,12 @@ flowchart TD
 
 ### F07 · Park and restore work with stash
 
-**Entry:** Stash → Stash changes or Manage stashes.
+**Entry:** Repository → Stash changes or Stashes.
 
 1. Enter a message; explicitly choose Include untracked and Keep index. A clean worktree reports no changes to stash.
 2. Create the stash on the serialized worker and refresh status. The Stashes window shows the exact stash ref, commit, and message.
-3. Select Apply to retain the entry, or Pop to remove it only after a conflict-free apply; explicitly choose Restore index where offered.
-4. On conflict retain the entry, report unmerged paths, and route to conflict resolution. A stash conflict is not a sequencer operation: do not invent Continue/Skip/Abort buttons for it.
+3. Select **Restore…**, then choose **Restore staged state** and/or **Remove stash after successful restore**. Remove maps to pop only after a conflict-free apply.
+4. On conflict retain the entry and report unmerged paths in the shared conflict workspace. A stash conflict is not a sequencer operation: do not invent Continue/Skip/Abort buttons for it.
 5. Drop confirms the exact stash and leaves working files untouched.
 
 **Completion:** restored work or a preserved recovery entry is visible. **Mockup:** Stash → conflict state, with the retained entry named.

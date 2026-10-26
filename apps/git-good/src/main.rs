@@ -266,11 +266,11 @@ impl RecoveryView {
         }
     }
 
-    fn select(&mut self, source: return_location::RecoverySource, commit: &str) {
+    fn select(&mut self, source: return_location::RecoverySource, entry: &str) {
         self.source = source;
         match source {
-            return_location::RecoverySource::Backups => self.backups.select_commit(commit),
-            return_location::RecoverySource::Reflog => self.reflog.select_commit(commit),
+            return_location::RecoverySource::Backups => self.backups.select_entry(entry),
+            return_location::RecoverySource::Reflog => self.reflog.select_entry(entry),
         }
     }
 
@@ -374,7 +374,18 @@ struct CreateBranchDialog {
     commit: String,
     selector: String,
     switch: bool,
+    recovery_source: Option<return_location::RecoverySource>,
     error: Option<String>,
+}
+
+impl CreateBranchDialog {
+    fn title(&self) -> &'static str {
+        if self.recovery_source.is_some() {
+            "Create branch here"
+        } else {
+            "New branch"
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -610,7 +621,7 @@ struct Outcome {
 
 fn recovery_label(action: RecoveryAction) -> &'static str {
     match action {
-        RecoveryAction::Backups => "Backups…",
+        RecoveryAction::Backups => "Recovery…",
         RecoveryAction::ResolveConflicts => "Resolve conflicts…",
         RecoveryAction::RetryFetch => "Retry fetch",
         RecoveryAction::RetryPush => "Retry push",
@@ -706,6 +717,7 @@ struct Browser {
     branch_error: Option<String>,
     branch_warning: Option<String>,
     branch_target: Option<(String, bool)>,
+    branch_after_create: Option<String>,
     pending_switch: Option<String>,
 
     network: Option<network::Worker>,
@@ -782,6 +794,7 @@ impl Browser {
             branch_error: None,
             branch_warning: None,
             branch_target: None,
+            branch_after_create: None,
             pending_switch: None,
 
             network: None,
@@ -1602,8 +1615,8 @@ impl Browser {
         ctx: &egui::Context,
         location: return_location::ReturnLocation,
     ) {
-        if let return_location::ReturnLocation::Recovery { source, commit } = &location {
-            self.open_recovery_at(ctx, *source, commit);
+        if let return_location::ReturnLocation::Recovery { source, entry } = &location {
+            self.open_recovery_at(ctx, *source, entry);
             return;
         }
         let shows_details = location.shows_details();
@@ -1973,6 +1986,7 @@ impl Browser {
             .or_else(|| self.state.selected.clone())
             .unwrap_or_default();
         if commit.is_empty() {
+            self.branch_error = Some("Create the first commit before creating a branch.".into());
             return;
         }
         let _ = history;
@@ -1981,6 +1995,7 @@ impl Browser {
             commit,
             selector: "current HEAD".into(),
             switch: true,
+            recovery_source: None,
             error: None,
         });
     }
@@ -2252,7 +2267,7 @@ impl Browser {
         subject: String,
         selected: String,
     ) {
-        self.open_recovery_at(ctx, source, &selected);
+        self.recovery = None;
         let Some(history) = &self.state.history else {
             return;
         };
@@ -2268,7 +2283,7 @@ impl Browser {
         );
         review.set_return_location(return_location::ReturnLocation::Recovery {
             source,
-            commit: selected,
+            entry: selected,
         });
         self.review = Some(review);
     }
@@ -2354,6 +2369,12 @@ impl Browser {
             match result {
                 Ok(receipt) => {
                     self.pending_switch = None;
+                    self.branch_after_create = None;
+                    if self.outcome.as_ref().is_some_and(|outcome| {
+                        matches!(outcome.recovery, Some(RecoveryAction::RetrySwitch))
+                    }) {
+                        self.outcome = None;
+                    }
                     self.branch_warning = if receipt.warnings.is_empty() {
                         None
                     } else {
@@ -2372,9 +2393,16 @@ impl Browser {
                     self.branch_warning = None;
                     if let Some((name, false)) = target {
                         self.pending_switch = Some(name.clone());
+                        let created = self.branch_after_create.take();
+                        let summary = match created {
+                            Some(branch) => {
+                                format!("Created {branch} but the switch was blocked: {error}")
+                            }
+                            None => format!("Switch to {name} blocked: {error}"),
+                        };
                         self.set_outcome(
                             OutcomeSeverity::Warning,
-                            format!("Switch to {name} blocked: {error}"),
+                            summary,
                             None,
                             Some(RecoveryAction::RetrySwitch),
                         );
@@ -2709,6 +2737,42 @@ impl Browser {
                         ui.close();
                     }
                     ui.separator();
+                    let stash_busy =
+                        self.branch.is_some() || self.network.is_some() || self.operation_busy();
+                    if ui
+                        .add_enabled(
+                            self.state.history.is_some() && !stash_busy,
+                            egui::Button::new("Stash changes…"),
+                        )
+                        .on_hover_text("Record working changes in a new stash entry")
+                        .clicked()
+                    {
+                        self.stash_dialog = Some(StashDialog {
+                            message: String::new(),
+                            include_untracked: false,
+                            keep_index: false,
+                            error: None,
+                        });
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(
+                            self.state.history.is_some() && !stash_busy,
+                            egui::Button::new("Stashes…"),
+                        )
+                        .on_hover_text("List, restore, or drop stash entries")
+                        .clicked()
+                    {
+                        self.stash_window = Some(StashWindow {
+                            entries: Vec::new(),
+                            error: None,
+                            notice: None,
+                            confirm_drop: None,
+                        });
+                        self.refresh_stashes();
+                        ui.close();
+                    }
+                    ui.separator();
                     let network_idle = self.network.is_none()
                         && self.branch.is_none()
                         && self.mutation.is_none()
@@ -2922,41 +2986,6 @@ impl Browser {
                     } else {
                         "Resize the window to at least 1120 px to show the sidebar"
                     });
-                });
-                let stash_busy =
-                    self.branch.is_some() || self.network.is_some() || self.operation_busy();
-                let has_repo = self.state.history.is_some();
-                ui.menu_button("Stash", |ui| {
-                    if ui
-                        .add_enabled(has_repo && !stash_busy, egui::Button::new("Stash changes…"))
-                        .on_hover_text("Record working changes in a new stash entry")
-                        .clicked()
-                    {
-                        self.stash_dialog = Some(StashDialog {
-                            message: String::new(),
-                            include_untracked: false,
-                            keep_index: false,
-                            error: None,
-                        });
-                        ui.close();
-                    }
-                    if ui
-                        .add_enabled(
-                            has_repo && !stash_busy,
-                            egui::Button::new("Manage stashes…"),
-                        )
-                        .on_hover_text("List, apply, pop, or drop stash entries")
-                        .clicked()
-                    {
-                        self.stash_window = Some(StashWindow {
-                            entries: Vec::new(),
-                            error: None,
-                            notice: None,
-                            confirm_drop: None,
-                        });
-                        self.refresh_stashes();
-                        ui.close();
-                    }
                 });
                 ui.menu_button("Help", |ui| {
                     if ui.button("Keyboard shortcuts…").clicked() {
@@ -3420,18 +3449,23 @@ impl Browser {
                             commit,
                             selector,
                             switch: false,
+                            recovery_source: Some(return_location::RecoverySource::Reflog),
                             error: None,
                         });
                     }
                 },
                 RecoveryToolAction::Backups(action) => match action {
-                    backups_view::Action::Open { commit, subject } => {
+                    backups_view::Action::Open {
+                        commit,
+                        subject,
+                        reference,
+                    } => {
                         self.open_recovery_review(
                             ctx,
                             return_location::RecoverySource::Backups,
-                            commit.clone(),
-                            subject,
                             commit,
+                            subject,
+                            reference,
                         );
                     }
                     backups_view::Action::Reset { commit, mode } => {
@@ -3443,6 +3477,7 @@ impl Browser {
                             commit,
                             selector,
                             switch: false,
+                            recovery_source: Some(return_location::RecoverySource::Backups),
                             error: None,
                         });
                     }
@@ -3453,8 +3488,8 @@ impl Browser {
         let mut create_branch_submit = None;
         let mut create_branch_cancel = false;
         if let Some(dialog) = &mut self.create_branch {
-            egui::Window::new("Create branch here")
-                .id(egui::Id::unique("create-branch-here"))
+            egui::Window::new(dialog.title())
+                .id(egui::Id::unique("create-branch-dialog"))
                 .collapsible(false)
                 .resizable(false)
                 .default_pos(ctx.content_rect().center())
@@ -3500,30 +3535,40 @@ impl Browser {
             match self.stash_path() {
                 Some(path) => match gg_git::branch::create_at(&path, &name, &dialog.commit) {
                     Ok(receipt) => {
+                        let source = dialog.recovery_source;
+                        let notice = format!(
+                            "Created {} at {}",
+                            receipt.branch,
+                            receipt.commit.chars().take(8).collect::<String>()
+                        );
                         self.create_branch = None;
                         self.load(ctx);
                         if let Some(view) = &mut self.recovery {
-                            view.reflog.notice(format!(
-                                "Created {} at {}",
-                                receipt.branch,
-                                receipt.commit.chars().take(8).collect::<String>()
-                            ));
+                            match source {
+                                Some(return_location::RecoverySource::Reflog) => {
+                                    view.reflog.notice(notice)
+                                }
+                                Some(return_location::RecoverySource::Backups) => {
+                                    view.backups.notice(notice)
+                                }
+                                None => {}
+                            }
                         }
                         if switch {
+                            self.branch_after_create = Some(receipt.branch.clone());
                             self.start_branch(ctx, receipt.branch.clone(), false);
-                            if let Some(error) = self.branch_error.take() {
-                                let summary = format!(
-                                    "Created {} but the switch was blocked: {error}",
-                                    receipt.branch
-                                );
-                                self.set_outcome(
-                                    OutcomeSeverity::Warning,
-                                    summary.clone(),
-                                    None,
-                                    None,
-                                );
-                                self.mutation_error = Some(summary);
+                            if self.branch.is_none() {
+                                self.branch_after_create = None;
+                                if let Some(error) = self.branch_error.take() {
+                                    let summary = format!(
+                                        "Created {} but the switch could not start: {error}",
+                                        receipt.branch
+                                    );
+                                    self.set_outcome(OutcomeSeverity::Warning, summary, None, None);
+                                }
                             }
+                        } else if source.is_none() {
+                            self.branch_warning = Some(format!("Created {}", receipt.branch));
                         }
                     }
                     Err(error) => {
@@ -4332,7 +4377,12 @@ impl Browser {
                     ui.checkbox(&mut dialog.restore_index, "Restore staged state");
                     ui.checkbox(&mut dialog.remove, "Remove stash after successful restore");
                     if let Some(error) = &dialog.error {
-                        ui.colored_label(ui.visuals().error_fg_color, error);
+                        egui::ScrollArea::vertical()
+                            .id_salt("restore-stash-error")
+                            .max_height(80.0)
+                            .show(ui, |ui| {
+                                ui.colored_label(ui.visuals().error_fg_color, error);
+                            });
                     }
                     ui.horizontal(|ui| {
                         if ui.button("Restore stash").clicked() {
@@ -4433,7 +4483,18 @@ impl Browser {
                     OutcomeSeverity::Warning => ui.visuals().warn_fg_color,
                     OutcomeSeverity::Error => ui.visuals().error_fg_color,
                 };
-                (format!("History · {}", outcome.summary), color)
+                (
+                    format!(
+                        "{} · {}",
+                        if matches!(outcome.recovery, Some(RecoveryAction::RetrySwitch)) {
+                            "Branch"
+                        } else {
+                            "History"
+                        },
+                        outcome.summary
+                    ),
+                    color,
+                )
             } else if !operation_active && let Some(worker) = &self.network {
                 if worker.is_cancelled() {
                     ("Cancelling network operation…".into(), ui.visuals().text_color())
@@ -4485,14 +4546,16 @@ impl Browser {
                 .flatten();
             let mut details_clicked = false;
             let mut recovery_clicked = None;
+            let mut dismiss_clicked = false;
             ui.horizontal(|ui| {
-                let reserved = if recovery.is_some() {
-                    150.0
-                } else if details.is_some() {
-                    76.0
-                } else {
-                    0.0
-                };
+                let reserved = 70.0
+                    + if recovery.is_some() {
+                        80.0
+                    } else if details.is_some() {
+                        76.0
+                    } else {
+                        0.0
+                    };
                 let width = (ui.available_width() - reserved).max(100.0);
                 let (rect, _) = ui.allocate_exact_size(
                     egui::vec2(width, 18.0),
@@ -4507,12 +4570,28 @@ impl Browser {
                 {
                     recovery_clicked = Some(action);
                 }
+                if outcome_active && ui.small_button("Dismiss").clicked() {
+                    dismiss_clicked = true;
+                }
             });
             if details_clicked {
                 self.outcome_details_open = true;
             }
             if let Some(action) = recovery_clicked {
                 self.run_recovery_action(ctx, action);
+            }
+            if dismiss_clicked {
+                if self
+                    .outcome
+                    .as_ref()
+                    .is_some_and(|outcome| {
+                        matches!(outcome.recovery, Some(RecoveryAction::RetrySwitch))
+                    })
+                {
+                    self.pending_switch = None;
+                }
+                self.outcome = None;
+                self.outcome_details_open = false;
             }
         });
         if self.outcome_details_open {
@@ -5520,7 +5599,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
         assert!(text.iter().any(|line| line.contains("Refresh failed")));
-        assert!(text.iter().any(|line| line.contains("Backups…")));
+        assert!(text.iter().any(|line| line.contains("Recovery…")));
     }
 
     #[test]
@@ -5590,7 +5669,7 @@ mod tests {
             text.iter()
                 .any(|line| line.contains("simulated rewrite failure"))
         );
-        assert!(text.iter().any(|line| line.contains("Backups…")));
+        assert!(text.iter().any(|line| line.contains("Recovery…")));
     }
 
     #[test]
@@ -6249,7 +6328,7 @@ mod tests {
             app.draw_ui(ctx)
         });
         let backups = output.shapes.iter().find_map(|shape| match &shape.shape {
-            egui::epaint::Shape::Text(text) if text.galley.job.text == "Backups…" => {
+            egui::epaint::Shape::Text(text) if text.galley.job.text == "Recovery…" => {
                 Some(text.pos)
             }
             _ => None,
@@ -6315,7 +6394,7 @@ mod tests {
             assert!(text.iter().any(|line| line.contains("Skip")));
             assert!(text.iter().any(|line| line.contains("Abort")));
             assert!(
-                !text.iter().any(|line| line.contains("Backups…")),
+                !text.iter().any(|line| line.contains("Recovery…")),
                 "recovery destinations stay out of the continuation controls"
             );
         }
@@ -6439,7 +6518,7 @@ mod tests {
         assert!(text.iter().any(|line| line.contains("Continue")));
         assert!(text.iter().any(|line| line.contains("Skip")));
         assert!(text.iter().any(|line| line.contains("Abort")));
-        assert!(!text.iter().any(|line| line.contains("Backups…")));
+        assert!(!text.iter().any(|line| line.contains("Recovery…")));
     }
 
     #[test]
@@ -6526,6 +6605,44 @@ mod tests {
         // Retry revalidates by running the same explicit switch again.
         app.run_recovery_action(&ctx, RecoveryAction::RetrySwitch);
         assert!(app.branch.is_some(), "retry starts a fresh switch worker");
+
+        // A successful revalidated switch clears the warning and the intent.
+        let (tx, rx) = std::sync::mpsc::channel();
+        let _ = tx.send(Ok(gg_git::branch::Receipt {
+            branch: "feature".into(),
+            head: "a".repeat(40),
+            created: false,
+            warnings: vec![],
+        }));
+        app.branch = Some(rx);
+        app.branch_target = Some(("feature".into(), false));
+        let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        assert!(app.pending_switch.is_none());
+        assert!(app.outcome.is_none());
+    }
+
+    #[test]
+    fn created_branch_is_reported_when_the_switch_is_blocked() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let _ = tx.send(Err("worktree has conflicting changes".into()));
+        app.branch = Some(rx);
+        app.branch_target = Some(("feature".into(), false));
+        app.branch_after_create = Some("feature".into());
+        let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        let summary = app.outcome.as_ref().map(|outcome| outcome.summary.as_str());
+        assert!(
+            summary.is_some_and(
+                |summary| summary.contains("Created feature but the switch was blocked")
+            ),
+            "{summary:?}"
+        );
+        assert_eq!(app.pending_switch.as_deref(), Some("feature"));
     }
 
     #[test]
@@ -6538,6 +6655,7 @@ mod tests {
                 commit: "a".repeat(40),
                 selector: "current HEAD".into(),
                 switch: true,
+                recovery_source: None,
                 error: None,
             });
             let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
@@ -6554,12 +6672,30 @@ mod tests {
                     _ => None,
                 })
                 .collect::<Vec<_>>();
-            assert!(text.iter().any(|line| line.contains("Create branch here")));
+            assert!(text.iter().any(|line| line.contains("New branch")));
             assert!(
                 text.iter()
                     .any(|line| line.contains("Switch after creation"))
             );
         }
+    }
+
+    #[test]
+    fn recovery_return_location_reopens_the_same_source() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        app.restore_return_location(
+            &ctx,
+            return_location::ReturnLocation::Recovery {
+                source: return_location::RecoverySource::Reflog,
+                entry: "HEAD@{2}".into(),
+            },
+        );
+        assert!(app.recovery.is_some());
+        assert_eq!(
+            app.recovery.as_ref().map(|view| view.source),
+            Some(return_location::RecoverySource::Reflog)
+        );
     }
 
     #[test]
@@ -6601,6 +6737,7 @@ mod tests {
                 commit: "b".repeat(40),
                 selector: "HEAD@{2}".into(),
                 switch: false,
+                recovery_source: Some(return_location::RecoverySource::Reflog),
                 error: None,
             });
             let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {

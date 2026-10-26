@@ -7,6 +7,7 @@ pub enum Action {
     Open {
         commit: String,
         subject: String,
+        reference: String,
     },
     Reset {
         commit: String,
@@ -23,6 +24,7 @@ pub struct BackupsView {
     entries: Vec<Backup>,
     selected: Option<usize>,
     error: Option<String>,
+    notice: Option<String>,
 }
 
 impl BackupsView {
@@ -32,6 +34,7 @@ impl BackupsView {
             entries: Vec::new(),
             selected: None,
             error: None,
+            notice: None,
         };
         view.load();
         view
@@ -55,10 +58,19 @@ impl BackupsView {
         }
     }
 
-    pub fn select_commit(&mut self, commit: &str) {
-        if let Some(index) = self.entries.iter().position(|entry| entry.commit == commit) {
+    pub fn select_entry(&mut self, reference: &str) {
+        if let Some(index) = self
+            .entries
+            .iter()
+            .position(|entry| entry.reference == reference)
+        {
             self.selected = Some(index);
         }
+    }
+
+    pub fn notice(&mut self, notice: String) {
+        self.notice = Some(notice);
+        self.error = None;
     }
 
     #[cfg(test)]
@@ -91,6 +103,9 @@ impl BackupsView {
             }
         });
         ui.separator();
+        if let Some(notice) = &self.notice {
+            ui.colored_label(ui.visuals().hyperlink_color, notice);
+        }
         if let Some(error) = &self.error {
             ui.colored_label(ui.visuals().error_fg_color, error);
         }
@@ -132,6 +147,7 @@ impl BackupsView {
                 action = Some(Action::Open {
                     commit: entry.commit.clone(),
                     subject: entry.subject.clone(),
+                    reference: entry.reference.clone(),
                 });
             }
             ui.menu_button("Reset branch here", |ui| {
@@ -215,6 +231,29 @@ mod tests {
         .to_string();
         gg_git::backup::create(dir.path(), "rebase", &head)?;
         Ok(dir)
+    }
+
+    #[test]
+    fn keeps_distinct_backups_at_one_commit_selectable() -> Result {
+        let dir = repo()?;
+        let head = String::from_utf8(
+            Command::new("git")
+                .arg("-C")
+                .arg(dir.path())
+                .args(["rev-parse", "HEAD"])
+                .output()?
+                .stdout,
+        )?
+        .trim()
+        .to_string();
+        gg_git::backup::create(dir.path(), "rebase", &head)?;
+        let mut view = BackupsView::new(dir.path().into());
+        assert_eq!(view.entries.len(), 2);
+        assert_eq!(view.entries[0].commit, view.entries[1].commit);
+        let reference = view.entries[1].reference.clone();
+        view.select_entry(&reference);
+        assert_eq!(view.selected, Some(1));
+        Ok(())
     }
 
     #[test]

@@ -22,7 +22,8 @@ pub enum ReturnLocation {
     Details(HistoryLocation),
     Recovery {
         source: RecoverySource,
-        commit: String,
+        /// Source-specific entry identity: reflog selector or backup reference.
+        entry: String,
     },
 }
 

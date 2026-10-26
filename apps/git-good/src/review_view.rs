@@ -291,6 +291,19 @@ impl Review {
         }
     }
     /// Return true when Back is explicitly requested.
+    fn back_label(&self) -> &'static str {
+        if self.show_diff {
+            "Back to files"
+        } else if matches!(
+            self.return_location,
+            Some(crate::return_location::ReturnLocation::Recovery { .. })
+        ) {
+            "Back to recovery"
+        } else {
+            "Back to history"
+        }
+    }
+
     pub(crate) fn draw_ui(&mut self, ui: &mut egui::Ui) -> bool {
         let ctx = ui.ctx().clone();
         let ctx = &ctx;
@@ -493,15 +506,7 @@ impl Review {
             .exact_size(42.0)
             .show(ui, |ui| {
                 ui.horizontal_centered(|ui| {
-                    if self.history.is_none()
-                        && ui
-                            .button(if self.show_diff {
-                                "Back to files"
-                            } else {
-                                "Back to history"
-                            })
-                            .clicked()
-                    {
+                    if self.history.is_none() && ui.button(self.back_label()).clicked() {
                         if self.show_diff {
                             self.show_diff = false;
                             self.restore_files = true;
@@ -927,6 +932,33 @@ mod tests {
             0,
         ));
         Ok(saved)
+    }
+
+    #[test]
+    fn recovery_caller_names_its_back_target() {
+        let ctx = egui::Context::default();
+        let mut view = Review::fixture(&ctx);
+        view.set_return_location(crate::return_location::ReturnLocation::Recovery {
+            source: crate::return_location::RecoverySource::Reflog,
+            entry: "HEAD@{2}".into(),
+        });
+        let output = crate::tests::run_ui(
+            &ctx,
+            crate::tests::frame_input(1120.0, 740.0, vec![]),
+            |ctx| {
+                view.draw_ui(ctx);
+            },
+        );
+        assert!(output.shapes.iter().any(|shape| matches!(
+            &shape.shape,
+            egui::epaint::Shape::Text(text)
+                if text.galley.job.text == "Back to recovery"
+        )));
+        assert!(!output.shapes.iter().any(|shape| matches!(
+            &shape.shape,
+            egui::epaint::Shape::Text(text)
+                if text.galley.job.text == "Back to history"
+        )));
     }
 
     #[test]

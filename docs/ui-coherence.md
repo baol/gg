@@ -65,7 +65,7 @@ Every command answers: **what object, what scope, what effect?**
 
 - Commit actions stay next to the selected commit identity. Branch actions stay next to the selected branch identity. File actions stay next to the path. The current checkout remains independently visible.
 - Promote only the frequent action beside the relevant content: Stage hunk at a hunk, Stage selected at a selected range, and the whole-file action in the file toolbar. These are different scopes of one command family, not interchangeable synonyms.
-- Use Stage/Unstage for index changes, Discard for working changes, Delete for refs/stash entries, and Remove worktree for the directory-removal operation. The object is always in the confirmation. Do not use Drop as a second label for Discard or Delete.
+- Use Stage/Unstage for index changes, Discard for working changes, Delete for refs, Drop for stash entries, and Remove worktree for the directory-removal operation. The object is always in the confirmation. Do not use Drop as a second label for Discard or Delete.
 - Use **Open commit** consistently from blame, stash, recovery, and reference inspection. It always opens the ordinary commit review with a return location.
 - Confirmations share one structure: title/verb, exact object, source and destination, effect, recovery information when applicable, Cancel, and a specific submit label. Read-only navigation does not open confirmation dialogs.
 - Context menus and keyboard bindings are generated from the same scoped commands as the visible action menu. A command has one readiness reason and one confirmation/outcome path regardless of how it was invoked.

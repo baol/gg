@@ -63,8 +63,12 @@ impl ReflogView {
         }
     }
 
-    pub fn select_commit(&mut self, commit: &str) {
-        if let Some(index) = self.entries.iter().position(|entry| entry.id == commit) {
+    pub fn select_entry(&mut self, selector: &str) {
+        if let Some(index) = self
+            .entries
+            .iter()
+            .position(|entry| entry.selector == selector)
+        {
             self.selected = Some(index);
         }
     }
@@ -264,6 +268,19 @@ mod tests {
         std::fs::write(dir.path().join("a"), b"next\n")?;
         git(dir.path(), &["commit", "-qam", "next"])?;
         Ok(dir)
+    }
+
+    #[test]
+    fn selects_entries_by_their_own_selector() -> Result {
+        let dir = repo()?;
+        let mut view = ReflogView::new(dir.path().into(), "HEAD".into());
+        assert!(view.entries.len() >= 2);
+        let selector = view.entries[1].selector.clone();
+        view.select_entry(&selector);
+        assert_eq!(view.selected, Some(1));
+        view.select_entry("HEAD@{999}");
+        assert_eq!(view.selected, Some(1));
+        Ok(())
     }
 
     #[test]
