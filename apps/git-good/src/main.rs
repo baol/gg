@@ -5366,6 +5366,7 @@ mod tests {
         run(path, &["init", "-q", "-b", "main"])?;
         run(path, &["config", "user.name", "Test"])?;
         run(path, &["config", "user.email", "test@example.org"])?;
+        run(path, &["config", "core.autocrlf", "false"])?;
         std::fs::write(path.join("a"), b"base\n")?;
         run(path, &["add", "a"])?;
         run(path, &["commit", "-qm", "base"])?;

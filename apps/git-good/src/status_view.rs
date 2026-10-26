@@ -1859,6 +1859,24 @@ mod tests {
             _ => None,
         })
     }
+    fn wait_text(
+        ctx: &egui::Context,
+        view: &mut StatusView,
+        width: f32,
+        label: &str,
+    ) -> Result<egui::Pos2, Box<dyn std::error::Error>> {
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            let output = run(ctx, view, width, vec![]);
+            if let Some(pos) = text_pos(&output, label) {
+                return Ok(pos);
+            }
+            if std::time::Instant::now() > until {
+                return Err(format!("missing {label}").into());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+    }
     fn click(ctx: &egui::Context, view: &mut StatusView, width: f32, pos: egui::Pos2) {
         let press = egui::Event::PointerButton {
             pos,
@@ -2894,8 +2912,7 @@ mod tests {
             let output = run(&ctx, &mut view, width, vec![]);
             let drop = text_pos(&output, "Discard hunk").ok_or("missing drop hunk")?;
             click(&ctx, &mut view, width, drop + egui::vec2(5.0, 0.0));
-            let output = run(&ctx, &mut view, width, vec![]);
-            let cancel = text_pos(&output, "Cancel").ok_or("missing drop cancel")?;
+            let cancel = wait_text(&ctx, &mut view, width, "Cancel")?;
             click(&ctx, &mut view, width, cancel + egui::vec2(5.0, 0.0));
             assert_eq!(std::fs::read(dir.path().join("a"))?, working);
             assert_eq!(std::fs::read(dir.path().join(".git/index"))?, index);
@@ -2903,8 +2920,7 @@ mod tests {
             let output = run(&ctx, &mut view, width, vec![]);
             let drop = text_pos(&output, "Discard hunk").ok_or("missing drop hunk")?;
             click(&ctx, &mut view, width, drop + egui::vec2(5.0, 0.0));
-            let output = run(&ctx, &mut view, width, vec![]);
-            let discard = text_pos(&output, "Discard").ok_or("missing discard")?;
+            let discard = wait_text(&ctx, &mut view, width, "Discard")?;
             click(&ctx, &mut view, width, discard + egui::vec2(5.0, 0.0));
             pump(&ctx, &mut view, width, |view| {
                 !view.reader.pending() && !view.stage.mutating() && view.reader.has_text("TWELVE")
@@ -2916,8 +2932,7 @@ mod tests {
             assert_eq!(std::fs::read(dir.path().join(".git/index"))?, index);
 
             click_file_action(&ctx, &mut view, width, "Discard file…")?;
-            let output = run(&ctx, &mut view, width, vec![]);
-            let discard = text_pos(&output, "Discard").ok_or("missing discard all")?;
+            let discard = wait_text(&ctx, &mut view, width, "Discard")?;
             click(&ctx, &mut view, width, discard + egui::vec2(5.0, 0.0));
             pump(&ctx, &mut view, width, |view| {
                 !view.reader.pending() && view.reader.ready() && view.lists[0].count == 0
