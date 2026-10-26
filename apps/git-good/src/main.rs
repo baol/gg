@@ -287,8 +287,8 @@ enum ConflictSide {
 enum ConflictUpdate {
     Paths(Vec<String>),
     Content {
-        content: gg_engine::conflict::Content,
-        snapshot: gg_engine::conflict::Snapshot,
+        content: Box<gg_engine::conflict::Content>,
+        snapshot: Box<gg_engine::conflict::Snapshot>,
     },
 }
 
@@ -312,6 +312,7 @@ struct ConflictView {
     snapshot: Option<gg_engine::conflict::Snapshot>,
     preview: gg_engine::conflict::Resolution,
     tab: ConflictTab,
+    placed: bool,
 }
 
 fn next_conflict_selection(paths: &[String], keep: Option<&str>, previous: usize) -> usize {
@@ -347,6 +348,30 @@ fn conflict_resolution_label(resolution: gg_engine::conflict::Resolution) -> &'s
     }
 }
 
+fn conflict_preview_available(view: &ConflictView) -> bool {
+    let (Some(content), Some(snapshot)) = (&view.content, &view.snapshot) else {
+        return false;
+    };
+    match view.preview {
+        gg_engine::conflict::Resolution::Base => content.base.is_some(),
+        gg_engine::conflict::Resolution::Ours => content.ours.is_some(),
+        gg_engine::conflict::Resolution::Theirs => content.theirs.is_some(),
+        gg_engine::conflict::Resolution::Working => {
+            snapshot.working.is_some() || snapshot.working_hash.is_some()
+        }
+    }
+}
+
+fn conflict_preview_reason(view: &ConflictView) -> &'static str {
+    if view.content.is_none() || view.snapshot.is_none() {
+        "Load the conflict before staging a resolution."
+    } else if !conflict_preview_available(view) {
+        "This preview source has no content. Choose another source or resolve it externally."
+    } else {
+        "Wait for the current operation to finish."
+    }
+}
+
 fn conflict_preview_text(
     content: &gg_engine::conflict::Content,
     snapshot: &gg_engine::conflict::Snapshot,
@@ -362,7 +387,10 @@ fn conflict_preview_text(
                     format!("[binary working file, {} bytes]", bytes.len())
                 }
                 Some(bytes) => String::from_utf8_lossy(bytes).into_owned(),
-                None => "(working file absent)".into(),
+                None => snapshot
+                    .working_note
+                    .clone()
+                    .unwrap_or_else(|| "(working file absent)".into()),
             };
         }
     };
@@ -1835,6 +1863,7 @@ impl Browser {
             snapshot: None,
             preview: gg_engine::conflict::Resolution::Working,
             tab: ConflictTab::Ours,
+            placed: false,
         });
         view.keep = keep.map(str::to_string);
         view.previous_selected = view.selected;
@@ -1887,8 +1916,8 @@ impl Browser {
                     load_content = !view.paths.is_empty();
                 }
                 Ok(ConflictUpdate::Content { content, snapshot }) => {
-                    view.content = Some(content);
-                    view.snapshot = Some(snapshot);
+                    view.content = Some(*content);
+                    view.snapshot = Some(*snapshot);
                     view.preview = gg_engine::conflict::Resolution::Working;
                     view.tab = ConflictTab::Result;
                     view.error = None;
@@ -1913,9 +1942,13 @@ impl Browser {
         };
         let Some(file) = view.paths.get(view.selected).cloned() else {
             view.content = None;
+            view.snapshot = None;
             view.loading = false;
             return;
         };
+        view.content = None;
+        view.snapshot = None;
+        view.preview = gg_engine::conflict::Resolution::Working;
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         let repaint = ctx.clone();
         if std::thread::Builder::new()
@@ -1924,7 +1957,10 @@ impl Browser {
                 let result = (|| {
                     let content = gg_git::conflict::read(&path, &file)?;
                     let snapshot = gg_git::conflict::snapshot(&path, &file)?;
-                    Ok(ConflictUpdate::Content { content, snapshot })
+                    Ok(ConflictUpdate::Content {
+                        content: Box::new(content),
+                        snapshot: Box::new(snapshot),
+                    })
                 })();
                 let _ = tx.send(result);
                 repaint.request_repaint();
@@ -2235,7 +2271,11 @@ impl Browser {
                     Err(error) => {
                         self.operation_restore_row = None;
                         self.mutation_notice = None;
-                        self.set_outcome(OutcomeSeverity::Error, error, None, None);
+                        self.set_outcome(OutcomeSeverity::Error, error.clone(), None, None);
+                        self.mutation_error = Some(error.clone());
+                        if let Some(view) = &mut self.conflict_view {
+                            view.error = Some(error);
+                        }
                         self.refresh_mutation();
                     }
                 }
@@ -3465,6 +3505,7 @@ impl Browser {
         }
 
         let conflict_mutation = self.mutation.clone();
+        let conflict_pending = self.operation_busy();
         let mut conflict_select = None;
         let mut stage_resolution = false;
         let mut refresh_content = false;
@@ -3475,15 +3516,18 @@ impl Browser {
                 .as_ref()
                 .map(|state| state.conflicts.len())
                 .unwrap_or(view.paths.len());
-            egui::Window::new("Resolve conflicts")
+            let mut window = egui::Window::new("Resolve conflicts")
                 .id(egui::Id::unique("resolve-conflicts"))
                 .open(&mut conflict_open)
                 .collapsible(false)
                 .resizable(true)
-                .default_width(900.0)
-                .default_pos(ctx.content_rect().center())
-                .pivot(egui::Align2::CENTER_CENTER)
-                .show(ctx, |ui| {
+                .default_width((ctx.content_rect().width() - 32.0).clamp(360.0, 900.0))
+                .max_height((ctx.content_rect().height() - 120.0).max(240.0));
+            if !view.placed {
+                window = window.current_pos(egui::pos2(ctx.content_rect().left() + 16.0, 116.0));
+                view.placed = true;
+            }
+            window.show(ctx, |ui| {
                     ui.horizontal(|ui| {
                         ui.strong(
                             operation
@@ -3590,13 +3634,17 @@ impl Browser {
                                         "Result · {} · preview, not staged",
                                         conflict_resolution_label(view.preview)
                                     ));
-                                    if ui
-                                        .add_enabled(
-                                            snapshot.is_some(),
-                                            egui::Button::new("Stage resolution"),
-                                        )
-                                        .clicked()
-                                    {
+                                    let enabled = !conflict_pending && conflict_preview_available(view);
+                                    let response = ui.add_enabled(
+                                        enabled,
+                                        egui::Button::new("Stage resolution"),
+                                    );
+                                    let response = if enabled {
+                                        response
+                                    } else {
+                                        response.on_disabled_hover_text(conflict_preview_reason(view))
+                                    };
+                                    if response.clicked() {
                                         stage_resolution = true;
                                     }
                                 });
@@ -3640,13 +3688,17 @@ impl Browser {
                                         "Result · {} · preview, not staged",
                                         conflict_resolution_label(view.preview)
                                     ));
-                                    if ui
-                                        .add_enabled(
-                                            snapshot.is_some(),
-                                            egui::Button::new("Stage resolution"),
-                                        )
-                                        .clicked()
-                                    {
+                                    let enabled = !conflict_pending && conflict_preview_available(view);
+                                    let response = ui.add_enabled(
+                                        enabled,
+                                        egui::Button::new("Stage resolution"),
+                                    );
+                                    let response = if enabled {
+                                        response
+                                    } else {
+                                        response.on_disabled_hover_text(conflict_preview_reason(view))
+                                    };
+                                    if response.clicked() {
                                         stage_resolution = true;
                                     }
                                 });
@@ -4932,9 +4984,12 @@ mod tests {
                     ours: Some("2".repeat(40)),
                     theirs: Some("3".repeat(40)),
                     working: Some(b"<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> x\n".to_vec()),
+                    working_hash: None,
+                    working_note: None,
                 }),
                 preview: gg_engine::conflict::Resolution::Working,
                 tab: ConflictTab::Ours,
+                placed: false,
             });
             let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
                 app.draw_ui(ctx)
@@ -5507,6 +5562,7 @@ mod tests {
             snapshot: None,
             preview: gg_engine::conflict::Resolution::Working,
             tab: ConflictTab::Ours,
+            placed: false,
         });
         let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
             app.draw_ui(ctx)
@@ -5514,20 +5570,22 @@ mod tests {
         assert!(app.conflict_view.as_ref().is_some_and(|view| view.loading));
         assert!(
             tx.send(Ok(ConflictUpdate::Content {
-                content: gg_engine::conflict::Content {
+                content: Box::new(gg_engine::conflict::Content {
                     path: "a".into(),
                     base: Some("base\n".into()),
                     ours: Some("ours\n".into()),
                     theirs: Some("theirs\n".into()),
                     binary: false,
                     truncated: false,
-                },
-                snapshot: gg_engine::conflict::Snapshot {
+                }),
+                snapshot: Box::new(gg_engine::conflict::Snapshot {
                     base: Some("1".repeat(40)),
                     ours: Some("2".repeat(40)),
                     theirs: Some("3".repeat(40)),
                     working: Some(b"ours\n".to_vec()),
-                },
+                    working_hash: None,
+                    working_note: None,
+                }),
             }))
             .is_ok()
         );
@@ -5682,11 +5740,14 @@ mod tests {
             error: None,
             loading: false,
             worker: None,
+            placed: false,
             snapshot: Some(gg_engine::conflict::Snapshot {
                 base: Some("1".repeat(40)),
                 ours: Some("2".repeat(40)),
                 theirs: Some("3".repeat(40)),
                 working: Some(b"ours\n".to_vec()),
+                working_hash: None,
+                working_note: None,
             }),
             preview: gg_engine::conflict::Resolution::Working,
             tab: ConflictTab::Ours,
@@ -5703,11 +5764,18 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
         assert!(!app.operation_busy());
-        assert!(app.mutation_error.is_none());
+        assert!(app.mutation_error.is_some());
         assert!(
             app.outcome
                 .as_ref()
                 .is_some_and(|outcome| outcome.severity == OutcomeSeverity::Error)
+        );
+        assert!(
+            app.conflict_view
+                .as_ref()
+                .and_then(|view| view.error.as_deref())
+                .is_some(),
+            "the conflict workspace shows the publication error"
         );
     }
 
@@ -6071,6 +6139,7 @@ mod tests {
             snapshot: None,
             preview: gg_engine::conflict::Resolution::Working,
             tab: ConflictTab::Base,
+            placed: false,
         });
         let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
             app.draw_ui(ctx)
