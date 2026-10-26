@@ -581,7 +581,7 @@ enum CommitCommand {
     Action(CommitAction),
     CopyHash,
     CopySubject,
-    OpenBackups,
+    OpenRecovery,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -688,8 +688,8 @@ fn commit_action_menu(
     }
     ui.separator();
     ui.label(egui::RichText::new("Recovery").weak());
-    if ui.button("Backups…").clicked() {
-        command = Some(CommitCommand::OpenBackups);
+    if ui.button("Recovery…").clicked() {
+        command = Some(CommitCommand::OpenRecovery);
     }
     command
 }
@@ -1576,7 +1576,7 @@ impl Browser {
             CommitCommand::Action(action) => self.run_commit_action(ctx, id.to_string(), action),
             CommitCommand::CopyHash => ctx.copy_text(id.to_string()),
             CommitCommand::CopySubject => ctx.copy_text(subject.to_string()),
-            CommitCommand::OpenBackups => {
+            CommitCommand::OpenRecovery => {
                 if let Some(history) = &self.state.history {
                     self.recovery = Some(RecoveryView::new(history.path.clone()));
                 }
@@ -6049,7 +6049,7 @@ mod tests {
                 "Integrate",
                 "Rewrite and destructive",
                 "Recovery",
-                "Backups…",
+                "Recovery…",
             ] {
                 assert!(text.contains(&label), "missing {label} at {width}");
             }
