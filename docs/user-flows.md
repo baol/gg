@@ -29,7 +29,7 @@ The existing product has a coherent center: history → review → reading, and 
 
 ## Shared screen and interaction model
 
-Keep Repository, Refs, View, Stash, and Help in the toolbar. Keep Local Changes and History in one stable navigation strip at every width; at wide widths retain grouped refs at the left, and at narrow widths use the Refs toolbar menu. Place file actions and commit actions beside their selected identity. One operation area sits directly beneath navigation, hidden when idle; the fixed-height status line shows severity, summary, Details, and at most one recovery action.
+Keep Repository, Refs, View, and Help in the toolbar; stash and recovery tools live under Repository. Keep Local Changes and History in one stable navigation strip at every width; at wide widths retain grouped refs at the left, and at narrow widths use the Refs toolbar menu. Place file actions and commit actions beside their selected identity. One operation area sits directly beneath navigation, hidden when idle; the fixed-height status line shows severity, summary, Details, and at most one recovery action.
 
 Retain selected commit, file, side, reading position, and filters through back navigation where the owning contracts specify them. Keep normal/amend drafts separately per canonical worktree. A pending worker disables duplicate/incompatible writes while browsing stays available; rewrite configuration closes on submission and its progress stays in the operation area. Never publish an old file's result under a new file's label.
 
@@ -166,7 +166,7 @@ flowchart TD
 1. Resolve the inclusive linear range oldest first; reject merge ranges. Show every commit exactly once, Up/Down, and Pick/Squash. The first row always remains Pick.
 2. Review the plan, clean-worktree/autostash choice, and private-backup notice; confirm the rewrite.
 3. Close the plan on submission. The operation area shows Rewriting commits, then Refreshing history until the replacement history is accepted; browsing stays available and the old history remains labeled. Conflicts use F09.
-4. From Repository → Recovery choose Backups or Reflog, then inspect the source, kind, subject, and commit time. **Open commit** verifies content in the ordinary reader; Back returns to that source and selected entry.
+4. From Repository → Recovery choose Backups or Reflog, then inspect the source, kind, subject, and commit time. **Open commit** verifies content in the ordinary reader; Back returns to that source, the Reflog reference filter, and the selected entry.
 5. **Create branch here…** opens the shared branch form with **Switch after creation** off. Reset branch here offers Soft (move tip), Mixed (also reset index), or Hard (also discard staged/working changes), with exact-target confirmation and Hard warning. Copy hash/ref is read-only. Keep backups after recovery.
 
 **Completion:** rewritten history or a recovered tip is reachable and selection restores. **Mockup:** Rewrite → Recovery; primary Create branch here demonstrates the nondestructive route.

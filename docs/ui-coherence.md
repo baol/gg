@@ -102,7 +102,7 @@ Repository → Stashes → select entry → Restore stash. Options: Restore stag
 
 ### Recover a commit
 
-Repository → Recovery → choose Backups or Reflog → select entry → Open commit in the usual reader. Back returns to that recovery source and selected entry. Create branch here opens the shared branch form with Switch after creation off. Reset opens the shared mode/target confirmation. A successful recovery does not erase the source entry or backup.
+Repository → Recovery → choose Backups or Reflog → select entry → Open commit in the usual reader. Back returns to that recovery source, the Reflog reference filter, and the selected entry. Create branch here opens the shared branch form with Switch after creation off. Reset opens the shared mode/target confirmation. A successful recovery does not erase the source entry or backup.
 
 ### Resume a blocked branch switch
 

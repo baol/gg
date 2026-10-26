@@ -625,7 +625,7 @@ fn recovery_label(action: RecoveryAction) -> &'static str {
         RecoveryAction::ResolveConflicts => "Resolve conflicts…",
         RecoveryAction::RetryFetch => "Retry fetch",
         RecoveryAction::RetryPush => "Retry push",
-        RecoveryAction::ManageStashes => "Manage stashes…",
+        RecoveryAction::ManageStashes => "Stashes…",
         RecoveryAction::RetrySwitch => "Retry switch",
     }
 }
@@ -1131,12 +1131,11 @@ impl Browser {
         } else {
             gg_git::stash::apply(&path, Some(reference), restore_index)?
         };
-        let action = if remove { "Popped" } else { "Applied" };
         let summary = if receipt.conflicts.is_empty() {
-            format!("{action} {reference}")
+            format!("Restored {reference}")
         } else {
             format!(
-                "{action} {reference} · {} conflict(s)",
+                "Restored {reference} · {} conflict(s)",
                 receipt.conflicts.len()
             )
         };
@@ -1488,6 +1487,18 @@ impl Browser {
             })
     }
 
+    fn dismiss_outcome(&mut self) {
+        if self
+            .outcome
+            .as_ref()
+            .is_some_and(|outcome| matches!(outcome.recovery, Some(RecoveryAction::RetrySwitch)))
+        {
+            self.pending_switch = None;
+        }
+        self.outcome = None;
+        self.outcome_details_open = false;
+    }
+
     fn set_outcome(
         &mut self,
         severity: OutcomeSeverity,
@@ -1615,8 +1626,13 @@ impl Browser {
         ctx: &egui::Context,
         location: return_location::ReturnLocation,
     ) {
-        if let return_location::ReturnLocation::Recovery { source, entry } = &location {
-            self.open_recovery_at(ctx, *source, entry);
+        if let return_location::ReturnLocation::Recovery {
+            source,
+            reference,
+            entry,
+        } = &location
+        {
+            self.open_recovery_at(ctx, *source, reference.as_deref(), entry);
             return;
         }
         let shows_details = location.shows_details();
@@ -2251,10 +2267,14 @@ impl Browser {
         &mut self,
         ctx: &egui::Context,
         source: return_location::RecoverySource,
+        reference: Option<&str>,
         commit: &str,
     ) {
         self.open_recovery(ctx, source);
         if let Some(view) = &mut self.recovery {
+            if let Some(reference) = reference {
+                view.reflog.set_reference(reference);
+            }
             view.select(source, commit);
         }
     }
@@ -2263,6 +2283,7 @@ impl Browser {
         &mut self,
         ctx: &egui::Context,
         source: return_location::RecoverySource,
+        reference: Option<String>,
         commit: String,
         subject: String,
         selected: String,
@@ -2283,6 +2304,7 @@ impl Browser {
         );
         review.set_return_location(return_location::ReturnLocation::Recovery {
             source,
+            reference,
             entry: selected,
         });
         self.review = Some(review);
@@ -3435,6 +3457,9 @@ impl Browser {
                         self.open_recovery_review(
                             ctx,
                             return_location::RecoverySource::Reflog,
+                            self.recovery
+                                .as_ref()
+                                .map(|view| view.reflog.reference().to_owned()),
                             commit,
                             subject,
                             selector,
@@ -3463,6 +3488,7 @@ impl Browser {
                         self.open_recovery_review(
                             ctx,
                             return_location::RecoverySource::Backups,
+                            None,
                             commit,
                             subject,
                             reference,
@@ -3950,7 +3976,7 @@ impl Browser {
                         ),
                         (
                             "Commit actions",
-                            "Alt+A: actions for the selected commit · menus: Repository, Refs, View, Stash, Help",
+                            "Alt+A: actions for the selected commit · menus: Repository, Refs, View, Help",
                         ),
                     ] {
                         ui.strong(group);
@@ -4581,17 +4607,7 @@ impl Browser {
                 self.run_recovery_action(ctx, action);
             }
             if dismiss_clicked {
-                if self
-                    .outcome
-                    .as_ref()
-                    .is_some_and(|outcome| {
-                        matches!(outcome.recovery, Some(RecoveryAction::RetrySwitch))
-                    })
-                {
-                    self.pending_switch = None;
-                }
-                self.outcome = None;
-                self.outcome_details_open = false;
+                self.dismiss_outcome();
             }
         });
         if self.outcome_details_open {
@@ -5197,6 +5213,141 @@ mod tests {
                     .any(|line| line.contains("Remove stash after successful restore"))
             );
         }
+    }
+
+    #[test]
+    fn new_branch_without_a_commit_explains_the_unborn_head() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        app.state.refs.head = None;
+        app.state.selected = None;
+        app.open_new_branch();
+        assert!(app.create_branch.is_none());
+        assert_eq!(
+            app.branch_error.as_deref(),
+            Some("Create the first commit before creating a branch.")
+        );
+        let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        assert!(output.shapes.iter().any(|shape| matches!(
+            &shape.shape,
+            egui::epaint::Shape::Text(text)
+                if text
+                    .galley
+                    .job
+                    .text
+                    .contains("Create the first commit before creating a branch.")
+        )));
+    }
+
+    #[test]
+    fn restore_stash_error_region_stays_bounded() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        app.restore_stash = Some(RestoreStashDialog {
+            reference: "stash@{0}".into(),
+            restore_index: false,
+            remove: false,
+            error: Some(
+                (0..40)
+                    .map(|line| format!("restore failure line {line}"))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            ),
+        });
+        let _ = crate::tests::run_ui(&ctx, frame_input(720.0, 480.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        let output = crate::tests::run_ui(&ctx, frame_input(720.0, 480.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        let error_clip = output.shapes.iter().find_map(|shape| match &shape.shape {
+            egui::epaint::Shape::Text(text)
+                if text.galley.job.text.contains("restore failure line 0") =>
+            {
+                Some(shape.clip_rect)
+            }
+            _ => None,
+        });
+        assert!(error_clip.is_some(), "the restore error is rendered");
+        if let Some(error_clip) = error_clip {
+            assert!(
+                error_clip.height() <= 80.0,
+                "error region grew to {:?}",
+                error_clip
+            );
+        }
+        for expected in [
+            "Restore stash",
+            "Restore staged state",
+            "Remove stash after successful restore",
+        ] {
+            assert!(
+                output.shapes.iter().any(|shape| matches!(
+                    &shape.shape,
+                    egui::epaint::Shape::Text(text)
+                        if text.galley.job.text.contains(expected)
+                )),
+                "missing {expected} while an error is shown"
+            );
+        }
+    }
+
+    #[test]
+    fn stash_restore_reports_the_restore_action() -> Result<(), Box<dyn std::error::Error>> {
+        use std::process::Command;
+        let run = |path: &std::path::Path, args: &[&str]| -> Result<(), String> {
+            let output = Command::new("git")
+                .arg("-C")
+                .arg(path)
+                .args(args)
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env(
+                    "GIT_CONFIG_GLOBAL",
+                    if cfg!(windows) { "NUL" } else { "/dev/null" },
+                )
+                .env("GIT_AUTHOR_NAME", "Test")
+                .env("GIT_AUTHOR_EMAIL", "test@example.org")
+                .env("GIT_COMMITTER_NAME", "Test")
+                .env("GIT_COMMITTER_EMAIL", "test@example.org")
+                .output()
+                .map_err(|error| error.to_string())?;
+            if output.status.success() {
+                Ok(())
+            } else {
+                Err(String::from_utf8_lossy(&output.stderr).into_owned())
+            }
+        };
+        let dir = tempfile::tempdir()?;
+        let path = dir.path();
+        run(path, &["init", "-q", "-b", "main"])?;
+        run(path, &["config", "user.name", "Test"])?;
+        run(path, &["config", "user.email", "test@example.org"])?;
+        std::fs::write(path.join("a"), b"base\n")?;
+        run(path, &["add", "a"])?;
+        run(path, &["commit", "-qm", "base"])?;
+        std::fs::write(path.join("a"), b"changed\n")?;
+        run(path, &["stash", "push", "-qm", "work"])?;
+
+        let ctx = egui::Context::default();
+        let mut app = Browser::new(path.to_path_buf());
+        app.state.history = Some(gg_engine::History {
+            path: path.to_path_buf(),
+            head: "main".into(),
+            commits: Vec::new(),
+            truncated: false,
+            shallow: false,
+        });
+        app.restore_stash_inner(&ctx, "stash@{0}", false, false)?;
+        let outcome = app.outcome.as_ref().ok_or("missing restore outcome")?;
+        assert_eq!(outcome.summary, "Restored stash@{0}");
+        assert!(matches!(outcome.severity, OutcomeSeverity::Info));
+        assert_eq!(std::fs::read(path.join("a"))?, b"changed\n");
+        Ok(())
     }
 
     #[test]
@@ -6245,6 +6396,10 @@ mod tests {
         assert!(text.contains(&"Navigation"));
         assert!(text.contains(&"Commit actions"));
         assert!(text.iter().any(|line| line.contains("Alt+A")));
+        assert!(
+            text.iter().all(|line| !line.contains("View, Stash, Help")),
+            "the retired top-level Stash menu is still advertised: {text:?}"
+        );
     }
 
     #[test]
@@ -6602,6 +6757,18 @@ mod tests {
         });
         assert!(app.branch.is_none());
 
+        // Dismiss clears the retained intent without executing it.
+        app.dismiss_outcome();
+        assert!(app.pending_switch.is_none());
+        assert!(app.outcome.is_none());
+        app.outcome = Some(Outcome {
+            severity: OutcomeSeverity::Warning,
+            summary: "Switch to feature blocked".into(),
+            details: None,
+            recovery: Some(RecoveryAction::RetrySwitch),
+        });
+        app.pending_switch = Some("feature".into());
+
         // Retry revalidates by running the same explicit switch again.
         app.run_recovery_action(&ctx, RecoveryAction::RetrySwitch);
         assert!(app.branch.is_some(), "retry starts a fresh switch worker");
@@ -6688,6 +6855,7 @@ mod tests {
             &ctx,
             return_location::ReturnLocation::Recovery {
                 source: return_location::RecoverySource::Reflog,
+                reference: Some("HEAD".into()),
                 entry: "HEAD@{2}".into(),
             },
         );
@@ -6696,6 +6864,70 @@ mod tests {
             app.recovery.as_ref().map(|view| view.source),
             Some(return_location::RecoverySource::Reflog)
         );
+    }
+
+    #[test]
+    fn recovery_return_location_restores_the_reflog_reference_and_entry()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::process::Command;
+        let run = |path: &std::path::Path, args: &[&str]| -> Result<(), String> {
+            let output = Command::new("git")
+                .arg("-C")
+                .arg(path)
+                .args(args)
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env(
+                    "GIT_CONFIG_GLOBAL",
+                    if cfg!(windows) { "NUL" } else { "/dev/null" },
+                )
+                .env("GIT_AUTHOR_NAME", "Test")
+                .env("GIT_AUTHOR_EMAIL", "test@example.org")
+                .env("GIT_COMMITTER_NAME", "Test")
+                .env("GIT_COMMITTER_EMAIL", "test@example.org")
+                .output()
+                .map_err(|error| error.to_string())?;
+            if output.status.success() {
+                Ok(())
+            } else {
+                Err(String::from_utf8_lossy(&output.stderr).into_owned())
+            }
+        };
+        let dir = tempfile::tempdir()?;
+        let path = dir.path();
+        run(path, &["init", "-q", "-b", "main"])?;
+        run(path, &["config", "user.name", "Test"])?;
+        run(path, &["config", "user.email", "test@example.org"])?;
+        std::fs::write(path.join("a"), b"base\n")?;
+        run(path, &["add", "a"])?;
+        run(path, &["commit", "-qm", "base"])?;
+        std::fs::write(path.join("a"), b"next\n")?;
+        run(path, &["commit", "-qam", "next"])?;
+        run(path, &["branch", "feature"])?;
+
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        app.state.history = Some(gg_engine::History {
+            path: path.to_path_buf(),
+            head: "main".into(),
+            commits: Vec::new(),
+            truncated: false,
+            shallow: false,
+        });
+        app.restore_return_location(
+            &ctx,
+            return_location::ReturnLocation::Recovery {
+                source: return_location::RecoverySource::Reflog,
+                reference: Some("main".into()),
+                entry: "main@{0}".into(),
+            },
+        );
+        assert!(app.recovery.is_some(), "recovery stays open");
+        if let Some(view) = app.recovery.as_ref() {
+            assert_eq!(view.reflog.reference(), "main");
+            assert_eq!(view.reflog.selected_selector(), Some("main@{0}"));
+            assert_eq!(view.source, return_location::RecoverySource::Reflog);
+        }
+        Ok(())
     }
 
     #[test]

@@ -63,6 +63,25 @@ impl ReflogView {
         }
     }
 
+    pub fn reference(&self) -> &str {
+        &self.reference
+    }
+
+    pub fn set_reference(&mut self, reference: &str) {
+        if reference != self.reference {
+            self.reference = reference.to_owned();
+            self.selected = None;
+            self.load();
+        }
+    }
+
+    #[cfg(test)]
+    pub fn selected_selector(&self) -> Option<&str> {
+        self.selected
+            .and_then(|index| self.entries.get(index))
+            .map(|entry| entry.selector.as_str())
+    }
+
     pub fn select_entry(&mut self, selector: &str) {
         if let Some(index) = self
             .entries
@@ -337,6 +356,22 @@ mod tests {
                 "missing {expected}: {text:?}"
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn restores_a_non_head_reference_and_its_selected_entry() -> Result {
+        let dir = repo()?;
+        git(dir.path(), &["branch", "feature"])?;
+        let mut view = ReflogView::new(dir.path().into(), "HEAD".into());
+        view.set_reference("main");
+        assert_eq!(view.reference(), "main");
+        let selector = view.entries[0].selector.clone();
+        assert!(selector.starts_with("main@{"), "{selector}");
+        view.set_reference("HEAD");
+        view.set_reference("main");
+        view.select_entry(&selector);
+        assert_eq!(view.selected, Some(0));
         Ok(())
     }
 

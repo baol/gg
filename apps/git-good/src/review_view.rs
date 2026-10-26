@@ -940,6 +940,7 @@ mod tests {
         let mut view = Review::fixture(&ctx);
         view.set_return_location(crate::return_location::ReturnLocation::Recovery {
             source: crate::return_location::RecoverySource::Reflog,
+            reference: Some("HEAD".into()),
             entry: "HEAD@{2}".into(),
         });
         let output = crate::tests::run_ui(
