@@ -175,6 +175,11 @@ fn read_inner(request: &WorkingRequest, cancelled: &dyn Fn() -> bool) -> Result<
         if result.note.is_empty() { "" } else { " · " },
         result.note
     );
+    if effective_mode.is_some_and(|mode| mode == 0o120000)
+        && !result.note.contains("Symlink target")
+    {
+        result.note.push_str(" · Symlink target");
+    }
     Ok(result)
 }
 

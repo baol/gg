@@ -408,6 +408,13 @@ impl DiffView {
         ctx.request_repaint();
     }
 
+    fn working_note_detail(note: &str) -> &str {
+        note.strip_prefix("Working snapshot · mode ")
+            .and_then(|rest| rest.split_once(" · "))
+            .map(|(_, detail)| detail)
+            .unwrap_or("")
+    }
+
     fn working_route(&self, working: &WorkingRequest) -> String {
         match working.entry.area {
             Area::Staged => {
@@ -422,7 +429,7 @@ impl DiffView {
             }
             Area::Unstaged => "index → working file".into(),
             Area::Untracked => "empty → working file".into(),
-            Area::Conflict => "Unmerged path · stage the resolution".into(),
+            Area::Conflict => "Unmerged path · resolve the conflict before staging".into(),
         }
     }
 
@@ -469,7 +476,7 @@ impl DiffView {
 
     fn can_whole_edit(&self) -> bool {
         self.content_settled()
-            && self.stage.is_some()
+            && self.stage.is_some_and(|stage| !stage.pending)
             && self.info.is_some()
             && self.working.as_ref().is_some_and(|working| {
                 matches!(
@@ -481,7 +488,9 @@ impl DiffView {
 
     fn can_drop_whole(&self) -> bool {
         self.content_settled()
-            && self.stage.is_some_and(|stage| stage.can_discard)
+            && self
+                .stage
+                .is_some_and(|stage| stage.can_discard && !stage.pending)
             && self.working.as_ref().is_some_and(|working| {
                 matches!(working.entry.area, Area::Unstaged | Area::Untracked)
                     && !matches!(working.entry.kind, Kind::IntentToAdd | Kind::Conflicted)
@@ -1279,8 +1288,15 @@ impl DiffView {
             } else {
                 format!(" · index {}", default_short(&working.repository.index))
             };
+            let note = self
+                .info
+                .as_ref()
+                .map(|info| info.note.trim())
+                .filter(|note| !note.is_empty())
+                .map(|note| format!(" · {note}"))
+                .unwrap_or_default();
             format!(
-                "{} · {} · {sizes}{base}",
+                "{} · {} · {sizes}{base}{note}",
                 working.entry.area.label(),
                 working.entry.kind.label(),
             )
@@ -1323,13 +1339,13 @@ impl DiffView {
                 parts.push("text comparison incomplete".into());
             }
             let note = info.note.trim();
-            if !pending
-                && !note.is_empty()
-                && !note.starts_with("Working snapshot")
-                && note != "Binary content"
-                && note != "Empty file"
-            {
-                parts.push(note.to_owned());
+            let detail = if self.working.is_some() {
+                Self::working_note_detail(note)
+            } else {
+                note
+            };
+            if !pending && !detail.is_empty() && detail != "Empty file" {
+                parts.push(detail.to_owned());
             }
             if pending {
                 parts.push("loading · previous diff retained".into());
@@ -1441,7 +1457,13 @@ impl DiffView {
             } else {
                 let (index, total) = self.change_position();
                 if total == 0 {
-                    ui.weak("No changes");
+                    if self
+                        .info
+                        .as_ref()
+                        .is_none_or(|info| info.note.trim().is_empty())
+                    {
+                        ui.weak("No changes");
+                    }
                 } else if total > 1 {
                     let label = if self.change_number().is_some() {
                         format!("Change {index} of {total}")
@@ -1501,6 +1523,14 @@ impl DiffView {
         }
         if let Some(preview) = &self.preview {
             self.binary_view.draw(ui, preview, keyboard);
+            return;
+        }
+        if self.working.is_some()
+            && let Some(info) = &self.info
+            && info.kind != DiffKind::Text
+        {
+            ui.weak("No inline preview · open Full file to inspect one side");
+            self.send(&ctx);
             return;
         }
         if self.count == 0 {
@@ -2203,6 +2233,93 @@ mod tests {
     }
 
     #[test]
+    fn working_summaries_replace_a_misleading_no_changes_state() {
+        use gg_engine::status::{Area, Kind, StatusEntry, StatusIdentity, WorkingRequest};
+        let ctx = egui::Context::default();
+        let draw = |view: &mut DiffView| {
+            crate::tests::run_ui(
+                &ctx,
+                crate::tests::frame_input(720.0, 480.0, vec![]),
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        view.draw(ui);
+                    });
+                },
+            )
+        };
+        let working = || WorkingRequest {
+            repository: StatusIdentity {
+                path: "/repo".into(),
+                head: None,
+                index: "index".into(),
+                base_tree: None,
+            },
+            entry: StatusEntry::new(Area::Unstaged, Kind::Modified, b"a"),
+        };
+        let mut binary = DiffView {
+            change: Some(file("a", true, true)),
+            working: Some(working()),
+            info: Some(FileDiff::summary(
+                DiffKind::Binary,
+                0,
+                12,
+                "Working snapshot · mode 100644 · Binary content",
+            )),
+            generation: 1,
+            displayed_generation: 1,
+            displayed_mode: Mode::Diff,
+            ..Default::default()
+        };
+        let output = draw(&mut binary);
+        let text = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(text.iter().any(|line| line.contains("Binary content")));
+        assert!(!text.contains(&"No changes"));
+
+        let mut mode = DiffView {
+            change: Some(file("a", true, true)),
+            working: Some(working()),
+            info: Some(FileDiff {
+                kind: DiffKind::Text,
+                old_size: 1,
+                new_size: 1,
+                complete: true,
+                note: "Working snapshot · mode 100755 · Mode 100644 to 100755".into(),
+                rows: vec![],
+            }),
+            details_open: true,
+            generation: 1,
+            displayed_generation: 1,
+            displayed_mode: Mode::Diff,
+            ..Default::default()
+        };
+        let output = draw(&mut mode);
+        let text = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            text.iter()
+                .any(|line| line.contains("Mode 100644 to 100755"))
+        );
+        assert!(
+            text.iter()
+                .any(|line| line.contains("Working snapshot · mode 100755"))
+        );
+        assert!(!text.contains(&"No changes"));
+    }
+
+    #[test]
     fn staging_edits_follow_the_hunk_and_selected_lines() {
         use gg_engine::status::{Area, Kind, StatusEntry, StatusIdentity, WorkingRequest};
         let ctx = egui::Context::default();
@@ -2297,6 +2414,15 @@ mod tests {
         );
         view.displayed_generation = 2;
         assert!(view.can_whole_edit() && view.can_drop_whole() && view.can_line_edit());
+        view.stage = Some(StageConfig {
+            verb: "Stage",
+            can_discard: true,
+            pending: true,
+        });
+        assert!(
+            !view.can_whole_edit() && !view.can_drop_whole(),
+            "whole-file actions wait for the pending mutation"
+        );
         let _ = ctx;
     }
 

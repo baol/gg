@@ -573,6 +573,26 @@ fn working_diff_normalizes_text_and_reports_binary_and_limits() -> Result {
 }
 #[cfg(unix)]
 #[test]
+fn working_diff_reports_a_mode_only_change() -> Result {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir()?;
+    let p = dir.path();
+    git(p, &["init", "-b", "main"])?;
+    std::fs::write(p.join("a"), b"same\n")?;
+    git(p, &["add", "a"])?;
+    git(p, &["commit", "-qm", "base"])?;
+    let mut permissions = std::fs::metadata(p.join("a"))?.permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(p.join("a"), permissions)?;
+    let diff = gg_git::working_diff::read(&request(p, b"a", Area::Unstaged)?, || false)?;
+    assert!(diff.rows.is_empty());
+    assert!(diff.note.contains("Mode 100644 to 100755"), "{}", diff.note);
+    assert!(diff.note.contains("Working snapshot"), "{}", diff.note);
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
 fn working_diff_reads_symlink_targets_and_rejects_symlink_ancestors() -> Result {
     use std::os::unix::fs::symlink;
     let dir = tempfile::tempdir()?;

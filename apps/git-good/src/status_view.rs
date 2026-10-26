@@ -1208,12 +1208,27 @@ impl StatusView {
         }
         let mut back = false;
         let mut refresh = false;
-        if !self.busy() && !self.replacing && crate::navigation::available(ctx) {
+        if self.drop_confirm.is_some() {
+            if crate::navigation::available(ctx)
+                && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+            {
+                self.drop_confirm = None;
+            }
+        } else if !self.busy() && !self.replacing && crate::navigation::available(ctx) {
             back |= ctx.input_mut(|i| {
                 i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)
                     || i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft)
             });
             refresh |= ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::R));
+            if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Tab)) {
+                self.focus = 1 - self.focus;
+                if self.lists[self.focus].count > 0 {
+                    let row = self.lists[self.focus].selected_row.unwrap_or(0);
+                    self.select_row(self.focus, row, ctx);
+                    self.lists[self.focus].reveal = true;
+                }
+                crate::navigation::focus_content(ctx);
+            }
             let page = (self.lists[self.focus].rect.height() / HEIGHT)
                 .floor()
                 .max(2.0) as isize
@@ -1512,6 +1527,31 @@ mod tests {
         wait(&mut view, true, "after")?;
         assert!(!view.reader.has_text("before"));
         Ok(())
+    }
+    #[test]
+    fn tab_switches_keyboard_focus_between_the_file_groups() {
+        let ctx = egui::Context::default();
+        let mut view = fixture(2, 2);
+        frame(&ctx, &mut view, 1120.0, vec![]);
+        let tab = egui::Event::Key {
+            key: egui::Key::Tab,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame(&ctx, &mut view, 1120.0, vec![tab.clone()]);
+        assert_eq!(view.focus, 1);
+        assert_eq!(
+            view.active.as_ref().map(|(_, area)| *area),
+            Some(Area::Staged)
+        );
+        frame(&ctx, &mut view, 1120.0, vec![tab]);
+        assert_eq!(view.focus, 0);
+        assert_eq!(
+            view.active.as_ref().map(|(_, area)| *area),
+            Some(Area::Unstaged)
+        );
     }
     #[test]
     fn workspace_preserves_independent_list_selection_and_scroll() {
@@ -2544,7 +2584,12 @@ mod tests {
             })
             .collect::<Vec<_>>();
         assert!(text.iter().any(|line| line.contains("Unmerged path")));
-        assert!(text.iter().any(|line| line.contains("Unmerged path:")));
+        assert!(
+            !text
+                .iter()
+                .any(|line| line.contains("Stage hunk") || line.contains("Unstage hunk")),
+            "conflict content is read-only until Stage resolution"
+        );
         assert!(!text.iter().any(|line| line == &"No unstaged changes"));
         Ok(())
     }
@@ -2755,6 +2800,26 @@ mod tests {
             settle(&ctx, &mut view, width);
             select_area(&mut view, &ctx, Area::Unstaged);
             ready(&ctx, &mut view, width);
+
+            let output = run(&ctx, &mut view, width, vec![]);
+            let drop = text_pos(&output, "Discard hunk").ok_or("missing drop hunk")?;
+            click(&ctx, &mut view, width, drop + egui::vec2(5.0, 0.0));
+            assert!(view.drop_confirm.is_some());
+            frame(
+                &ctx,
+                &mut view,
+                width,
+                vec![egui::Event::Key {
+                    key: egui::Key::Escape,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+            );
+            assert!(view.drop_confirm.is_none(), "Escape cancels the discard");
+            assert_eq!(std::fs::read(dir.path().join("a"))?, working);
+            assert_eq!(std::fs::read(dir.path().join(".git/index"))?, index);
 
             let output = run(&ctx, &mut view, width, vec![]);
             let drop = text_pos(&output, "Discard hunk").ok_or("missing drop hunk")?;
