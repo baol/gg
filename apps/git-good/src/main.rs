@@ -3505,7 +3505,8 @@ impl Browser {
         }
 
         let conflict_mutation = self.mutation.clone();
-        let conflict_pending = self.operation_busy();
+        let conflict_pending =
+            self.operation_busy() || self.network.is_some() || self.branch.is_some();
         let mut conflict_select = None;
         let mut stage_resolution = false;
         let mut refresh_content = false;
