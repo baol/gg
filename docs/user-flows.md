@@ -90,7 +90,7 @@ flowchart TD
 **Entry:** Local Changes. **Goal:** commit only intended index contents.
 
 1. Scan and group staged, unstaged, untracked, and conflicted paths; keep scan completion distinct from a clean tree.
-2. Select an entry in either counted group. It immediately selects that comparison in the shared reader: Staged is HEAD → index, Unstaged is index → working file, and amend is HEAD parent → index. There is no separate View diff step or Staged/Unstaged reader switch; Enter opens the full-width reading layout, and the header names the path, exact endpoints, and Diff/Full file once.
+2. Select an entry in either counted group. It immediately selects that comparison in the shared reader: Staged is HEAD → index, Unstaged is index → working file, and amend is HEAD parent → index. There is no separate View diff step or Staged/Unstaged reader switch; the reader stays in place, and its header names the path, exact endpoints, and Diff/Full file once. Review uses Enter or double-click for its full-width reading layout.
 3. Use File actions for a whole path, Stage hunk for one hunk, or select changed lines and Stage selected. Unstage and Discard mirror those scopes. The same reader keeps Diff/Full, Before/After, and the reading place; refresh both lists and the active comparison in place and preserve independent selections/scroll.
 4. Return to files and enter a message. Enable Commit only when the validated scan is complete, the message is nonempty, and staged changes exist. Name any blocking conflict or unsupported index state.
 5. Commit the index through hooks. On success clear only the submitted draft; History refreshes and selects the new commit.
