@@ -844,6 +844,7 @@ impl Browser {
             }
             Ok(network::Outcome::Clone(receipt)) => {
                 self.network_error = None;
+                self.clear_operation_state();
                 self.network_notice = Some(format!("Cloned {}", receipt.path.display()));
                 if let Some(working) = &self.working {
                     self.working_drafts
@@ -1072,6 +1073,9 @@ impl Browser {
         self.mutation_notice = None;
         self.outcome = None;
         self.outcome_details_open = false;
+        self.network_notice = None;
+        self.stash_notice = None;
+        self.branch_warning = None;
         self.operation_worker = None;
         self.operation_repo = None;
         self.operation_restore_row = None;
@@ -1240,7 +1244,11 @@ impl Browser {
 
     /// Operations that make Local Changes mutations incompatible.
     fn external_operation_reason(&self) -> Option<String> {
-        if self.operation_busy() {
+        if self.rewrite_job.is_some() {
+            Some("Wait for the history rewrite to finish".into())
+        } else if self.rewrite_refresh.is_some() {
+            Some("Wait for history to refresh".into())
+        } else if self.operation_worker.is_some() {
             Some("Wait for the current operation to finish".into())
         } else if self.network.is_some() {
             Some("Wait for the network operation to finish".into())
@@ -2766,7 +2774,7 @@ impl Browser {
                 self.rewrite_dialog = None;
             } else if let Some(error) = self.state.error.clone() {
                 self.rewrite_refresh = None;
-                let summary = format!("History refresh failed: {error}");
+                let summary = format!("Refresh failed: {error}");
                 self.set_outcome(
                     OutcomeSeverity::Error,
                     summary,
@@ -5125,10 +5133,7 @@ mod tests {
                 _ => None,
             })
             .collect::<Vec<_>>();
-        assert!(
-            text.iter()
-                .any(|line| line.contains("History refresh failed"))
-        );
+        assert!(text.iter().any(|line| line.contains("Refresh failed")));
         assert!(text.iter().any(|line| line.contains("Backups…")));
     }
 
@@ -5928,6 +5933,12 @@ mod tests {
     fn finish_network_clone_opens_the_new_repository() -> Result<(), Box<dyn std::error::Error>> {
         let ctx = egui::Context::default();
         let mut app = Browser::new(".".into());
+        app.outcome = Some(Outcome {
+            severity: OutcomeSeverity::Info,
+            summary: "Old repository result".into(),
+            details: None,
+            recovery: None,
+        });
         let path = std::env::current_dir()?;
         app.finish_network(
             &ctx,
@@ -5946,6 +5957,7 @@ mod tests {
                 .is_some_and(|notice| notice.starts_with("Cloned"))
         );
         assert!(app.state.requested.is_some());
+        assert!(app.outcome.is_none(), "clone clears the old outcome");
         Ok(())
     }
 
