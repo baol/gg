@@ -267,6 +267,8 @@ fn read_working(path: &Path, file: &str) -> Result<Option<Vec<u8>>, String> {
 
 fn write_working(path: &Path, file: &str, bytes: &[u8], mode: &str) -> Result<(), String> {
     let target = worktree_path(path, file)?;
+    #[cfg(not(unix))]
+    let _ = mode;
     let parent = target
         .parent()
         .ok_or("The conflict path has no parent directory.")?;
