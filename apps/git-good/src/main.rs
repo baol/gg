@@ -1070,6 +1070,8 @@ impl Browser {
         self.mutation = None;
         self.mutation_error = None;
         self.mutation_notice = None;
+        self.outcome = None;
+        self.outcome_details_open = false;
         self.operation_worker = None;
         self.operation_repo = None;
         self.operation_restore_row = None;
@@ -1080,6 +1082,16 @@ impl Browser {
 
     /// Detect an operation already in progress when a repository is opened.
     fn sync_mutation(&mut self) {
+        // A replacement for another path may still be loading. Keep the old
+        // operation state clear until the requested history is adopted.
+        if self.state.requested.as_ref().is_some_and(|requested| {
+            self.state
+                .history
+                .as_ref()
+                .is_none_or(|history| &history.path != requested)
+        }) {
+            return;
+        }
         let path = self
             .state
             .history
@@ -2761,6 +2773,8 @@ impl Browser {
                     None,
                     Some(RecoveryAction::Backups),
                 );
+                self.state.error = None;
+                self.pending = None;
             }
         }
         let mut mutation_action = None;
@@ -2898,18 +2912,16 @@ impl Browser {
                             .desired_width((ui.available_width() - 80.0).max(100.0))
                             .hint_text("Repository path"),
                     );
+                    let open_ready = self.pending.is_none()
+                        && self.network.is_none()
+                        && self.branch.is_none()
+                        && !self.operation_busy();
                     let enter =
                         response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                     if ui
-                        .add_enabled(
-                            self.pending.is_none()
-                                && self.network.is_none()
-                                && self.branch.is_none()
-                                && !self.operation_busy(),
-                            egui::Button::new("Open"),
-                        )
+                        .add_enabled(open_ready, egui::Button::new("Open"))
                         .clicked()
-                        || enter
+                        || (open_ready && enter)
                     {
                         self.reflog = None;
                         self.backups = None;
@@ -5092,6 +5104,35 @@ mod tests {
     }
 
     #[test]
+    fn refresh_failure_keeps_backup_recovery_reachable() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        app.rewrite_refresh = Some(app.state.loaded_generation + 1);
+        app.state.error = Some("simulated refresh failure".into());
+        let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        assert!(app.mutation_error.is_none());
+        assert!(app.state.error.is_none());
+        let text = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            text.iter()
+                .any(|line| line.contains("History refresh failed"))
+        );
+        assert!(text.iter().any(|line| line.contains("Backups…")));
+    }
+
+    #[test]
     fn continuation_worker_label_replaces_the_mutation_strip() {
         let ctx = egui::Context::default();
         let mut app = layout_fixture();
@@ -5169,6 +5210,12 @@ mod tests {
         app.operation_worker = Some(rx);
         app.operation_repo = Some("/old".into());
         app.mutation_notice = Some("Merging old repository…".into());
+        app.outcome = Some(Outcome {
+            severity: OutcomeSeverity::Info,
+            summary: "Merged old repository".into(),
+            details: None,
+            recovery: None,
+        });
         app.rewrite_refresh = Some(5);
         app.mutation_path = Some("/old".into());
         assert!(app.state.history.is_some());
@@ -5182,6 +5229,10 @@ mod tests {
         assert!(app.operation_repo.is_none());
         assert!(app.rewrite_refresh.is_none());
         assert!(app.mutation_notice.is_none());
+        assert!(
+            app.outcome.is_none(),
+            "the old repository outcome is cleared"
+        );
     }
 
     #[test]
