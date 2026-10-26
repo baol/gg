@@ -90,8 +90,8 @@ flowchart TD
 **Entry:** Local Changes. **Goal:** commit only intended index contents.
 
 1. Scan and group staged, unstaged, untracked, and conflicted paths; keep scan completion distinct from a clean tree.
-2. Select a file and View diff. At wide widths show Staged (HEAD → index) and Unstaged (index → working file). At narrow widths show counted tabs, default to the nonempty pane, and offer Split to stack both.
-3. Stage file for a whole path, Stage hunk for one hunk, or select changed lines and Stage selected. Unstage mirrors those scopes. Refresh both panes in place and preserve independent selections/scroll.
+2. Select an entry in either counted group. It immediately selects that comparison in the shared reader: Staged is HEAD → index, Unstaged is index → working file, and amend is HEAD parent → index. There is no separate View diff step or Staged/Unstaged reader switch; Enter opens the full-width reading layout, and the header names the path, exact endpoints, and Diff/Full file once.
+3. Use File actions for a whole path, Stage hunk for one hunk, or select changed lines and Stage selected. Unstage and Discard mirror those scopes. The same reader keeps Diff/Full, Before/After, and the reading place; refresh both lists and the active comparison in place and preserve independent selections/scroll.
 4. Return to files and enter a message. Enable Commit only when the validated scan is complete, the message is nonempty, and staged changes exist. Name any blocking conflict or unsupported index state.
 5. Commit the index through hooks. On success clear only the submitted draft; History refreshes and selects the new commit.
 
@@ -101,7 +101,7 @@ flowchart TD
 
 **Amend entry:** Local Changes → Amend. Switch to the separate amend draft or HEAD message and display the affected hash/subject. Staged becomes **HEAD parent → index**, showing the amended commit's actual contents. Stage adds working changes; Unstage removes content from the amended commit while preserving working files. Allow message-only amend. Save a private backup before rewriting, preserve the author, run hooks including post-rewrite, then refresh. Backup failure aborts before publication. Turning Amend off restores the normal draft. Hook failure retains the amend draft.
 
-**Discard entry:** Unstaged → Discard file/hunk/selected. Show the exact path and scope; explain that tracked working content is restored from the index, untracked files are removed, and the index is unchanged. Cancel preserves everything and returns focus to the invoking action. Confirm refreshes both panes in place. Refuse stale/unsupported/conflicted scopes with a reason; never broaden the requested scope. **Completion:** only the confirmed content changes. **Mockup:** Stage → Discard → Stage; amend is specified here rather than simulated.
+**Discard entry:** Unstaged → Discard file/hunk/selected. Show the exact path and scope; explain that tracked working content is restored from the index, untracked files are removed, and the index is unchanged. Cancel preserves everything and returns focus to the invoking action. Confirm refreshes both lists and the active comparison in place. Refuse stale/unsupported/conflicted scopes with a reason; never broaden the requested scope. **Completion:** only the confirmed content changes. **Mockup:** Stage → Discard → Stage; amend is specified here rather than simulated.
 
 ### F05 · Switch, create, track, and delete references
 

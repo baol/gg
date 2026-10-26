@@ -29,6 +29,7 @@ pub struct FileHistory {
     busy: bool,
     choosing: Option<usize>,
     error: Option<String>,
+    close: bool,
 }
 
 impl FileHistory {
@@ -52,6 +53,7 @@ impl FileHistory {
             busy: true,
             choosing: None,
             error: None,
+            close: false,
         };
         view.start(ctx);
         view
@@ -144,6 +146,11 @@ impl FileHistory {
         {
             self.choosing = None;
         }
+    }
+
+    /// True when the strip's close control was clicked.
+    pub fn take_close(&mut self) -> bool {
+        std::mem::take(&mut self.close)
     }
 
     pub fn pending(&self) -> bool {
@@ -316,21 +323,26 @@ impl FileHistory {
     fn edge_labels(&self) -> Option<(String, String)> {
         let timeline = self.timeline.as_ref()?;
         let version = timeline.current(self.index)?;
-        let after = format!("{} · {}", version.short_commit(), version.path);
+        let after = if version.path == self.file {
+            version.short_commit()
+        } else {
+            format!("{} · {}", version.short_commit(), version.path)
+        };
         let before = match &version.previous {
             Predecessor::Linked => timeline
                 .current(self.index + 1)
-                .map(|older| format!("{} · {}", older.short_commit(), older.path))
+                .map(|older| {
+                    if older.path == version.path {
+                        older.short_commit()
+                    } else {
+                        format!("{} · {}", older.short_commit(), older.path)
+                    }
+                })
                 .unwrap_or_else(|| "Earlier version".into()),
             Predecessor::Oldest => "Absent".into(),
             _ => "Earlier version not loaded".into(),
         };
         Some((before, after))
-    }
-
-    /// Exact endpoint labels of the displayed history edge.
-    pub fn endpoints(&self) -> Option<(String, String)> {
-        self.edge_labels()
     }
 
     /// Hand the current version edge to the shared reader.
@@ -386,11 +398,9 @@ impl FileHistory {
 
     /// Draw the compact version strip directly above the shared reader.
     pub fn draw_strip(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        ui.horizontal(|ui| {
-            ui.strong("File history");
-            ui.weak(&self.file);
-        });
         ui.horizontal_wrapped(|ui| {
+            ui.strong("File history");
+            ui.separator();
             if ui
                 .add_enabled(self.can_older(), egui::Button::new("Older version"))
                 .on_disabled_hover_text(
@@ -408,14 +418,35 @@ impl FileHistory {
             {
                 self.newer();
             }
-        });
-        ui.horizontal_wrapped(|ui| {
             if let Some(timeline) = &self.timeline {
                 ui.weak(timeline.position(self.index));
             } else if self.error.is_some() {
                 ui.weak("History unavailable");
             } else {
                 ui.weak("Loading versions…");
+            }
+        });
+        if let Some(version) = self.current().cloned() {
+            let kind = version.kind.map(HistoryKind::label).unwrap_or("Version");
+            let line = format!("{kind} · {} · {}", version.short_commit(), version.subject);
+            ui.horizontal(|ui| {
+                let width = (ui.available_width() - 132.0).max(80.0);
+                ui.allocate_ui_with_layout(
+                    egui::vec2(width, 18.0),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        bounded_text::field(ui, &line, egui::FontId::monospace(11.0), 18.0);
+                    },
+                );
+                if ui.button("Close file history").clicked() {
+                    self.close = true;
+                }
+            });
+            let mut detail = format!("{} · {}", version.author, date(version.time));
+            if let Some(old) = &version.old_path
+                && old != &version.path
+            {
+                detail.push_str(&format!(" · from {old}"));
             }
             let reason = if !self.can_older() {
                 self.older_reason()
@@ -424,34 +455,22 @@ impl FileHistory {
             } else {
                 None
             };
-            if let Some(reason) = reason {
-                ui.weak(reason);
-            } else if self.can_older() && self.can_newer() {
-                ui.weak("Earlier version");
-            }
-            if let Some(note) = self
+            let note = self
                 .timeline
                 .as_ref()
-                .and_then(|timeline| timeline.note.as_deref())
-            {
-                ui.weak(note);
-            }
-        });
-        if let Some(version) = self.current() {
-            let kind = version.kind.map(HistoryKind::label).unwrap_or("Version");
-            bounded_text::field(
-                ui,
-                &format!("{kind} · {} · {}", version.short_commit(), version.subject),
-                egui::FontId::monospace(11.0),
-                18.0,
-            );
-            let mut detail = format!("{} · {}", version.author, date(version.time));
-            if let Some(old) = &version.old_path
-                && old != &version.path
-            {
-                detail.push_str(&format!(" · from {old}"));
+                .and_then(|timeline| timeline.note.clone());
+            for part in [reason, note].into_iter().flatten() {
+                detail.push_str(" · ");
+                detail.push_str(&part);
             }
             bounded_text::field(ui, &detail, egui::FontId::monospace(11.0), 18.0);
+        }
+        if self.current().is_none() {
+            ui.horizontal(|ui| {
+                if ui.button("Close file history").clicked() {
+                    self.close = true;
+                }
+            });
         }
         if let Some(error) = self.error.clone() {
             let mut retry = false;
@@ -539,6 +558,7 @@ impl FileHistory {
             busy: false,
             choosing: None,
             error: None,
+            close: false,
         }
     }
 

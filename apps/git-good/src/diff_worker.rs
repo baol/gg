@@ -76,7 +76,11 @@ impl Worker {
                 }
             },
             |request, side, changed, cancelled| {
-                gg_git::file::read(&request.path, &request.change, side, changed, cancelled)
+                if let Some(working) = &request.working {
+                    gg_git::working_diff::read_side(working, side, changed, cancelled)
+                } else {
+                    gg_git::file::read(&request.path, &request.change, side, changed, cancelled)
+                }
             },
         )
     }

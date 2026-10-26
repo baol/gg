@@ -5975,8 +5975,8 @@ mod tests {
                     .collect::<Vec<_>>();
                 assert_eq!(
                     positions.len(),
-                    2,
-                    "one strip entry plus the workspace heading at {width}: {positions:?}"
+                    1,
+                    "one stable strip entry without a duplicate workspace heading at {width}: {positions:?}"
                 );
                 assert!(positions.iter().any(|x| *x < 190.0), "{positions:?}");
             }

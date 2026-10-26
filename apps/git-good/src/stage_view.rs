@@ -1,342 +1,64 @@
-//! Active staged/working comparison with inline hunk, line, and whole-file actions.
-use crate::bounded_text;
+//! Validated staging mutations behind the shared Local Changes reader.
+//!
+//! Loading and rendering belong to [`crate::diff_view::DiffView`]. This module
+//! owns only the selected working comparison, the mutation worker, and the
+//! conversion from reader row edits to the Git staging or discard operation.
+use crate::diff_view::{StageEdit, StageScope};
 use eframe::egui;
-use gg_engine::{
-    diff::{DiffKind, DiffRow, FileDiff, RowKind},
-    status::{Area, Kind, StatusEntry, StatusIdentity, WorkingRequest},
-};
+use gg_engine::status::{Area, StatusEntry, StatusIdentity, WorkingRequest};
 use gg_git::patch::{Change, Edit};
 use std::{
-    collections::BTreeSet,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-        mpsc::{Receiver, TryRecvError},
-    },
+    sync::mpsc::{Receiver, TryRecvError},
     thread,
 };
 
-const HEIGHT: f32 = 20.0;
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum PaneKind {
-    Staged,
-    Unstaged,
-}
-
-struct Part {
-    pane: usize,
-    result: Result<FileDiff, String>,
-}
-
-struct Load {
-    rx: Receiver<Part>,
-    cancel: Arc<AtomicBool>,
-    remaining: usize,
-}
-
-impl Drop for Load {
-    fn drop(&mut self) {
-        self.cancel.store(true, Ordering::Relaxed);
-    }
-}
-
-struct HunkInfo {
-    header: usize,
-    changes: Vec<usize>,
-}
-
 #[derive(Default)]
-struct Pane {
+pub struct StageActions {
     request: Option<WorkingRequest>,
-    diff: Option<FileDiff>,
-    error: Option<String>,
-    loading: bool,
-    selected: BTreeSet<usize>,
-    hunks: Vec<HunkInfo>,
-    columns: usize,
-    offset: f32,
-    restore: bool,
-}
-
-impl Pane {
-    fn rows(&self) -> usize {
-        self.diff.as_ref().map_or(0, |diff| diff.rows.len())
-    }
-
-    fn text(&self) -> bool {
-        self.diff
-            .as_ref()
-            .is_some_and(|diff| diff.kind == DiffKind::Text && diff.complete)
-    }
-
-    fn can_line_edit(&self, kind: PaneKind) -> bool {
-        if !self.text() {
-            return false;
-        }
-        self.request.as_ref().is_some_and(|request| match kind {
-            PaneKind::Staged => request.entry.area == Area::Staged,
-            PaneKind::Unstaged => {
-                request.entry.area == Area::Unstaged && request.entry.kind == Kind::Modified
-            }
-        })
-    }
-
-    fn can_whole_edit(&self, kind: PaneKind) -> bool {
-        self.rows() > 0
-            && self.request.as_ref().is_some_and(|request| match kind {
-                PaneKind::Staged => request.entry.area == Area::Staged,
-                PaneKind::Unstaged => {
-                    matches!(request.entry.area, Area::Unstaged | Area::Untracked)
-                }
-            })
-    }
-
-    fn can_drop_whole(&self) -> bool {
-        self.rows() > 0
-            && self.request.as_ref().is_some_and(|request| {
-                matches!(request.entry.area, Area::Unstaged | Area::Untracked)
-                    && !matches!(request.entry.kind, Kind::IntentToAdd | Kind::Conflicted)
-            })
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum DropScope {
-    Selected,
-    Hunk,
-    File,
-}
-
-enum Action {
-    Hunk {
-        pane: usize,
-        edit: Edit,
-    },
-    Whole {
-        pane: usize,
-    },
-    Drop {
-        pane: usize,
-        edit: Option<Edit>,
-        scope: DropScope,
-    },
-}
-
-#[derive(Default)]
-pub struct StageView {
-    path: String,
-    panes: [Pane; 2],
-    active: usize,
-    load: Option<Load>,
     mutation: Option<Receiver<Result<StatusIdentity, String>>>,
-    mutation_label: Option<String>,
-    drop_confirm: Option<Action>,
+    label: Option<&'static str>,
     error: Option<String>,
-    changed: bool,
-    missing: Option<String>,
+    changed: Option<StatusIdentity>,
 }
 
-impl StageView {
-    pub fn select_working(
-        &mut self,
-        repository: StatusIdentity,
-        entry: StatusEntry,
-        companion: Option<StatusEntry>,
-        ctx: &egui::Context,
-    ) {
-        self.path = entry.path.clone();
-        self.active = if entry.area == Area::Staged { 0 } else { 1 };
-        self.panes = [
-            Pane {
-                request: Some(WorkingRequest {
-                    repository: repository.clone(),
-                    entry: staged_entry(&entry, companion.as_ref()),
-                }),
-                restore: true,
-                ..Pane::default()
-            },
-            Pane {
-                request: Some(WorkingRequest {
-                    repository,
-                    entry: unstaged_entry(&entry, companion.as_ref()),
-                }),
-                restore: true,
-                ..Pane::default()
-            },
-        ];
-        self.error = None;
+impl StageActions {
+    /// Point the mutation engine at the comparison selected in the workspace.
+    pub fn select(&mut self, repository: StatusIdentity, entry: StatusEntry) {
+        self.request = Some(WorkingRequest { repository, entry });
         self.mutation = None;
-        self.mutation_label = None;
-        self.drop_confirm = None;
-        self.missing = None;
-        self.reload(ctx);
+        self.label = None;
+        self.error = None;
+        self.changed = None;
     }
 
-    /// Keep a reviewed path visible after its list entry disappears.
-    pub fn select_missing(
-        &mut self,
-        _repository: StatusIdentity,
-        path_bytes: Vec<u8>,
-        area: Area,
-        ctx: &egui::Context,
-    ) {
-        let entry = StatusEntry::new(area, Kind::Modified, &path_bytes);
-        self.path = entry.path;
-        self.active = if area == Area::Staged { 0 } else { 1 };
-        self.panes = [Pane::default(), Pane::default()];
-        self.load = None;
+    /// Leave the active comparison without requesting anything.
+    pub fn clear(&mut self) {
+        self.request = None;
         self.mutation = None;
-        self.mutation_label = None;
-        self.drop_confirm = None;
+        self.label = None;
         self.error = None;
-        self.changed = false;
-        self.missing = Some("This entry is no longer present. Select another entry.".into());
-        ctx.request_repaint();
+        self.changed = None;
     }
 
-    pub fn reload(&mut self, ctx: &egui::Context) {
-        let (Some(staged), Some(unstaged)) =
-            (self.panes[0].request.clone(), self.panes[1].request.clone())
-        else {
-            return;
-        };
-        self.load = None; // Cancels any prior comparison.
-        self.error = None;
-        for pane in &mut self.panes {
-            pane.loading = true;
-            pane.error = None;
-        }
-        let cancel = Arc::new(AtomicBool::new(false));
-        let thread_cancel = cancel.clone();
-        let (tx, rx) = std::sync::mpsc::channel();
-        let repaint = ctx.clone();
-        let active = self.active;
-        match thread::Builder::new()
-            .name("gg-stage-diff".into())
-            .spawn(move || {
-                let cancelled = {
-                    let cancel = thread_cancel.clone();
-                    move || cancel.load(Ordering::Relaxed)
-                };
-                // Read the visible comparison first; the other pane stays available
-                // for the same path when the lists switch selection.
-                for pane in [active, 1 - active] {
-                    let request = if pane == 0 { &staged } else { &unstaged };
-                    let result = gg_git::working_diff::read(request, &cancelled);
-                    if cancelled() {
-                        return;
-                    }
-                    if tx.send(Part { pane, result }).is_err() {
-                        return;
-                    }
-                    repaint.request_repaint();
-                }
-            }) {
-            Ok(_) => {
-                self.load = Some(Load {
-                    rx,
-                    cancel,
-                    remaining: 2,
-                });
-            }
-            Err(e) => {
-                for pane in &mut self.panes {
-                    pane.loading = false;
-                }
-                self.error = Some(format!("Start diff: {e}"));
-            }
-        }
-    }
-
-    /// Repository identity currently requested by the two comparisons.
-    pub fn repository(&self) -> Option<&StatusIdentity> {
-        self.panes[0]
-            .request
-            .as_ref()
-            .map(|request| &request.repository)
-    }
-
-    #[cfg(test)]
-    pub fn active_pane(&self) -> usize {
-        self.active
-    }
-
-    #[cfg(test)]
-    pub fn path(&self) -> &str {
-        &self.path
-    }
-
-    #[cfg(test)]
-    pub fn pane_rows(&self, pane: usize) -> usize {
-        self.panes.get(pane).map_or(0, Pane::rows)
-    }
-
-    #[cfg(test)]
-    pub fn pending(&self) -> bool {
-        self.mutation.is_some() || self.load.is_some()
-    }
-
-    /// A stage, unstage, or discard publication is pending.
+    /// A mutation publication is pending.
     pub fn mutating(&self) -> bool {
         self.mutation.is_some()
     }
 
-    pub fn take_changed(&mut self) -> bool {
-        std::mem::take(&mut self.changed)
+    pub fn label(&self) -> Option<&'static str> {
+        self.label
     }
 
-    #[cfg(test)]
-    pub fn ready(&self) -> bool {
-        self.panes.iter().all(|pane| !pane.loading)
-    }
-
-    #[cfg(test)]
-    pub fn has_text(&self, needle: &str) -> bool {
-        self.panes.iter().any(|pane| {
-            pane.diff
-                .as_ref()
-                .is_some_and(|diff| diff.rows.iter().any(|row| row.text.contains(needle)))
-        })
-    }
-
-    #[cfg(test)]
-    pub fn pane_has_text(&self, pane: usize, needle: &str) -> bool {
-        self.panes.get(pane).is_some_and(|pane| {
-            pane.diff
-                .as_ref()
-                .is_some_and(|diff| diff.rows.iter().any(|row| row.text.contains(needle)))
-        })
-    }
-
-    #[cfg(test)]
-    pub fn pane_ready(&self, pane: usize) -> bool {
-        self.panes
-            .get(pane)
-            .is_some_and(|pane| !pane.loading && pane.diff.is_some())
-    }
-
-    #[cfg(test)]
     pub fn error(&self) -> Option<&str> {
         self.error.as_deref()
     }
 
-    fn poll(&mut self, ctx: &egui::Context) {
-        let mut parts = vec![];
-        let mut done = false;
-        if let Some(load) = &mut self.load {
-            while let Ok(part) = load.rx.try_recv() {
-                parts.push(part);
-                load.remaining = load.remaining.saturating_sub(1);
-            }
-            done = load.remaining == 0;
-        }
-        for part in parts {
-            self.adopt(part.pane, part.result);
-        }
-        if done {
-            self.load = None;
-        }
+    /// Take the repository identity published by the last successful mutation.
+    pub fn take_changed(&mut self) -> Option<StatusIdentity> {
+        self.changed.take()
+    }
+
+    pub fn poll(&mut self) {
         let result = self.mutation.as_ref().and_then(|rx| match rx.try_recv() {
             Ok(result) => Some(result),
             Err(TryRecvError::Disconnected) => {
@@ -346,777 +68,191 @@ impl StageView {
         });
         if let Some(result) = result {
             self.mutation = None;
-            self.mutation_label = None;
+            self.label = None;
             match result {
                 Ok(identity) => {
-                    for pane in &mut self.panes {
-                        if let Some(request) = &mut pane.request {
-                            request.repository = identity.clone();
-                        }
+                    if let Some(request) = &mut self.request {
+                        request.repository = identity.clone();
                     }
-                    self.changed = true;
+                    self.changed = Some(identity);
                     self.error = None;
-                    self.reload(ctx);
                 }
-                Err(e) => self.error = Some(e),
+                Err(error) => self.error = Some(error),
             }
         }
     }
 
-    fn adopt(&mut self, index: usize, result: Result<FileDiff, String>) {
-        let Some(pane) = self.panes.get_mut(index) else {
-            return;
-        };
-        pane.loading = false;
-        match result {
-            Ok(diff) => {
-                pane.error = None;
-                pane.columns = diff
-                    .rows
-                    .iter()
-                    .map(|row| row.text.chars().count())
-                    .max()
-                    .unwrap_or(0);
-                pane.hunks = hunk_infos(&diff.rows);
-                let rows = diff.rows.len();
-                if pane.offset > rows as f32 * HEIGHT {
-                    pane.offset = (rows as f32 * HEIGHT - HEIGHT).max(0.0);
-                }
-                pane.diff = Some(diff);
-                pane.selected.clear();
-                pane.restore = true;
-            }
-            Err(e) => {
-                pane.error = Some(e);
-            }
-        }
-    }
-
-    fn apply(&mut self, action: Action, ctx: &egui::Context) {
+    /// Apply one reader edit. Duplicate submissions are refused while pending.
+    pub fn apply(&mut self, edit: StageEdit, ctx: &egui::Context) {
         if self.mutation.is_some() {
             return;
         }
-        let pane_index = match &action {
-            Action::Hunk { pane, .. } | Action::Whole { pane } | Action::Drop { pane, .. } => *pane,
-        };
-        let Some(request) = self
-            .panes
-            .get(pane_index)
-            .and_then(|pane| pane.request.clone())
-        else {
+        let Some(request) = self.request.clone() else {
             return;
         };
-        let path = request.repository.path.clone();
-        let base_tree = request.repository.base_tree.clone();
-        let label = match &action {
-            Action::Drop { .. } => "Dropping…",
-            Action::Hunk { .. } | Action::Whole { .. } if pane_index == 0 => "Unstaging…",
-            Action::Hunk { .. } | Action::Whole { .. } => "Staging…",
+        let area = request.entry.area;
+        if area == Area::Conflict {
+            self.error = Some("Resolve the conflict before staging or discarding.".into());
+            return;
+        }
+        if edit.discard && area == Area::Staged {
+            self.error = Some("Discard is only available for working changes.".into());
+            return;
+        }
+        let patch = match edit.scope {
+            StageScope::File => None,
+            StageScope::Hunk | StageScope::Selected => {
+                let Some(header) = edit.header.clone() else {
+                    self.error =
+                        Some("The selected hunk is no longer loaded. Refresh the diff.".into());
+                    return;
+                };
+                let changes = edit
+                    .changes
+                    .iter()
+                    .filter_map(|(kind, line)| match kind {
+                        gg_engine::diff::RowKind::Added => Some(Change::Added(*line)),
+                        gg_engine::diff::RowKind::Deleted => Some(Change::Deleted(*line)),
+                        _ => None,
+                    })
+                    .collect();
+                Some(Edit { header, changes })
+            }
         };
+        self.label = Some(if edit.discard {
+            "Discarding…"
+        } else if area == Area::Staged {
+            "Unstaging…"
+        } else {
+            "Staging…"
+        });
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         let repaint = ctx.clone();
-        match thread::Builder::new()
+        let result = thread::Builder::new()
             .name("gg-stage-mutate".into())
             .spawn(move || {
-                let result = match action {
-                    Action::Hunk { pane, edit } => {
-                        if pane == 0 {
-                            gg_git::unstage::changes(&request, &[edit])
-                        } else {
-                            gg_git::stage::changes(&request, &[edit])
-                        }
+                let operation = match (area, edit.discard, patch) {
+                    (Area::Staged, true, _) => {
+                        Err("Discard is only available for working changes".into())
                     }
-                    Action::Whole { pane } => {
-                        if pane == 0 {
-                            gg_git::unstage::file(&request)
-                        } else {
-                            gg_git::stage::file(&request)
-                        }
+                    (Area::Staged, false, None) => gg_git::unstage::file(&request),
+                    (Area::Staged, false, Some(edit)) => {
+                        gg_git::unstage::changes(&request, &[edit])
                     }
-                    Action::Drop { pane, edit, .. } => {
-                        if pane != 1 {
-                            Err("Drop is only available for working changes".into())
-                        } else if let Some(edit) = edit {
-                            gg_git::drop::changes(&request, &[edit])
-                        } else {
-                            gg_git::drop::file(&request)
-                        }
+                    (Area::Unstaged | Area::Untracked, true, None) => gg_git::drop::file(&request),
+                    (Area::Unstaged | Area::Untracked, true, Some(edit)) => {
+                        gg_git::drop::changes(&request, &[edit])
                     }
-                }
-                .and_then(|()| {
-                    gg_git::status::Session::open_with_base_tree(&path, base_tree)
-                        .map(|session| session.identity)
-                        .map_err(|e| format!("Refresh diff: {e}"))
+                    (Area::Unstaged | Area::Untracked, false, None) => {
+                        gg_git::stage::file(&request)
+                    }
+                    (Area::Unstaged | Area::Untracked, false, Some(edit)) => {
+                        gg_git::stage::changes(&request, &[edit])
+                    }
+                    (Area::Conflict, _, _) => Err("Resolve the conflict before staging.".into()),
+                };
+                let result = operation.and_then(|()| {
+                    gg_git::status::Session::open_with_base_tree(
+                        &request.repository.path,
+                        request.repository.base_tree.clone(),
+                    )
+                    .map(|session| session.identity)
+                    .map_err(|error| format!("Refresh diff: {error}"))
                 });
                 let _ = tx.send(result);
                 repaint.request_repaint();
-            }) {
-            Ok(_) => {
-                self.mutation = Some(rx);
-                self.mutation_label = Some(label.into());
-                self.error = None;
-            }
-            Err(e) => self.error = Some(format!("Start mutation: {e}")),
-        }
-    }
-
-    pub fn draw(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        self.poll(ctx);
-        if let Some(label) = &self.mutation_label {
-            ui.horizontal(|ui| {
-                ui.spinner();
-                ui.weak(label);
             });
-        }
-        if let Some(error) = &self.error {
-            bounded_text::field(ui, error, egui::FontId::proportional(12.0), 22.0);
-        }
-        if let Some(missing) = &self.missing {
-            bounded_text::field(ui, &self.path, egui::FontId::proportional(13.0), 24.0);
-            bounded_text::field(ui, missing, egui::FontId::proportional(12.0), 22.0);
-            return;
-        }
-        let mut action = self.drop_confirm.take();
-        let mut confirmed = false;
-        if let Some(confirm) = &action {
-            let scope = match confirm {
-                Action::Drop { scope, .. } => drop_scope(*scope),
-                _ => "",
-            };
-            ui.horizontal(|ui| {
-                ui.colored_label(
-                    ui.visuals().error_fg_color,
-                    format!(
-                        "Discard {scope} from {}? The index is unchanged.",
-                        self.path
-                    ),
-                );
-                if ui
-                    .add_enabled(
-                        self.mutation.is_none(),
-                        egui::Button::new("Discard").min_size(egui::vec2(86.0, 22.0)),
-                    )
-                    .clicked()
-                {
-                    confirmed = true;
-                }
-                if ui
-                    .add_enabled(
-                        self.mutation.is_none(),
-                        egui::Button::new("Cancel").min_size(egui::vec2(70.0, 22.0)),
-                    )
-                    .clicked()
-                {
-                    action = None;
-                }
-            });
-            ui.weak("Working-tree changes will be lost. The index is unchanged.");
-        }
-        let blocked = self.mutation.is_some() || action.is_some();
-        if confirmed {
-            if let Some(action) = action.take() {
-                self.apply(action, ctx);
-            }
-        } else {
-            self.drop_confirm = action;
-        }
-        if self.path.is_empty() {
-            ui.weak("Select an Unstaged or Staged entry to read its comparison.");
-            return;
-        }
-        ui.horizontal(|ui| {
-            bounded_text::field(ui, &self.path, egui::FontId::proportional(13.0), 24.0);
-        });
-        let mut action = None;
-        draw_pane(
-            &mut self.panes[self.active],
-            if self.active == 0 {
-                PaneKind::Staged
-            } else {
-                PaneKind::Unstaged
-            },
-            ui,
-            blocked,
-            &mut action,
-        );
-        if let Some(action) = action {
-            match action {
-                Action::Drop { .. } => self.drop_confirm = Some(action),
-                _ => self.apply(action, ctx),
+        match result {
+            Ok(_) => self.mutation = Some(rx),
+            Err(error) => {
+                self.label = None;
+                self.error = Some(format!("Start mutation: {error}"));
             }
         }
     }
-}
-
-fn route(_pane: usize, pane_state: &Pane) -> &'static str {
-    match pane_state
-        .request
-        .as_ref()
-        .map(|request| request.entry.area)
-    {
-        Some(Area::Conflict) => "unmerged path",
-        Some(Area::Untracked) => "empty -> working file",
-        Some(Area::Staged)
-            if pane_state
-                .request
-                .as_ref()
-                .is_some_and(|request| request.repository.base_tree.is_some()) =>
-        {
-            "HEAD parent -> index (amend)"
-        }
-        Some(Area::Staged) => "HEAD -> index",
-        _ => "index -> working file",
-    }
-}
-
-fn staged_entry(primary: &StatusEntry, companion: Option<&StatusEntry>) -> StatusEntry {
-    if primary.area == Area::Conflict {
-        return StatusEntry::new(Area::Conflict, Kind::Conflicted, &primary.path_bytes);
-    }
-    if primary.area == Area::Staged {
-        return primary.clone();
-    }
-    if let Some(entry) = companion.filter(|entry| entry.area == Area::Staged) {
-        return entry.clone();
-    }
-    StatusEntry::new(Area::Staged, Kind::Modified, &primary.path_bytes)
-}
-
-fn unstaged_entry(primary: &StatusEntry, companion: Option<&StatusEntry>) -> StatusEntry {
-    if matches!(primary.area, Area::Unstaged | Area::Untracked) {
-        return primary.clone();
-    }
-    if let Some(entry) =
-        companion.filter(|entry| matches!(entry.area, Area::Unstaged | Area::Untracked))
-    {
-        return entry.clone();
-    }
-    let area = if primary.area == Area::Conflict {
-        Area::Conflict
-    } else {
-        Area::Unstaged
-    };
-    let kind = if area == Area::Conflict {
-        Kind::Conflicted
-    } else {
-        Kind::Modified
-    };
-    StatusEntry::new(area, kind, &primary.path_bytes)
-}
-
-fn hunk_infos(rows: &[DiffRow]) -> Vec<HunkInfo> {
-    let mut hunks = vec![];
-    for (index, row) in rows.iter().enumerate() {
-        if row.kind == RowKind::Hunk {
-            hunks.push(HunkInfo {
-                header: index,
-                changes: vec![],
-            });
-        } else if matches!(row.kind, RowKind::Added | RowKind::Deleted)
-            && let Some(hunk) = hunks.last_mut()
-        {
-            hunk.changes.push(index);
-        }
-    }
-    hunks
-}
-
-fn draw_pane(
-    pane: &mut Pane,
-    kind: PaneKind,
-    ui: &mut egui::Ui,
-    pending: bool,
-    action: &mut Option<Action>,
-) {
-    let index = match kind {
-        PaneKind::Staged => 0,
-        PaneKind::Unstaged => 1,
-    };
-    let title = match pane.request.as_ref().map(|request| request.entry.area) {
-        Some(Area::Conflict) => "Conflict",
-        Some(Area::Untracked) => "Untracked",
-        Some(Area::Staged) => "Staged",
-        _ => "Unstaged",
-    };
-    let route_text = route(index, pane);
-    let verb = if kind == PaneKind::Staged {
-        "Unstage"
-    } else {
-        "Stage"
-    };
-    ui.horizontal(|ui| {
-        ui.strong(title);
-        ui.weak(route_text);
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if pane.can_whole_edit(kind)
-                && ui
-                    .add_enabled(
-                        !pending,
-                        egui::Button::new(format!("{verb} file")).min_size(egui::vec2(88.0, 20.0)),
-                    )
-                    .clicked()
-            {
-                *action = Some(Action::Whole { pane: index });
-            }
-            if kind == PaneKind::Unstaged
-                && pane.can_drop_whole()
-                && ui
-                    .add_enabled(
-                        !pending,
-                        egui::Button::new("Discard file").min_size(egui::vec2(76.0, 20.0)),
-                    )
-                    .on_hover_text(
-                        "Discard all working changes in this file; the index is unchanged",
-                    )
-                    .clicked()
-            {
-                *action = Some(Action::Drop {
-                    pane: index,
-                    edit: None,
-                    scope: DropScope::File,
-                });
-            }
-        });
-    });
-    let note = if let Some(error) = &pane.error {
-        error.clone()
-    } else if pane.loading {
-        if pane.diff.is_some() {
-            "Refreshing…".into()
-        } else {
-            "Loading…".into()
-        }
-    } else if let Some(diff) = &pane.diff {
-        if diff.rows.is_empty() {
-            if !diff.note.is_empty() {
-                diff.note.clone()
-            } else if kind == PaneKind::Staged {
-                "No staged changes".into()
-            } else {
-                "No unstaged changes".into()
-            }
-        } else {
-            let mut note = diff.note.clone();
-            if note.is_empty() {
-                note = format!("{} to {} bytes", diff.old_size, diff.new_size);
-            }
-            note
-        }
-    } else {
-        "Loading…".into()
-    };
-    bounded_text::field(
-        ui,
-        &note,
-        egui::FontId::proportional(11.0),
-        if pane.error.is_some() { 22.0 } else { 18.0 },
-    );
-    ui.separator();
-    let Some(diff) = &pane.diff else {
-        return;
-    };
-    if diff.rows.is_empty() {
-        return;
-    }
-    let can_edit = pane.can_line_edit(kind);
-    let mut scroll = egui::ScrollArea::both()
-        .id_salt(("stage-pane", index))
-        .auto_shrink([false, false]);
-    if pane.restore {
-        scroll = scroll.vertical_scroll_offset(pane.offset);
-        pane.restore = false;
-    }
-    ui.spacing_mut().item_spacing.y = 0.0;
-    let font = egui::FontId::monospace(12.0);
-    let Pane {
-        diff,
-        selected,
-        hunks,
-        columns,
-        offset,
-        ..
-    } = pane;
-    let Some(diff) = diff else {
-        return;
-    };
-    let width = (120.0 + *columns as f32 * 8.0).max(ui.available_width());
-    let out = scroll.show_rows(ui, HEIGHT, diff.rows.len(), |ui, rows| {
-        for index in rows {
-            let row = &diff.rows[index];
-            let (rect, response) = ui.allocate_exact_size(
-                egui::vec2(width, HEIGHT),
-                egui::Sense::click(),
-            );
-            let (sign, color, fill) = crate::colors::diff(ui.visuals(), row.kind);
-            ui.painter().rect_filled(rect, 0.0, fill);
-            if selected.contains(&index) {
-                ui.painter()
-                    .rect_filled(rect, 0.0, crate::colors::selection(ui.visuals()));
-                ui.painter().rect_filled(
-                    egui::Rect::from_min_size(rect.min, egui::vec2(3.0, HEIGHT)),
-                    0.0,
-                    ui.visuals().selection.stroke.color,
-                );
-            }
-            let mut button_clicked = false;
-            let mut drop_clicked = false;
-            if row.kind == RowKind::Hunk && can_edit {
-                let hunk = hunks.iter().find(|hunk| hunk.header == index);
-                let chosen = hunk.map_or(0, |hunk| {
-                    hunk.changes
-                        .iter()
-                        .filter(|line| selected.contains(line))
-                        .count()
-                });
-                let label = if chosen == 0 {
-                    format!("{verb} hunk")
-                } else {
-                    format!("{verb} {chosen}")
-                };
-                let button = egui::Rect::from_min_size(
-                    rect.min + egui::vec2(4.0, 1.0),
-                    egui::vec2(104.0, HEIGHT - 2.0),
-                );
-                if pending {
-                    ui.painter().rect(
-                        button,
-                        3.0,
-                        ui.visuals().widgets.noninteractive.bg_fill,
-                        ui.visuals().widgets.noninteractive.bg_stroke,
-                        egui::StrokeKind::Inside,
-                    );
-                    ui.painter().text(
-                        button.center(),
-                        egui::Align2::CENTER_CENTER,
-                        &label,
-                        egui::FontId::proportional(11.0),
-                        ui.visuals().weak_text_color(),
-                    );
-                } else {
-                    let response = ui
-                        .interact(
-                            button,
-                            ui.scope_id().with(("stage-hunk", index_kind(kind), index)),
-                            egui::Sense::click(),
-                        )
-                        .on_hover_text(
-                            "Apply the selected changed lines, or the whole hunk when none are selected",
-                        );
-                    button_clicked = response.clicked();
-                    let fill = if response.hovered() {
-                        ui.visuals().widgets.hovered.bg_fill
-                    } else {
-                        ui.visuals().widgets.inactive.bg_fill
-                    };
-                    ui.painter().rect(
-                        button,
-                        3.0,
-                        fill,
-                        ui.visuals().widgets.inactive.fg_stroke,
-                        egui::StrokeKind::Inside,
-                    );
-                    ui.painter().text(
-                        button.center(),
-                        egui::Align2::CENTER_CENTER,
-                        &label,
-                        egui::FontId::proportional(11.0),
-                        ui.visuals().strong_text_color(),
-                    );
-                    if button_clicked {
-                        let edit = hunk.map(|hunk| {
-                            let lines = hunk
-                                .changes
-                                .iter()
-                                .copied()
-                                .filter(|line| selected.contains(line))
-                                .collect::<Vec<_>>();
-                            Edit {
-                                header: row.text.clone(),
-                                changes: if lines.is_empty() {
-                                    vec![]
-                                } else {
-                                    lines
-                                        .into_iter()
-                                        .filter_map(|line| match diff.rows[line].kind {
-                                            RowKind::Added => diff.rows[line]
-                                                .new_line
-                                                .map(Change::Added),
-                                            RowKind::Deleted => diff.rows[line]
-                                                .old_line
-                                                .map(Change::Deleted),
-                                            _ => None,
-                                        })
-                                        .collect()
-                                },
-                            }
-                        });
-                        if let Some(edit) = edit {
-                            *action = Some(Action::Hunk {
-                                pane: index_kind(kind),
-                                edit,
-                            });
-                        }
-                    }
-                }
-                if kind == PaneKind::Unstaged
-                    && let Some(hunk) = hunk
-                {
-                    let chosen = hunk
-                        .changes
-                        .iter()
-                        .any(|line| selected.contains(line));
-                    let label = if chosen {
-                        "Discard selected"
-                    } else {
-                        "Discard hunk"
-                    };
-                    let button = egui::Rect::from_min_size(
-                        egui::pos2(rect.right() - 108.0, rect.top() + 1.0),
-                        egui::vec2(104.0, HEIGHT - 2.0),
-                    );
-                    if pending {
-                        ui.painter().rect(
-                            button,
-                            3.0,
-                            ui.visuals().widgets.noninteractive.bg_fill,
-                            ui.visuals().widgets.noninteractive.bg_stroke,
-                            egui::StrokeKind::Inside,
-                        );
-                        ui.painter().text(
-                            button.center(),
-                            egui::Align2::CENTER_CENTER,
-                            label,
-                            egui::FontId::proportional(11.0),
-                            ui.visuals().weak_text_color(),
-                        );
-                    } else {
-                        let response = ui
-                            .interact(
-                                button,
-                                ui.scope_id().with(("drop-hunk", index)),
-                                egui::Sense::click(),
-                            )
-                            .on_hover_text(
-                                "Discard the selected change block, or the whole hunk when none is selected",
-                            );
-                        drop_clicked = response.clicked();
-                        let fill = if response.hovered() {
-                            ui.visuals().widgets.hovered.bg_fill
-                        } else {
-                            ui.visuals().widgets.inactive.bg_fill
-                        };
-                        ui.painter().rect(
-                            button,
-                            3.0,
-                            fill,
-                            ui.visuals().widgets.inactive.fg_stroke,
-                            egui::StrokeKind::Inside,
-                        );
-                        ui.painter().text(
-                            button.center(),
-                            egui::Align2::CENTER_CENTER,
-                            label,
-                            egui::FontId::proportional(11.0),
-                            ui.visuals().strong_text_color(),
-                        );
-                        if drop_clicked {
-                            *action = Some(Action::Drop {
-                                pane: index_kind(kind),
-                                edit: Some(Edit {
-                                    header: row.text.clone(),
-                                    changes: drop_changes(&diff.rows, hunk, selected),
-                                }),
-                                scope: if chosen {
-                                    DropScope::Selected
-                                } else {
-                                    DropScope::Hunk
-                                },
-                            });
-                        }
-                    }
-                }
-            }
-            for (x, text) in [
-                (0.0, row.old_line.map(|n| n.to_string()).unwrap_or_default()),
-                (
-                    48.0,
-                    row.new_line.map(|n| n.to_string()).unwrap_or_default(),
-                ),
-                (96.0, sign.into()),
-            ] {
-                ui.painter()
-                    .with_clip_rect(
-                        egui::Rect::from_min_size(
-                            rect.min + egui::vec2(x, 0.0),
-                            egui::vec2(if x == 96.0 { 16.0 } else { 46.0 }, HEIGHT),
-                        )
-                        .intersect(ui.clip_rect()),
-                    )
-                    .text(
-                        rect.min + egui::vec2(x + 4.0, HEIGHT / 2.0),
-                        egui::Align2::LEFT_CENTER,
-                        text,
-                        font.clone(),
-                        ui.visuals().weak_text_color(),
-                    );
-            }
-            let origin = rect.min + egui::vec2(116.0, HEIGHT / 2.0);
-            let text_right = if kind == PaneKind::Unstaged
-                && can_edit
-                && row.kind == RowKind::Hunk
-            {
-                rect.right() - 112.0
-            } else {
-                rect.right()
-            };
-            let clip = egui::Rect::from_min_max(
-                rect.min + egui::vec2(116.0, 0.0),
-                egui::pos2(text_right, rect.bottom()),
-            )
-            .intersect(ui.clip_rect());
-            let (start, end, advance) = ui.fonts_mut(|fonts| {
-                visible_text(
-                    &row.text,
-                    clip.left() - origin.x,
-                    clip.right() - origin.x,
-                    |ch| fonts.glyph_width(&font, ch),
-                )
-            });
-            ui.painter().with_clip_rect(clip).text(
-                origin + egui::vec2(advance, 0.0),
-                egui::Align2::LEFT_CENTER,
-                &row.text[start..end],
-                font.clone(),
-                color,
-            );
-            let hover = if can_edit && matches!(row.kind, RowKind::Added | RowKind::Deleted) {
-                "Click to select this changed line for partial staging"
-            } else if can_edit && row.kind == RowKind::Hunk {
-                "Click to select all changed lines in this hunk"
-            } else {
-                "Click to copy this displayed line"
-            };
-            if !pending
-                && response.on_hover_text(hover).clicked()
-                && !button_clicked
-                && !drop_clicked
-            {
-                if can_edit && row.kind == RowKind::Hunk {
-                    if let Some(hunk) = hunks.iter().find(|hunk| hunk.header == index) {
-                        let all = hunk.changes.iter().all(|line| selected.contains(line));
-                        if all {
-                            for line in &hunk.changes {
-                                selected.remove(line);
-                            }
-                        } else {
-                            selected.extend(hunk.changes.iter().copied());
-                        }
-                    }
-                } else if can_edit
-                    && matches!(row.kind, RowKind::Added | RowKind::Deleted)
-                {
-                    if !selected.remove(&index) {
-                        selected.insert(index);
-                    }
-                } else {
-                    ui.ctx().copy_text(row.text.clone());
-                }
-            }
-        }
-    });
-    *offset = out.state.clamped_offset().y;
-}
-
-fn drop_changes(rows: &[DiffRow], hunk: &HunkInfo, selected: &BTreeSet<usize>) -> Vec<Change> {
-    let chosen = hunk.changes.iter().any(|line| selected.contains(line));
-    if !chosen {
-        return vec![];
-    }
-    let mut blocks: Vec<Vec<usize>> = vec![];
-    for line in &hunk.changes {
-        match blocks.last_mut() {
-            Some(block) if block.last().is_some_and(|last| *line == last + 1) => {
-                block.push(*line);
-            }
-            _ => blocks.push(vec![*line]),
-        }
-    }
-    blocks
-        .into_iter()
-        .filter(|block| block.iter().any(|line| selected.contains(line)))
-        .flatten()
-        .filter_map(|line| match rows[line].kind {
-            RowKind::Added => rows[line].new_line.map(Change::Added),
-            RowKind::Deleted => rows[line].old_line.map(Change::Deleted),
-            _ => None,
-        })
-        .collect()
-}
-
-fn drop_scope(scope: DropScope) -> &'static str {
-    match scope {
-        DropScope::Selected => "the selected changes",
-        DropScope::Hunk => "this hunk",
-        DropScope::File => "all working changes",
-    }
-}
-
-fn index_kind(kind: PaneKind) -> usize {
-    match kind {
-        PaneKind::Staged => 0,
-        PaneKind::Unstaged => 1,
-    }
-}
-
-fn visible_text(
-    text: &str,
-    left: f32,
-    right: f32,
-    mut width: impl FnMut(char) -> f32,
-) -> (usize, usize, f32) {
-    let mut x = 0.0;
-    let mut start = text.len();
-    let mut end = text.len();
-    let mut advance = 0.0;
-    for (index, ch) in text.char_indices() {
-        if x > right {
-            end = index;
-            break;
-        }
-        let next = x + width(ch);
-        if start == text.len() && next >= left {
-            start = index;
-            advance = x;
-        }
-        x = next;
-    }
-    (start.min(end), end, advance)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn request(area: Area) -> WorkingRequest {
+        WorkingRequest {
+            repository: StatusIdentity {
+                path: "/nonexistent".into(),
+                head: None,
+                index: String::new(),
+                base_tree: None,
+            },
+            entry: StatusEntry::new(area, gg_engine::status::Kind::Modified, b"f.txt"),
+        }
+    }
+
     #[test]
-    fn conflicted_paths_never_open_an_editable_pane() {
-        let conflict = StatusEntry::new(Area::Conflict, Kind::Conflicted, b"conflicted.txt");
-        let staged = staged_entry(&conflict, None);
-        let unstaged = unstaged_entry(&conflict, None);
-        assert_eq!(staged.area, Area::Conflict);
-        assert_eq!(unstaged.area, Area::Conflict);
-        let pane = Pane {
-            request: Some(WorkingRequest {
-                repository: StatusIdentity {
-                    path: "/nonexistent".into(),
-                    head: None,
-                    index: String::new(),
-                    base_tree: None,
-                },
-                entry: staged,
-            }),
-            ..Pane::default()
+    fn conflicts_and_staged_discards_are_refused_before_spawning() {
+        let ctx = egui::Context::default();
+        let mut actions = StageActions {
+            request: Some(request(Area::Conflict)),
+            ..StageActions::default()
         };
-        assert!(!pane.can_line_edit(PaneKind::Staged));
-        assert!(!pane.can_whole_edit(PaneKind::Staged));
+        actions.apply(
+            StageEdit {
+                scope: StageScope::File,
+                discard: false,
+                header: None,
+                changes: vec![],
+            },
+            &ctx,
+        );
+        assert!(!actions.mutating());
+        assert!(
+            actions
+                .error()
+                .is_some_and(|error| error.contains("conflict"))
+        );
+
+        let mut actions = StageActions {
+            request: Some(request(Area::Staged)),
+            ..StageActions::default()
+        };
+        actions.apply(
+            StageEdit {
+                scope: StageScope::File,
+                discard: true,
+                header: None,
+                changes: vec![],
+            },
+            &ctx,
+        );
+        assert!(!actions.mutating());
+        assert!(
+            actions
+                .error()
+                .is_some_and(|error| error.contains("Discard"))
+        );
+    }
+
+    #[test]
+    fn a_hunk_edit_requires_its_header() {
+        let ctx = egui::Context::default();
+        let mut actions = StageActions {
+            request: Some(request(Area::Unstaged)),
+            ..StageActions::default()
+        };
+        actions.apply(
+            StageEdit {
+                scope: StageScope::Hunk,
+                discard: false,
+                header: None,
+                changes: vec![],
+            },
+            &ctx,
+        );
+        assert!(!actions.mutating());
+        assert!(
+            actions
+                .error()
+                .is_some_and(|error| error.contains("Refresh"))
+        );
     }
 }

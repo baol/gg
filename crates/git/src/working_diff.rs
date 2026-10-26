@@ -1,10 +1,12 @@
 //! Capture and validate selected working comparisons without writing Git objects.
 use gg_engine::{
     diff::{self, DiffKind, FileDiff, MAX_BLOB_BYTES},
+    file::{FileKind, FileText, ReadingSide},
     review::{ChangeKind, FileChange, FileSide},
     status::{Area, WorkingRequest},
 };
 use std::{
+    collections::BTreeSet,
     io::Read,
     path::{Component, Path},
 };
@@ -174,6 +176,227 @@ fn read_inner(request: &WorkingRequest, cancelled: &dyn Fn() -> bool) -> Result<
         result.note
     );
     Ok(result)
+}
+
+/// Read one full-file side of the selected working comparison.
+///
+/// Staged reads the base tree and the index; unstaged and untracked reads the
+/// index and the normalized working snapshot. Conflict entries have no
+/// meaningful single side and return an explicit summary.
+pub fn read_side(
+    request: &WorkingRequest,
+    side: ReadingSide,
+    changed: &BTreeSet<usize>,
+    cancelled: impl Fn() -> bool,
+) -> std::result::Result<FileText, String> {
+    read_side_inner(request, side, changed, &cancelled).map_err(|error| {
+        format!(
+            "Read {} of {}: {error}",
+            side.label().to_lowercase(),
+            request.entry.path
+        )
+    })
+}
+
+fn read_side_inner(
+    request: &WorkingRequest,
+    side: ReadingSide,
+    changed: &BTreeSet<usize>,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<FileText> {
+    let check = || -> Result<()> {
+        if cancelled() {
+            Err("Read cancelled".into())
+        } else {
+            Ok(())
+        }
+    };
+    check()?;
+    crate::status::validate(&request.repository)?;
+    let repo = gix::discover(&request.repository.path)?;
+    let relative = gix::path::from_bstr(gix::bstr::BStr::new(&request.entry.path_bytes))?;
+    if relative.as_os_str().is_empty()
+        || relative
+            .components()
+            .any(|part| !matches!(part, Component::Normal(_)))
+    {
+        return Err("Use a repository-relative file path".into());
+    }
+    if request.entry.area == Area::Conflict {
+        return Ok(FileText::missing(
+            side,
+            "Unmerged path: choosing a side is read-only; stage the resolution",
+        ));
+    }
+    let index = repo.index_or_empty()?;
+    let index_side = index
+        .entry_by_path(gix::bstr::BStr::new(&request.entry.path_bytes))
+        .filter(|entry| {
+            !entry
+                .flags
+                .contains(gix::index::entry::Flags::INTENT_TO_ADD)
+        })
+        .map(|entry| FileSide {
+            id: entry.id.to_string(),
+            mode: entry.mode.bits() as u16,
+        });
+    let side = match (request.entry.area, side) {
+        (Area::Staged, ReadingSide::Before) => {
+            read_tree_side(request, &repo, &relative, side, changed, cancelled)?
+        }
+        (Area::Staged, ReadingSide::After) => {
+            read_git_side(&repo, index_side.as_ref(), side, changed, cancelled)?
+        }
+        (Area::Untracked, ReadingSide::Before) => {
+            FileText::missing(side, "Untracked: no earlier content")
+        }
+        (_, ReadingSide::Before) => {
+            read_git_side(&repo, index_side.as_ref(), side, changed, cancelled)?
+        }
+        (_, ReadingSide::After) => read_working_side(
+            request,
+            &repo,
+            &relative,
+            index_side.as_ref(),
+            side,
+            changed,
+            cancelled,
+        )?,
+    };
+    check()?;
+    crate::status::validate(&request.repository)?;
+    Ok(side)
+}
+
+fn read_tree_side(
+    request: &WorkingRequest,
+    repo: &gix::Repository,
+    relative: &Path,
+    side: ReadingSide,
+    changed: &BTreeSet<usize>,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<FileText> {
+    let before = if let Some(base) = &request.repository.base_tree {
+        let tree = repo.find_tree(gix::ObjectId::from_hex(base.as_bytes())?)?;
+        tree.lookup_entry_by_path(relative)?.map(|entry| FileSide {
+            id: entry.id().to_string(),
+            mode: entry.mode().value(),
+        })
+    } else if let Some(head) = &request.repository.head {
+        let tree = repo
+            .find_commit(gix::ObjectId::from_hex(head.as_bytes())?)?
+            .tree()?;
+        tree.lookup_entry_by_path(relative)?.map(|entry| FileSide {
+            id: entry.id().to_string(),
+            mode: entry.mode().value(),
+        })
+    } else {
+        None
+    };
+    read_git_side(repo, before.as_ref(), side, changed, cancelled)
+}
+
+fn read_git_side(
+    repo: &gix::Repository,
+    file: Option<&FileSide>,
+    side: ReadingSide,
+    changed: &BTreeSet<usize>,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<FileText> {
+    let Some(file) = file else {
+        return Ok(FileText::missing(side, "No content on this side"));
+    };
+    if file.mode == 0o160000 {
+        return Ok(FileText::summary(
+            FileKind::Gitlink,
+            side,
+            0,
+            "Gitlink: compare the referenced commit ID",
+        ));
+    }
+    if cancelled() {
+        return Err("Read cancelled".into());
+    }
+    let id = gix::ObjectId::from_hex(file.id.as_bytes())?;
+    let size = repo.find_header(id)?.size();
+    if size > MAX_BLOB_BYTES as u64 {
+        return Ok(FileText::summary(
+            FileKind::Limited,
+            side,
+            size,
+            "Text budget: 2 MiB per file",
+        ));
+    }
+    if cancelled() {
+        return Err("Read cancelled".into());
+    }
+    let blob = repo.find_blob(id)?;
+    if cancelled() {
+        return Err("Read cancelled".into());
+    }
+    let mut text = FileText::from_bytes(side, &blob.data, changed);
+    if file.mode == 0o120000 && text.note.is_empty() {
+        text.note = "Symlink target".into();
+    }
+    Ok(text)
+}
+
+fn read_working_side(
+    request: &WorkingRequest,
+    repo: &gix::Repository,
+    relative: &Path,
+    index_side: Option<&FileSide>,
+    side: ReadingSide,
+    changed: &BTreeSet<usize>,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<FileText> {
+    if index_side.is_some_and(|side| side.mode == 0o160000) {
+        return Ok(FileText::summary(
+            FileKind::Gitlink,
+            side,
+            0,
+            "Submodule working changes: inspect the submodule repository",
+        ));
+    }
+    let captured = capture(
+        &request.repository.path,
+        relative,
+        Some(MAX_BLOB_BYTES as u64),
+    )?;
+    let Some(captured) = captured else {
+        return Ok(FileText::missing(side, "Working file absent"));
+    };
+    if captured.size > MAX_BLOB_BYTES as u64 {
+        return Ok(FileText::summary(
+            FileKind::Limited,
+            side,
+            captured.size,
+            "Text budget: 2 MiB per side",
+        ));
+    }
+    if cancelled() {
+        return Err("Read cancelled".into());
+    }
+    let filesystem = repo.filesystem_options()?;
+    let mode = effective_mode(&filesystem, index_side.map(|side| side.mode), captured.mode);
+    let mut bytes = captured.bytes;
+    if mode != 0o120000 {
+        let index = repo.index_or_empty()?;
+        let (mut pipeline, _) = repo.filter_pipeline(None)?;
+        let mut normalized = vec![];
+        pipeline
+            .convert_to_git(std::io::Cursor::new(&bytes), relative, &index)?
+            .take((MAX_BLOB_BYTES + 1) as u64)
+            .read_to_end(&mut normalized)?;
+        bytes = normalized;
+    }
+    let mut text = FileText::from_bytes(side, &bytes, changed);
+    if mode == 0o120000 && text.note.is_empty() {
+        text.note = "Symlink target".into();
+    } else if text.note.is_empty() {
+        text.note = format!("Working snapshot · mode {mode:06o}");
+    }
+    Ok(text)
 }
 #[derive(PartialEq)]
 pub(crate) struct Capture {
