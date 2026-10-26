@@ -364,6 +364,7 @@ enum MutationAction {
 enum OperationArea {
     Mutation {
         operation: gg_engine::mutation::Operation,
+        commit: Option<String>,
         conflicts: usize,
         pending: bool,
     },
@@ -553,6 +554,7 @@ struct Browser {
     #[cfg(debug_assertions)]
     open_local: bool,
     operation_worker: Option<std::sync::mpsc::Receiver<Result<OperationOutcome, String>>>,
+    operation_repo: Option<PathBuf>,
     operation_restore_row: Option<usize>,
     merge_dialog: Option<MergeDialog>,
     rebase_dialog: Option<RebaseDialog>,
@@ -626,6 +628,7 @@ impl Browser {
             #[cfg(debug_assertions)]
             open_local: std::env::var_os("GG_LOCAL_CHANGES").is_some(),
             operation_worker: None,
+            operation_repo: None,
             operation_restore_row: None,
             merge_dialog: None,
             rebase_dialog: None,
@@ -1062,6 +1065,19 @@ impl Browser {
         ctx.request_repaint();
     }
 
+    /// Drop work that belonged to the previous repository.
+    fn clear_operation_state(&mut self) {
+        self.mutation = None;
+        self.mutation_error = None;
+        self.mutation_notice = None;
+        self.operation_worker = None;
+        self.operation_repo = None;
+        self.operation_restore_row = None;
+        self.rewrite_job = None;
+        self.rewrite_refresh = None;
+        self.conflict_view = None;
+    }
+
     /// Detect an operation already in progress when a repository is opened.
     fn sync_mutation(&mut self) {
         let path = self
@@ -1073,8 +1089,7 @@ impl Browser {
             return;
         }
         if self.mutation_path.is_some() {
-            self.mutation = None;
-            self.mutation_error = None;
+            self.clear_operation_state();
         }
         self.mutation_path = path;
         if self.mutation.is_none() {
@@ -1211,21 +1226,21 @@ impl Browser {
             || self.rewrite_refresh.is_some()
     }
 
+    /// Operations that make Local Changes mutations incompatible.
+    fn external_operation_reason(&self) -> Option<String> {
+        if self.operation_busy() {
+            Some("Wait for the current operation to finish".into())
+        } else if self.network.is_some() {
+            Some("Wait for the network operation to finish".into())
+        } else if self.branch.is_some() {
+            Some("Wait for the branch operation to finish".into())
+        } else {
+            None
+        }
+    }
+
     /// The one operation currently owning the strip beneath navigation.
     fn operation_area(&self) -> Option<OperationArea> {
-        if let Some(state) = &self.mutation {
-            return Some(OperationArea::Mutation {
-                operation: state.operation,
-                conflicts: state.conflicts.len(),
-                pending: self.operation_worker.is_some(),
-            });
-        }
-        if self.rewrite_job.is_some() {
-            return Some(OperationArea::Rewrite { refreshing: false });
-        }
-        if self.rewrite_refresh.is_some() {
-            return Some(OperationArea::Rewrite { refreshing: true });
-        }
         if self.operation_worker.is_some() {
             return Some(OperationArea::Worker {
                 label: self
@@ -1233,6 +1248,20 @@ impl Browser {
                     .clone()
                     .unwrap_or_else(|| "Working…".into()),
             });
+        }
+        if let Some(state) = &self.mutation {
+            return Some(OperationArea::Mutation {
+                operation: state.operation,
+                commit: state.commit.clone(),
+                conflicts: state.conflicts.len(),
+                pending: false,
+            });
+        }
+        if self.rewrite_job.is_some() {
+            return Some(OperationArea::Rewrite { refreshing: false });
+        }
+        if self.rewrite_refresh.is_some() {
+            return Some(OperationArea::Rewrite { refreshing: true });
         }
         if let Some(worker) = &self.network {
             return Some(OperationArea::Network {
@@ -1407,6 +1436,7 @@ impl Browser {
             })
             .map_err(|error| format!("Start operation: {error}"))?;
         self.operation_worker = Some(rx);
+        self.operation_repo = self.stash_path();
         self.operation_restore_row = self.state.selected_row;
         self.mutation_error = None;
         self.mutation_notice = Some(label);
@@ -1648,6 +1678,7 @@ impl Browser {
             .stash_path()
             .ok_or("Open a repository before rewriting history.")?;
         let restore_row = self.state.selected_row;
+        let operation_path = path.clone();
         let (sender, receiver) = std::sync::mpsc::channel();
         let repaint = ctx.clone();
         std::thread::Builder::new()
@@ -1662,6 +1693,7 @@ impl Browser {
             receiver,
             restore_row,
         });
+        self.operation_repo = Some(operation_path);
         self.rewrite_dialog = None;
         Ok(())
     }
@@ -1864,8 +1896,18 @@ impl Browser {
     fn load(&mut self, ctx: &egui::Context) {
         self.branch_error = None;
         self.network_error = None;
-        self.refresh_mutation();
         let path = PathBuf::from(&self.path);
+        let switching = self
+            .state
+            .history
+            .as_ref()
+            .is_some_and(|history| history.path != path);
+        if switching {
+            self.clear_operation_state();
+            self.mutation_path = None;
+        } else {
+            self.refresh_mutation();
+        }
         self.state.begin(path.clone());
         let request = stream::Request {
             revision: self.state.filter_revision,
@@ -2077,21 +2119,26 @@ impl Browser {
         };
         if let Some(result) = rewrite_done {
             let restore_row = self.rewrite_job.take().and_then(|job| job.restore_row);
-            match result {
-                Ok(receipt) => {
-                    let generation = self.finish_rewrite(ctx, receipt, restore_row);
-                    self.rewrite_refresh = Some(generation);
+            let same_repository = self.operation_repo.as_ref() == self.stash_path().as_ref();
+            self.operation_repo = None;
+            if same_repository {
+                match result {
+                    Ok(receipt) => {
+                        let generation = self.finish_rewrite(ctx, receipt, restore_row);
+                        self.rewrite_refresh = Some(generation);
+                    }
+                    Err(error) => {
+                        self.refresh_mutation();
+                        self.set_outcome(
+                            OutcomeSeverity::Error,
+                            error,
+                            None,
+                            Some(RecoveryAction::Backups),
+                        );
+                    }
                 }
-                Err(error) => {
-                    self.refresh_mutation();
-                    self.set_outcome(
-                        OutcomeSeverity::Error,
-                        error.clone(),
-                        None,
-                        Some(RecoveryAction::Backups),
-                    );
-                    self.mutation_error = Some(error);
-                }
+            } else {
+                self.mutation_notice = None;
             }
         }
         let operation_done = match self.operation_worker.as_ref().map(|rx| rx.try_recv()) {
@@ -2103,14 +2150,20 @@ impl Browser {
         };
         if let Some(result) = operation_done {
             self.operation_worker = None;
-            match result {
-                Ok(outcome) => self.finish_operation(ctx, outcome),
-                Err(error) => {
-                    self.operation_restore_row = None;
-                    self.mutation_notice = None;
-                    self.set_outcome(OutcomeSeverity::Error, error.clone(), None, None);
-                    self.mutation_error = Some(error);
-                    self.refresh_mutation();
+            let same_repository = self.operation_repo.as_ref() == self.stash_path().as_ref();
+            self.operation_repo = None;
+            if !same_repository {
+                self.operation_restore_row = None;
+                self.mutation_notice = None;
+            } else {
+                match result {
+                    Ok(outcome) => self.finish_operation(ctx, outcome),
+                    Err(error) => {
+                        self.operation_restore_row = None;
+                        self.mutation_notice = None;
+                        self.set_outcome(OutcomeSeverity::Error, error, None, None);
+                        self.refresh_mutation();
+                    }
                 }
             }
         }
@@ -2135,9 +2188,7 @@ impl Browser {
             if now - self.last_scroll <= 0.2 {
                 ctx.request_repaint_after(std::time::Duration::from_millis(200));
             }
-            // A rewrite dialog covers the list, so the refresh can replace rows immediately.
-            let safe = self.rewrite_refresh.is_some()
-                || (!hovering_history && !interacting && now - self.last_scroll > 0.2);
+            let safe = !hovering_history && !interacting && now - self.last_scroll > 0.2;
             let hovering_scrollbar = ctx.input(|i| i.pointer.hover_pos()).is_some_and(|p| {
                 self.history_rect.contains(p) && p.x >= self.history_rect.right() - 18.0
             });
@@ -2368,8 +2419,10 @@ impl Browser {
                         ui.close();
                     }
                     ui.separator();
-                    let network_idle =
-                        self.network.is_none() && self.branch.is_none() && !self.operation_busy();
+                    let network_idle = self.network.is_none()
+                        && self.branch.is_none()
+                        && self.mutation.is_none()
+                        && !self.operation_busy();
                     let has_repo = self.state.history.is_some();
                     if ui
                         .add_enabled(network_idle && has_repo, egui::Button::new("Fetch"))
@@ -2399,19 +2452,6 @@ impl Browser {
                             destination: String::new(),
                         });
                         ui.close();
-                    }
-                    if let Some(worker) = &self.network {
-                        ui.separator();
-                        if ui
-                            .add_enabled(
-                                !worker.is_cancelled(),
-                                egui::Button::new("Cancel network operation"),
-                            )
-                            .clicked()
-                        {
-                            worker.cancel();
-                            ui.close();
-                        }
                     }
                 });
                 let refs = self.state.refs.clone();
@@ -2635,8 +2675,7 @@ impl Browser {
                     }
                 });
                 ui.separator();
-                let trailing = if self.network.is_some() { 40.0 } else { 0.0 };
-                let identity_width = (ui.available_width() - trailing).max(80.0);
+                let identity_width = ui.available_width().max(80.0);
                 let (identity, path) = if let Some(history) = &self.state.history {
                     let tracking = self
                         .state
@@ -2718,11 +2757,10 @@ impl Browser {
                 let summary = format!("History refresh failed: {error}");
                 self.set_outcome(
                     OutcomeSeverity::Error,
-                    summary.clone(),
+                    summary,
                     None,
                     Some(RecoveryAction::Backups),
                 );
-                self.mutation_error = Some(summary);
             }
         }
         let mut mutation_action = None;
@@ -2734,10 +2772,17 @@ impl Browser {
                     match &area {
                         OperationArea::Mutation {
                             operation,
+                            commit,
                             conflicts,
                             pending,
                         } => {
                             ui.strong(format!("{} in progress", operation.as_str()));
+                            if let Some(commit) = commit {
+                                ui.weak(format!(
+                                    "· {}",
+                                    commit.chars().take(8).collect::<String>()
+                                ));
+                            }
                             if *conflicts > 0 {
                                 ui.label(format!(
                                     "· {conflicts} conflict{}",
@@ -2859,7 +2904,8 @@ impl Browser {
                         .add_enabled(
                             self.pending.is_none()
                                 && self.network.is_none()
-                                && self.branch.is_none(),
+                                && self.branch.is_none()
+                                && !self.operation_busy(),
                             egui::Button::new("Open"),
                         )
                         .clicked()
@@ -3966,10 +4012,11 @@ impl Browser {
         }
 
         if self.working.is_some() {
-            let close = self
-                .working
-                .as_mut()
-                .is_some_and(|working| working.draw_ui(ui));
+            let external = self.external_operation_reason();
+            let close = self.working.as_mut().is_some_and(|working| {
+                working.set_external_busy(external);
+                working.draw_ui(ui)
+            });
             let committed = self
                 .working
                 .as_mut()
@@ -4137,6 +4184,9 @@ impl Browser {
                 ui.add_space(5.0);
                 ui.horizontal(|ui| {
                     ui.strong("History");
+                    if self.rewrite_refresh.is_some() {
+                        ui.weak("Refreshing · showing previous history");
+                    }
                     let count = format!(
                         "{}{}",
                         self.state.count,
@@ -5023,6 +5073,11 @@ mod tests {
             1,
             "one operation area reports the refresh: {text:?}"
         );
+        assert!(
+            text.iter()
+                .any(|line| line.contains("showing previous history")),
+            "the retained history is labeled: {text:?}"
+        );
 
         app.state.loaded_generation = app.rewrite_refresh.unwrap_or_default();
         let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
@@ -5034,6 +5089,99 @@ mod tests {
             egui::epaint::Shape::Text(text)
                 if text.galley.job.text.contains("Refreshing history")
         )));
+    }
+
+    #[test]
+    fn continuation_worker_label_replaces_the_mutation_strip() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        app.mutation = Some(gg_engine::mutation::OperationState {
+            operation: gg_engine::mutation::Operation::Rebase,
+            commit: Some("abc123".into()),
+            conflicts: vec!["a".into()],
+        });
+        let (_tx, rx) = std::sync::mpsc::channel();
+        app.operation_worker = Some(rx);
+        app.mutation_notice = Some("Continuing rebase…".into());
+        let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        let text = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            text.iter().any(|line| line.contains("Continuing rebase")),
+            "the area names the running continuation: {text:?}"
+        );
+        assert!(!text.iter().any(|line| line.contains("rebase in progress")));
+    }
+
+    #[test]
+    fn rewrite_failure_keeps_backup_recovery_reachable() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        let path = app.stash_path().unwrap_or_default();
+        assert!(!path.as_os_str().is_empty());
+        let (tx, rx) = std::sync::mpsc::channel();
+        let _ = tx.send(Err("simulated rewrite failure".into()));
+        app.operation_repo = Some(path);
+        app.rewrite_job = Some(RewriteJob {
+            receiver: rx,
+            restore_row: None,
+        });
+        let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        assert!(app.mutation_error.is_none());
+        assert!(
+            app.outcome
+                .as_ref()
+                .is_some_and(|outcome| outcome.severity == OutcomeSeverity::Error)
+        );
+        let text = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            text.iter()
+                .any(|line| line.contains("simulated rewrite failure"))
+        );
+        assert!(text.iter().any(|line| line.contains("Backups…")));
+    }
+
+    #[test]
+    fn repository_switch_discards_foreign_operation_state() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        let (_tx, rx) = std::sync::mpsc::channel();
+        app.operation_worker = Some(rx);
+        app.operation_repo = Some("/old".into());
+        app.mutation_notice = Some("Merging old repository…".into());
+        app.rewrite_refresh = Some(5);
+        app.mutation_path = Some("/old".into());
+        assert!(app.state.history.is_some());
+        if let Some(history) = app.state.history.as_mut() {
+            history.path = "/new".into();
+        }
+        let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        assert!(app.operation_worker.is_none());
+        assert!(app.operation_repo.is_none());
+        assert!(app.rewrite_refresh.is_none());
+        assert!(app.mutation_notice.is_none());
     }
 
     #[test]
@@ -5277,7 +5425,12 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
         assert!(!app.operation_busy());
-        assert!(app.mutation_error.is_some());
+        assert!(app.mutation_error.is_none());
+        assert!(
+            app.outcome
+                .as_ref()
+                .is_some_and(|outcome| outcome.severity == OutcomeSeverity::Error)
+        );
     }
 
     #[test]
@@ -5612,6 +5765,10 @@ mod tests {
             assert!(text.iter().any(|line| line.contains("Continue")));
             assert!(text.iter().any(|line| line.contains("Abort")));
             assert!(!text.iter().any(|line| line.contains("Skip")));
+            assert!(
+                text.iter().any(|line| line.contains("abc123")),
+                "the area names the operation target at {width}: {text:?}"
+            );
         }
     }
 

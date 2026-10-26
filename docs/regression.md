@@ -87,11 +87,12 @@ Before connecting M1 controls, test Review/Back anchor restoration, active-view 
 
 ## Coherence I5b operation area
 
-- One operation area renders directly beneath the navigation strip, hidden when idle. It is the only place for running labels, progress, cancellation, and supported continuation controls; the status line does not duplicate them while it is active.
+- One operation area renders directly beneath the navigation strip, hidden when idle. It is the only place for running labels, progress, cancellation, and supported continuation controls; the status line does not duplicate them while it is active. Running continuations show their worker label instead of a stale needs-attention strip, and the needs-attention label names the operation commit.
 - Merge shows Resolve conflicts, a gated Continue, and Abort without Skip. Cherry-pick, revert, and rebase show Skip. Continue stays disabled until no unmerged paths remain. Stash conflicts never add sequencer controls. The conflict window owns source inspection, side choice, and Stage resolved only.
-- Rewrite submission closes the plan. The area reports Rewriting commits, then Refreshing history until the replacement generation loads; browsing remains available and the retained history is labeled. Failures clear the area and report an error outcome with the backup route.
+- Rewrite submission closes the plan. The area reports Rewriting commits, then Refreshing history until the replacement generation loads; browsing remains available, and the filter header labels the retained rows **Refreshing · showing previous history**. Replacement rows wait for the hover/scroll-safe boundary. Failures clear the area and report an error outcome whose **Backups…** action remains reachable.
 - Network operations show phase/percent/message with Cancel in the area; branch operations show their label there. Duplicate submission is refused and incompatible mutations stay disabled for the duration.
-- Opening a repository with an existing operation detects it on the first completed history load. Switching repositories clears the previous operation state before detection.
+- Opening a repository with an existing operation detects it on the first completed history load. Switching repositories drops the previous workers, notices, conflict view, and refresh state; late results are ignored and the new repository is detected independently. Open is disabled while work owns the area.
+- Local Changes disables staging, discard, commit, amend, and duplicate mutations while the area owns a rewrite, operation worker, network, or branch operation. Network work cannot start during an in-progress merge/rebase; cancellation lives only in the area.
 - Geometry/interaction tests cover the area at 720×480 and 1120×740, the merge-without-Skip rule, one-area ownership, rewrite lifecycle, network cancel, and outcome/recovery behavior.
 
 ## M1 changed files

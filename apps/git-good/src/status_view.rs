@@ -110,6 +110,7 @@ pub struct StatusView {
     complete: bool,
     error: Option<String>,
     action_error: Option<String>,
+    external_busy: Option<String>,
     replacing: bool,
     active: Option<Comparison>,
     active_entry: Option<StatusEntry>,
@@ -148,6 +149,7 @@ impl StatusView {
             complete: false,
             error: None,
             action_error: None,
+            external_busy: None,
             replacing: false,
             active: None,
             active_entry: None,
@@ -427,7 +429,12 @@ impl StatusView {
         self.prune_rows(pinned);
     }
     fn busy(&self) -> bool {
-        self.stage.mutating() || self.commit.is_some()
+        self.stage.mutating() || self.commit.is_some() || self.external_busy.is_some()
+    }
+
+    /// Disable incompatible mutations while another view owns an operation.
+    pub fn set_external_busy(&mut self, reason: Option<String>) {
+        self.external_busy = reason;
     }
 
     pub fn take_commit(&mut self) -> Option<String> {
@@ -1086,6 +1093,12 @@ impl StatusView {
     }
 
     fn status_text(&self) -> String {
+        if let Some(reason) = &self.external_busy {
+            return format!(
+                "{reason} · {} unstaged · {} staged",
+                self.lists[0].count, self.lists[1].count
+            );
+        }
         if let Some(error) = &self.error {
             return format!(
                 "{}{}",
@@ -1396,6 +1409,7 @@ mod tests {
             complete: true,
             error: None,
             action_error: None,
+            external_busy: None,
             replacing: false,
             active: None,
             active_entry: None,
@@ -2203,6 +2217,23 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn an_external_operation_disables_incompatible_mutations() {
+        let ctx = egui::Context::default();
+        let mut view = fixture(1, 1);
+        frame(&ctx, &mut view, 1120.0, vec![]);
+        assert!(!view.busy());
+        view.set_external_busy(Some("Wait for the history rewrite to finish".into()));
+        assert!(view.busy());
+        assert!(
+            view.status_text()
+                .contains("Wait for the history rewrite to finish")
+        );
+        assert_eq!(
+            commit_reason(true, false, "message", false, 1),
+            Some("Wait for the current operation")
+        );
+    }
     #[test]
     fn commit_readiness_explains_disabled_states() {
         assert_eq!(
