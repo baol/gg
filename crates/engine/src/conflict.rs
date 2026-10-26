@@ -28,7 +28,12 @@ pub struct Snapshot {
     pub base: Option<String>,
     pub ours: Option<String>,
     pub theirs: Option<String>,
+    /// Exact working bytes when the file is a bounded regular file.
     pub working: Option<Vec<u8>>,
+    /// FNV-1a hash of a larger regular working file.
+    pub working_hash: Option<u64>,
+    /// Why the working preview is unavailable, when it is.
+    pub working_note: Option<String>,
 }
 
 /// The result chosen for preview and, after explicit confirmation, publication.

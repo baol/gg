@@ -2332,6 +2332,7 @@ mod tests {
         settle(&ctx, &mut view, 1120.0);
         view.start_amend(&ctx)?;
         settle(&ctx, &mut view, 1120.0);
+        ready(&ctx, &mut view, 1120.0);
         assert_eq!(view.message, "base");
         assert!(view.amend);
         assert!(view.amend_base_commit.is_none(), "root amend has no parent");

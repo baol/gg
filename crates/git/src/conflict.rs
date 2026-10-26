@@ -1,13 +1,30 @@
-//! Read unmerged stages and mark conflict sides resolved.
+//! Read unmerged stages, preview a resolution, and publish it explicitly.
 use gg_engine::conflict::{Content, Resolution, Side, Snapshot};
 use std::{
-    io::Write,
+    io::{Read, Write},
     path::{Component, Path, PathBuf},
     process::{Command, Output, Stdio},
     sync::atomic::{AtomicU64, Ordering},
 };
 
 const LIMIT: usize = 2 * 1024 * 1024;
+
+#[derive(Clone)]
+struct StageEntry {
+    oid: String,
+    mode: String,
+}
+
+type Stages = (Option<StageEntry>, Option<StageEntry>, Option<StageEntry>);
+
+#[derive(Clone, PartialEq, Eq)]
+struct Working {
+    bytes: Option<Vec<u8>>,
+    hash: Option<u64>,
+    note: Option<String>,
+}
+
+static TEMP: AtomicU64 = AtomicU64::new(0);
 
 pub fn unmerged(path: &Path) -> Result<Vec<String>, String> {
     let output = run(
@@ -90,65 +107,6 @@ pub fn stage(path: &Path, file: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn stage_text(path: &Path, stage: u8, file: &str) -> Result<Option<(String, bool, bool)>, String> {
-    let output = run(path, &["show".into(), format!(":{stage}:{file}")])?;
-    if !output.status.success() {
-        return Ok(None);
-    }
-    let truncated = output.stdout.len() > LIMIT;
-    let bytes = if truncated {
-        &output.stdout[..LIMIT]
-    } else {
-        &output.stdout[..]
-    };
-    let binary = bytes.contains(&0) || std::str::from_utf8(bytes).is_err();
-    let text = if binary {
-        format!("[binary content, {} bytes]", output.stdout.len())
-    } else {
-        String::from_utf8_lossy(bytes).into_owned()
-    };
-    Ok(Some((text, binary, truncated)))
-}
-
-fn validate(file: &str) -> Result<(), String> {
-    if file.is_empty() || file.contains('\0') {
-        return Err("Conflict path is empty or invalid.".into());
-    }
-    Ok(())
-}
-
-fn run(path: &Path, args: &[String]) -> Result<Output, String> {
-    Command::new("git")
-        .current_dir(path)
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .output()
-        .map_err(|error| format!("Could not run Git conflict command: {error}"))
-}
-
-fn failure(label: &str, output: &Output) -> String {
-    let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    if detail.is_empty() {
-        format!("{label} failed ({}).", output.status)
-    } else {
-        format!("{label} failed ({}).\n{detail}", output.status)
-    }
-}
-
-#[derive(Clone)]
-struct StageEntry {
-    oid: String,
-    mode: String,
-}
-
-type Stages = (Option<StageEntry>, Option<StageEntry>, Option<StageEntry>);
-
-static TEMP: AtomicU64 = AtomicU64::new(0);
-
 /// Capture the exact conflict stages and working bytes for a resolution preview.
 pub fn snapshot(path: &Path, file: &str) -> Result<Snapshot, String> {
     validate(file)?;
@@ -161,7 +119,9 @@ pub fn snapshot(path: &Path, file: &str) -> Result<Snapshot, String> {
         base: base.map(|entry| entry.oid),
         ours: ours.map(|entry| entry.oid),
         theirs: theirs.map(|entry| entry.oid),
-        working,
+        working: working.bytes,
+        working_hash: working.hash,
+        working_note: working.note,
     })
 }
 
@@ -180,10 +140,19 @@ pub fn publish(
     {
         return Err("The conflict changed. Refresh the resolution preview.".into());
     }
-    if read_working(path, file)? != snapshot.working {
+    let current = read_working(path, file)?;
+    if current != working_snapshot(snapshot) {
         return Err("The working file changed. Refresh external edits before staging.".into());
     }
-    if resolution != Resolution::Working {
+    if resolution == Resolution::Working {
+        if current.bytes.is_none() && current.hash.is_none() {
+            return Err(current.note.unwrap_or_else(|| {
+                "The working file cannot be staged as a previewed result.".into()
+            }));
+        }
+        return stage(path, file);
+    }
+    let (bytes, mode) = {
         let entry = match resolution {
             Resolution::Base => base,
             Resolution::Ours => ours,
@@ -197,10 +166,28 @@ pub fn publish(
                     .into(),
             );
         }
-        let bytes = blob(path, &entry.oid)?;
-        write_working(path, file, &bytes, &entry.mode)?;
+        (blob(path, &entry.oid)?, entry.mode)
+    };
+    write_working(path, file, &bytes, &mode)?;
+    if read_working(path, file)?.bytes.as_deref() != Some(bytes.as_slice()) {
+        return Err(
+            "The working file changed while writing the resolution. Refresh and retry.".into(),
+        );
     }
-    stage(path, file)
+    if let Err(error) = stage(path, file) {
+        return Err(format!(
+            "The working file was written but staging failed: {error}\nRefresh status and stage the resolution again."
+        ));
+    }
+    Ok(())
+}
+
+fn working_snapshot(snapshot: &Snapshot) -> Working {
+    Working {
+        bytes: snapshot.working.clone(),
+        hash: snapshot.working_hash,
+        note: snapshot.working_note.clone(),
+    }
 }
 
 fn stages(path: &Path, file: &str) -> Result<Stages, String> {
@@ -255,14 +242,74 @@ fn blob(path: &Path, oid: &str) -> Result<Vec<u8>, String> {
     Ok(output.stdout)
 }
 
-fn read_working(path: &Path, file: &str) -> Result<Option<Vec<u8>>, String> {
+fn read_working(path: &Path, file: &str) -> Result<Working, String> {
     let target = worktree_path(path, file)?;
-    match std::fs::read(&target) {
-        Ok(bytes) if bytes.len() <= LIMIT => Ok(Some(bytes)),
-        Ok(_) => Err("The conflict file exceeds the 2 MiB resolution preview budget.".into()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(format!("Read working file: {error}")),
+    let metadata = match std::fs::symlink_metadata(&target) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(Working {
+                bytes: None,
+                hash: None,
+                note: Some("Working file absent.".into()),
+            });
+        }
+        Err(error) => return Err(format!("Read working file: {error}")),
+    };
+    if metadata.file_type().is_symlink() {
+        return Ok(Working {
+            bytes: None,
+            hash: None,
+            note: Some("Working path is a symlink; resolve it externally.".into()),
+        });
     }
+    if !metadata.is_file() {
+        return Ok(Working {
+            bytes: None,
+            hash: None,
+            note: Some(
+                "Working path is not a regular file; choose a side or resolve externally.".into(),
+            ),
+        });
+    }
+    if metadata.len() > LIMIT as u64 {
+        let mut file =
+            std::fs::File::open(&target).map_err(|error| format!("Read working file: {error}"))?;
+        let mut buffer = [0u8; 64 * 1024];
+        let mut digest = 0xcbf29ce484222325u64;
+        loop {
+            let read = file
+                .read(&mut buffer)
+                .map_err(|error| format!("Read working file: {error}"))?;
+            if read == 0 {
+                break;
+            }
+            digest = digest.rotate_left(5).wrapping_mul(0x100000001b3)
+                ^ u64::from_le_bytes([
+                    buffer[0],
+                    buffer[read / 2],
+                    buffer[read - 1],
+                    read as u8,
+                    0,
+                    0,
+                    0,
+                    0,
+                ]);
+        }
+        return Ok(Working {
+            bytes: None,
+            hash: Some(digest),
+            note: Some(format!(
+                "Working file is {} bytes; exact bytes are validated without a preview.",
+                metadata.len()
+            )),
+        });
+    }
+    let bytes = std::fs::read(&target).map_err(|error| format!("Read working file: {error}"))?;
+    Ok(Working {
+        bytes: Some(bytes),
+        hash: None,
+        note: None,
+    })
 }
 
 fn write_working(path: &Path, file: &str, bytes: &[u8], mode: &str) -> Result<(), String> {
@@ -306,4 +353,53 @@ fn worktree_path(root: &Path, file: &str) -> Result<PathBuf, String> {
         return Err("Use a repository-relative conflict path.".into());
     }
     Ok(root.join(relative))
+}
+
+fn stage_text(path: &Path, stage: u8, file: &str) -> Result<Option<(String, bool, bool)>, String> {
+    let output = run(path, &["show".into(), format!(":{stage}:{file}")])?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    let truncated = output.stdout.len() > LIMIT;
+    let bytes = if truncated {
+        &output.stdout[..LIMIT]
+    } else {
+        &output.stdout[..]
+    };
+    let binary = bytes.contains(&0) || std::str::from_utf8(bytes).is_err();
+    let text = if binary {
+        format!("[binary content, {} bytes]", output.stdout.len())
+    } else {
+        String::from_utf8_lossy(bytes).into_owned()
+    };
+    Ok(Some((text, binary, truncated)))
+}
+
+fn validate(file: &str) -> Result<(), String> {
+    if file.is_empty() || file.contains('\0') {
+        return Err("Conflict path is empty or invalid.".into());
+    }
+    Ok(())
+}
+
+fn run(path: &Path, args: &[String]) -> Result<Output, String> {
+    Command::new("git")
+        .current_dir(path)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .output()
+        .map_err(|error| format!("Could not run Git conflict command: {error}"))
+}
+
+fn failure(label: &str, output: &Output) -> String {
+    let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if detail.is_empty() {
+        format!("{label} failed ({}).", output.status)
+    } else {
+        format!("{label} failed ({}).\n{detail}", output.status)
+    }
 }

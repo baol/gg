@@ -126,7 +126,8 @@ fn previewed_sides_publish_only_after_validation() -> Result {
     let snapshot = gg_git::conflict::snapshot(p, "a")?;
     assert!(snapshot.base.is_some());
     assert!(snapshot.ours.is_some());
-    assert!(snapshot.theirs.is_some());
+    let ours = snapshot.ours.clone();
+    assert!(ours.is_some());
     assert_eq!(
         std::fs::read(p.join("a"))?,
         b"<<<<<<< HEAD\nmain\n=======\nfeature\n>>>>>>> feature\n"
@@ -135,6 +136,12 @@ fn previewed_sides_publish_only_after_validation() -> Result {
     gg_git::conflict::publish(p, "a", &snapshot, gg_engine::conflict::Resolution::Ours)?;
     assert_eq!(std::fs::read(p.join("a"))?, b"main\n");
     assert!(gg_git::conflict::unmerged(p)?.is_empty());
+    let staged = git(p, &["ls-files", "-s", "--", "a"])?;
+    let staged = String::from_utf8_lossy(&staged);
+    assert!(
+        staged.contains(ours.as_deref().unwrap_or_default()),
+        "staged output must be the selected side: {staged}"
+    );
     Ok(())
 }
 
@@ -184,5 +191,69 @@ fn snapshot_rejects_paths_outside_the_repository() -> Result {
     let p = dir.path();
     conflicting(p)?;
     assert!(gg_git::conflict::snapshot(p, "../a").is_err());
+    Ok(())
+}
+
+#[test]
+fn oversized_working_files_validate_without_a_preview() -> Result {
+    let dir = repo()?;
+    let p = dir.path();
+    conflicting(p)?;
+    std::fs::write(p.join("a"), vec![b'a'; 2 * 1024 * 1024 + 1])?;
+    let snapshot = gg_git::conflict::snapshot(p, "a")?;
+    assert!(snapshot.working.is_none());
+    assert!(snapshot.working_hash.is_some());
+    assert!(
+        snapshot
+            .working_note
+            .as_deref()
+            .is_some_and(|note| note.contains("bytes"))
+    );
+    gg_git::conflict::publish(p, "a", &snapshot, gg_engine::conflict::Resolution::Working)?;
+    assert!(gg_git::conflict::unmerged(p)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn publishing_reports_a_partial_worktree_write() -> Result {
+    let dir = repo()?;
+    let p = dir.path();
+    conflicting(p)?;
+    let snapshot = gg_git::conflict::snapshot(p, "a")?;
+    std::fs::write(p.join(".git/index.lock"), b"locked")?;
+    let error =
+        match gg_git::conflict::publish(p, "a", &snapshot, gg_engine::conflict::Resolution::Ours) {
+            Err(error) => error,
+            Ok(()) => return Err("locked index must fail".into()),
+        };
+    assert!(error.contains("written but staging failed"), "{error}");
+    assert_eq!(std::fs::read(p.join("a"))?, b"main\n");
+    std::fs::remove_file(p.join(".git/index.lock"))?;
+    assert!(!gg_git::conflict::unmerged(p)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn non_regular_working_paths_keep_the_side_preview_explicit() -> Result {
+    let dir = repo()?;
+    let p = dir.path();
+    conflicting(p)?;
+    std::fs::remove_file(p.join("a"))?;
+    std::fs::create_dir(p.join("a"))?;
+    let snapshot = gg_git::conflict::snapshot(p, "a")?;
+    assert!(snapshot.working.is_none());
+    assert!(
+        snapshot
+            .working_note
+            .as_deref()
+            .is_some_and(|note| note.contains("not a regular file"))
+    );
+    let error =
+        match gg_git::conflict::publish(p, "a", &snapshot, gg_engine::conflict::Resolution::Ours) {
+            Err(error) => error,
+            Ok(()) => return Err("a directory cannot be replaced by rename".into()),
+        };
+    assert!(error.contains("Write working file"), "{error}");
+    assert!(p.join("a").is_dir());
     Ok(())
 }
