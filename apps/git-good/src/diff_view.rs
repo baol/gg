@@ -52,6 +52,7 @@ pub struct DiffView {
     displayed_working: Option<gg_engine::status::WorkingRequest>,
     displayed_generation: u64,
     displayed_mode: Mode,
+    displayed_side: ReadingSide,
     path: PathBuf,
     pub generation: u64,
     pub rows: BTreeMap<usize, DiffRow>,
@@ -103,6 +104,7 @@ impl Default for DiffView {
             displayed_working: None,
             displayed_generation: 0,
             displayed_mode: Mode::Diff,
+            displayed_side: ReadingSide::After,
             path: PathBuf::new(),
             generation: 0,
             rows: BTreeMap::new(),
@@ -441,8 +443,14 @@ impl DiffView {
             .is_some_and(|info| info.kind == DiffKind::Text && info.complete)
     }
 
+    fn content_pending(&self) -> bool {
+        self.displayed_generation != self.generation
+            || self.displayed_mode != self.mode
+            || (self.mode == Mode::Full && self.displayed_side != self.side)
+    }
+
     fn content_settled(&self) -> bool {
-        self.displayed_generation == self.generation
+        !self.content_pending()
     }
 
     fn can_line_edit(&self) -> bool {
@@ -740,6 +748,7 @@ impl DiffView {
             return;
         }
         self.hunks = update.hunks;
+        self.displayed_side = update.side;
         if self.mode == Mode::Full {
             if self.displayed_mode != Mode::Full
                 || self.displayed_generation != update.generation
@@ -755,6 +764,7 @@ impl DiffView {
                 self.displayed_working = self.working.clone();
                 self.displayed_generation = update.generation;
                 self.displayed_mode = Mode::Full;
+                self.displayed_side = update.side;
                 self.full_side = update.side;
                 self.full = None;
                 self.cursor = None;
@@ -806,6 +816,7 @@ impl DiffView {
                     self.displayed_working = self.working.clone();
                     self.displayed_generation = update.generation;
                     self.displayed_mode = Mode::Diff;
+                    self.displayed_side = update.side;
                     self.cursor = None;
                     self.anchor = None;
                     self.stage_selected.clear();
@@ -1290,7 +1301,7 @@ impl DiffView {
     /// One short state line for completeness, notes, and loading. Sizes and
     /// object identity live in File details instead of permanent rows.
     fn draw_status(&mut self, ui: &mut egui::Ui) {
-        let pending = self.displayed_generation != self.generation;
+        let pending = self.content_pending();
         let mut parts: Vec<String> = vec![];
         if self.mode == Mode::Full {
             if let Some(full) = &self.full {
@@ -1973,11 +1984,11 @@ fn visible_text(
 #[cfg(test)]
 impl DiffView {
     pub fn ready(&self) -> bool {
-        self.displayed_generation == self.generation
+        self.content_settled()
     }
 
     pub fn pending(&self) -> bool {
-        self.displayed_generation != self.generation
+        self.content_pending()
     }
 
     pub fn has_text(&self, needle: &str) -> bool {
