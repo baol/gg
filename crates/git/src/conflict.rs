@@ -138,7 +138,7 @@ pub fn publish(
         || ours.as_ref().map(|entry| entry.oid.clone()) != snapshot.ours
         || theirs.as_ref().map(|entry| entry.oid.clone()) != snapshot.theirs
     {
-        return Err("The conflict changed. Refresh the resolution preview.".into());
+        return Err("The conflict changed. Refresh external edits and retry.".into());
     }
     let current = read_working(path, file)?;
     if current != working_snapshot(snapshot) {
@@ -169,9 +169,16 @@ pub fn publish(
         (blob(path, &entry.oid)?, entry.mode)
     };
     write_working(path, file, &bytes, &mode)?;
-    if read_working(path, file)?.bytes.as_deref() != Some(bytes.as_slice()) {
+    let written = read_working(path, file)?;
+    let written_ok = if bytes.len() > LIMIT {
+        written.bytes.is_none() && written.hash == Some(hash(&bytes))
+    } else {
+        written.bytes.as_deref() == Some(bytes.as_slice())
+    };
+    if !written_ok {
         return Err(
-            "The working file changed while writing the resolution. Refresh and retry.".into(),
+            "The working file changed while writing the resolution. Refresh external edits and retry."
+                .into(),
         );
     }
     if let Err(error) = stage(path, file) {
@@ -180,6 +187,15 @@ pub fn publish(
         ));
     }
     Ok(())
+}
+
+fn hash(bytes: &[u8]) -> u64 {
+    let mut digest = 0xcbf29ce484222325u64;
+    for byte in bytes {
+        digest ^= u64::from(*byte);
+        digest = digest.wrapping_mul(0x100000001b3);
+    }
+    digest
 }
 
 fn working_snapshot(snapshot: &Snapshot) -> Working {
@@ -283,17 +299,10 @@ fn read_working(path: &Path, file: &str) -> Result<Working, String> {
             if read == 0 {
                 break;
             }
-            digest = digest.rotate_left(5).wrapping_mul(0x100000001b3)
-                ^ u64::from_le_bytes([
-                    buffer[0],
-                    buffer[read / 2],
-                    buffer[read - 1],
-                    read as u8,
-                    0,
-                    0,
-                    0,
-                    0,
-                ]);
+            for byte in &buffer[..read] {
+                digest ^= u64::from(*byte);
+                digest = digest.wrapping_mul(0x100000001b3);
+            }
         }
         return Ok(Working {
             bytes: None,

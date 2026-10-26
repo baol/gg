@@ -128,6 +128,7 @@ fn previewed_sides_publish_only_after_validation() -> Result {
     assert!(snapshot.ours.is_some());
     let ours = snapshot.ours.clone();
     assert!(ours.is_some());
+    assert!(snapshot.theirs.is_some());
     assert_eq!(
         std::fs::read(p.join("a"))?,
         b"<<<<<<< HEAD\nmain\n=======\nfeature\n>>>>>>> feature\n"
@@ -255,5 +256,47 @@ fn non_regular_working_paths_keep_the_side_preview_explicit() -> Result {
         };
     assert!(error.contains("Write working file"), "{error}");
     assert!(p.join("a").is_dir());
+    Ok(())
+}
+
+#[test]
+fn oversized_sides_publish_and_changed_bytes_are_detected() -> Result {
+    let dir = tempfile::tempdir()?;
+    let p = dir.path();
+    git(p, &["init", "-b", "main"])?;
+    git(p, &["config", "user.name", "Test"])?;
+    git(p, &["config", "user.email", "test@example.org"])?;
+    std::fs::write(p.join("a"), b"base\n")?;
+    git(p, &["add", "a"])?;
+    git(p, &["commit", "-qm", "base"])?;
+    git(p, &["switch", "-qc", "feature"])?;
+    std::fs::write(p.join("a"), vec![b'f'; 2 * 1024 * 1024 + 1])?;
+    git(p, &["commit", "-qam", "feature"])?;
+    git(p, &["switch", "-q", "main"])?;
+    std::fs::write(p.join("a"), vec![b'm'; 2 * 1024 * 1024 + 1])?;
+    git(p, &["commit", "-qam", "main"])?;
+    let _ = gg_git::merge::merge(p, "feature", false);
+    assert!(!gg_git::conflict::unmerged(p)?.is_empty());
+
+    let snapshot = gg_git::conflict::snapshot(p, "a")?;
+    gg_git::conflict::publish(p, "a", &snapshot, gg_engine::conflict::Resolution::Ours)?;
+    let resolved = std::fs::read(p.join("a"))?;
+    assert_eq!(resolved.len(), 2 * 1024 * 1024 + 1);
+    assert!(resolved.iter().all(|byte| *byte == b'm'));
+    assert!(gg_git::conflict::unmerged(p)?.is_empty());
+
+    let dir = repo()?;
+    let p = dir.path();
+    conflicting(p)?;
+    let mut oversized = vec![b'a'; 2 * 1024 * 1024 + 1];
+    std::fs::write(p.join("a"), &oversized)?;
+    let snapshot = gg_git::conflict::snapshot(p, "a")?;
+    oversized[100] = b'b';
+    std::fs::write(p.join("a"), &oversized)?;
+    assert!(
+        gg_git::conflict::publish(p, "a", &snapshot, gg_engine::conflict::Resolution::Working,)
+            .is_err(),
+        "a changed byte in a large file must invalidate the preview"
+    );
     Ok(())
 }
