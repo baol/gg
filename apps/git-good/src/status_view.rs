@@ -84,7 +84,9 @@ impl List {
 pub struct StatusView {
     path: PathBuf,
     identity: Option<gg_engine::status::StatusIdentity>,
-    stage: crate::stage_view::StageView,
+    stage: crate::stage_view::StageActions,
+    reader: crate::diff_view::DiffView,
+    drop_confirm: Option<crate::diff_view::StageEdit>,
     commit: Option<std::sync::mpsc::Receiver<Result<gg_git::commit::Receipt, String>>>,
     commit_done: Option<String>,
     last_commit: Option<String>,
@@ -120,7 +122,9 @@ impl StatusView {
         let mut view = Self {
             path,
             identity: None,
-            stage: crate::stage_view::StageView::default(),
+            stage: crate::stage_view::StageActions::default(),
+            reader: crate::diff_view::DiffView::default(),
+            drop_confirm: None,
             commit: None,
             commit_done: None,
             last_commit: None,
@@ -290,15 +294,14 @@ impl StatusView {
         }
     }
     fn mark_missing(&mut self, ctx: &egui::Context) {
-        let Some(selected) = self.active.clone() else {
+        if self.active.is_none() {
             return;
-        };
-        let Some(identity) = self.identity.clone() else {
-            return;
-        };
+        }
         self.active_entry = None;
-        self.stage
-            .select_missing(identity, selected.0, selected.1, ctx);
+        self.stage.clear();
+        self.reader.clear();
+        self.drop_confirm = None;
+        ctx.request_repaint();
     }
     fn prune_rows(&mut self, pinned: Option<(usize, usize)>) {
         for index in 0..2 {
@@ -354,15 +357,6 @@ impl StatusView {
             .find(|entry| entry.path_bytes == selected.0 && entry.area == selected.1)
             .cloned()
     }
-    fn companion(&self, entry: &StatusEntry) -> Option<StatusEntry> {
-        self.lists
-            .iter()
-            .flat_map(|list| list.rows.values())
-            .find(|candidate| {
-                candidate.path_bytes == entry.path_bytes && candidate.area != entry.area
-            })
-            .cloned()
-    }
     fn select_row(&mut self, index: usize, row: usize, ctx: &egui::Context) {
         let Some(entry) = self.lists[index].rows.get(&row).cloned() else {
             self.focus = index;
@@ -382,9 +376,10 @@ impl StatusView {
         self.lists[index].selected = Some(selected.clone());
         self.active = Some(selected);
         self.active_entry = Some(entry.clone());
+        self.drop_confirm = None;
         if let Some(repository) = self.identity.clone() {
-            let companion = self.companion(&entry);
-            self.stage.select_working(repository, entry, companion, ctx);
+            self.stage.select(repository.clone(), entry.clone());
+            self.reader.select_working(repository, entry, ctx);
         }
     }
     fn sync_active(&mut self, ctx: &egui::Context, reload: bool) {
@@ -400,16 +395,14 @@ impl StatusView {
         let entry = self
             .find_entry(&selected)
             .unwrap_or_else(|| StatusEntry::new(selected.1, kind, &selected.0));
-        let companion = self.companion(&entry);
-        let repository_changed = self.stage.repository() != self.identity.as_ref();
         let selection_changed = self.active_entry.as_ref() != Some(&entry);
-        if let Some(identity) = self.identity.clone()
-            && (repository_changed || selection_changed)
-        {
-            self.stage
-                .select_working(identity, entry.clone(), companion, ctx);
-        } else if reload {
-            self.stage.reload(ctx);
+        if let Some(identity) = self.identity.clone() {
+            if selection_changed {
+                self.stage.select(identity.clone(), entry.clone());
+                self.reader.select_working(identity, entry.clone(), ctx);
+            } else if reload {
+                self.reader.refresh_working(identity, ctx);
+            }
         }
         self.active_entry = Some(entry);
     }
@@ -866,10 +859,89 @@ impl StatusView {
 
     fn draw_reader(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         self.reader_rect = ui.max_rect();
-        if self.active.is_some() {
-            self.stage.draw(ui, ctx);
-        } else {
+        if let Some(label) = self.stage.label() {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.weak(label);
+            });
+        }
+        if let Some(error) = self.stage.error().map(str::to_owned) {
+            bounded_text::field(ui, &error, egui::FontId::proportional(12.0), 22.0);
+        }
+        if let Some(selected) = &self.active
+            && self.active_entry.is_none()
+        {
+            bounded_text::field(
+                ui,
+                &gg_engine::review::display_path(&selected.0),
+                egui::FontId::proportional(13.0),
+                24.0,
+            );
+            ui.weak("This entry is no longer present. Select another entry.");
+            return;
+        }
+        if self.active.is_none() {
             ui.weak("Select an Unstaged or Staged entry to read its comparison.");
+            return;
+        }
+        let Some(entry) = self.active_entry.clone() else {
+            return;
+        };
+        let mut confirm = self.drop_confirm.take();
+        let mut confirmed = false;
+        if let Some(edit) = &confirm {
+            let scope = match edit.scope {
+                crate::diff_view::StageScope::Selected => "the selected changes",
+                crate::diff_view::StageScope::Hunk => "this hunk",
+                crate::diff_view::StageScope::File => "all working changes",
+            };
+            ui.horizontal_wrapped(|ui| {
+                ui.colored_label(
+                    ui.visuals().error_fg_color,
+                    format!(
+                        "Discard {scope} from {}? The index is unchanged.",
+                        entry.path
+                    ),
+                );
+                if ui
+                    .add_enabled(!self.stage.mutating(), egui::Button::new("Discard"))
+                    .clicked()
+                {
+                    confirmed = true;
+                }
+                if ui
+                    .add_enabled(!self.stage.mutating(), egui::Button::new("Cancel"))
+                    .clicked()
+                {
+                    confirm = None;
+                }
+            });
+            ui.weak("Working-tree changes will be lost. The index is unchanged.");
+        }
+        if confirmed {
+            if let Some(edit) = confirm.take() {
+                self.stage.apply(edit, ctx);
+            }
+        } else {
+            self.drop_confirm = confirm;
+        }
+        let discard = matches!(entry.area, Area::Unstaged | Area::Untracked)
+            && !matches!(entry.kind, Kind::IntentToAdd | Kind::Conflicted);
+        let verb = if entry.area == Area::Staged {
+            "Unstage"
+        } else {
+            "Stage"
+        };
+        self.reader
+            .set_staging(verb, discard, self.stage.mutating());
+        self.reader.draw(ui);
+        self.reader.clear_staging();
+        if let Some(edit) = self.reader.take_stage_edit() {
+            if edit.discard {
+                self.drop_confirm = Some(edit);
+            } else {
+                self.stage.apply(edit, ctx);
+            }
         }
     }
 
@@ -890,7 +962,7 @@ impl StatusView {
         bounded_text::field(
             ui,
             &format!(
-                "Amending {head} · {subject} · Base {base} · Staged is {head}'s parent -> index; Unstage removes changes from the amended commit"
+                "Amending {head} · {subject} · Base {base} · Staged is {head}'s parent → index; Unstage removes changes from the amended commit"
             ),
             egui::FontId::proportional(12.0),
             GROUP_HEADER,
@@ -1076,6 +1148,7 @@ impl StatusView {
         let ctx = ui.ctx().clone();
         let ctx = &ctx;
         self.poll_commit(ctx);
+        self.stage.poll();
         let (now, scrolling, pointer_down, hovered) = ctx.input(|i| {
             (
                 i.time,
@@ -1155,21 +1228,19 @@ impl StatusView {
                 self.lists[self.focus].reveal = true;
             }
         }
-        egui::Panel::top("working-header")
-            .exact_size(42.0)
+        egui::Panel::bottom("working-status")
+            .exact_size(25.0)
             .show(ui, |ui| {
-                ui.add_space(5.0);
                 ui.horizontal(|ui| {
-                    ui.strong("Local Changes");
                     ui.allocate_ui_with_layout(
-                        egui::vec2((ui.available_width() - 82.0).max(100.0), 26.0),
+                        egui::vec2((ui.available_width() - 82.0).max(120.0), 22.0),
                         egui::Layout::left_to_right(egui::Align::Center),
                         |ui| {
                             bounded_text::field(
                                 ui,
-                                &self.path.display().to_string(),
-                                egui::FontId::proportional(13.0),
-                                26.0,
+                                &self.status_text(),
+                                egui::FontId::proportional(12.0),
+                                22.0,
                             );
                         },
                     );
@@ -1181,20 +1252,10 @@ impl StatusView {
                             } else {
                                 "Refresh"
                             })
-                            .min_size(egui::vec2(74.0, 26.0)),
+                            .min_size(egui::vec2(74.0, 22.0)),
                         )
                         .clicked();
                 });
-            });
-        egui::Panel::bottom("working-status")
-            .exact_size(25.0)
-            .show(ui, |ui| {
-                bounded_text::field(
-                    ui,
-                    &self.status_text(),
-                    egui::FontId::proportional(12.0),
-                    22.0,
-                );
             });
         let wide = ui.available_width() >= WIDE_LAYOUT;
         if !wide {
@@ -1225,7 +1286,8 @@ impl StatusView {
                 );
             }
         });
-        if self.stage.take_changed() {
+        if let Some(identity) = self.stage.take_changed() {
+            self.reader.refresh_working(identity, ctx);
             self.start(ctx, true);
         }
         let ranges = Ranges {
@@ -1282,7 +1344,9 @@ mod tests {
                 index: "index".into(),
                 base_tree: None,
             }),
-            stage: crate::stage_view::StageView::default(),
+            stage: crate::stage_view::StageActions::default(),
+            reader: crate::diff_view::DiffView::default(),
+            drop_confirm: None,
             commit: None,
             commit_done: None,
             last_commit: None,
@@ -1423,8 +1487,8 @@ mod tests {
             let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
             loop {
                 frame(&ctx, view, 1120.0, vec![]);
-                if (!reading && view.complete && !view.replacing && view.stage.pane_ready(1))
-                    || (reading && view.stage.ready() && view.stage.has_text(text))
+                if (!reading && view.complete && !view.replacing && view.reader.ready())
+                    || (reading && view.reader.ready() && view.reader.has_text(text))
                 {
                     return Ok(());
                 }
@@ -1446,7 +1510,7 @@ mod tests {
         wait(&mut view, false, "")?;
         assert_eq!(view.identity, identity);
         wait(&mut view, true, "after")?;
-        assert!(!view.stage.has_text("before"));
+        assert!(!view.reader.has_text("before"));
         Ok(())
     }
     #[test]
@@ -1509,7 +1573,11 @@ mod tests {
             view.lists[0].rows.insert(998, entry(0, 998));
             view.lists[0].rows.insert(999, entry(0, 999));
             frame(&ctx, &mut view, width, vec![]);
-            assert!(view.lists[0].rect.top() >= 42.0);
+            assert!(
+                view.lists[0].rect.top() < 42.0,
+                "no duplicate workspace header: top={}",
+                view.lists[0].rect.top()
+            );
             view.lists[0].selected_row = Some(998);
             view.lists[0].reveal = true;
             frame(&ctx, &mut view, width, vec![]);
@@ -1611,16 +1679,14 @@ mod tests {
             view.active.as_ref().map(|(_, area)| *area),
             Some(Area::Staged)
         );
-        assert_eq!(view.stage.active_pane(), 0);
-        assert!(view.stage.pane_has_text(0, "staged"));
+        assert!(view.reader.has_text("staged"));
         view.select_row(0, unstaged, &ctx);
         ready(&ctx, &mut view, 1120.0);
         assert_eq!(
             view.active.as_ref().map(|(_, area)| *area),
             Some(Area::Unstaged)
         );
-        assert_eq!(view.stage.active_pane(), 1);
-        assert!(view.stage.pane_has_text(1, "working"));
+        assert!(view.reader.has_text("working"));
         Ok(())
     }
     #[test]
@@ -1644,6 +1710,60 @@ mod tests {
         assert!(!text.contains(&"Split"));
         assert!(!text.contains(&"Review & stage"));
         assert_eq!(view.active, None);
+        Ok(())
+    }
+    #[test]
+    fn workspace_uses_one_reader_header_with_on_demand_details()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        generated(dir.path())?;
+        let ctx = egui::Context::default();
+        let mut view = StatusView::new(dir.path().into(), &ctx);
+        settle(&ctx, &mut view, 1120.0);
+        select_area(&mut view, &ctx, Area::Unstaged);
+        ready(&ctx, &mut view, 1120.0);
+        let output = run(&ctx, &mut view, 1120.0, vec![]);
+        let text = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(text.contains(&"File actions"));
+        assert!(text.contains(&"index → working file"));
+        assert!(!text.contains(&"View diff"));
+        assert!(!text.iter().any(|line| line.starts_with("Unstaged:")));
+        assert!(
+            !text.contains(&"Show file details"),
+            "low-frequency identity stays behind the action surface"
+        );
+        assert!(
+            !text.iter().any(|line| line.starts_with("100644 ")),
+            "object identity is not a permanent row"
+        );
+
+        let menu = text_pos(&output, "File actions").ok_or("missing File actions")?;
+        click(&ctx, &mut view, 1120.0, menu + egui::vec2(5.0, 0.0));
+        let output = run(&ctx, &mut view, 1120.0, vec![]);
+        let details =
+            text_pos(&output, "Show file details").ok_or("missing file details action")?;
+        click(&ctx, &mut view, 1120.0, details + egui::vec2(5.0, 0.0));
+        let output = run(&ctx, &mut view, 1120.0, vec![]);
+        let text = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            text.iter()
+                .any(|line| line.contains("Unstaged · Modified") && line.contains("index")),
+            "details name the comparison without replacing the reader header: {text:?}"
+        );
         Ok(())
     }
     fn run(
@@ -1771,9 +1891,7 @@ mod tests {
         });
     }
     fn ready(ctx: &egui::Context, view: &mut StatusView, width: f32) {
-        pump(ctx, view, width, |view| {
-            view.stage.ready() && view.stage.pane_ready(0) && view.stage.pane_ready(1)
-        });
+        pump(ctx, view, width, |view| view.reader.ready());
     }
     fn generated(path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
         git(path, &["init", "-q"])?;
@@ -1803,6 +1921,20 @@ mod tests {
             view.select_row(index, row, ctx);
         }
     }
+    fn click_file_action(
+        ctx: &egui::Context,
+        view: &mut StatusView,
+        width: f32,
+        label: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let output = run(ctx, view, width, vec![]);
+        let menu = text_pos(&output, "File actions").ok_or("missing File actions")?;
+        click(ctx, view, width, menu + egui::vec2(5.0, 0.0));
+        let output = run(ctx, view, width, vec![]);
+        let item = text_pos(&output, label).ok_or("missing file action item")?;
+        click(ctx, view, width, item + egui::vec2(5.0, 0.0));
+        Ok(())
+    }
     fn select_area(view: &mut StatusView, ctx: &egui::Context, area: Area) {
         let index = if area == Area::Staged { 1 } else { 0 };
         if view.lists[index].rows.contains_key(&0) {
@@ -1810,6 +1942,38 @@ mod tests {
         }
     }
 
+    #[test]
+    fn local_changes_full_file_reads_both_working_sides() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let dir = tempfile::tempdir()?;
+        generated(dir.path())?;
+        let ctx = egui::Context::default();
+        let mut view = StatusView::new(dir.path().into(), &ctx);
+        settle(&ctx, &mut view, 1120.0);
+        select_area(&mut view, &ctx, Area::Unstaged);
+        ready(&ctx, &mut view, 1120.0);
+        let output = run(&ctx, &mut view, 1120.0, vec![]);
+        let full = text_pos(&output, "Full file").ok_or("missing Full file")?;
+        click(&ctx, &mut view, 1120.0, full + egui::vec2(5.0, 0.0));
+        pump(&ctx, &mut view, 1120.0, |view| {
+            !view.reader.pending() && view.reader.has_text("ONE")
+        });
+        assert!(view.reader.has_text("TWELVE"));
+        let output = run(&ctx, &mut view, 1120.0, vec![]);
+        let before = text_pos(&output, "Before").ok_or("missing Before side")?;
+        click(&ctx, &mut view, 1120.0, before + egui::vec2(5.0, 0.0));
+        pump(&ctx, &mut view, 1120.0, |view| {
+            !view.reader.pending() && view.reader.has_text("twelve")
+        });
+        assert!(!view.reader.has_text("TWELVE"));
+        let output = run(&ctx, &mut view, 1120.0, vec![]);
+        let diff = text_pos(&output, "Diff").ok_or("missing Diff")?;
+        click(&ctx, &mut view, 1120.0, diff + egui::vec2(5.0, 0.0));
+        pump(&ctx, &mut view, 1120.0, |view| {
+            !view.reader.pending() && view.reader.has_text("TWELVE")
+        });
+        Ok(())
+    }
     #[test]
     fn inline_hunk_button_moves_the_hunk_and_keeps_the_workspace()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -1825,7 +1989,11 @@ mod tests {
         let button = text_pos(&output, "Stage hunk").ok_or("missing stage hunk")?;
         click(&ctx, &mut view, 1120.0, button + egui::vec2(5.0, 0.0));
         pump(&ctx, &mut view, 1120.0, |view| {
-            !view.stage.pending() && view.stage.ready() && view.stage.pane_has_text(0, "ONE")
+            !view.reader.pending()
+                && view.reader.ready()
+                && !view.stage.mutating()
+                && view.complete
+                && !view.replacing
         });
         assert_eq!(
             view.active.as_ref().map(|(_, area)| *area),
@@ -1835,8 +2003,8 @@ mod tests {
             file(dir.path(), &["show", ":a"])?,
             b"ONE\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\ntwelve\n"
         );
-        assert!(view.stage.pane_has_text(1, "TWELVE"));
-        assert!(!view.stage.pane_has_text(1, "ONE"));
+        assert!(view.reader.has_text("TWELVE"));
+        assert!(!view.reader.has_text("ONE"));
         assert_eq!(std::fs::read(dir.path().join("a"))?, working);
         Ok(())
     }
@@ -1853,19 +2021,28 @@ mod tests {
         select_area(&mut view, &ctx, Area::Unstaged);
         ready(&ctx, &mut view, 1120.0);
         let output = run(&ctx, &mut view, 1120.0, vec![]);
+        for _ in 0..2 {
+            let next = text_pos(&output, "Next >").ok_or("missing next change")?;
+            click(&ctx, &mut view, 1120.0, next + egui::vec2(5.0, 0.0));
+        }
+        let output = run(&ctx, &mut view, 1120.0, vec![]);
         let line = text_pos(&output, "TWELVE").ok_or("missing added line")?;
         click(&ctx, &mut view, 1120.0, line + egui::vec2(5.0, 0.0));
         let output = run(&ctx, &mut view, 1120.0, vec![]);
         let button = text_pos(&output, "Stage 1").ok_or("missing selected-line action")?;
         click(&ctx, &mut view, 1120.0, button + egui::vec2(5.0, 0.0));
         pump(&ctx, &mut view, 1120.0, |view| {
-            !view.stage.pending() && view.stage.ready() && view.stage.pane_has_text(0, "TWELVE")
+            !view.reader.pending()
+                && view.reader.ready()
+                && !view.stage.mutating()
+                && view.complete
+                && !view.replacing
         });
         assert_eq!(
             file(dir.path(), &["show", ":a"])?,
             b"one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\ntwelve\nTWELVE\n"
         );
-        assert!(view.stage.pane_has_text(1, "twelve"));
+        assert!(view.reader.has_text("twelve"));
         assert_eq!(std::fs::read(dir.path().join("a"))?, working);
         Ok(())
     }
@@ -1889,17 +2066,19 @@ mod tests {
         let button = text_pos(&output, "Unstage hunk").ok_or("missing unstage hunk")?;
         click(&ctx, &mut view, 1120.0, button + egui::vec2(5.0, 0.0));
         pump(&ctx, &mut view, 1120.0, |view| {
-            !view.stage.pending() && view.stage.ready()
+            !view.reader.pending() && !view.stage.mutating()
         });
         assert_eq!(
             file(dir.path(), &["show", ":a"])?,
             b"one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\nTWELVE\n"
         );
-        let output = run(&ctx, &mut view, 1120.0, vec![]);
-        let button = text_pos(&output, "Unstage file").ok_or("missing unstage all")?;
-        click(&ctx, &mut view, 1120.0, button + egui::vec2(5.0, 0.0));
+        click_file_action(&ctx, &mut view, 1120.0, "Unstage file")?;
         pump(&ctx, &mut view, 1120.0, |view| {
-            !view.stage.pending() && view.stage.ready() && !view.stage.pane_has_text(0, "TWELVE")
+            !view.reader.pending()
+                && view.reader.ready()
+                && !view.stage.mutating()
+                && view.complete
+                && !view.replacing
         });
         assert_eq!(
             file(dir.path(), &["show", ":a"])?,
@@ -1928,11 +2107,12 @@ mod tests {
         settle(&ctx, &mut view, 1120.0);
         select_path(&mut view, &ctx, "a", Area::Unstaged);
         ready(&ctx, &mut view, 1120.0);
-        let output = run(&ctx, &mut view, 1120.0, vec![]);
-        let stage = text_pos(&output, "Stage file").ok_or("missing stage file")?;
-        click(&ctx, &mut view, 1120.0, stage + egui::vec2(5.0, 0.0));
+        click_file_action(&ctx, &mut view, 1120.0, "Stage file")?;
         pump(&ctx, &mut view, 1120.0, |view| {
-            !view.stage.pending() && view.complete && !view.replacing
+            !view.reader.pending()
+                && view.complete
+                && !view.replacing
+                && view.lists[1].rows.values().any(|entry| entry.path == "a")
         });
         assert_eq!(file(p, &["show", ":a"])?, b"a-working\n");
         assert_eq!(file(p, &["show", ":b"])?, staged_b);
@@ -1940,11 +2120,9 @@ mod tests {
 
         select_path(&mut view, &ctx, "a", Area::Staged);
         ready(&ctx, &mut view, 1120.0);
-        let output = run(&ctx, &mut view, 1120.0, vec![]);
-        let unstage = text_pos(&output, "Unstage file").ok_or("missing unstage file")?;
-        click(&ctx, &mut view, 1120.0, unstage + egui::vec2(5.0, 0.0));
+        click_file_action(&ctx, &mut view, 1120.0, "Unstage file")?;
         pump(&ctx, &mut view, 1120.0, |view| {
-            !view.stage.pending() && view.complete && !view.replacing
+            !view.reader.pending() && !view.stage.mutating() && view.complete && !view.replacing
         });
         assert_eq!(file(p, &["show", ":a"])?, b"a-base\n");
         assert_eq!(file(p, &["show", ":b"])?, staged_b);
@@ -2041,7 +2219,7 @@ mod tests {
         assert!(output.shapes.iter().any(|shape| matches!(
             &shape.shape,
             egui::epaint::Shape::Text(text)
-                if text.galley.job.text.contains("HEAD parent -> index")
+                if text.galley.job.text.contains("HEAD parent → index")
         )));
         let amend = text_pos(&output, "Amend commit").ok_or("missing amend button")?;
         click(&ctx, &mut view, 1120.0, amend + egui::vec2(5.0, 0.0));
@@ -2171,6 +2349,7 @@ mod tests {
             .to_string();
         assert_eq!(view.amend_base_commit.as_deref(), Some(parent.as_str()));
         select_path(&mut view, &ctx, "a", Area::Staged);
+        ready(&ctx, &mut view, 1120.0);
         let output = run(&ctx, &mut view, 1120.0, vec![]);
         assert!(output.shapes.iter().any(|shape| matches!(
             &shape.shape,
@@ -2180,7 +2359,7 @@ mod tests {
         )));
         assert!(output.shapes.iter().any(|shape| matches!(
             &shape.shape,
-            egui::epaint::Shape::Text(text) if text.galley.job.text.contains("HEAD parent -> index")
+            egui::epaint::Shape::Text(text) if text.galley.job.text.contains("HEAD parent → index")
         )));
         assert!(
             view.lists[1].rows.values().any(|entry| entry.path == "a"),
@@ -2209,9 +2388,7 @@ mod tests {
 
         select_path(&mut view, &ctx, "a", Area::Staged);
         ready(&ctx, &mut view, 1120.0);
-        let output = run(&ctx, &mut view, 1120.0, vec![]);
-        let unstage = text_pos(&output, "Unstage file").ok_or("missing unstage file")?;
-        click(&ctx, &mut view, 1120.0, unstage + egui::vec2(5.0, 0.0));
+        click_file_action(&ctx, &mut view, 1120.0, "Unstage file")?;
         pump(&ctx, &mut view, 1120.0, |view| {
             !view.busy() && view.complete && !view.replacing
         });
@@ -2221,9 +2398,7 @@ mod tests {
 
         select_path(&mut view, &ctx, "a", Area::Unstaged);
         ready(&ctx, &mut view, 1120.0);
-        let output = run(&ctx, &mut view, 1120.0, vec![]);
-        let stage = text_pos(&output, "Stage file").ok_or("missing stage file")?;
-        click(&ctx, &mut view, 1120.0, stage + egui::vec2(5.0, 0.0));
+        click_file_action(&ctx, &mut view, 1120.0, "Stage file")?;
         pump(&ctx, &mut view, 1120.0, |view| {
             !view.busy() && view.complete && !view.replacing
         });
@@ -2340,7 +2515,7 @@ mod tests {
                 .any(|entry| entry.area == Area::Conflict),
             "conflict row is missing"
         );
-        pump(&ctx, &mut view, 1120.0, |view| view.stage.ready());
+        pump(&ctx, &mut view, 1120.0, |view| view.reader.ready());
         let output = run(&ctx, &mut view, 1120.0, vec![]);
         let text = output
             .shapes
@@ -2350,7 +2525,7 @@ mod tests {
                 _ => None,
             })
             .collect::<Vec<_>>();
-        assert!(text.iter().any(|line| line.contains("unmerged path")));
+        assert!(text.iter().any(|line| line.contains("Unmerged path")));
         assert!(text.iter().any(|line| line.contains("Unmerged path:")));
         assert!(!text.iter().any(|line| line == &"No unstaged changes"));
         Ok(())
@@ -2477,11 +2652,9 @@ mod tests {
         settle(&ctx, &mut view, 1120.0);
         select_path(&mut view, &ctx, "a", Area::Unstaged);
         ready(&ctx, &mut view, 1120.0);
-        let output = run(&ctx, &mut view, 1120.0, vec![]);
-        let stage = text_pos(&output, "Stage file").ok_or("missing stage file")?;
-        click(&ctx, &mut view, 1120.0, stage + egui::vec2(5.0, 0.0));
+        click_file_action(&ctx, &mut view, 1120.0, "Stage file")?;
         pump(&ctx, &mut view, 1120.0, |view| {
-            !view.stage.pending() && view.complete && !view.replacing && view.lists[0].count == 0
+            !view.reader.pending() && view.complete && !view.replacing && view.lists[0].count == 0
         });
         assert_eq!(view.lists[0].count, 0);
         assert_eq!(
@@ -2490,15 +2663,22 @@ mod tests {
                 .map(|(bytes, area)| (String::from_utf8_lossy(bytes).into_owned(), *area)),
             Some(("a".into(), Area::Unstaged))
         );
-        assert_eq!(view.stage.path(), "a");
-        assert_eq!(view.stage.active_pane(), 1);
-        assert_eq!(view.stage.pane_rows(1), 0, "stale working diff");
+        assert_eq!(view.reader.rows_len(), 0, "stale working diff");
         let output = run(&ctx, &mut view, 1120.0, vec![]);
-        assert!(output.shapes.iter().any(|shape| matches!(
-            &shape.shape,
-            egui::epaint::Shape::Text(text)
-                if text.galley.job.text.contains("No unstaged changes")
-        )));
+        let text = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(text.iter().any(|line| line.contains("No unstaged changes")));
+        assert!(
+            text.iter().any(|line| line.contains("no longer present")),
+            "the reviewed path stays visible with an explicit empty comparison"
+        );
+        assert!(text.contains(&"a"), "the reviewed path is retained");
         select_path(&mut view, &ctx, "a", Area::Staged);
         ready(&ctx, &mut view, 1120.0);
         assert_eq!(
@@ -2520,6 +2700,11 @@ mod tests {
         select_area(&mut view, &ctx, Area::Unstaged);
         ready(&ctx, &mut view, 1120.0);
         let output = run(&ctx, &mut view, 1120.0, vec![]);
+        for _ in 0..2 {
+            let next = text_pos(&output, "Next >").ok_or("missing next change")?;
+            click(&ctx, &mut view, 1120.0, next + egui::vec2(5.0, 0.0));
+        }
+        let output = run(&ctx, &mut view, 1120.0, vec![]);
         let line = text_pos(&output, "TWELVE").ok_or("missing selected line")?;
         click(&ctx, &mut view, 1120.0, line + egui::vec2(5.0, 0.0));
         let output = run(&ctx, &mut view, 1120.0, vec![]);
@@ -2529,7 +2714,7 @@ mod tests {
         let discard = text_pos(&output, "Discard").ok_or("missing discard")?;
         click(&ctx, &mut view, 1120.0, discard + egui::vec2(5.0, 0.0));
         pump(&ctx, &mut view, 1120.0, |view| {
-            !view.stage.pending() && view.stage.ready()
+            !view.reader.pending() && !view.stage.mutating()
         });
         assert_eq!(
             std::fs::read(dir.path().join("a"))?,
@@ -2569,10 +2754,7 @@ mod tests {
             let discard = text_pos(&output, "Discard").ok_or("missing discard")?;
             click(&ctx, &mut view, width, discard + egui::vec2(5.0, 0.0));
             pump(&ctx, &mut view, width, |view| {
-                !view.stage.pending()
-                    && view.stage.ready()
-                    && view.stage.pane_has_text(1, "TWELVE")
-                    && !view.stage.pane_has_text(1, "ONE")
+                !view.reader.pending() && !view.stage.mutating() && view.reader.has_text("TWELVE")
             });
             assert_eq!(
                 std::fs::read(dir.path().join("a"))?,
@@ -2580,14 +2762,12 @@ mod tests {
             );
             assert_eq!(std::fs::read(dir.path().join(".git/index"))?, index);
 
-            let output = run(&ctx, &mut view, width, vec![]);
-            let drop = text_pos(&output, "Discard file").ok_or("missing drop all")?;
-            click(&ctx, &mut view, width, drop + egui::vec2(5.0, 0.0));
+            click_file_action(&ctx, &mut view, width, "Discard file…")?;
             let output = run(&ctx, &mut view, width, vec![]);
             let discard = text_pos(&output, "Discard").ok_or("missing discard all")?;
             click(&ctx, &mut view, width, discard + egui::vec2(5.0, 0.0));
             pump(&ctx, &mut view, width, |view| {
-                !view.stage.pending() && view.stage.ready() && view.lists[0].count == 0
+                !view.reader.pending() && view.reader.ready() && view.lists[0].count == 0
             });
             assert_eq!(
                 std::fs::read(dir.path().join("a"))?,
@@ -2618,7 +2798,9 @@ mod tests {
         let output = run(&ctx, &mut view, 1120.0, vec![]);
         let button = text_pos(&output, "Stage hunk").ok_or("missing stage hunk")?;
         click(&ctx, &mut view, 1120.0, button + egui::vec2(5.0, 0.0));
-        pump(&ctx, &mut view, 1120.0, |view| !view.stage.pending());
+        pump(&ctx, &mut view, 1120.0, |view| {
+            !view.reader.pending() && !view.stage.mutating()
+        });
         assert!(
             view.stage
                 .error()

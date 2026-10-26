@@ -6,13 +6,39 @@ use crate::{
 };
 use eframe::egui;
 use gg_engine::{
-    diff::{DiffRow, FileDiff, RowKind},
+    diff::{DiffKind, DiffRow, FileDiff, RowKind},
     file::{FileText, ReadingSide},
     review::FileChange,
+    status::{Area, Kind, StatusEntry, StatusIdentity, WorkingRequest},
 };
 use std::{collections::BTreeMap, ops::Range, path::PathBuf};
 
 const HEIGHT: f32 = 20.0;
+
+/// Scope of one staging command emitted by the reader.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StageScope {
+    Selected,
+    Hunk,
+    File,
+}
+
+/// One validated staging or discard command, expressed independently of the
+/// mutation crate. `changes` are `(row kind, old-or-new side line)` pairs.
+#[derive(Clone)]
+pub struct StageEdit {
+    pub scope: StageScope,
+    pub discard: bool,
+    pub header: Option<String>,
+    pub changes: Vec<(RowKind, usize)>,
+}
+
+#[derive(Clone, Copy)]
+struct StageConfig {
+    verb: &'static str,
+    can_discard: bool,
+    pending: bool,
+}
 
 pub struct DiffView {
     worker: Option<Worker>,
@@ -25,6 +51,7 @@ pub struct DiffView {
     displayed_path: PathBuf,
     displayed_working: Option<gg_engine::status::WorkingRequest>,
     displayed_generation: u64,
+    displayed_mode: Mode,
     path: PathBuf,
     pub generation: u64,
     pub rows: BTreeMap<usize, DiffRow>,
@@ -56,6 +83,10 @@ pub struct DiffView {
     before_endpoint: Option<String>,
     after_endpoint: Option<String>,
     restoring: Option<reader::ReaderPlace>,
+    stage: Option<StageConfig>,
+    stage_selected: BTreeMap<usize, (RowKind, usize)>,
+    stage_edit: Option<StageEdit>,
+    details_open: bool,
 }
 
 impl Default for DiffView {
@@ -71,6 +102,7 @@ impl Default for DiffView {
             displayed_path: PathBuf::new(),
             displayed_working: None,
             displayed_generation: 0,
+            displayed_mode: Mode::Diff,
             path: PathBuf::new(),
             generation: 0,
             rows: BTreeMap::new(),
@@ -102,6 +134,10 @@ impl Default for DiffView {
             before_endpoint: None,
             after_endpoint: None,
             restoring: None,
+            stage: None,
+            stage_selected: BTreeMap::new(),
+            stage_edit: None,
+            details_open: false,
         }
     }
 }
@@ -152,6 +188,9 @@ impl DiffView {
         self.hunks.clear();
         self.groups.clear();
         self.jump = None;
+        self.stage_selected.clear();
+        self.stage_edit = None;
+        self.details_open = false;
         if !self.side_available(self.side) {
             self.side = self.existing_side();
         }
@@ -280,6 +319,280 @@ impl DiffView {
         ctx.request_repaint();
     }
 
+    /// Select the active Staged, Unstaged, Untracked, or Conflict comparison.
+    pub fn select_working(
+        &mut self,
+        repository: StatusIdentity,
+        entry: StatusEntry,
+        ctx: &egui::Context,
+    ) {
+        let same = self
+            .working
+            .as_ref()
+            .is_some_and(|working| working.repository == repository && working.entry == entry);
+        if same {
+            return;
+        }
+        self.restoring = None;
+        self.restore_line = self.current_line();
+        self.path = repository.path.clone();
+        self.change = Some(FileChange {
+            path: entry.path.clone(),
+            path_bytes: entry.path_bytes.clone(),
+            kind: match entry.kind {
+                Kind::Added => gg_engine::review::ChangeKind::Added,
+                Kind::Deleted => gg_engine::review::ChangeKind::Deleted,
+                Kind::TypeChanged => gg_engine::review::ChangeKind::TypeChanged,
+                _ => gg_engine::review::ChangeKind::Modified,
+            },
+            old: None,
+            new: None,
+        });
+        self.working = Some(WorkingRequest { repository, entry });
+        self.generation += 1;
+        self.error = None;
+        self.staged = None;
+        self.sent = None;
+        self.full = None;
+        self.cursor = None;
+        self.anchor = None;
+        self.hunks.clear();
+        self.groups.clear();
+        self.jump = None;
+        self.stage_selected.clear();
+        self.stage_edit = None;
+        self.before_endpoint = None;
+        self.after_endpoint = None;
+        self.side = self.existing_side();
+        self.full_side = self.side;
+        self.send(ctx);
+        ctx.request_repaint();
+    }
+
+    /// Leave the file source without keeping any comparison.
+    pub fn clear(&mut self) {
+        *self = Self::default();
+    }
+
+    /// Enable the staged/working action overlay for this frame.
+    pub fn set_staging(&mut self, verb: &'static str, can_discard: bool, pending: bool) {
+        self.stage = Some(StageConfig {
+            verb,
+            can_discard,
+            pending,
+        });
+    }
+
+    /// Disable row actions when no staging entry is selected.
+    pub fn clear_staging(&mut self) {
+        self.stage = None;
+    }
+
+    /// Take one action emitted by the staging overlay.
+    pub fn take_stage_edit(&mut self) -> Option<StageEdit> {
+        self.stage_edit.take()
+    }
+
+    /// Refresh the same working comparison after a successful mutation.
+    pub fn refresh_working(&mut self, repository: StatusIdentity, ctx: &egui::Context) {
+        let Some(working) = &mut self.working else {
+            return;
+        };
+        working.repository = repository;
+        self.generation += 1;
+        self.sent = None;
+        self.error = None;
+        self.send(ctx);
+        ctx.request_repaint();
+    }
+
+    fn working_route(&self, working: &WorkingRequest) -> String {
+        match working.entry.area {
+            Area::Staged => {
+                if working.repository.base_tree.is_some() {
+                    "HEAD parent → index".into()
+                } else if let Some(head) = &working.repository.head {
+                    let short = head.get(..8).unwrap_or(head);
+                    format!("HEAD {short} → index")
+                } else {
+                    "empty → index".into()
+                }
+            }
+            Area::Unstaged => "index → working file".into(),
+            Area::Untracked => "empty → working file".into(),
+            Area::Conflict => "Unmerged path · stage the resolution".into(),
+        }
+    }
+
+    fn working_side_available(entry: &StatusEntry, side: ReadingSide) -> bool {
+        if entry.area == Area::Conflict {
+            return false;
+        }
+        match (entry.kind, side) {
+            (Kind::Added, ReadingSide::Before) | (Kind::Deleted, ReadingSide::After) => false,
+            (_, ReadingSide::Before) => entry.area != Area::Untracked,
+            (_, ReadingSide::After) => true,
+        }
+    }
+
+    fn stage_text(&self) -> bool {
+        self.info
+            .as_ref()
+            .is_some_and(|info| info.kind == DiffKind::Text && info.complete)
+    }
+
+    fn content_settled(&self) -> bool {
+        self.displayed_generation == self.generation
+    }
+
+    fn can_line_edit(&self) -> bool {
+        let Some(working) = &self.working else {
+            return false;
+        };
+        self.content_settled()
+            && self.stage.is_some()
+            && self.mode == Mode::Diff
+            && self.stage_text()
+            && matches!(
+                (working.entry.area, working.entry.kind),
+                (Area::Staged, _) | (Area::Unstaged, Kind::Modified)
+            )
+    }
+
+    fn can_whole_edit(&self) -> bool {
+        self.content_settled()
+            && self.stage.is_some()
+            && self.info.is_some()
+            && self.working.as_ref().is_some_and(|working| {
+                matches!(
+                    working.entry.area,
+                    Area::Staged | Area::Unstaged | Area::Untracked
+                )
+            })
+    }
+
+    fn can_drop_whole(&self) -> bool {
+        self.content_settled()
+            && self.stage.is_some_and(|stage| stage.can_discard)
+            && self.working.as_ref().is_some_and(|working| {
+                matches!(working.entry.area, Area::Unstaged | Area::Untracked)
+                    && !matches!(working.entry.kind, Kind::IntentToAdd | Kind::Conflicted)
+            })
+    }
+
+    fn hunk_bounds(&self, header: usize) -> Range<usize> {
+        let end = self
+            .hunks
+            .iter()
+            .find(|hunk| **hunk > header)
+            .copied()
+            .unwrap_or(self.count);
+        header.saturating_add(1)..end
+    }
+
+    fn toggle_hunk(&mut self, header: usize) {
+        let bounds = self.hunk_bounds(header);
+        let rows: Vec<(usize, RowKind, usize)> = self
+            .rows
+            .range(bounds.clone())
+            .filter_map(|(row, row_data)| match row_data.kind {
+                RowKind::Added => row_data.new_line.map(|line| (*row, row_data.kind, line)),
+                RowKind::Deleted => row_data.old_line.map(|line| (*row, row_data.kind, line)),
+                _ => None,
+            })
+            .collect();
+        if rows.is_empty() {
+            return;
+        }
+        let all = rows
+            .iter()
+            .all(|(row, _, _)| self.stage_selected.contains_key(row));
+        for (row, kind, line) in rows {
+            if all {
+                self.stage_selected.remove(&row);
+            } else {
+                self.stage_selected.insert(row, (kind, line));
+            }
+        }
+    }
+
+    fn hunk_edit(&self, header: usize, discard: bool) -> StageEdit {
+        let bounds = self.hunk_bounds(header);
+        let chosen: Vec<(usize, RowKind, usize)> = self
+            .stage_selected
+            .iter()
+            .filter(|(row, _)| bounds.contains(row))
+            .map(|(row, (kind, line))| (*row, *kind, *line))
+            .collect();
+        let changes = if chosen.is_empty() {
+            vec![]
+        } else if discard {
+            // Expand each touched block so a discard cannot remove half of a
+            // replacement that shares the block.
+            let picked: std::collections::BTreeSet<usize> =
+                chosen.iter().map(|(row, _, _)| *row).collect();
+            type Block = (Vec<usize>, Vec<(RowKind, usize)>);
+            let mut blocks: Vec<Block> = vec![];
+            let mut current: (Vec<usize>, Vec<(RowKind, usize)>) = (vec![], vec![]);
+            let mut last: Option<usize> = None;
+            for (row, data) in self.rows.range(bounds.clone()) {
+                let line = match data.kind {
+                    RowKind::Added => data.new_line.map(|line| (data.kind, line)),
+                    RowKind::Deleted => data.old_line.map(|line| (data.kind, line)),
+                    _ => None,
+                };
+                match line {
+                    Some(line) => {
+                        if !last.is_some_and(|last| *row == last + 1) && !current.0.is_empty() {
+                            blocks.push(std::mem::take(&mut current));
+                        }
+                        current.0.push(*row);
+                        current.1.push(line);
+                        last = Some(*row);
+                    }
+                    None => {
+                        if !current.0.is_empty() {
+                            blocks.push(std::mem::take(&mut current));
+                        }
+                        last = None;
+                    }
+                }
+            }
+            if !current.0.is_empty() {
+                blocks.push(current);
+            }
+            blocks
+                .into_iter()
+                .filter(|(rows, _)| rows.iter().any(|row| picked.contains(row)))
+                .flat_map(|(_, lines)| lines)
+                .collect()
+        } else {
+            chosen
+                .into_iter()
+                .map(|(_, kind, line)| (kind, line))
+                .collect()
+        };
+        StageEdit {
+            scope: if changes.is_empty() {
+                StageScope::Hunk
+            } else {
+                StageScope::Selected
+            },
+            discard,
+            header: self.rows.get(&header).map(|row| row.text.clone()),
+            changes,
+        }
+    }
+
+    fn file_edit(&self, discard: bool) -> StageEdit {
+        StageEdit {
+            scope: StageScope::File,
+            discard,
+            header: None,
+            changes: vec![],
+        }
+    }
+
     /// Reapply the restored place after an asynchronous update settles.
     fn apply_restoring(&mut self) {
         let Some(place) = &self.restoring else {
@@ -297,6 +610,17 @@ impl DiffView {
 
     /// Capabilities the current comparison supports.
     pub fn capabilities(&self) -> reader::Capabilities {
+        if let Some(working) = &self.working {
+            let before = Self::working_side_available(&working.entry, ReadingSide::Before);
+            let after = Self::working_side_available(&working.entry, ReadingSide::After);
+            return reader::Capabilities {
+                diff: working.entry.area != Area::Conflict,
+                full_before: before,
+                full_after: after,
+                export_before: false,
+                export_after: false,
+            };
+        }
         let present = |side: &Option<gg_engine::review::FileSide>| {
             side.as_ref().is_some_and(|side| side.mode != 0o160000)
         };
@@ -327,6 +651,9 @@ impl DiffView {
     }
 
     fn side_available(&self, side: ReadingSide) -> bool {
+        if let Some(working) = &self.working {
+            return Self::working_side_available(&working.entry, side);
+        }
         let Some(change) = &self.change else {
             return true;
         };
@@ -337,6 +664,13 @@ impl DiffView {
     }
 
     fn existing_side(&self) -> ReadingSide {
+        if let Some(working) = &self.working {
+            return if Self::working_side_available(&working.entry, ReadingSide::After) {
+                ReadingSide::After
+            } else {
+                ReadingSide::Before
+            };
+        }
         match &self.change {
             Some(change) => {
                 gg_engine::file::existing_side(change.old.as_ref(), change.new.as_ref())
@@ -407,7 +741,10 @@ impl DiffView {
         }
         self.hunks = update.hunks;
         if self.mode == Mode::Full {
-            if self.displayed_generation != update.generation || self.full_side != update.side {
+            if self.displayed_mode != Mode::Full
+                || self.displayed_generation != update.generation
+                || self.full_side != update.side
+            {
                 self.rows.clear();
                 self.offset = 0.0;
                 self.reset = true;
@@ -417,11 +754,13 @@ impl DiffView {
                 self.displayed_path = self.path.clone();
                 self.displayed_working = self.working.clone();
                 self.displayed_generation = update.generation;
+                self.displayed_mode = Mode::Full;
                 self.full_side = update.side;
                 self.full = None;
                 self.cursor = None;
                 self.anchor = None;
                 self.groups.clear();
+                self.stage_selected.clear();
             }
             self.preview = None;
             match update.full {
@@ -454,7 +793,9 @@ impl DiffView {
         }
         match update.result {
             Ok(mut info) => {
-                if self.displayed_generation != update.generation {
+                if self.displayed_mode != Mode::Diff
+                    || self.displayed_generation != update.generation
+                {
                     self.rows.clear();
                     self.offset = 0.0;
                     self.reset = true;
@@ -464,8 +805,10 @@ impl DiffView {
                     self.displayed_path = self.path.clone();
                     self.displayed_working = self.working.clone();
                     self.displayed_generation = update.generation;
+                    self.displayed_mode = Mode::Diff;
                     self.cursor = None;
                     self.anchor = None;
+                    self.stage_selected.clear();
                 }
                 self.preview = update.preview;
                 self.count = update.count;
@@ -799,6 +1142,203 @@ impl DiffView {
         self.draw_inner(ui, true);
     }
 
+    /// One file header: exact path, one scoped action menu, and the exact
+    /// endpoints. Low-frequency identity and commands are not permanent rows.
+    fn draw_header(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, change: &FileChange) {
+        ui.horizontal(|ui| {
+            let width = (ui.available_width() - 104.0).max(80.0);
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 24.0), egui::Sense::hover());
+            bounded_text::paint(
+                ui,
+                rect,
+                &change.path,
+                egui::FontId::proportional(14.0),
+                ui.visuals().text_color(),
+            );
+            ui.menu_button("File actions", |ui| {
+                let capabilities = self.capabilities();
+                for (label, side, enabled) in [
+                    (
+                        "Export before…",
+                        change.old.as_ref(),
+                        capabilities.export_before,
+                    ),
+                    (
+                        "Export after…",
+                        change.new.as_ref(),
+                        capabilities.export_after,
+                    ),
+                ] {
+                    if ui
+                        .add_enabled(enabled && !self.export.busy(), egui::Button::new(label))
+                        .clicked()
+                        && let Some(side) = side
+                    {
+                        self.export.choose(
+                            self.displayed_path.clone(),
+                            side.clone(),
+                            format!("{} · {}", label.trim_end_matches('…'), change.path),
+                        );
+                        ui.close();
+                    }
+                }
+                if self.can_whole_edit() {
+                    let verb = self.stage.map_or("Stage", |stage| stage.verb);
+                    if ui.button(format!("{verb} file")).clicked() {
+                        self.stage_edit = Some(self.file_edit(false));
+                        ui.close();
+                    }
+                }
+                if self.can_drop_whole() && ui.button("Discard file…").clicked() {
+                    self.stage_edit = Some(self.file_edit(true));
+                    ui.close();
+                }
+                let native = std::str::from_utf8(&change.path_bytes).ok();
+                if ui
+                    .button(if native.is_some() {
+                        "Copy path"
+                    } else {
+                        "Copy escaped path"
+                    })
+                    .clicked()
+                {
+                    ctx.copy_text(native.unwrap_or(&change.path).to_owned());
+                    ui.close();
+                }
+                ui.separator();
+                if ui
+                    .button(if self.details_open {
+                        "Hide file details"
+                    } else {
+                        "Show file details"
+                    })
+                    .clicked()
+                {
+                    self.details_open = !self.details_open;
+                    ui.close();
+                }
+            });
+        });
+        let displayed_working = self
+            .displayed_working
+            .clone()
+            .or_else(|| self.working.clone());
+        if let Some(working) = &displayed_working {
+            bounded_text::field(
+                ui,
+                &self.working_route(working),
+                egui::FontId::monospace(11.0),
+                20.0,
+            );
+        } else if (self.displayed.is_none() || self.displayed_generation == self.generation)
+            && let (Some(before), Some(after)) = (&self.before_endpoint, &self.after_endpoint)
+        {
+            bounded_text::field(
+                ui,
+                &format!("{} {before} → {} {after}", self.old_label, self.new_label),
+                egui::FontId::monospace(11.0),
+                20.0,
+            );
+        }
+        if !self.details_open {
+            return;
+        }
+        let side = |side: &Option<gg_engine::review::FileSide>| {
+            side.as_ref()
+                .map(|side| format!("{:06o} {}", side.mode, side.id))
+                .unwrap_or_else(|| "absent".into())
+        };
+        let sizes = self
+            .info
+            .as_ref()
+            .map(|info| format!("{} → {} bytes", info.old_size, info.new_size))
+            .unwrap_or_default();
+        let text = if let Some(working) = &displayed_working {
+            let base = if working.entry.area == Area::Staged {
+                format!(
+                    " · base {} → index {}",
+                    working
+                        .repository
+                        .head
+                        .as_deref()
+                        .map(default_short)
+                        .unwrap_or("unborn"),
+                    default_short(&working.repository.index)
+                )
+            } else {
+                format!(" · index {}", default_short(&working.repository.index))
+            };
+            format!(
+                "{} · {} · {sizes}{base}",
+                working.entry.area.label(),
+                working.entry.kind.label(),
+            )
+        } else {
+            format!(
+                "{}: {} · {} bytes · {}: {} · {} bytes",
+                self.old_label,
+                side(&change.old),
+                self.info.as_ref().map_or(0, |info| info.old_size),
+                self.new_label,
+                side(&change.new),
+                self.info.as_ref().map_or(0, |info| info.new_size)
+            )
+        };
+        bounded_text::field(ui, &text, egui::FontId::monospace(10.0), 18.0);
+    }
+
+    /// One short state line for completeness, notes, and loading. Sizes and
+    /// object identity live in File details instead of permanent rows.
+    fn draw_status(&mut self, ui: &mut egui::Ui) {
+        let pending = self.displayed_generation != self.generation;
+        let mut parts: Vec<String> = vec![];
+        if self.mode == Mode::Full {
+            if let Some(full) = &self.full {
+                if !full.complete {
+                    parts.push("bounded".into());
+                }
+                if pending {
+                    parts.push("loading · previous content retained".into());
+                } else if !full.note.is_empty() && !full.note.starts_with("Working snapshot") {
+                    parts.push(full.note.clone());
+                }
+            } else if self.error.is_some() {
+                parts.push("Full file unavailable".into());
+            } else {
+                parts.push("Loading full file…".into());
+            }
+        } else if let Some(info) = &self.info {
+            if !info.complete {
+                parts.push("text comparison incomplete".into());
+            }
+            let note = info.note.trim();
+            if !pending
+                && !note.is_empty()
+                && !note.starts_with("Working snapshot")
+                && note != "Binary content"
+                && note != "Empty file"
+            {
+                parts.push(note.to_owned());
+            }
+            if pending {
+                parts.push("loading · previous diff retained".into());
+            }
+        } else if self.error.is_some() {
+            parts.push("Diff unavailable".into());
+        } else {
+            parts.push("Loading selected-file diff…".into());
+        }
+        if parts.is_empty() {
+            return;
+        }
+        bounded_text::field(
+            ui,
+            &parts.join(" · "),
+            egui::FontId::proportional(11.0),
+            20.0,
+        );
+    }
+
     fn draw_inner(&mut self, ui: &mut egui::Ui, keyboard: bool) {
         self.bounds = ui.max_rect();
         let ctx = ui.ctx().clone();
@@ -841,62 +1381,7 @@ impl DiffView {
             ui.weak("Select a file to read its diff");
             return;
         };
-        bounded_text::field(ui, &change.path, egui::FontId::proportional(14.0), 24.0);
-        let displayed_working = if self.displayed.is_some() {
-            &self.displayed_working
-        } else {
-            &self.working
-        };
-        if let Some(working) = displayed_working {
-            let label = match working.entry.area {
-                gg_engine::status::Area::Staged => "Staged: HEAD to index",
-                gg_engine::status::Area::Unstaged => "Unstaged: index to working snapshot",
-                gg_engine::status::Area::Untracked => "Untracked: empty to working snapshot",
-                gg_engine::status::Area::Conflict => "Unmerged path",
-            };
-            bounded_text::field(ui, label, egui::FontId::proportional(12.0), 20.0);
-        } else {
-            if self.displayed_generation == self.generation
-                && let (Some(before), Some(after)) = (&self.before_endpoint, &self.after_endpoint)
-            {
-                bounded_text::field(
-                    ui,
-                    &format!("{before} → {after}"),
-                    egui::FontId::monospace(11.0),
-                    20.0,
-                );
-            }
-            let side = |s: &Option<gg_engine::review::FileSide>| {
-                s.as_ref()
-                    .map(|s| format!("{:06o} {}", s.mode, s.id))
-                    .unwrap_or_else(|| "absent".into())
-            };
-            bounded_text::field(
-                ui,
-                &format!("{} to {}", side(&change.old), side(&change.new)),
-                egui::FontId::monospace(10.0),
-                20.0,
-            );
-            let capabilities = self.capabilities();
-            ui.horizontal(|ui| {
-                for (label, side, enabled) in [
-                    ("Export before", &change.old, capabilities.export_before),
-                    ("Export after", &change.new, capabilities.export_after),
-                ] {
-                    if ui
-                        .add_enabled(enabled && !self.export.busy(), egui::Button::new(label))
-                        .clicked()
-                        && let Some(side) = side
-                    {
-                        self.export.choose(
-                            self.displayed_path.clone(),
-                            side.clone(),
-                            format!("{label} · {}", change.path),
-                        );
-                    }
-                }
-            });
-        }
+        self.draw_header(ui, &ctx, &change);
         let mut actions = vec![];
         let capabilities = self.capabilities();
         ui.horizontal_wrapped(|ui| {
@@ -905,7 +1390,11 @@ impl DiffView {
                     capabilities.diff,
                     egui::Button::new("Diff").selected(self.mode == Mode::Diff),
                 )
-                .on_disabled_hover_text("Choose an earlier version to compare");
+                .on_disabled_hover_text(if self.working.is_some() {
+                    "This path has no comparable sides"
+                } else {
+                    "Choose an earlier version to compare"
+                });
             if diff.clicked() {
                 actions.push(Action::Mode(Mode::Diff));
             }
@@ -936,28 +1425,32 @@ impl DiffView {
             ui.separator();
             if !self.edge_known {
                 ui.weak("Earlier version not loaded");
-                ui.add_enabled(false, egui::Button::new("< Prev change"));
-                ui.add_enabled(false, egui::Button::new("Next change >"));
+                ui.add_enabled(false, egui::Button::new("< Prev"));
+                ui.add_enabled(false, egui::Button::new("Next >"));
             } else {
                 let (index, total) = self.change_position();
-                let label = if total == 0 {
-                    "No changes".to_string()
-                } else if self.change_number().is_some() {
-                    format!("Change {index} of {total}")
-                } else {
-                    format!("Before change 1 of {total}")
-                };
-                ui.weak(label);
+                if total == 0 {
+                    ui.weak("No changes");
+                } else if total > 1 {
+                    let label = if self.change_number().is_some() {
+                        format!("Change {index} of {total}")
+                    } else {
+                        format!("Before change 1 of {total}")
+                    };
+                    ui.weak(label);
+                }
                 let previous = self.previous_change().is_some();
                 let next = self.next_change().is_some();
                 if ui
-                    .add_enabled(previous, egui::Button::new("< Prev change"))
+                    .add_enabled(previous, egui::Button::new("< Prev"))
+                    .on_hover_text("Previous change")
                     .clicked()
                 {
                     actions.push(Action::Change(-1));
                 }
                 if ui
-                    .add_enabled(next, egui::Button::new("Next change >"))
+                    .add_enabled(next, egui::Button::new("Next >"))
+                    .on_hover_text("Next change")
                     .clicked()
                 {
                     actions.push(Action::Change(1));
@@ -971,6 +1464,7 @@ impl DiffView {
                 Action::Change(direction) => self.jump_change(direction, &ctx),
             }
         }
+        self.draw_status(ui);
         if let Some(error) = &self.error {
             bounded_text::field(ui, error, egui::FontId::proportional(12.0), 22.0);
             if ui
@@ -987,85 +1481,6 @@ impl DiffView {
                 self.full = None;
                 self.send(&ctx);
             }
-        }
-        let pending = self.displayed_generation != self.generation;
-        let status = if pending && self.error.is_some() {
-            "Showing previous diff".into()
-        } else if pending {
-            format!(
-                "Loading {} · previous diff retained",
-                self.change.as_ref().map_or("file", |c| c.path.as_str())
-            )
-        } else {
-            String::new()
-        };
-        if self.mode == Mode::Full {
-            if let Some(full) = &self.full {
-                bounded_text::field(
-                    ui,
-                    &format!(
-                        "{} side · {} bytes{}",
-                        self.side_label(full.side),
-                        full.size,
-                        if full.complete { "" } else { " · bounded" }
-                    ),
-                    egui::FontId::proportional(11.0),
-                    18.0,
-                );
-                bounded_text::field(
-                    ui,
-                    if pending { &status } else { &full.note },
-                    egui::FontId::proportional(12.0),
-                    22.0,
-                );
-            } else {
-                bounded_text::field(
-                    ui,
-                    if self.error.is_some() {
-                        "Full file unavailable"
-                    } else {
-                        "Loading full file…"
-                    },
-                    egui::FontId::proportional(12.0),
-                    22.0,
-                );
-            }
-        } else if let Some(info) = &self.info {
-            bounded_text::field(
-                ui,
-                &format!(
-                    "{}: {} bytes · {}: {} bytes{}",
-                    self.old_label,
-                    info.old_size,
-                    self.new_label,
-                    info.new_size,
-                    if info.complete {
-                        ""
-                    } else {
-                        " · text comparison incomplete"
-                    }
-                ),
-                egui::FontId::proportional(11.0),
-                18.0,
-            );
-            bounded_text::field(
-                ui,
-                if pending { &status } else { &info.note },
-                egui::FontId::proportional(12.0),
-                22.0,
-            );
-        } else {
-            bounded_text::field(
-                ui,
-                if self.error.is_some() {
-                    "Diff unavailable"
-                } else {
-                    "Loading selected-file diff…"
-                },
-                egui::FontId::proportional(11.0),
-                18.0,
-            );
-            bounded_text::field(ui, "", egui::FontId::proportional(12.0), 22.0);
         }
         ui.separator();
         self.rect = ui.available_rect_before_wrap();
@@ -1101,8 +1516,15 @@ impl DiffView {
         }
         ui.spacing_mut().item_spacing.y = 0.0;
         let shift = ctx.input(|input| input.modifiers.shift);
+        let staging = self.stage;
+        let can_edit = self.can_line_edit();
+        let can_discard = can_edit && staging.is_some_and(|stage| stage.can_discard);
+        let pending = staging.is_some_and(|stage| stage.pending);
+        let verb = staging.map_or("Stage", |stage| stage.verb);
         let mut cursor = self.cursor;
         let mut anchor = self.anchor;
+        let mut hunk_toggle = None;
+        let mut hunk_action: Option<(usize, bool)> = None;
         let result = scroll.show_rows(ui, HEIGHT, self.count, |ui, rows| {
             self.range = rows.start.saturating_sub(24)..rows.end.saturating_add(24);
             // A conservative monospace width keeps every source column reachable.
@@ -1127,12 +1549,149 @@ impl DiffView {
                 };
                 let (sign, color, fill) = crate::colors::diff(ui.visuals(), row.kind);
                 ui.painter().rect_filled(rect, 0.0, fill);
-                if cursor == Some(index) {
+                let selected = self.stage_selected.contains_key(&index);
+                if selected {
+                    ui.painter()
+                        .rect_filled(rect, 0.0, crate::colors::selection(ui.visuals()));
+                    ui.painter().rect_filled(
+                        egui::Rect::from_min_size(rect.min, egui::vec2(3.0, HEIGHT)),
+                        0.0,
+                        ui.visuals().selection.stroke.color,
+                    );
+                } else if cursor == Some(index) {
                     ui.painter()
                         .rect_filled(rect, 0.0, ui.visuals().selection.bg_fill);
                 } else if index >= lo && index <= hi {
                     ui.painter()
                         .rect_filled(rect, 0.0, crate::colors::selection(ui.visuals()));
+                }
+                let mut button_clicked = false;
+                let mut discard_clicked = false;
+                if can_edit && row.kind == RowKind::Hunk {
+                    let bounds = self.hunk_bounds(index);
+                    let chosen = self
+                        .stage_selected
+                        .keys()
+                        .filter(|row| bounds.contains(row))
+                        .count();
+                    let label = if chosen == 0 {
+                        format!("{verb} hunk")
+                    } else {
+                        format!("{verb} {chosen}")
+                    };
+                    let button = egui::Rect::from_min_size(
+                        rect.min + egui::vec2(4.0, 1.0),
+                        egui::vec2(104.0, HEIGHT - 2.0),
+                    );
+                    if pending {
+                        ui.painter().rect(
+                            button,
+                            3.0,
+                            ui.visuals().widgets.noninteractive.bg_fill,
+                            ui.visuals().widgets.noninteractive.bg_stroke,
+                            egui::StrokeKind::Inside,
+                        );
+                        ui.painter().text(
+                            button.center(),
+                            egui::Align2::CENTER_CENTER,
+                            &label,
+                            egui::FontId::proportional(11.0),
+                            ui.visuals().weak_text_color(),
+                        );
+                    } else {
+                        let response = ui
+                            .interact(
+                                button,
+                                ui.scope_id().with(("stage-hunk", index)),
+                                egui::Sense::click(),
+                            )
+                            .on_hover_text(
+                                "Apply the selected changed lines, or the whole hunk when none are selected",
+                            );
+                        button_clicked = response.clicked();
+                        let fill = if response.hovered() {
+                            ui.visuals().widgets.hovered.bg_fill
+                        } else {
+                            ui.visuals().widgets.inactive.bg_fill
+                        };
+                        ui.painter().rect(
+                            button,
+                            3.0,
+                            fill,
+                            ui.visuals().widgets.inactive.fg_stroke,
+                            egui::StrokeKind::Inside,
+                        );
+                        ui.painter().text(
+                            button.center(),
+                            egui::Align2::CENTER_CENTER,
+                            &label,
+                            egui::FontId::proportional(11.0),
+                            ui.visuals().strong_text_color(),
+                        );
+                        if button_clicked {
+                            hunk_action = Some((index, false));
+                        }
+                    }
+                    if can_discard {
+                        let label = if chosen == 0 {
+                            "Discard hunk"
+                        } else {
+                            "Discard selected"
+                        };
+                        let button = egui::Rect::from_min_size(
+                            egui::pos2(rect.right() - 108.0, rect.top() + 1.0),
+                            egui::vec2(104.0, HEIGHT - 2.0),
+                        );
+                        if pending {
+                            ui.painter().rect(
+                                button,
+                                3.0,
+                                ui.visuals().widgets.noninteractive.bg_fill,
+                                ui.visuals().widgets.noninteractive.bg_stroke,
+                                egui::StrokeKind::Inside,
+                            );
+                            ui.painter().text(
+                                button.center(),
+                                egui::Align2::CENTER_CENTER,
+                                label,
+                                egui::FontId::proportional(11.0),
+                                ui.visuals().weak_text_color(),
+                            );
+                        } else {
+                            let response = ui
+                                .interact(
+                                    button,
+                                    ui.scope_id().with(("drop-hunk", index)),
+                                    egui::Sense::click(),
+                                )
+                                .on_hover_text(
+                                    "Discard the selected change block, or the whole hunk when none is selected",
+                                );
+                            discard_clicked = response.clicked();
+                            let fill = if response.hovered() {
+                                ui.visuals().widgets.hovered.bg_fill
+                            } else {
+                                ui.visuals().widgets.inactive.bg_fill
+                            };
+                            ui.painter().rect(
+                                button,
+                                3.0,
+                                fill,
+                                ui.visuals().widgets.inactive.fg_stroke,
+                                egui::StrokeKind::Inside,
+                            );
+                            ui.painter().text(
+                                button.center(),
+                                egui::Align2::CENTER_CENTER,
+                                label,
+                                egui::FontId::proportional(11.0),
+                                ui.visuals().strong_text_color(),
+                            );
+                            if discard_clicked {
+                                hunk_action = Some((index, true));
+                            }
+                        }
+                    }
                 }
                 let font = egui::FontId::monospace(12.0);
                 for (x, text) in [
@@ -1160,8 +1719,16 @@ impl DiffView {
                         );
                 }
                 let origin = rect.min + egui::vec2(116.0, HEIGHT / 2.0);
-                let clip = egui::Rect::from_min_max(rect.min + egui::vec2(116.0, 0.0), rect.max)
-                    .intersect(ui.clip_rect());
+                let text_right = if can_discard && row.kind == RowKind::Hunk {
+                    rect.right() - 112.0
+                } else {
+                    rect.right()
+                };
+                let clip = egui::Rect::from_min_max(
+                    rect.min + egui::vec2(116.0, 0.0),
+                    egui::pos2(text_right, rect.bottom()),
+                )
+                .intersect(ui.clip_rect());
                 // Shape only visible source characters, including at deep horizontal offsets.
                 let (start, end, advance) = ui.fonts_mut(|fonts| {
                     visible_text(
@@ -1178,22 +1745,57 @@ impl DiffView {
                     font,
                     color,
                 );
-                let response = response
-                    .on_hover_text("Click to set the place · Double-click to copy this line");
-                if response.clicked() && !response.double_clicked() {
-                    self.restoring = None;
-                    cursor = Some(index);
-                    if shift {
-                        anchor = Some(anchor.unwrap_or(index));
+                let hover = if can_edit {
+                    match row.kind {
+                        RowKind::Hunk => "Click to select all changed lines in this hunk",
+                        RowKind::Added | RowKind::Deleted => {
+                            "Click to select this changed line for partial staging"
+                        }
+                        _ => "Click to set the place · Double-click to copy this line",
+                    }
+                } else {
+                    "Click to set the place · Double-click to copy this line"
+                };
+                let response = response.on_hover_text(hover);
+                if response.clicked() && !response.double_clicked() && !pending {
+                    if button_clicked || discard_clicked {
+                        // The inline hunk button owns this click.
+                    } else if can_edit && row.kind == RowKind::Hunk {
+                        hunk_toggle = Some(index);
+                    } else if can_edit && matches!(row.kind, RowKind::Added | RowKind::Deleted)
+                    {
+                        let line = match row.kind {
+                            RowKind::Added => row.new_line,
+                            RowKind::Deleted => row.old_line,
+                            _ => None,
+                        };
+                        if let Some(line) = line
+                            && self.stage_selected.remove(&index).is_none()
+                        {
+                            self.stage_selected.insert(index, (row.kind, line));
+                        }
                     } else {
-                        anchor = Some(index);
+                        self.restoring = None;
+                        cursor = Some(index);
+                        anchor = Some(if shift {
+                            anchor.unwrap_or(index)
+                        } else {
+                            index
+                        });
                     }
                 }
-                if response.double_clicked() {
+                if response.double_clicked() && !can_edit {
                     ctx.copy_text(row.text.clone());
                 }
             }
         });
+        if let Some(header) = hunk_toggle {
+            self.toggle_hunk(header);
+        }
+        if let Some((header, discard)) = hunk_action {
+            self.stage_edit = Some(self.hunk_edit(header, discard));
+            self.stage_selected.clear();
+        }
         self.offset = result.state.clamped_offset().y;
         self.cursor = cursor;
         self.anchor = anchor;
@@ -1335,6 +1937,14 @@ impl DiffView {
     }
 }
 
+fn default_short(value: &str) -> &str {
+    if value.is_empty() {
+        "none"
+    } else {
+        value.get(..8).unwrap_or(value)
+    }
+}
+
 fn visible_text(
     text: &str,
     left: f32,
@@ -1358,6 +1968,33 @@ fn visible_text(
         x = next;
     }
     (start.min(end), end, advance)
+}
+
+#[cfg(test)]
+impl DiffView {
+    pub fn ready(&self) -> bool {
+        self.displayed_generation == self.generation
+    }
+
+    pub fn pending(&self) -> bool {
+        self.displayed_generation != self.generation
+    }
+
+    pub fn has_text(&self, needle: &str) -> bool {
+        self.rows.values().any(|row| row.text.contains(needle))
+            || self
+                .full
+                .as_ref()
+                .is_some_and(|full| full.lines.iter().any(|line| line.text.contains(needle)))
+    }
+
+    pub fn rows_len(&self) -> usize {
+        if self.mode == Mode::Full {
+            self.full.as_ref().map_or(0, |full| full.lines.len())
+        } else {
+            self.count
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1535,6 +2172,7 @@ mod tests {
                 new: None,
             }),
             info: Some(FileDiff::summary(DiffKind::Binary, 256, 268, "")),
+            details_open: true,
             ..Default::default()
         };
         let output = crate::tests::run_ui(
@@ -1546,8 +2184,109 @@ mod tests {
         );
         assert!(output.shapes.iter().any(|shape| {
             matches!(&shape.shape, egui::Shape::Text(text)
-                if text.galley.job.text == "Before: 256 bytes · After: 268 bytes")
+                if text.galley.job.text.contains("Before")
+                    && text.galley.job.text.contains("256 bytes")
+                    && text.galley.job.text.contains("After")
+                    && text.galley.job.text.contains("268 bytes"))
         }));
+    }
+
+    #[test]
+    fn staging_edits_follow_the_hunk_and_selected_lines() {
+        use gg_engine::status::{Area, Kind, StatusEntry, StatusIdentity, WorkingRequest};
+        let ctx = egui::Context::default();
+        let mut view = DiffView {
+            change: Some(file("a", true, true)),
+            working: Some(WorkingRequest {
+                repository: StatusIdentity {
+                    path: "/repo".into(),
+                    head: None,
+                    index: "index".into(),
+                    base_tree: None,
+                },
+                entry: StatusEntry::new(Area::Unstaged, Kind::Modified, b"a"),
+            }),
+            info: Some(FileDiff {
+                kind: DiffKind::Text,
+                old_size: 1,
+                new_size: 1,
+                complete: true,
+                note: String::new(),
+                rows: vec![],
+            }),
+            hunks: vec![0, 4],
+            count: 7,
+            stage: Some(StageConfig {
+                verb: "Stage",
+                can_discard: true,
+                pending: false,
+            }),
+            ..Default::default()
+        };
+        let row = |kind, old_line, new_line| DiffRow {
+            kind,
+            old_line,
+            new_line,
+            text: String::new(),
+            bytes: vec![],
+        };
+        for (index, row) in [
+            row(RowKind::Hunk, None, None),
+            row(RowKind::Deleted, Some(1), None),
+            row(RowKind::Added, None, Some(1)),
+            row(RowKind::Added, None, Some(2)),
+            row(RowKind::Hunk, None, None),
+            row(RowKind::Added, None, Some(3)),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            view.rows.insert(index, row);
+        }
+
+        let whole = view.hunk_edit(0, false);
+        assert_eq!(whole.scope, StageScope::Hunk);
+        assert!(whole.changes.is_empty(), "the whole hunk is implicit");
+        assert_eq!(whole.header.as_deref(), Some(""));
+
+        view.stage_selected.insert(2, (RowKind::Added, 1));
+        let selected = view.hunk_edit(0, false);
+        assert_eq!(selected.scope, StageScope::Selected);
+        assert_eq!(selected.changes, vec![(RowKind::Added, 1)]);
+
+        let discard = view.hunk_edit(0, true);
+        assert!(discard.discard);
+        assert_eq!(
+            discard.changes,
+            vec![
+                (RowKind::Deleted, 1),
+                (RowKind::Added, 1),
+                (RowKind::Added, 2)
+            ],
+            "a discard expands the touched change block"
+        );
+
+        view.stage_selected.clear();
+        view.stage_selected.insert(5, (RowKind::Added, 3));
+        let other = view.hunk_edit(4, false);
+        assert_eq!(other.scope, StageScope::Selected);
+        assert_eq!(other.changes, vec![(RowKind::Added, 3)]);
+        assert!(!other.discard);
+
+        let file = view.file_edit(true);
+        assert_eq!(file.scope, StageScope::File);
+        assert!(file.discard);
+        assert!(file.changes.is_empty());
+
+        view.generation = 2;
+        view.displayed_generation = 1;
+        assert!(
+            !view.can_whole_edit() && !view.can_drop_whole() && !view.can_line_edit(),
+            "actions wait for the displayed comparison to match the request"
+        );
+        view.displayed_generation = 2;
+        assert!(view.can_whole_edit() && view.can_drop_whole() && view.can_line_edit());
+        let _ = ctx;
     }
 
     #[test]
@@ -1987,7 +2726,7 @@ mod tests {
         assert!(output.shapes.iter().any(|shape| matches!(
             &shape.shape,
             egui::epaint::Shape::Text(text)
-                if text.galley.job.text == "main (11111111) → feature (22222222)"
+                if text.galley.job.text == "Before main (11111111) → After feature (22222222)"
         )));
     }
 
@@ -2114,10 +2853,11 @@ mod tests {
         let ctx = egui::Context::default();
         let mut view = DiffView {
             change: Some(file("src/app.rs", true, true)),
+            displayed: Some(file("src/app.rs", true, true)),
             generation: 1,
             ..Default::default()
         };
-        view.set_endpoints("before version", "after version");
+        view.set_endpoints("older (aaaaaaaa)", "newer (bbbbbbbb)");
         let draw = |view: &mut DiffView| {
             crate::tests::run_ui(
                 &ctx,
@@ -2131,14 +2871,16 @@ mod tests {
         assert!(!output.shapes.iter().any(|shape| matches!(
             &shape.shape,
             egui::epaint::Shape::Text(text)
-                if text.galley.job.text == "before version → after version"
+                if text.galley.job.text
+                    == "Before older (aaaaaaaa) → After newer (bbbbbbbb)"
         )));
         view.displayed_generation = 1;
         let output = draw(&mut view);
         assert!(output.shapes.iter().any(|shape| matches!(
             &shape.shape,
             egui::epaint::Shape::Text(text)
-                if text.galley.job.text == "before version → after version"
+                if text.galley.job.text
+                    == "Before older (aaaaaaaa) → After newer (bbbbbbbb)"
         )));
     }
 }

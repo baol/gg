@@ -385,6 +385,163 @@ fn working_diffs_reject_stale_index_and_cancelled_reads() -> Result {
     Ok(())
 }
 #[test]
+fn working_full_file_reads_the_exact_sides() -> Result {
+    use gg_engine::file::ReadingSide;
+    fn text(side: &gg_engine::file::FileText) -> Vec<u8> {
+        side.lines
+            .iter()
+            .flat_map(|line| line.bytes.clone())
+            .collect()
+    }
+    let dir = tempfile::tempdir()?;
+    let p = dir.path();
+    git(p, &["init", "-b", "main"])?;
+    std::fs::write(p.join("a"), b"base\n")?;
+    git(p, &["add", "a"])?;
+    git(p, &["commit", "-qm", "base"])?;
+    std::fs::write(p.join("a"), b"staged\n")?;
+    git(p, &["add", "a"])?;
+    std::fs::write(p.join("a"), b"working\n")?;
+
+    let staged = request(p, b"a", Area::Staged)?;
+    assert_eq!(
+        text(&gg_git::working_diff::read_side(
+            &staged,
+            ReadingSide::Before,
+            &Default::default(),
+            || false,
+        )?),
+        b"base\n"
+    );
+    assert_eq!(
+        text(&gg_git::working_diff::read_side(
+            &staged,
+            ReadingSide::After,
+            &Default::default(),
+            || false,
+        )?),
+        b"staged\n"
+    );
+    let unstaged = request(p, b"a", Area::Unstaged)?;
+    assert_eq!(
+        text(&gg_git::working_diff::read_side(
+            &unstaged,
+            ReadingSide::Before,
+            &Default::default(),
+            || false,
+        )?),
+        b"staged\n"
+    );
+    assert_eq!(
+        text(&gg_git::working_diff::read_side(
+            &unstaged,
+            ReadingSide::After,
+            &Default::default(),
+            || false,
+        )?),
+        b"working\n"
+    );
+
+    std::fs::write(p.join("u"), b"new\n")?;
+    let untracked = request(p, b"u", Area::Untracked)?;
+    let before = gg_git::working_diff::read_side(
+        &untracked,
+        ReadingSide::Before,
+        &Default::default(),
+        || false,
+    )?;
+    assert!(before.lines.is_empty());
+    assert!(before.note.contains("Untracked"));
+    assert_eq!(
+        text(&gg_git::working_diff::read_side(
+            &untracked,
+            ReadingSide::After,
+            &Default::default(),
+            || false,
+        )?),
+        b"new\n"
+    );
+
+    std::fs::remove_file(p.join("a"))?;
+    let deleted = request(p, b"a", Area::Unstaged)?;
+    let after =
+        gg_git::working_diff::read_side(&deleted, ReadingSide::After, &Default::default(), || {
+            false
+        })?;
+    assert!(after.lines.is_empty());
+    assert!(after.note.contains("absent"));
+
+    git(p, &["rm", "-q", "a"])?;
+    let staged_deleted = request(p, b"a", Area::Staged)?;
+    assert_eq!(
+        text(&gg_git::working_diff::read_side(
+            &staged_deleted,
+            ReadingSide::Before,
+            &Default::default(),
+            || false,
+        )?),
+        b"base\n"
+    );
+    assert!(
+        gg_git::working_diff::read_side(
+            &staged_deleted,
+            ReadingSide::After,
+            &Default::default(),
+            || false,
+        )?
+        .lines
+        .is_empty()
+    );
+
+    assert!(
+        gg_git::working_diff::read_side(
+            &staged,
+            ReadingSide::Before,
+            &Default::default(),
+            || true,
+        )
+        .err()
+        .is_some_and(|error| error.contains("cancelled"))
+    );
+    std::fs::write(p.join("a"), b"new index\n")?;
+    git(p, &["add", "a"])?;
+    assert!(
+        gg_git::working_diff::read_side(
+            &staged_deleted,
+            ReadingSide::Before,
+            &Default::default(),
+            || false,
+        )
+        .err()
+        .is_some_and(|error| error.contains("Refresh status"))
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn working_full_file_reads_symlink_targets() -> Result {
+    use gg_engine::file::ReadingSide;
+    let dir = tempfile::tempdir()?;
+    let p = dir.path();
+    git(p, &["init", "-b", "main"])?;
+    std::os::unix::fs::symlink("target", p.join("link"))?;
+    let request = request(p, b"link", Area::Untracked)?;
+    let after =
+        gg_git::working_diff::read_side(&request, ReadingSide::After, &Default::default(), || {
+            false
+        })?;
+    let bytes: Vec<u8> = after
+        .lines
+        .iter()
+        .flat_map(|line| line.bytes.clone())
+        .collect();
+    assert_eq!(bytes, b"target");
+    assert_eq!(after.note, "Symlink target");
+    Ok(())
+}
+
+#[test]
 fn working_diff_normalizes_text_and_reports_binary_and_limits() -> Result {
     use gg_engine::diff::DiffKind;
     let dir = tempfile::tempdir()?;

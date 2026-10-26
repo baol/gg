@@ -15,7 +15,8 @@ Send the shared brief plus one assignment to each subagent. Do not dispatch the 
 | I2 · Shared reader | I1 accepted | Common comparison/presentation/place interface |
 | I3 · Local Changes | I2 accepted | Required layout, staging and commit/amend integration |
 | I4 · File history | I3 accepted | History changes the source inside the existing reader |
-| I5 · Operations | I4 accepted | One operation area and responsive rewrite |
+| I5a · One file workspace | I4 accepted | Local Changes on the shared reader, one header, one scoped action surface |
+| I5b · Operations | I5a accepted | One operation area and responsive rewrite |
 | I6 · Conflicts | I5 accepted | Read-only preview followed by validated Stage resolution |
 | I7 · Repository tools | I6 accepted | Unified Recovery, stash restore, branch forms and pending intent |
 | V1 · Behavior verifier | Each completed candidate | Independent Git, worker, and regression verification |
@@ -163,10 +164,30 @@ Tests: exact reader restoration, boundaries, ambiguous predecessors, rename/dele
 Do not implement attribution or line/range tracing in this task. Preserve their Place extension contract.
 ~~~
 
+## I5a · One file workspace across review and Local Changes
+
+~~~text
+Apply the shared brief. Implement I5a after I4 is accepted.
+
+Starting points: apps/git-good/src/status_view.rs, stage_view.rs, diff_view.rs, diff_worker.rs, review_view.rs, file_history_view.rs; crates/git/src/working_diff.rs and tests/status.rs. Read Architecture: Commit review; Working status/diffs; File staging; Hunk, line, and drop actions; File reading and history. Read the one-file-workspace and prototype review criteria in docs/ui-coherence.md.
+
+Make Local Changes render on the shared reader. Selecting either list entry selects its comparison immediately; there is no separate View diff route, second renderer, or Staged/Unstaged reader switch. Diff/Full file, Before/After, exact endpoints, and the reading place are the same controls used by review and file history.
+
+Show each file identity, exact path, endpoints, and scoped commands once. Keep modes, object IDs, byte sizes, and copy behind an on-demand File details disclosure. Put export, copy path, Stage file, Unstage file, and Discard file behind one File actions surface beside the path. Keep inline Stage hunk/Unstage hunk/Discard hunk and selected-line actions beside their content. Remove permanently repeated path/route/mode rows and the duplicate workspace heading.
+
+Read both working full-file sides on the selected-file worker: base tree and index for Staged, index and normalized working bytes for Unstaged, empty and working bytes for Untracked. Preserve the 2 MiB/100,000-line budgets, symlink/gitlink/binary summaries, cancellation, stale-result rejection, and read-only browsing.
+
+Keep the existing mutation contract: whole-file, hunk, selected-line, and confirmed Discard validate original bytes and the index; duplicate actions stay disabled while pending; refresh both lists and the active comparison; a disappeared path keeps an explicit empty comparison. Preserve normal/amend drafts, staging safety, and independent list scrolling.
+
+Tests: real Git fixtures prove both full-file sides, exact endpoint labels, one presentation/action surface, no View diff or second renderer, whole-file/hunk/line/discard equivalence, no unrelated index or working changes, and the existing narrow geometry. Preserve or strengthen old staging and commit/amend coverage when replacing renderer-specific accessors.
+
+Retain the shared reader/strip interfaces for I5b-I7. Do not implement the operation area, conflicts, or recovery here.
+~~~
+
 ## I5 · One operation area and responsive rewrite
 
 ~~~text
-Apply the shared brief. Implement I5 after I4 is accepted.
+Apply the shared brief. Implement I5 after I5a is accepted.
 
 Starting points: apps/git-good/src/main.rs (operation_busy, start_operation, finish_operation, begin_rewrite, finish_rewrite, RewriteJob, OperationOutcome), network.rs, and native worker tests. Read Architecture: outcomes, network progress/cancellation, M5 operation state, rebase, reorder/squash.
 

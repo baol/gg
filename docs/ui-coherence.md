@@ -53,6 +53,8 @@ Wide layouts retain file selection to the left of the reader. Local Changes uses
 
 The header always spells out both endpoints: parent → commit, HEAD → index, index → working file, or older version → selected version. In amend mode Staged is explicitly HEAD parent → index. No generic 'Before' label replaces the endpoint identity.
 
+Each view states the file identity, exact endpoints, presentation, and its scoped commands once. The path appears in the reader header rather than in both a view identity strip and the reader. Low-frequency metadata (modes, object IDs, byte sizes) and commands (export, copy path) live in an on-demand **File details** disclosure or **File actions** menu instead of permanent rows. There is no second route to the same comparison, such as a separate **View diff** step.
+
 Opening File history saves the entry comparison, file, side, presentation, attribution state, and line/range. A version strip appears above the same reader. Closing File history restores that saved context once; older/newer clicks do not add Back entries. A predecessor chooser is an interruption inside this source change and returns to the same reader. Diff is unavailable until the earlier edge is resolved; current Full file remains readable.
 
 Line history uses this same version strip with a visible range anchor. Deleted ranges name the Before side. Attribution retains the existing read-only/history-bounds contracts; attribution of live uncommitted content requires its own specification and is not assumed here.

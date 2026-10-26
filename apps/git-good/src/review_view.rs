@@ -264,45 +264,21 @@ impl Review {
         self.restore_files = true;
         self.diff = crate::diff_view::DiffView::default();
     }
-    fn metadata(&mut self, ui: &mut egui::Ui) {
-        let Some(change) = self.selected.and_then(|row| self.rows.get(&row)) else {
-            ui.weak("Select a file");
-            return;
-        };
-        if ui.button("View diff").clicked() {
-            self.show_diff = true;
-        }
-        ui.weak("SELECTED FILE");
-        ui.add_space(8.0);
-        bounded_text::field(ui, &change.path, egui::FontId::proportional(14.0), 24.0);
-        ui.add_space(8.0);
-        for (label, side) in [("Before", &change.old), ("After", &change.new)] {
-            let text = side
-                .as_ref()
-                .map(|s| format!("{label}  {:06o}  {}", s.mode, s.id))
-                .unwrap_or_else(|| format!("{label}  absent"));
-            bounded_text::field(ui, &text, egui::FontId::monospace(11.0), 22.0);
-        }
-        let native_text = std::str::from_utf8(&change.path_bytes);
-        if ui
-            .button(if native_text.is_ok() {
-                "Copy path"
-            } else {
-                "Copy escaped path"
-            })
-            .clicked()
-        {
-            ui.ctx()
-                .copy_text(native_text.unwrap_or(&change.path).to_owned());
-        }
-    }
     /// Draw the history strip above whichever reader path is active.
     fn draw_reader(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, reading: bool) {
         let mut message = None;
+        let mut close = false;
         if let Some(history) = &mut self.history {
             history.draw_strip(ui, ctx);
-            ui.separator();
-            message = history.prepare(&mut self.diff, ctx);
+            close = history.take_close();
+            if !close {
+                ui.separator();
+                message = history.prepare(&mut self.diff, ctx);
+            }
+        }
+        if close {
+            self.close_history(ctx);
+            return;
         }
         if let Some(message) = message {
             bounded_text::field(ui, message, egui::FontId::proportional(12.0), 22.0);
@@ -513,22 +489,18 @@ impl Review {
                 ctx,
             );
         }
-        let mut close_history = false;
         egui::Panel::top("review-header")
             .exact_size(42.0)
             .show(ui, |ui| {
                 ui.horizontal_centered(|ui| {
-                    if self.history.is_some() {
-                        if ui.button("Close history").clicked() {
-                            close_history = true;
-                        }
-                    } else if ui
-                        .button(if self.show_diff {
-                            "Back to files"
-                        } else {
-                            "Back to history"
-                        })
-                        .clicked()
+                    if self.history.is_none()
+                        && ui
+                            .button(if self.show_diff {
+                                "Back to files"
+                            } else {
+                                "Back to history"
+                            })
+                            .clicked()
                     {
                         if self.show_diff {
                             self.show_diff = false;
@@ -581,9 +553,14 @@ impl Review {
                         self.retry(ctx);
                     }
                     let label = format!(
-                        "{}{} files",
+                        "{}{} file{}",
                         self.count,
-                        if self.complete { "" } else { "+" }
+                        if self.complete { "" } else { "+" },
+                        if self.count == 1 && self.complete {
+                            ""
+                        } else {
+                            "s"
+                        }
                     );
                     ui.weak(label);
                     if let Some(comparison) = &self.comparison {
@@ -611,51 +588,17 @@ impl Review {
                             if parent != before {
                                 self.switch_parent(parent, ctx);
                             }
-                        } else {
-                            ui.weak(if parents.is_empty() {
-                                "Empty tree"
-                            } else {
-                                "Parent 1"
-                            });
                         }
                     }
                 });
             });
-        if close_history {
-            self.close_history(ctx);
+        if self.history.is_none() {
+            egui::Panel::top("review-identity")
+                .exact_size(26.0)
+                .show(ui, |ui| {
+                    bounded_text::field(ui, &self.subject, egui::FontId::proportional(16.0), 24.0);
+                });
         }
-        let display_endpoints = if self.history.is_some() {
-            self.history
-                .as_ref()
-                .and_then(|history| history.endpoints())
-                .unwrap_or_else(|| self.reader_endpoints())
-        } else {
-            self.reader_endpoints()
-        };
-        egui::Panel::top("review-identity")
-            .exact_size(96.0)
-            .show(ui, |ui| {
-                bounded_text::field(ui, &self.subject, egui::FontId::proportional(16.0), 24.0);
-                let (before, after) = &display_endpoints;
-                bounded_text::field(
-                    ui,
-                    &format!("Before  {before}"),
-                    egui::FontId::monospace(11.0),
-                    20.0,
-                );
-                bounded_text::field(
-                    ui,
-                    &format!("After   {after}"),
-                    egui::FontId::monospace(11.0),
-                    20.0,
-                );
-                bounded_text::field(
-                    ui,
-                    &self.request.path.display().to_string(),
-                    egui::FontId::monospace(11.0),
-                    20.0,
-                );
-            });
         egui::Panel::bottom("review-status")
             .exact_size(26.0)
             .show(ui, |ui| {
@@ -718,10 +661,6 @@ impl Review {
                 .default_size(640.0)
                 .size_range(400.0..=(ctx.content_rect().width() - 320.0).max(400.0))
                 .show(ui, |ui| self.draw_reader(ui, ctx, false));
-        } else {
-            egui::Panel::bottom("review-file-info-narrow")
-                .exact_size(170.0)
-                .show(ui, |ui| self.metadata(ui));
         }
         egui::CentralPanel::default().show(ui, |ui| {
             ui.horizontal(|ui| {
@@ -805,7 +744,11 @@ impl Review {
                             egui::FontId::proportional(13.0),
                             ui.visuals().strong_text_color(),
                         );
-                        if response.clicked() {
+                        if response.double_clicked() {
+                            response.surrender_focus();
+                            self.selected = Some(row);
+                            self.show_diff = true;
+                        } else if response.clicked() {
                             response.surrender_focus();
                             self.selected = Some(row);
                         }
@@ -1000,6 +943,23 @@ mod tests {
             parents: Vec::new(),
             subject: "Compare".into(),
         });
+        view.rows.insert(
+            0,
+            FileChange {
+                path: "src/app.rs".into(),
+                path_bytes: b"src/app.rs".to_vec(),
+                kind: ChangeKind::Modified,
+                old: Some(FileSide {
+                    id: "b".repeat(40),
+                    mode: 0o100644,
+                }),
+                new: Some(FileSide {
+                    id: "a".repeat(40),
+                    mode: 0o100644,
+                }),
+            },
+        );
+        view.selected = Some(0);
         let output = crate::tests::run_ui(
             &ctx,
             crate::tests::frame_input(1120.0, 740.0, vec![]),
@@ -1192,8 +1152,8 @@ mod tests {
                 "Diff",
                 "Full file",
                 "No changes",
-                "< Prev change",
-                "Next change >",
+                "< Prev",
+                "Next >",
             ] {
                 assert!(
                     text.iter().any(|line| line.contains(label)),
