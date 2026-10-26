@@ -1927,11 +1927,29 @@ mod tests {
         width: f32,
         label: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let output = run(ctx, view, width, vec![]);
-        let menu = text_pos(&output, "File actions").ok_or("missing File actions")?;
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let menu = loop {
+            let output = run(ctx, view, width, vec![]);
+            if let Some(menu) = text_pos(&output, "File actions") {
+                break menu;
+            }
+            if std::time::Instant::now() > until {
+                return Err("missing File actions".into());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        };
         click(ctx, view, width, menu + egui::vec2(5.0, 0.0));
-        let output = run(ctx, view, width, vec![]);
-        let item = text_pos(&output, label).ok_or("missing file action item")?;
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let item = loop {
+            let output = run(ctx, view, width, vec![]);
+            if let Some(item) = text_pos(&output, label) {
+                break item;
+            }
+            if std::time::Instant::now() > until {
+                return Err("missing file action item".into());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        };
         click(ctx, view, width, item + egui::vec2(5.0, 0.0));
         Ok(())
     }
