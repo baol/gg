@@ -19,6 +19,7 @@ Send the shared brief plus one assignment to each subagent. Do not dispatch the 
 | I5b · Operations | I5a accepted | One operation area and responsive rewrite |
 | I6 · Conflicts | I5 accepted | Read-only preview followed by validated Stage resolution |
 | I7 · Repository tools | I6 accepted | Unified Recovery, stash restore, branch forms and pending intent |
+| I8 · Coherence closeout | I7 accepted | Interaction-parity pass, narrow-layout fixes, deferred-element list, integrated native V2 |
 | V1 · Behavior verifier | Each completed candidate | Independent Git, worker, and regression verification |
 | V2 · Native UI verifier | Each completed UI candidate | Native layout, keyboard, coherence and journey verification |
 
@@ -249,6 +250,24 @@ Standardize Back/Cancel/Close and Delete/Discard wording. Remove old entry point
 Tests: Git fixture oracles for stash options/conflicts, resets/backups, branch creation/switch partial success; real input paths for nested review return, source/selection retention, keyboard parity, canceled intent and worktree isolation. Copy exact identifiers.
 
 Do not expand into force push, worktree management, restart persistence or other deferred features.
+~~~
+
+## I8 · Coherence closeout
+
+~~~text
+Apply the shared brief. Implement I8 after I7 is accepted. This is a closeout pass, not a new feature milestone.
+
+Starting points: docs/ui-coherence.md, docs/user-flows.md, docs/ui-coherence.fragment.html, docs/ui-mockups.fragment.html, the owning sections of docs/architecture.md, apps/git-good/src/main.rs, review_view.rs, diff_view.rs, and the Recovery/Stashes/branch windows.
+
+Walk the four connected journeys in the V2 brief on the integrated tree at 1120x740 and 720x480. Use keyboard and pointer, real Git fixtures, and the current candidate. Mockups explain intent; they are not a pixel specification. Check every implemented surface against docs/ui-coherence.md, docs/user-flows.md, and the prototype for redundant, missing, or conflicting controls. Preserve legitimate distinctions such as stage versus discard and cancel versus abort.
+
+Fix concrete parity defects found by the walk. Typical closeout defects include a repository tool whose default size leaves the viewport at narrow widths, a narrow reader that waits forever for hover to clear after an explicit file selection, a status hint clipped mid-shortcut, or a superseded control that still appears beside its replacement. Do not add deferred M7 features or placeholder controls. Keep exact identities, worker bounds, read-only previews, confirmations, and return locations unchanged.
+
+Record a deferred-element list in docs/ui-coherence.md so every optional promise is either implemented or explicitly planned. Update the owning architecture contract with any behavior change and add focused regression tests, including geometry assertions for viewport containment.
+
+Capture the final integrated journeys at both sizes: History -> review -> reader -> Back; Local Changes with both groups and commit/amend; a conflict workspace with preview and Stage resolution; Recovery -> Open commit -> Back with the Reflog filter; Stashes -> Restore form; and the shared branch form. Record platform, theme, scale, fixture, and unverified conditions in docs/verification.md.
+
+Checks: cargo fmt --all -- --check; cargo test --workspace --locked; cargo clippy --workspace --all-targets --locked -- -D warnings. Return behavior, changed files/contracts, commands/results, capture paths, remaining limitations, and a reviewable diff.
 ~~~
 
 ## V1 · Independent behavior verifier

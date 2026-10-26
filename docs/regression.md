@@ -113,6 +113,13 @@ Before connecting M1 controls, test Review/Back anchor restoration, active-view 
 - **Repository → Stashes…** opens the stash window, which offers one Restore… form with Restore staged state and Remove stash after successful restore; Drop stays a separate confirmed action. Failed restores keep the form and entry in a bounded error region, successful restores report Restored, and stash conflicts add no sequencer controls. The Help window no longer advertises a top-level Stash menu.
 - Tests render the Recovery source selector and caller-specific branch/stash forms at both widths, reselect source-specific entries (including duplicate backups at one commit and a non-HEAD Reflog filter), assert Review's recovery back label and return location, verify the unborn New-branch reason, keep a long restore error inside its scroll viewport, assert the Restored outcome, and reproduce blocked-switch intent through an idle frame before an explicit retry starts a new worker; success clears the warning and the created-branch partial state is reported.
 
+## Coherence I8 closeout regressions
+
+- A real-fixture egui geometry test opens Recovery at 720×480, asserts the window rectangle stays inside both axes, and asserts Open commit and Copy ref still render. The default width is the smaller of 760 pixels and the available content width minus 24 pixels.
+- A reader regression reproduces the narrow file-list → reader transition with the resting pointer already over the reader. An explicit new selection publishes its diff once; the existing asynchronous-replacement test still waits for hover to clear.
+- A status-line test asserts the wide hint includes paging and copy ID while the narrow hint keeps `j/k`, review, details, history, and filter without clipping.
+- The Help window test rejects the retired `View, Stash, Help` menu sequence. The deferred-element list in [ui-coherence](ui-coherence.md#deferred-elements) covers attribution/line history, image diffs, worktrees, submodules, LFS, signing, force push, restart-persistent drafts, and the dedicated conflict workspace.
+
 ## M1 changed files
 
 - Git-oracle fixtures cover root/first-parent changes, merge-parent selection, nested paths, additions/deletions, IDs/modes, file-to-directory replacement, empty comparisons, invalid parents/revisions, and pinned comparisons with unavailable blobs.

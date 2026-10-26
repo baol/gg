@@ -121,6 +121,21 @@ Adopt in small increments:
 
 Before changing production UI, update the owning architecture and plan contracts for each increment. This proposal itself changes no production behavior and does not claim M7 implementation or native acceptance.
 
+## Deferred elements
+
+These controls appear in the design exploration but are intentionally not part of this delivery. They stay planned in [plan](plan.md) with honest extension points; no disabled or placeholder control pretends they work.
+
+- **Show attribution** and blame/line/range history: the reader keeps the saved comparison and version-cursor extension points, but no attribution button or fake line-history control ships until the algorithm and its bounds are specified.
+- **Image diffs**: images keep the bounded preview and export rules; side-by-side and swipe comparison remain later work.
+- **Worktree management**: drafts, selection, and filters already stay worktree-scoped, but list/create/open/remove actions wait for a dedicated contract.
+- **Submodules**: referenced commit identity is visible through ordinary review, but explicit update and recursive status actions are not added.
+- **Git LFS**: pointer identity and explicit fetch/smudge actions remain unimplemented.
+- **Commit and tag signing**: verification and signing configuration remain unimplemented.
+- **Force push**: push stays non-force; no force-with-lease or force toggle is offered.
+- **Restart-persistent drafts**: normal/amend drafts survive view and repository changes in one session, not application restarts.
+- **A conflict panel inside Local Changes**: the shared preview/publication grammar lives in the dedicated resizable conflict workspace; folding it into the two-list panel remains a documented limitation rather than a hidden second route.
+- **Cross-platform and full accessibility acceptance**: the recorded native evidence is Linux/X11 with llvmpipe; macOS, Windows, other display scales, screen readers, and exhaustive contrast remain unverified.
+
 ## Prototype review criteria
 
 - The same file controls appear in the same order for commit review, staging, and file history.

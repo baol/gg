@@ -49,6 +49,7 @@ Goal: consolidate navigation, reading, scoped commands, operations, and recovery
    - **5b. Operation area and responsive rewrite · complete.** One operation area owns running, refreshing, needs-attention, and supported continuation controls across views. Validated submission closes configuration; rewrite stops blocking browsing while retained old history is labeled until replacement data is accepted.
 6. **Conflict preview followed by Stage resolution · complete.** Conflicts use the shared file workspace and name Base, ours, theirs, and the result. Choosing a source is read-only; **Stage resolution** is the single publication step and validates original bytes, operation, path, and stale content.
 7. **Repository tools, recovery, and pending intent · complete.** Consolidate Backups and Reflog under **Repository → Recovery**, add one **Restore stash…** form, share branch creation with an explicit switch choice, and retain blocked-action intent for revalidation without auto-execution. Recovery returns to its source, Reflog reference filter, and selected entry.
+8. **Coherence closeout · complete.** Walk the connected native journeys at 1120×740 and 720×480 against the mockups and owning contracts; fix concrete parity defects such as clipped repository tools, narrow-reader reveal stalls, and truncated status hints; record the deferred-element list; and leave no superseded control beside its replacement.
 
 ### Acceptance
 
@@ -64,6 +65,7 @@ Goal: consolidate navigation, reading, scoped commands, operations, and recovery
 | One file workspace | Staging, commit review, and file history use the same reader controls in the same order; the file path, exact endpoints, and scoped actions appear once, and low-frequency details are on demand; there is no separate **View diff** route or second renderer | egui geometry and interaction, native review |
 | Operations and conflicts | One operation area owns progress and supported recovery; source preview never stages, and Stage resolution validates original bytes and stale state | Worker tests, Git oracle, native review |
 | Recovery and intent | Recovery shares one source selector and returns to its selected entry; stash restore options and branch-creation switch choice are explicit; blocked intent is reoffered and revalidated, never auto-executed | egui interaction, Git oracle, native review |
+| Coherence closeout | Connected review, Local Changes, conflict, recovery, stash, and branch journeys keep the same labels, placement, disable reasons, and return rules at 1120×740 and 720×480; no superseded control remains and every housed control stays inside the viewport | Native capture, geometry test, keyboard/pointer review |
 
 Implementation handoff: [phased implementation and verification prompts](implementation-prompts.md). These increments change no deferred M7 scope: blame/line history, image diffs, worktrees, submodules, LFS, signing, and force push remain planned.
 

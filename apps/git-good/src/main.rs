@@ -277,12 +277,14 @@ impl RecoveryView {
     fn draw(&mut self, ctx: &egui::Context, references: &[String]) -> Option<RecoveryToolAction> {
         let mut action = None;
         let mut open = self.open;
+        let max_width = (ctx.content_rect().width() - 24.0).max(320.0);
         egui::Window::new("Recovery")
             .id(egui::Id::unique("recovery"))
             .open(&mut open)
             .collapsible(false)
             .resizable(true)
-            .default_width(760.0)
+            .default_width(max_width.min(760.0))
+            .max_width(max_width)
             .default_height(500.0)
             .default_pos(ctx.content_rect().center())
             .pivot(egui::Align2::CENTER_CENTER)
@@ -4556,7 +4558,12 @@ impl Browser {
                     .current_tracking()
                     .map(|tracking| format!("{}   ·   ", refs_view::tracking_label(tracking)))
                     .unwrap_or_default();
-                (format!("{tracking}Up/Down / j k: select   ·   PgUp/PgDn: page   ·   Enter: review   ·   Space: details   ·   Esc: history   ·   Ctrl/Cmd+F: filter   ·   Ctrl/Cmd+C: copy ID"), ui.visuals().weak_text_color())
+                let hints = if narrow {
+                    "j/k: select · Enter: review · Space: details · Esc: history · Ctrl/Cmd+F: filter"
+                } else {
+                    "Up/Down / j k: select   ·   PgUp/PgDn: page   ·   Enter: review   ·   Space: details   ·   Esc: history   ·   Ctrl/Cmd+F: filter   ·   Ctrl/Cmd+C: copy ID"
+                };
+                (format!("{tracking}{hints}"), ui.visuals().weak_text_color())
             };
             let outcome_active = !operation_active
                 && self.network_error.is_none()
@@ -5078,6 +5085,38 @@ mod tests {
             assert!(labels >= 1, "width={width}: {text:?}");
             if width >= 1120.0 {
                 assert!(labels >= 2, "width={width}: {text:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn status_hints_shorten_at_narrow_widths() {
+        for width in [720.0, 1120.0] {
+            let ctx = egui::Context::default();
+            let mut app = layout_fixture();
+            let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let output = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let hint = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                    _ => None,
+                })
+                .find(|line| line.contains("Enter: review") && line.contains("Ctrl/Cmd+F: filter"));
+            assert!(hint.is_some(), "missing status hint at {width}");
+            if let Some(hint) = hint {
+                if width < 900.0 {
+                    assert!(hint.contains("j/k: select"), "{hint}");
+                    assert!(!hint.contains("copy ID"), "{hint}");
+                } else {
+                    assert!(hint.contains("Up/Down / j k: select"), "{hint}");
+                    assert!(hint.contains("copy ID"), "{hint}");
+                }
             }
         }
     }
@@ -6957,6 +6996,89 @@ mod tests {
             assert!(text.iter().any(|line| line.contains("Backups")));
             assert!(!text.iter().any(|line| line.contains("Reflog…")));
         }
+    }
+
+    #[test]
+    fn recovery_window_stays_inside_the_narrow_viewport() -> Result<(), Box<dyn std::error::Error>>
+    {
+        use std::process::Command;
+        let run = |path: &std::path::Path, args: &[&str]| -> Result<(), String> {
+            let output = Command::new("git")
+                .arg("-C")
+                .arg(path)
+                .args(args)
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env(
+                    "GIT_CONFIG_GLOBAL",
+                    if cfg!(windows) { "NUL" } else { "/dev/null" },
+                )
+                .env("GIT_AUTHOR_NAME", "Test")
+                .env("GIT_AUTHOR_EMAIL", "test@example.org")
+                .env("GIT_COMMITTER_NAME", "Test")
+                .env("GIT_COMMITTER_EMAIL", "test@example.org")
+                .output()
+                .map_err(|error| error.to_string())?;
+            if output.status.success() {
+                Ok(())
+            } else {
+                Err(String::from_utf8_lossy(&output.stderr).into_owned())
+            }
+        };
+        let dir = tempfile::tempdir()?;
+        let path = dir.path();
+        run(path, &["init", "-q", "-b", "main"])?;
+        run(path, &["config", "user.name", "Test"])?;
+        run(path, &["config", "user.email", "test@example.org"])?;
+        std::fs::write(path.join("a"), b"base\n")?;
+        run(path, &["add", "a"])?;
+        run(path, &["commit", "-qm", "base"])?;
+        std::fs::write(path.join("a"), b"next\n")?;
+        run(path, &["commit", "-qam", "next"])?;
+        run(
+            path,
+            &[
+                "update-ref",
+                "refs/gg/backup/rewrite/1761490000000000000",
+                "HEAD~1",
+            ],
+        )?;
+
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        app.recovery = Some(RecoveryView::new(path.to_path_buf()));
+        let _ = crate::tests::run_ui(&ctx, frame_input(720.0, 480.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        let output = crate::tests::run_ui(&ctx, frame_input(720.0, 480.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        let text = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        for expected in ["Recovery", "Open commit", "Copy ref"] {
+            assert!(
+                text.iter().any(|line| line.contains(expected)),
+                "missing {expected} at 720x480: {text:?}"
+            );
+        }
+        let rect = ctx.memory(|memory| memory.area_rect(egui::Id::unique("recovery")));
+        assert!(rect.is_some(), "the recovery window is laid out");
+        if let Some(rect) = rect {
+            assert!(
+                rect.min.x >= 0.0 && rect.max.x <= 720.0,
+                "recovery window leaves the viewport horizontally: {rect:?}"
+            );
+            assert!(
+                rect.min.y >= 0.0 && rect.max.y <= 480.0,
+                "recovery window leaves the viewport vertically: {rect:?}"
+            );
+        }
+        Ok(())
     }
 
     #[test]

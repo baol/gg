@@ -66,6 +66,7 @@ pub struct DiffView {
     bounds: egui::Rect,
     last_scroll: f64,
     staged: Option<Update>,
+    reveal: bool,
     offset: f32,
     reset: bool,
     mode: Mode,
@@ -118,6 +119,7 @@ impl Default for DiffView {
             bounds: egui::Rect::NOTHING,
             last_scroll: f64::NEG_INFINITY,
             staged: None,
+            reveal: false,
             offset: 0.0,
             reset: false,
             mode: Mode::Diff,
@@ -183,6 +185,7 @@ impl DiffView {
         self.generation += 1;
         self.error = None;
         self.staged = None;
+        self.reveal = true;
         self.sent = None;
         self.full = None;
         self.cursor = None;
@@ -354,6 +357,7 @@ impl DiffView {
         self.generation += 1;
         self.error = None;
         self.staged = None;
+        self.reveal = true;
         self.sent = None;
         self.full = None;
         self.cursor = None;
@@ -1395,11 +1399,16 @@ impl DiffView {
             self.staged = Some(update);
         }
         // Initial rows wait until the reading area's hit targets are clear.
-        if ((quiet && !hovering)
+        // A newly selected file is the exception: at narrow widths the file
+        // list disappears and the resting pointer can already be over the
+        // reader, so the explicit selection must reveal its content.
+        let reveal = self.reveal;
+        if ((quiet && (!hovering || reveal))
             || (self.info.is_some() && self.displayed_generation == self.generation))
             && let Some(update) = self.staged.clone()
         {
             self.accept(update, pinned);
+            self.reveal = false;
             if pinned.is_none() {
                 self.staged = None;
             }
@@ -2199,6 +2208,47 @@ mod tests {
         assert_eq!(view.displayed_generation, 1);
         frame(&mut view, vec![egui::Event::PointerGone]);
         assert_eq!(view.displayed_generation, 2);
+    }
+
+    #[test]
+    fn a_new_selection_reveals_while_the_pointer_rests_on_the_reader() {
+        let ctx = egui::Context::default();
+        let mut view = DiffView::default();
+        let selection = file("a", false, true);
+        view.change = Some(selection);
+        view.generation = 1;
+        let mut doc = FileDiff::summary(DiffKind::Text, 0, 100, "");
+        doc.rows = (0..20)
+            .map(|i| DiffRow {
+                kind: RowKind::Added,
+                old_line: None,
+                new_line: Some(i + 1),
+                text: format!("row {i}"),
+                bytes: vec![],
+            })
+            .collect();
+        view.accept(diff_update(1, doc.clone()), None);
+        view.change = None; // Isolate rendered input from asynchronous repository reads.
+
+        let frame = |view: &mut DiffView, events| {
+            let _ = crate::tests::run_ui(
+                &ctx,
+                crate::tests::frame_input(720.0, 480.0, events),
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| view.draw_reading(ui));
+                },
+            );
+        };
+        frame(&mut view, vec![]);
+        let pointer = view.rect.center();
+        frame(&mut view, vec![egui::Event::PointerMoved(pointer)]);
+        view.generation = 2;
+        view.last_scroll = f64::NEG_INFINITY;
+        view.reveal = true;
+        view.staged = Some(diff_update(2, doc));
+        frame(&mut view, vec![]);
+        assert_eq!(view.displayed_generation, 2);
+        assert!(!view.reveal);
     }
 
     #[test]
