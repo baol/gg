@@ -84,6 +84,21 @@ Linux x86_64 · Rust 1.99.1 · Xvfb/llvmpipe · disposable Git fixture (`/tmp/op
 - Remaining P3 observations: Tab can leave egui's latent focus on the Refresh button without painting a focus ring, and pointer selection dismisses an open discard confirmation without mutating anything. Neither affects safety or the restored reader.
 - Limitations: only Linux/X11, the dark theme, and llvmpipe were inspected natively. The wide history split is still about 400 pixels, so the close control shares the version metadata line and a long subject truncates with the existing full-text disclosure. Attribution, line/range history, image-diff extensions, worktrees, submodules, LFS, and signing remain deferred.
 
+## Coherence I5b · One operation area · 2026-10-26
+
+Linux x86_64 · Rust 1.99.1 · Xvfb/llvmpipe · disposable Git fixtures (`/tmp/opencode/gg-i5b-merge`: a real two-parent merge conflict; `/tmp/opencode/gg-i5b-rewrite-slow`: 301 linear commits).
+
+- `cargo fmt --all -- --check` passed.
+- `cargo test --workspace --locked` passed: 402 tests, 0 failures, 3 ignored opt-in performance checks. This includes 207 `git-good` unit tests and 33 CLI tests.
+- `cargo clippy --workspace --all-targets --locked -- -D warnings` passed.
+- One operation area now sits directly beneath the navigation strip and is hidden when idle. It owns operation-worker labels, rewrite/refresh progress, network progress with **Cancel**, branch work, and needs-attention conflicts. The old mutation banner, toolbar network cancel, and conflict-window recovery controls are gone; the status line yields to the area and does not duplicate progress or recovery controls.
+- Merge shows **Resolve conflicts…**, a gated **Continue**, and **Abort** without **Skip**; cherry-pick, revert, and rebase show supported **Skip**. Continue stays disabled while conflicts remain. Stash conflicts do not create sequencer controls.
+- Rewrite configuration closes on submission instead of staying as a blocking modal. The operation area reports **Rewriting commits** and then **Refreshing history** until the replacement generation is accepted; browsing stays available and the old history remains labeled through the refresh. A failed rewrite or refresh reports an error outcome with the backup route; duplicate submissions and incompatible mutations stay disabled.
+- Opening a repository already in a merge, rebase, cherry-pick, or revert now detects the operation on the first history load and shows it in the area.
+- Tests cover the one-area count at both widths, merge-without-Skip, conflict-window/area ownership, rewrite progress/refresh lifecycle, network cancel placement, duplicate submission, and the existing outcome/recovery behavior.
+- Native X11 at 1120×740: [merge conflict in the operation area](screenshots/coherence-i5b-operation-merge-wide.png). At 720×480: [narrow operation area](screenshots/coherence-i5b-operation-merge-narrow.png). Also captured: [rewrite configuration](screenshots/coherence-i5b-rewrite-dialog.png) and [the closed dialog with the rewritten-history outcome](screenshots/coherence-i5b-rewrite-done.png).
+- Limitations: only Linux/X11, the dark theme, and llvmpipe were inspected natively; a running rewrite/refresh was too short-lived to capture on the fixture, so its area is covered by the unit lifecycle test and the merge capture of the same component. Independent V1/V2 verification remains pending.
+
 ## Coherence proposal and shared workspace · 2026-10-25
 
 Reviewed [cross-view interaction consistency](ui-coherence.md) and created a [shared-workspace prototype](ui-coherence.html). Local Changes incorporates the user's requested arrangement: Unstaged above Staged on the left, selected changes on the right, commit/amend at lower right. File selection determines the comparison; no second Staged/Unstaged switch is present.

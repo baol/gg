@@ -85,6 +85,15 @@ Before connecting M1 controls, test Review/Back anchor restoration, active-view 
 - `Tab` moves keyboard focus between the two groups and selects the other group's remembered row, while a focused text editor keeps normal keys. Binary working comparisons show a named summary and a no-inline-preview note instead of "No changes"; mode-only changes show the mode note in the header and details; File details names the working modes and worker note.
 - Geometry and interaction tests render Local Changes at 1120×740 and 720×480, assert one reader header and the on-demand details/action surface, exercise both full-file working sides, and retain the whole-file, hunk, line, discard, refresh, amend, and draft scenarios.
 
+## Coherence I5b operation area
+
+- One operation area renders directly beneath the navigation strip, hidden when idle. It is the only place for running labels, progress, cancellation, and supported continuation controls; the status line does not duplicate them while it is active.
+- Merge shows Resolve conflicts, a gated Continue, and Abort without Skip. Cherry-pick, revert, and rebase show Skip. Continue stays disabled until no unmerged paths remain. Stash conflicts never add sequencer controls. The conflict window owns source inspection, side choice, and Stage resolved only.
+- Rewrite submission closes the plan. The area reports Rewriting commits, then Refreshing history until the replacement generation loads; browsing remains available and the retained history is labeled. Failures clear the area and report an error outcome with the backup route.
+- Network operations show phase/percent/message with Cancel in the area; branch operations show their label there. Duplicate submission is refused and incompatible mutations stay disabled for the duration.
+- Opening a repository with an existing operation detects it on the first completed history load. Switching repositories clears the previous operation state before detection.
+- Geometry/interaction tests cover the area at 720×480 and 1120×740, the merge-without-Skip rule, one-area ownership, rewrite lifecycle, network cancel, and outcome/recovery behavior.
+
 ## M1 changed files
 
 - Git-oracle fixtures cover root/first-parent changes, merge-parent selection, nested paths, additions/deletions, IDs/modes, file-to-directory replacement, empty comparisons, invalid parents/revisions, and pinned comparisons with unavailable blobs.

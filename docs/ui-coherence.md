@@ -74,7 +74,7 @@ Branch creation has one form with a starting point and an explicit **Switch afte
 
 ## One lifecycle for operations
 
-**Configure → validate → run → refresh → done**, with **needs attention** for conflicts and actionable errors.
+**Configure → validate → run → refresh → done**, with **needs attention** for conflicts and actionable errors. One operation area beneath navigation is hidden when idle and owns progress, cancellation, and supported continuation; configuration closes on submission, so a running rewrite keeps browsing available.
 
 Configuration is specific to the Git operation. The lifecycle and placement are shared. Merge, rebase, rewrite, stash, and network operations use the same pending/attention/result presentation. Rewriting becomes non-blocking for browsing after submission; its old history remains explicitly labeled until replacement data is accepted. Incompatible mutations remain disabled. That is a proposed change to the existing blocking rewrite contract and needs native worker/state verification before implementation.
 
