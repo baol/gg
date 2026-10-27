@@ -641,17 +641,17 @@ Linux x86_64 · Rust 1.99.1 · release build · `/home/mirko/dev/vscode` (194,92
 
 | Check | Result |
 | --- | --- |
-| `git good history` CLI (streams 66 MiB JSON) | 13.91 s wall, 206 MiB peak RSS |
+| `git good history` CLI (streams 66 MiB JSON) | 3.92 s wall, 222 MiB peak RSS |
 | `git good refs` CLI | 1.01 s wall, 125 MiB peak RSS |
 | `git good status` CLI | 2.10 s wall, 118 MiB peak RSS |
-| Native history first rows | 6.70 s |
-| Native history complete | 27.0 s |
-| In-memory history frame p95 | 34.5 ms |
-| Deep jumps to oldest and back | 70.7 ms / 72.9 ms |
+| Native history first rows | 2.3–2.8 s |
+| Native history complete | 17.1–18.6 s |
+| In-memory history frame p95 | 38.7–41.2 ms |
+| Deep jumps to oldest and back | 69–111 ms |
 | Retained history rows | 94 (within the 768-row cache) |
-| Native test peak RSS | 293 MiB |
+| Native test peak RSS | 270–293 MiB |
 
-The production worker test `real_repository_history_first_frame_and_deep_navigation` now records this shape for any `GG_TEST_REPOSITORY`. **Finding:** first rows take 6.7 s against the 500 ms M0 target on this real multi-ref repository. The delay is dominated by history setup/topological traversal over 6,205 refs and 194,924 commits before the first page; `git log --topo-order --all -n 1` itself takes about 2 s here. Input-to-frame p95 (34.5 ms) is below the 50 ms interaction target but above the 16 ms cached-frame target. Deep jumps and retained-row bounds pass. A follow-up should avoid the duplicate refs read and make the first history page independent of full topological setup; no optimization is included in this measurement.
+The production worker test `real_repository_history_first_frame_and_deep_navigation` now records this shape for any `GG_TEST_REPOSITORY`. The initial measurement was 6.70 s to first rows and 27.0 s to complete. **Optimization:** when the union has more than 512 divergent tips, history now delegates topological ordering to `git rev-list --topo-order --stdin` and reads commit metadata through gitoxide; the refs snapshot is reused instead of scanned twice. The two measured runs after the change reached first rows in 2.3–2.8 s and completion in 17.1–18.6 s, with the same 194,924 commits and the same first 20 commit IDs as `git rev-list --topo-order --all`. CLI history dropped from 13.91 s to 3.92 s. **Remaining gap:** first rows still miss the 500 ms M0 target because full topological order over 194,924 commits and 6,205 refs takes about 1.7 s in Git itself before its first line. Meeting 500 ms would require a provisional HEAD-only page or a persisted ordering cache, which would change the current all-refs topo contract. Input-to-frame p95 stays below the 50 ms interaction target but above the 16 ms cached-frame target; one back jump reached 111 ms. Deep jumps and retained-row bounds otherwise pass, and the result is recorded for the next decision.
 
 ## M7 worktrees · 2026-10-27
 

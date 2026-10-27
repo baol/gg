@@ -193,7 +193,7 @@ fn run(
     ctx: &eframe::egui::Context,
 ) -> Result<(), String> {
     let refs = gg_git::refs::read(&path)?;
-    let session = gg_git::Session::open(&HistoryRequest { path })?;
+    let session = gg_git::Session::open_with_refs(&HistoryRequest { path }, refs.clone())?;
     if previous_path
         .as_ref()
         .is_some_and(|old| *old != session.identity.path)

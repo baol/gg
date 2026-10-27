@@ -1,6 +1,10 @@
 //! Native Git object access through gitoxide.
 use gg_engine::{Commit, History, HistoryRequest, HistorySource};
-use std::collections::{BinaryHeap, HashSet};
+use std::{
+    collections::{BinaryHeap, HashSet},
+    io::{BufRead, BufReader, Read, Write},
+    process::{Child, ChildStderr, ChildStdout, Command, Stdio},
+};
 
 pub struct Git;
 
@@ -29,15 +33,72 @@ enum Walk {
         shallow: HashSet<gix::ObjectId>,
     },
     Topo(Box<dyn Iterator<Item = Result<gix::ObjectId, String>>>),
+    Git(GitWalk),
+}
+
+struct GitWalk {
+    child: Child,
+    reader: BufReader<ChildStdout>,
+    stderr: Option<ChildStderr>,
+}
+
+impl GitWalk {
+    fn open(path: &std::path::Path, tips: &[gix::ObjectId]) -> Result<Self, String> {
+        let mut child = Command::new("git")
+            .arg("-C")
+            .arg(path)
+            .args(["rev-list", "--topo-order", "--stdin"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .spawn()
+            .map_err(|error| format!("Could not start Git history traversal: {error}"))?;
+        if let Some(mut stdin) = child.stdin.take() {
+            for tip in tips {
+                writeln!(stdin, "{tip}").map_err(|error| error.to_string())?;
+            }
+        }
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or("Git history traversal has no stdout")?;
+        let stderr = child.stderr.take();
+        Ok(Self {
+            child,
+            reader: BufReader::new(stdout),
+            stderr,
+        })
+    }
+}
+
+impl Drop for GitWalk {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
 }
 
 impl Session {
     pub fn open(request: &HistoryRequest) -> Result<Self, String> {
-        Self::open_inner(request)
+        Self::open_inner(request, None)
             .map_err(|e| format!("Could not read {}: {e}", request.path.display()))
     }
 
-    fn open_inner(request: &HistoryRequest) -> Result<Self, Box<dyn std::error::Error>> {
+    /// Open with an already-read refs snapshot, avoiding a second ref scan.
+    pub fn open_with_refs(
+        request: &HistoryRequest,
+        refs: gg_engine::refs::Snapshot,
+    ) -> Result<Self, String> {
+        Self::open_inner(request, Some(refs))
+            .map_err(|e| format!("Could not read {}: {e}", request.path.display()))
+    }
+
+    fn open_inner(
+        request: &HistoryRequest,
+        refs: Option<gg_engine::refs::Snapshot>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let repo = gix::discover(&request.path)?;
         let head = repo.head()?;
         let label = head
@@ -56,7 +117,10 @@ impl Session {
         } else {
             Some(repo.head_commit()?.id)
         };
-        let refs = crate::refs::read(&request.path)?;
+        let refs = match refs {
+            Some(refs) => refs,
+            None => crate::refs::read(&request.path)?,
+        };
         let shallow: HashSet<_> = repo
             .shallow_commits()?
             .map(|ids| ids.iter().copied().collect())
@@ -73,7 +137,9 @@ impl Session {
                 tips.push(id);
             }
         }
-        let walk = if tips.len() > 1 && shallow.is_empty() {
+        let walk = if tips.len() > 512 && shallow.is_empty() {
+            Walk::Git(GitWalk::open(&request.path, &tips)?)
+        } else if tips.len() > 1 && shallow.is_empty() {
             let walk = gix::traverse::commit::topo::Builder::new(repo.objects.clone())
                 .with_tips(tips)
                 .sorting(gix::traverse::commit::topo::Sorting::TopoOrder)
@@ -114,6 +180,25 @@ impl Session {
                 Some(Err(error)) => return Err(std::io::Error::other(error).into()),
                 None => return Ok(None),
             },
+            Walk::Git(walk) => {
+                let mut line = String::new();
+                if walk.reader.read_line(&mut line)? == 0 {
+                    let status = walk.child.wait()?;
+                    if !status.success() {
+                        let mut detail = String::new();
+                        if let Some(mut stderr) = walk.stderr.take() {
+                            stderr.read_to_string(&mut detail)?;
+                        }
+                        return Err(std::io::Error::other(format!(
+                            "Git history traversal failed: {}",
+                            detail.trim()
+                        ))
+                        .into());
+                    }
+                    return Ok(None);
+                }
+                gix::ObjectId::from_hex(line.trim().as_bytes())?
+            }
             Walk::Frontier { frontier, seen, .. } => {
                 let Some((_, id)) = frontier.pop() else {
                     seen.clear();
