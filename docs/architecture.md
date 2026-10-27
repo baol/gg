@@ -393,6 +393,12 @@ Line history maps the selected range through each content edge on a cancellable 
 
 Create chooses an exact destination and either an existing local branch or a new branch with a start revision. The destination must be absent or empty, and a branch checked out elsewhere is named with its path instead of being forced. Add runs on a worker, keeps the dialog on failure, and lists the worktree only after Git succeeds. Open saves the current worktree's commit/file selection, filter, reading place, and Local Changes draft before loading the target; each worktree restores its own saved selection and draft, and a new worktree starts empty. Remove re-lists, rechecks dirty/lock/current/main state, confirms the exact path and branch, and runs `git worktree remove` without force. CLI `git good worktree list|add|remove` returns the same inventory and receipts as JSON.
 
+### Submodules
+
+A gitlink's **Submodule details…** action is available from the shared reader's File actions menu. It names the exact path, Before/After recorded commits, parent index commit, nested HEAD, initialization and dirty state, `.gitmodules` URL and branch, configured URL differences, recorded-object availability, and any missing `.gitmodules` or status detail. Historical review keeps Before and After recorded IDs separate from the nested checkout; browsing never initializes, checks out, stages, or fetches a submodule.
+
+Update targets the parent index gitlink and is blocked when the selected recorded commit differs from the index, when the nested tree is dirty, or when the recorded object is missing locally. The confirmation names the path, target commit, and URL, states that Git may fetch, and states that the parent index is not staged. Update runs on a worker, initializes with `git submodule update --init -- <path>`, and rescans the nested and parent status. **Open nested repository** switches to the initialized nested repository as its own context; the parent selection and draft remain in the per-worktree state map. CLI `git good submodule status|update PATH [--repo PATH]` returns the same details and receipt. Network use is explicit in the confirmation; no automatic recursive update, force, or parent staging is added.
+
 ### Deferred large-repository features
 
-Submodules expose referenced commit IDs and require an explicit update action. Git LFS keeps pointer identity and fetch actions explicit. Signature verification reports the signer and status without changing repository configuration.
+Git LFS keeps pointer identity and fetch actions explicit. Signature verification reports the signer and status without changing repository configuration.

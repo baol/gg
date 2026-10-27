@@ -276,6 +276,7 @@ pub mod review;
 pub mod rewrite;
 pub mod stash;
 pub mod status;
+pub mod submodule;
 pub mod sync;
 pub mod tag;
 pub mod working_diff;

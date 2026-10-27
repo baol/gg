@@ -20,7 +20,7 @@ Follow-up design direction: [coherent interaction proposal](ui-coherence.md) and
 | M7: blame and line/range history | Complete | Explain a line's origin without losing the selected range | F12; Blame mockup |
 | M7: image comparison | Complete | Compare dimensions and pixels across revisions | F13; Images mockup |
 | M7: worktrees | Complete | Work on another branch with isolated drafts and selection | F14; Worktrees mockup |
-| M7: submodules and LFS | Planned | Understand nested revisions and pointer/object availability | F15–F16; Submodule and LFS mockups |
+| M7: submodules and LFS | Submodules complete; LFS planned | Understand nested revisions and pointer/object availability | F15–F16; Submodule and LFS mockups |
 | M7: signing | Planned | Distinguish signature validity, trust, and signing setup | F17; Signing mockup |
 
 The roadmap now distinguishes the already-completed reading surface and file history from the remaining M7 work. Read M7 as partially delivered, not wholly future work. The plan provides the finer delivery sequence. M0–M6 completion is a documented claim, not a fresh implementation audit; platform acceptance and preview gates remain separate in [verification](verification.md#preview-acceptance-pending).
@@ -215,7 +215,7 @@ flowchart TD
 
 **Completion:** the correct worktree is active or removed without state leakage. **Mockup:** Worktrees → Open with a visible draft-isolation receipt. Missing paths stay blocked and unpruned; locked worktrees report their reason and cannot be removed.
 
-### F15 · Inspect and update a submodule · proposed M7
+### F15 · Inspect and update a submodule · M7
 
 **Entry proposal:** select a gitlink in Review or Local Changes → Submodule details.
 
@@ -224,7 +224,7 @@ flowchart TD
 3. Update explicitly states destination commit and whether network is needed. Validate nested changes, confirm, run progress, then rescan nested and parent states.
 4. Keep parent-index staging a separate deliberate action; a nested checkout is not itself a parent commit.
 
-**Proposed states:** uninitialized, dirty, missing recorded object, offline/failure, and changed URL/configuration each retain target identity and Details. Block dirty overwrite. **Completion:** actual nested state and parent reference remain distinguishable. **Mockup:** Submodule shows a blocked dirty update. **Decision:** initialization/network policy and CLI parity need specification before implementation.
+**States:** uninitialized, dirty, missing recorded object, offline/failure, and changed URL/configuration each retain target identity and Details. Dirty overwrite is blocked with a reason. **Completion:** actual nested state and parent reference remain distinguishable. **Mockup:** Submodule shows a blocked dirty update. Update is explicit, may fetch from the named URL, and never stages the parent gitlink.
 
 ### F16 · Inspect an LFS pointer and retrieve content · proposed M7
 

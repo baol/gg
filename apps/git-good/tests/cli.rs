@@ -2250,6 +2250,86 @@ fn worktree_cli_lists_adds_and_removes() -> Result {
 }
 
 #[test]
+fn submodule_cli_reports_and_updates_a_gitlink() -> Result {
+    let nested = tempfile::tempdir()?;
+    init(nested.path(), &["-b", "main"])?;
+    git(nested.path(), &["config", "user.name", "Test"])?;
+    git(nested.path(), &["config", "user.email", "test@example.org"])?;
+    std::fs::write(nested.path().join("lib.txt"), b"one\n")?;
+    git(nested.path(), &["add", "lib.txt"])?;
+    git(nested.path(), &["commit", "-qm", "one"])?;
+    let first = String::from_utf8(git_output(nested.path(), &["rev-parse", "HEAD"])?)?
+        .trim()
+        .to_string();
+    std::fs::write(nested.path().join("lib.txt"), b"two\n")?;
+    git(nested.path(), &["commit", "-qam", "two"])?;
+
+    let parent = tempfile::tempdir()?;
+    init(parent.path(), &["-b", "main"])?;
+    git(parent.path(), &["config", "user.name", "Test"])?;
+    git(parent.path(), &["config", "user.email", "test@example.org"])?;
+    std::fs::write(parent.path().join("a"), b"base\n")?;
+    git(parent.path(), &["add", "a"])?;
+    git(parent.path(), &["commit", "-qm", "base"])?;
+    let add = Command::new("git")
+        .arg("-C")
+        .arg(parent.path())
+        .args(["-c", "protocol.file.allow=always", "submodule", "add"])
+        .arg(nested.path())
+        .arg("sub")
+        .output()?;
+    assert!(
+        add.status.success(),
+        "{}",
+        String::from_utf8_lossy(&add.stderr)
+    );
+    git(parent.path(), &["commit", "-qm", "add submodule"])?;
+    let index = String::from_utf8(git_output(parent.path(), &["rev-parse", "HEAD:sub"])?)?
+        .trim()
+        .to_string();
+
+    let binary = env!("CARGO_BIN_EXE_git-good");
+    let out = Command::new(binary)
+        .args(["submodule", "status", "sub", "--repo"])
+        .arg(parent.path())
+        .output()?;
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let status: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(status["operation"], "submodule status");
+    assert_eq!(status["submodule"]["path"], "sub");
+    assert_eq!(status["submodule"]["index"], index);
+    assert_eq!(status["submodule"]["initialized"], true);
+    assert_eq!(status["submodule"]["dirty"], false);
+
+    git(&parent.path().join("sub"), &["checkout", "-q", &first])?;
+    let out = Command::new(binary)
+        .args(["submodule", "update", "sub", "--repo"])
+        .arg(parent.path())
+        .output()?;
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let receipt: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(receipt["operation"], "submodule update");
+    assert_eq!(receipt["submodule"]["checked_out"], index);
+
+    std::fs::write(parent.path().join("sub/lib.txt"), b"dirty\n")?;
+    let out = Command::new(binary)
+        .args(["submodule", "update", "sub", "--repo"])
+        .arg(parent.path())
+        .output()?;
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("local changes"));
+    Ok(())
+}
+
+#[test]
 fn branch_create_at_cli_does_not_switch() -> Result {
     let repo = tempfile::tempdir()?;
     init(repo.path(), &["-b", "main"])?;

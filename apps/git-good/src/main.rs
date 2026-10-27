@@ -45,6 +45,8 @@ mod status_cli;
 mod status_view;
 mod status_worker;
 mod stream;
+mod submodule_cli;
+mod submodule_worker;
 mod sync_cli;
 mod tag_cli;
 mod thumbnails;
@@ -65,7 +67,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("--help")) {
         println!(
-            "gg · good git\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good refs [PATH]      Print branches, remotes, tags, and HEAD as JSON\ngit-good status [PATH] [--file PATH --area AREA]   Print working status or diff as JSON\ngit-good stage --file PATH [--hunk HEADER]... [--repo PATH]   Stage one file or selected hunks\ngit-good unstage --file PATH [--repo PATH]   Unstage one file\ngit-good commit [--amend] -m MESSAGE [--repo PATH]   Commit the index or amend HEAD after Git hooks\ngit-good reflog [REF] [--repo PATH]   Print reflog entries as JSON\ngit-good blame PATH [--revision REF] [--lines START,END] [--repo PATH]   Print line attribution as JSON\ngit-good worktree <list|add|remove> [OPTIONS] [--repo PATH]   List, add, or remove worktrees\ngit-good switch [--create] BRANCH [--repo PATH]   Switch to or create a local branch\ngit-good fetch [REMOTE] [--prune] [--repo PATH]   Fetch and update remote-tracking refs\ngit-good push [REMOTE] [BRANCH] [--set-upstream] [--repo PATH]   Push a local branch without force\ngit-good clone URL [PATH]   Clone a repository and open it\ngit-good stash <list|push|apply|pop|drop> [OPTIONS] [--repo PATH]   List or mutate stashes\ngit-good cherry-pick COMMIT [--repo PATH]   Apply a commit\ngit-good revert COMMIT [--repo PATH]   Invert a commit\ngit-good merge REF [--no-ff] [--repo PATH]   Merge a branch, remote, or tag\ngit-good rebase REF [--autostash] [--repo PATH]   Rebase the current branch onto a branch, remote, or tag\ngit-good rebase --continue|--skip|--abort [--repo PATH]   Recover an in-progress rebase\ngit-good rewrite --from COMMIT --pick COMMIT... --squash COMMIT... [--autostash] [--repo PATH]   Reorder or squash a linear range\ngit-good rewrite --continue|--skip|--abort [--repo PATH]   Recover an in-progress rewrite\ngit-good conflicts [--repo PATH]   List unmerged paths\ngit-good conflict --file PATH [--use ours|theirs|--stage] [--repo PATH]   Read or resolve a conflict\ngit-good reset --soft|--mixed|--hard COMMIT [--repo PATH]   Reset the current branch\ngit-good branch --delete BRANCH [--force] [--repo PATH]   Delete a local branch\ngit-good branch --create NAME [--at REF] [--repo PATH]   Create a local branch without switching\ngit-good tag --delete TAG [--repo PATH]   Delete a local tag\ngit-good show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]   Review or export\n\nBrowse commits reachable from HEAD and all local, remote, and tag refs."
+            "gg · good git\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good refs [PATH]      Print branches, remotes, tags, and HEAD as JSON\ngit-good status [PATH] [--file PATH --area AREA]   Print working status or diff as JSON\ngit-good stage --file PATH [--hunk HEADER]... [--repo PATH]   Stage one file or selected hunks\ngit-good unstage --file PATH [--repo PATH]   Unstage one file\ngit-good commit [--amend] -m MESSAGE [--repo PATH]   Commit the index or amend HEAD after Git hooks\ngit-good reflog [REF] [--repo PATH]   Print reflog entries as JSON\ngit-good blame PATH [--revision REF] [--lines START,END] [--repo PATH]   Print line attribution as JSON\ngit-good worktree <list|add|remove> [OPTIONS] [--repo PATH]   List, add, or remove worktrees\ngit-good submodule <status|update> PATH [OPTIONS] [--repo PATH]   Inspect or update a gitlink submodule\ngit-good switch [--create] BRANCH [--repo PATH]   Switch to or create a local branch\ngit-good fetch [REMOTE] [--prune] [--repo PATH]   Fetch and update remote-tracking refs\ngit-good push [REMOTE] [BRANCH] [--set-upstream] [--repo PATH]   Push a local branch without force\ngit-good clone URL [PATH]   Clone a repository and open it\ngit-good stash <list|push|apply|pop|drop> [OPTIONS] [--repo PATH]   List or mutate stashes\ngit-good cherry-pick COMMIT [--repo PATH]   Apply a commit\ngit-good revert COMMIT [--repo PATH]   Invert a commit\ngit-good merge REF [--no-ff] [--repo PATH]   Merge a branch, remote, or tag\ngit-good rebase REF [--autostash] [--repo PATH]   Rebase the current branch onto a branch, remote, or tag\ngit-good rebase --continue|--skip|--abort [--repo PATH]   Recover an in-progress rebase\ngit-good rewrite --from COMMIT --pick COMMIT... --squash COMMIT... [--autostash] [--repo PATH]   Reorder or squash a linear range\ngit-good rewrite --continue|--skip|--abort [--repo PATH]   Recover an in-progress rewrite\ngit-good conflicts [--repo PATH]   List unmerged paths\ngit-good conflict --file PATH [--use ours|theirs|--stage] [--repo PATH]   Read or resolve a conflict\ngit-good reset --soft|--mixed|--hard COMMIT [--repo PATH]   Reset the current branch\ngit-good branch --delete BRANCH [--force] [--repo PATH]   Delete a local branch\ngit-good branch --create NAME [--at REF] [--repo PATH]   Create a local branch without switching\ngit-good tag --delete TAG [--repo PATH]   Delete a local tag\ngit-good show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]   Review or export\n\nBrowse commits reachable from HEAD and all local, remote, and tag refs."
         );
         return Ok(());
     }
@@ -89,6 +91,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("blame")) {
         return blame_cli::run(args);
+    }
+    if first.as_deref() == Some(std::ffi::OsStr::new("submodule")) {
+        let sub = args
+            .next()
+            .ok_or("Use git-good submodule <status|update> --help for usage")?;
+        return match sub.to_str() {
+            Some("status") => submodule_cli::status(args),
+            Some("update") => submodule_cli::update(args),
+            _ => Err("Use git-good submodule <status|update>".into()),
+        };
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("worktree")) {
         let sub = args
@@ -766,6 +778,16 @@ struct CreateWorktreeDialog {
     error: Option<String>,
 }
 
+struct SubmoduleWindow {
+    request: crate::diff_view::SubmoduleRequest,
+    details: Option<gg_engine::submodule::Details>,
+    error: Option<String>,
+    notice: Option<String>,
+    busy: Option<String>,
+    confirm_update: bool,
+    refresh_parent: bool,
+}
+
 struct Browser {
     logo: Option<egui::TextureHandle>,
     path: String,
@@ -821,6 +843,9 @@ struct Browser {
     worktree_worker: Option<worktree_worker::Worker>,
     worktree_generation: u64,
     worktree_states: std::collections::HashMap<PathBuf, WorktreeState>,
+    submodule_window: Option<SubmoduleWindow>,
+    submodule_worker: Option<submodule_worker::Worker>,
+    submodule_generation: u64,
     refs_visible: bool,
     refs_query: String,
     state: state::State,
@@ -902,6 +927,9 @@ impl Browser {
             worktree_worker: None,
             worktree_generation: 0,
             worktree_states: std::collections::HashMap::new(),
+            submodule_window: None,
+            submodule_worker: None,
+            submodule_generation: 0,
             refs_visible: true,
             refs_query: String::new(),
             state: state::State::default(),
@@ -2798,6 +2826,272 @@ impl Browser {
         }
         if let Some(path) = open_path {
             self.switch_worktree(ctx, path);
+        }
+    }
+
+    fn open_submodule(&mut self, ctx: &egui::Context, request: crate::diff_view::SubmoduleRequest) {
+        let action = submodule_worker::Action::Read {
+            before: request.before.clone(),
+            after: request.after.clone(),
+        };
+        self.submodule_window = Some(SubmoduleWindow {
+            request,
+            details: None,
+            error: None,
+            notice: None,
+            busy: None,
+            confirm_update: false,
+            refresh_parent: false,
+        });
+        self.request_submodule(ctx, action);
+    }
+
+    fn request_submodule(&mut self, ctx: &egui::Context, action: submodule_worker::Action) {
+        let Some(repo) = self.stash_path() else {
+            return;
+        };
+        let Some(window) = &self.submodule_window else {
+            return;
+        };
+        let path_bytes = window.request.path_bytes.clone();
+        if self.submodule_worker.is_none() {
+            match submodule_worker::Worker::start(ctx.clone()) {
+                Ok(worker) => self.submodule_worker = Some(worker),
+                Err(error) => {
+                    if let Some(window) = &mut self.submodule_window {
+                        window.error = Some(error);
+                        window.busy = None;
+                    }
+                    return;
+                }
+            }
+        }
+        self.submodule_generation += 1;
+        let generation = self.submodule_generation;
+        let label = match action {
+            submodule_worker::Action::Read { .. } => "Reading submodule…",
+            submodule_worker::Action::Update => "Updating submodule…",
+        };
+        if let Some(window) = &mut self.submodule_window {
+            window.busy = Some(label.into());
+            window.error = None;
+            window.notice = None;
+        }
+        if let Some(worker) = &self.submodule_worker {
+            worker.request(generation, repo, path_bytes, action);
+        }
+    }
+
+    fn poll_submodule(&mut self) {
+        let Some(update) = self
+            .submodule_worker
+            .as_ref()
+            .and_then(submodule_worker::Worker::poll)
+        else {
+            return;
+        };
+        if update.generation != self.submodule_generation {
+            return;
+        }
+        let Some(window) = &mut self.submodule_window else {
+            return;
+        };
+        window.busy = None;
+        match update.result {
+            Ok((details, receipt)) => {
+                window.details = Some(details);
+                window.error = None;
+                if let Some(receipt) = receipt {
+                    window.notice = Some(format!(
+                        "Updated {} to {}.",
+                        receipt.path,
+                        receipt
+                            .target
+                            .as_deref()
+                            .map(|target| target.chars().take(8).collect::<String>())
+                            .unwrap_or_else(|| "the index commit".into())
+                    ));
+                    window.refresh_parent = true;
+                }
+            }
+            Err(error) => window.error = Some(error),
+        }
+    }
+
+    fn draw_submodule(&mut self, ctx: &egui::Context) {
+        self.poll_submodule();
+        let Some(request) = self
+            .submodule_window
+            .as_ref()
+            .map(|window| window.request.clone())
+        else {
+            return;
+        };
+        let nested = self
+            .stash_path()
+            .map(|repo| repo.join(worktree_path(&request.path_bytes)));
+        let mut open = true;
+        let mut open_nested = false;
+        let mut ask_update = false;
+        let mut submit_update = false;
+        let mut cancel_update = false;
+        {
+            let Some(window) = &mut self.submodule_window else {
+                return;
+            };
+            let max_width = (ctx.content_rect().width() - 24.0).max(360.0);
+            egui::Window::new("Submodule details")
+                .id(egui::Id::unique("submodule-details"))
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(true)
+                .default_width(max_width.min(680.0))
+                .max_width(max_width)
+                .default_pos(ctx.content_rect().center())
+                .pivot(egui::Align2::CENTER_CENTER)
+                .show(ctx, |ui| {
+                    ui.label(egui::RichText::new(&request.path).monospace().strong());
+                    if let Some(details) = &window.details {
+                        ui.weak(details.status_label());
+                        if let Some(before) = request.before.as_deref() {
+                            ui.label(format!("Before {before}"));
+                        }
+                        if let Some(after) = request.after.as_deref() {
+                            ui.label(format!("After {after}"));
+                        }
+                        ui.label(format!(
+                            "Index {}",
+                            details.index.as_deref().unwrap_or("absent")
+                        ));
+                        ui.label(format!(
+                            "Checked out {}",
+                            details.checked_out.as_deref().unwrap_or("not initialized")
+                        ));
+                        ui.horizontal_wrapped(|ui| {
+                            if let Some(url) = &details.url {
+                                ui.weak(url);
+                            }
+                            if let Some(branch) = &details.branch {
+                                ui.weak(format!("branch {branch}"));
+                            }
+                        });
+                        if let Some(configured) = &details.configured_url
+                            && Some(configured) != details.url.as_ref()
+                        {
+                            ui.colored_label(
+                                ui.visuals().warn_fg_color,
+                                format!("Configured URL differs: {configured}"),
+                            );
+                        }
+                        if let Some(note) = &details.note {
+                            ui.weak(note);
+                        }
+                        let update = details.can_update();
+                        ui.horizontal_wrapped(|ui| {
+                            let can_open = details.initialized
+                                && nested.as_ref().is_some_and(|path| path.exists());
+                            if ui
+                                .add_enabled(can_open, egui::Button::new("Open nested repository"))
+                                .on_disabled_hover_text(
+                                    "Initialize the submodule before opening it",
+                                )
+                                .clicked()
+                            {
+                                open_nested = true;
+                            }
+                            if ui
+                                .add_enabled(
+                                    update.is_ok() && window.busy.is_none(),
+                                    egui::Button::new("Update…"),
+                                )
+                                .on_disabled_hover_text(
+                                    update
+                                        .err()
+                                        .unwrap_or_else(|| "Update the nested checkout".into()),
+                                )
+                                .clicked()
+                            {
+                                ask_update = true;
+                            }
+                        });
+                    } else if window.busy.is_some() {
+                        ui.horizontal(|ui| {
+                            ui.spinner();
+                            ui.weak("Reading submodule…");
+                        });
+                    }
+                    if let Some(error) = &window.error {
+                        ui.colored_label(ui.visuals().error_fg_color, error);
+                    }
+                    if let Some(notice) = &window.notice {
+                        ui.colored_label(ui.visuals().hyperlink_color, notice);
+                    }
+                });
+            if window.confirm_update
+                && let Some(details) = &window.details
+            {
+                let mut confirm = true;
+                egui::Window::new("Update submodule")
+                    .id(egui::Id::unique("update-submodule"))
+                    .open(&mut confirm)
+                    .collapsible(false)
+                    .resizable(false)
+                    .default_pos(ctx.content_rect().center())
+                    .pivot(egui::Align2::CENTER_CENTER)
+                    .show(ctx, |ui| {
+                        ui.label(format!(
+                            "Update {} to {}?",
+                            request.path,
+                            details
+                                .target()
+                                .map(|target| target.chars().take(8).collect::<String>())
+                                .unwrap_or_else(|| "the index commit".into())
+                        ));
+                        if let Some(url) = &details.url {
+                            ui.weak(format!("Git may fetch from {url}."));
+                        }
+                        ui.weak("The parent index is not staged by this action.");
+                        if ui
+                            .add_enabled(window.busy.is_none(), egui::Button::new("Update"))
+                            .clicked()
+                        {
+                            submit_update = true;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            cancel_update = true;
+                        }
+                    });
+                if !confirm {
+                    cancel_update = true;
+                }
+            }
+        }
+        if ask_update && let Some(window) = &mut self.submodule_window {
+            window.confirm_update = true;
+        }
+        if cancel_update && let Some(window) = &mut self.submodule_window {
+            window.confirm_update = false;
+        }
+        if submit_update {
+            if let Some(window) = &mut self.submodule_window {
+                window.confirm_update = false;
+            }
+            self.request_submodule(ctx, submodule_worker::Action::Update);
+        }
+        if open_nested && let Some(path) = nested {
+            self.submodule_window = None;
+            self.switch_worktree(ctx, path);
+            return;
+        }
+        let refresh = self
+            .submodule_window
+            .as_mut()
+            .is_some_and(|window| std::mem::take(&mut window.refresh_parent));
+        if refresh {
+            self.refresh_working(ctx);
+        }
+        if !open {
+            self.submodule_window = None;
         }
     }
 
@@ -4988,12 +5282,20 @@ impl Browser {
             self.stash_window = None;
         }
 
+        self.draw_submodule(ctx);
         if self.working.is_some() {
             let external = self.external_operation_reason();
             let close = self.working.as_mut().is_some_and(|working| {
                 working.set_external_busy(external);
                 working.draw_ui(ui)
             });
+            if let Some(request) = self
+                .working
+                .as_mut()
+                .and_then(|working| working.take_submodule_request())
+            {
+                self.open_submodule(ctx, request);
+            }
             let committed = self
                 .working
                 .as_mut()
@@ -5011,6 +5313,13 @@ impl Browser {
                 .review
                 .as_mut()
                 .is_some_and(|review| review.draw_ui(ui));
+            if let Some(request) = self
+                .review
+                .as_mut()
+                .and_then(|review| review.take_submodule_request())
+            {
+                self.open_submodule(ctx, request);
+            }
             if close {
                 let location = self
                     .review
@@ -7624,6 +7933,83 @@ mod tests {
             );
         }
         Ok(())
+    }
+
+    #[test]
+    fn submodule_details_window_renders_recorded_state_and_update() {
+        let details = gg_engine::submodule::Details {
+            path: "vendor/lib".into(),
+            path_bytes: b"vendor/lib".to_vec(),
+            recorded: Some("a".repeat(40)),
+            before: Some("b".repeat(40)),
+            index: Some("a".repeat(40)),
+            checked_out: Some("a".repeat(40)),
+            initialized: true,
+            dirty: Some(false),
+            url: Some("https://example.org/lib".into()),
+            branch: Some("main".into()),
+            configured_url: None,
+            recorded_available: Some(true),
+            status: Some("+".into()),
+            note: None,
+        };
+        for width in [720.0, 1120.0] {
+            let ctx = egui::Context::default();
+            let mut app = layout_fixture();
+            app.submodule_window = Some(SubmoduleWindow {
+                request: crate::diff_view::SubmoduleRequest {
+                    path: "vendor/lib".into(),
+                    path_bytes: b"vendor/lib".to_vec(),
+                    before: Some("b".repeat(40)),
+                    after: Some("a".repeat(40)),
+                },
+                details: Some(details.clone()),
+                error: None,
+                notice: None,
+                busy: None,
+                confirm_update: false,
+                refresh_parent: false,
+            });
+            let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let output = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let text = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            for expected in [
+                "Submodule details",
+                "vendor/lib",
+                "Different commit",
+                "Index",
+                "Checked out",
+                "Open nested repository",
+                "Update…",
+            ] {
+                assert!(
+                    text.iter().any(|line| line.contains(expected)),
+                    "missing {expected} at {width}: {text:?}"
+                );
+            }
+            if width <= 720.0 {
+                let rect =
+                    ctx.memory(|memory| memory.area_rect(egui::Id::unique("submodule-details")));
+                assert!(rect.is_some(), "the submodule window is laid out");
+                if let Some(rect) = rect {
+                    assert!(
+                        rect.min.x >= 0.0 && rect.max.x <= 720.0,
+                        "submodule window leaves the viewport: {rect:?}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

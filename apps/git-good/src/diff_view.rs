@@ -78,6 +78,7 @@ pub struct DiffView {
     blame_loading: bool,
     line_history: Option<(usize, usize)>,
     open_commit: Option<(String, String)>,
+    submodule_request: Option<SubmoduleRequest>,
     offset: f32,
     reset: bool,
     mode: Mode,
@@ -141,6 +142,7 @@ impl Default for DiffView {
             blame_loading: false,
             line_history: None,
             open_commit: None,
+            submodule_request: None,
             offset: 0.0,
             reset: false,
             mode: Mode::Diff,
@@ -173,6 +175,14 @@ enum Action {
     Side(ReadingSide),
     Change(isize),
     Attribution,
+}
+
+#[derive(Clone, Debug)]
+pub struct SubmoduleRequest {
+    pub path: String,
+    pub path_bytes: Vec<u8>,
+    pub before: Option<String>,
+    pub after: Option<String>,
 }
 
 impl DiffView {
@@ -213,6 +223,7 @@ impl DiffView {
         self.blame_loading = false;
         self.blame_generation += 1;
         self.open_commit = None;
+        self.submodule_request = None;
         self.sent = None;
         self.full = None;
         self.cursor = None;
@@ -266,6 +277,40 @@ impl DiffView {
     /// Take an Open commit request raised by the attribution strip.
     pub fn take_open_commit(&mut self) -> Option<(String, String)> {
         self.open_commit.take()
+    }
+
+    /// Take a submodule-details request raised by File actions.
+    pub fn take_submodule_request(&mut self) -> Option<SubmoduleRequest> {
+        self.submodule_request.take()
+    }
+
+    fn request_submodule(&self, change: &FileChange) -> Option<SubmoduleRequest> {
+        let gitlink = |side: &Option<gg_engine::review::FileSide>| {
+            side.as_ref().is_some_and(|side| side.mode == 0o160000)
+        };
+        if !gitlink(&change.old)
+            && !gitlink(&change.new)
+            && self
+                .info
+                .as_ref()
+                .is_none_or(|info| info.kind != DiffKind::Gitlink)
+        {
+            return None;
+        }
+        Some(SubmoduleRequest {
+            path: change.path.clone(),
+            path_bytes: change.path_bytes.clone(),
+            before: change
+                .old
+                .as_ref()
+                .filter(|side| side.mode == 0o160000)
+                .map(|side| side.id.clone()),
+            after: change
+                .new
+                .as_ref()
+                .filter(|side| side.mode == 0o160000)
+                .map(|side| side.id.clone()),
+        })
     }
 
     /// Whether attribution can be shown for the current comparison.
@@ -532,6 +577,7 @@ impl DiffView {
         self.blame_loading = false;
         self.blame_generation += 1;
         self.open_commit = None;
+        self.submodule_request = None;
         self.sent = None;
         self.full = None;
         self.cursor = None;
@@ -1406,6 +1452,13 @@ impl DiffView {
                 {
                     ctx.copy_text(native.unwrap_or(&change.path).to_owned());
                     ui.close();
+                }
+                if let Some(request) = self.request_submodule(change) {
+                    ui.separator();
+                    if ui.button("Submodule details…").clicked() {
+                        self.submodule_request = Some(request);
+                        ui.close();
+                    }
                 }
                 ui.separator();
                 if ui
@@ -2521,6 +2574,36 @@ mod tests {
         frame(&mut view, vec![]);
         assert_eq!(view.displayed_generation, 2);
         assert!(!view.reveal);
+    }
+
+    #[test]
+    fn gitlink_change_exposes_recorded_before_and_after_ids() {
+        let side = FileSide {
+            id: "a".repeat(40),
+            mode: 0o160000,
+        };
+        let change = FileChange {
+            path: "vendor/lib".into(),
+            path_bytes: b"vendor/lib".to_vec(),
+            kind: gg_engine::review::ChangeKind::Modified,
+            old: Some(side.clone()),
+            new: Some(FileSide {
+                id: "b".repeat(40),
+                mode: 0o160000,
+            }),
+        };
+        let view = DiffView {
+            change: Some(change.clone()),
+            info: Some(FileDiff::summary(DiffKind::Gitlink, 0, 0, "")),
+            ..Default::default()
+        };
+        let request = view.request_submodule(&change);
+        assert!(request.is_some(), "gitlink request");
+        if let Some(request) = request {
+            assert_eq!(request.path, "vendor/lib");
+            assert_eq!(request.before.as_deref(), Some("a".repeat(40).as_str()));
+            assert_eq!(request.after.as_deref(), Some("b".repeat(40).as_str()));
+        }
     }
 
     #[test]

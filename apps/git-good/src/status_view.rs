@@ -452,6 +452,10 @@ impl StatusView {
     }
 
     /// Capture the active draft before the workspace is dropped.
+    pub(crate) fn take_submodule_request(&mut self) -> Option<crate::diff_view::SubmoduleRequest> {
+        self.reader.take_submodule_request()
+    }
+
     pub(crate) fn capture_draft(&self) -> Draft {
         let (normal, amend) = if self.amend {
             (self.normal_draft.clone(), self.message.clone())

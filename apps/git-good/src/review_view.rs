@@ -102,6 +102,11 @@ impl Review {
         self.diff.take_open_commit()
     }
 
+    /// Take a submodule-details request raised by the reader.
+    pub fn take_submodule_request(&mut self) -> Option<crate::diff_view::SubmoduleRequest> {
+        self.diff.take_submodule_request()
+    }
+
     /// Exact endpoint labels shared by the identity strip and the reader.
     fn reader_endpoints(&self) -> (String, String) {
         let after_id = self

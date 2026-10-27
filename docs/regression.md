@@ -296,6 +296,14 @@ Native review: the refs sidebar and status line show the current branch upstream
 - Backup tests assert `gg_git::backup::list` returns the private reference, kind, commit, subject, and commit time while the refs snapshot continues to exclude `refs/gg/`.
 - egui tests render the **Reorder and squash** modal with ordered rows, up/down icon controls, Squash choices, autostash, and the backup warning at 720 and 1120 widths. A submitted rewrite closes the configuration; the operation area shows **Rewriting commits…**, then **Refreshing history…** until the replacement history generation is accepted, and Escape is no longer needed to dismiss a blocking modal. The Backups window renders the entry list, Open commit, Reset branch here, Create branch here…, Copy hash, and Copy ref at 1120 width. The operation area names an in-progress rebase; Backups stays in Repository and outcome recovery.
 
+## M7 submodules
+
+- Git fixtures report parent index commit, nested HEAD, initialized/dirty state, URL, and recorded-object availability. Dirty nested content, a recorded commit that differs from the index, and a missing recorded object block Update.
+- Update restores the parent-index gitlink commit in the nested repository without staging the parent; the receipt names the target and the next scan reports a clean nested checkout.
+- An uninitialized clone retains the parent index identity with no nested HEAD or dirty state and does not implicitly initialize during inspection.
+- CLI `git good submodule status|update` returns the same details and receipt; tests cover status, update after an older nested checkout, and a dirty update rejection.
+- The egui Submodule details window renders at 720×480 inside the viewport with recorded IDs, index, checked-out, URL, Open nested, and Update; a dirty state disables Update with the reason. The diff view exposes gitlink Before/After IDs from the selected change.
+
 ## M7 worktrees
 
 - Git fixtures list main and linked worktrees, branch/detached/bare labels, current/main markers, and dirty status. Add supports new and existing branches; checked-out branches and nonempty destinations are rejected with the exact path/reason.
