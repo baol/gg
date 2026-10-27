@@ -2754,7 +2754,12 @@ mod tests {
         view.active_entry = Some(entry.clone());
         view.focus = 0;
         view.refresh(&ctx);
-        settle(&ctx, &mut view, 1120.0);
+        pump(&ctx, &mut view, 1120.0, |view| {
+            view.lists[0]
+                .rows
+                .iter()
+                .any(|(_, entry)| entry.path_bytes == selected.0 && entry.area == selected.1)
+        });
         let row = view
             .find_entry(&selected)
             .and_then(|_| {
@@ -2771,7 +2776,12 @@ mod tests {
         let draft = view.capture_draft();
         let mut restored = StatusView::new(p.into(), &ctx);
         restored.restore_draft(draft, &ctx);
-        settle(&ctx, &mut restored, 1120.0);
+        pump(&ctx, &mut restored, 1120.0, |view| {
+            view.lists[0]
+                .rows
+                .iter()
+                .any(|(_, entry)| entry.path_bytes == selected.0 && entry.area == selected.1)
+        });
         let row = restored.lists[0]
             .rows
             .iter()
