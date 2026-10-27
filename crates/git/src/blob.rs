@@ -9,6 +9,16 @@ fn check(cancelled: &impl Fn() -> bool) -> Result<(), String> {
         Ok(())
     }
 }
+/// Encoded size of one blob side, without reading its content.
+pub fn size(path: &Path, side: &FileSide) -> Result<u64, String> {
+    if side.mode == 0o160000 {
+        return Ok(0);
+    }
+    let repo = gix::discover(path).map_err(|e| e.to_string())?;
+    let id = gix::ObjectId::from_hex(side.id.as_bytes()).map_err(|e| e.to_string())?;
+    Ok(repo.find_header(id).map_err(|e| e.to_string())?.size())
+}
+
 /// Preview reads have an explicit encoded-byte budget. None means summary/export only.
 pub fn preview(
     path: &Path,

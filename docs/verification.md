@@ -635,6 +635,19 @@ Linux x86_64 · Rust 1.99.1 · local Git fixtures.
 - Native X11 at 720×480: [full file](screenshots/m7-file-narrow-full.png) and [second change](screenshots/m7-file-narrow-change.png).
 - Full-file reads and reading navigation never write objects, refs, the index, or working files.
 
+## M7 image diffs · 2026-10-27
+
+Linux x86_64 · Rust 1.99.1 · Xvfb/llvmpipe · disposable Git fixture (`/tmp/opencode/gg-images`: a 120×80 RGBA PNG replaced by a 160×100 RGBA PNG across two commits).
+
+- `cargo fmt --all -- --check` passed.
+- `cargo test --workspace --locked` passed: 443 tests, 0 failures, 3 ignored opt-in performance checks. This includes 234 `git-good` unit tests and 34 CLI tests.
+- `cargo clippy --workspace --all-targets --locked -- -D warnings` passed.
+- The reader names each image side's short blob ID, exact dimensions, encoded bytes, and absent/budget/gitlink state. PNG and JPEG decode through the bounded worker; corrupt, oversized, unknown, and over-budget content keeps metadata, hexadecimal fallback where available, and per-side export.
+- **Side by side** is the wide default. **Swipe** aligns each image by its own dimensions without stretching, clips After over Before at a labeled boundary, supports the slider's keyboard arrows and canvas dragging, and paints a theme-aware checkerboard behind transparency. **Fit** preserves aspect ratio and never upscales; **Actual size** shows natural pixels with a 100% label and scrolling. At 720 width the view stacks named Before/After previews instead of forcing a narrow swipe.
+- Preserved alpha is asserted from a decoded RGBA image. Aspect-ratio fitting, non-upscaling, presentation controls, dimensions, and swipe labels are covered by egui tests; export continues through the existing exact-byte route.
+- Native X11: [wide side-by-side with dimensions and byte sizes](screenshots/m7-image-wide.png), [wide swipe with the labeled boundary and checkerboard](screenshots/m7-image-swipe.png), and [narrow stacked previews](screenshots/m7-image-narrow.png).
+- Limitations: only Linux/X11, the dark theme, and llvmpipe were inspected natively. There is no pixel-difference heatmap, onion-skin blend, free pan/zoom beyond Actual size, or animation; those were not part of this increment.
+
 ## M7 blame attribution · 2026-10-27
 
 Linux x86_64 · Rust 1.99.1 · Xvfb/llvmpipe · disposable Git fixture (`/tmp/opencode/gg-blame`: six-line `src/app.rs` with three authors and three commits).

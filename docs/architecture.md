@@ -145,6 +145,8 @@ Review opens a resizable file-list/diff workspace with commit identity and paren
 
 Decode PNG/JPEG on the selected-file worker. Bound each side to 16 MiB encoded, 8 megapixels, 4096 pixels per dimension, and 64 MiB decoder allocation. Fit previews to 1024 pixels; show original dimensions. Unknown, corrupt, and oversized images retain a labeled hexadecimal preview of the first 256 bytes when inside the encoded budget. Larger blobs retain summaries and export. Publish current-generation previews at the diff's interaction-safe boundary; retain one preview pair and two textures.
 
+Image comparison names each side's short blob ID, exact dimensions, encoded bytes, and absent, gitlink, binary, or budget state. Wide layouts offer **Side by side** and **Swipe**; narrow layouts stack named Before/After previews. **Fit** preserves each image's aspect ratio and never upscales; **Actual size** shows 100% with scrolling and a visible zoom label. Swipe aligns each image by its own dimensions without stretching, clips the After image at a labeled boundary slider that also responds to keyboard arrows, and permits dragging the boundary on the canvas. A theme-aware checkerboard behind both previews exposes transparency. Export remains per side and preserves the complete original bytes.
+
 Export either present blob side to a new user-chosen path, preserving exact bytes. Write a temporary file beside the destination, then publish without overwriting. Keep Git metadata outside export destinations. Export symlink target bytes; gitlinks retain referenced commit IDs. Cancel before object decoding and between 64-KiB writes; remove temporary output on cancellation/failure. Run one export per review view, pin its path/object identity, and cancel on closing the export or review. Escape closes the export window before review navigation resumes. Gitoxide decoding uses memory proportional to the selected object and delta chain; output writes use fixed-size chunks.
 
 ### CLI
@@ -387,4 +389,4 @@ Line history maps the selected range through each content edge on a cancellable 
 
 ### Deferred large-repository features
 
-Image diffs reuse the bounded preview and export rules. Worktrees keep drafts, selection, and filters isolated per canonical worktree. Submodules expose referenced commit IDs and require an explicit update action. Git LFS keeps pointer identity and fetch actions explicit. Signature verification reports the signer and status without changing repository configuration.
+Worktrees keep drafts, selection, and filters isolated per canonical worktree. Submodules expose referenced commit IDs and require an explicit update action. Git LFS keeps pointer identity and fetch actions explicit. Signature verification reports the signer and status without changing repository configuration.

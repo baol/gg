@@ -296,6 +296,14 @@ Native review: the refs sidebar and status line show the current branch upstream
 - Backup tests assert `gg_git::backup::list` returns the private reference, kind, commit, subject, and commit time while the refs snapshot continues to exclude `refs/gg/`.
 - egui tests render the **Reorder and squash** modal with ordered rows, up/down icon controls, Squash choices, autostash, and the backup warning at 720 and 1120 widths. A submitted rewrite closes the configuration; the operation area shows **Rewriting commits…**, then **Refreshing history…** until the replacement history generation is accepted, and Escape is no longer needed to dismiss a blocking modal. The Backups window renders the entry list, Open commit, Reset branch here, Create branch here…, Copy hash, and Copy ref at 1120 width. The operation area names an in-progress rebase; Backups stays in Repository and outcome recovery.
 
+## M7 image diffs
+
+- PNG and JPEG decode with exact dimensions and preserved alpha; corrupt, oversized, unknown, binary, absent, and budget states keep metadata and the bounded hexadecimal fallback.
+- Fit preserves each image's aspect ratio and never upscales; Actual size uses natural pixels and exposes a 100% zoom label.
+- The view renders Side by side, Swipe, Fit, Actual size, Hexadecimal, per-side short ID, dimensions, and encoded bytes at 1120 width. At 720 width it stacks named Before/After previews.
+- Swipe keeps Before beneath a clipped After image, aligns each image by its own dimensions without stretching, offers a labeled boundary slider and canvas drag, and paints a theme-aware checkerboard behind transparency.
+- Export remains per side and uses the bounded exact-byte route; image presentation never changes the selected comparison or export identity.
+
 ## M7 blame attribution
 
 - Git fixtures attribute the full file and a bounded line range, keep origin line numbers, and preserve author, email, author time, and subject through a content change.

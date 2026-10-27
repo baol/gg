@@ -18,7 +18,7 @@ Follow-up design direction: [coherent interaction proposal](ui-coherence.md) and
 | M6: rewriting and recovery | Complete | Amend, rebase, reorder/squash, inspect reflog and backups | F04, F08, F10; Rewrite and Recovery mockups |
 | M7: file reading and file history | Complete increments inside an unfinished milestone | Read a complete file and follow content versions and renames | F02, F11; Reading and File history mockups |
 | M7: blame and line/range history | Complete | Explain a line's origin without losing the selected range | F12; Blame mockup |
-| M7: image comparison | Planned; binary previews/export already exist | Compare dimensions and pixels across revisions | F13; Images mockup |
+| M7: image comparison | Complete | Compare dimensions and pixels across revisions | F13; Images mockup |
 | M7: worktrees | Planned | Work on another branch with isolated drafts and selection | F14; Worktrees mockup |
 | M7: submodules and LFS | Planned | Understand nested revisions and pointer/object availability | F15–F16; Submodule and LFS mockups |
 | M7: signing | Planned | Distinguish signature validity, trust, and signing setup | F17; Signing mockup |
@@ -194,7 +194,7 @@ flowchart TD
 
 **Proposed states:** loading attribution, unavailable/shallow history, unsupported binary, and failed lookup retain source and exact place with Details/Retry. **Completion:** origin or an honest boundary is visible. **Mockup:** Blame → File history; the full range chooser is specified here, not simulated. No uncommitted-line blame semantics are assumed.
 
-### F13 · Compare images · proposed M7
+### F13 · Compare images · M7
 
 **Entry:** choose a supported image in commit review. Existing previews/export stay available.
 
@@ -202,7 +202,7 @@ flowchart TD
 2. Choose Side by side or Swipe; a labeled slider controls the boundary, including by keyboard. Pair Fit/Actual size with visible zoom context; preserve side identity when changing presentation.
 3. Different dimensions stay visible; do not stretch one image to pretend the sizes match. Transparency needs a neutral checkerboard. Export before/after uses the original complete content and new-file rules.
 
-**Proposed states:** unsupported format/decoding failure/preview budget show metadata and export rather than an empty canvas. Narrow layouts stack named before/after previews; swipe remains optional. **Completion:** user understands visual change and size. **Mockup:** Images demonstrates side-by-side/stacked previews; swipe/zoom are design requirements only.
+**States:** unsupported format, decoding failure, and preview budgets show metadata and export rather than an empty canvas. Wide layouts offer side-by-side and swipe; narrow layouts stack named before/after previews. Fit never upscales, and Actual size shows 100% with scrolling. **Completion:** the user understands the visual change and the exact dimensions. **Mockup:** Images demonstrates side-by-side/stacked previews and the swipe boundary.
 
 ### F14 · Manage isolated worktrees · proposed M7
 
