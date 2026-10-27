@@ -8571,6 +8571,76 @@ mod performance {
     use std::time::{Duration, Instant};
 
     #[test]
+    #[ignore = "set GG_TEST_REPOSITORY to a real repository and GG_OFFLINE=1"]
+    fn real_repository_history_first_frame_and_deep_navigation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let path =
+            std::env::var_os("GG_TEST_REPOSITORY").ok_or("GG_TEST_REPOSITORY is required")?;
+        let ctx = egui::Context::default();
+        let mut app = Browser::new(path.into());
+        let started = Instant::now();
+        app.load(&ctx);
+        let mut first = None;
+        let mut frames = Vec::new();
+        while !app.state.finished {
+            let before = Instant::now();
+            let _ = crate::tests::run_ui(
+                &ctx,
+                super::tests::frame_input(1120.0, 740.0, vec![]),
+                |ctx| app.draw_ui(ctx),
+            );
+            frames.push(before.elapsed());
+            if app.state.count > 0 && first.is_none() {
+                first = Some(started.elapsed());
+            }
+            assert!(app.state.error.is_none(), "{:?}", app.state.error);
+            assert!(started.elapsed() < Duration::from_secs(120));
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let complete = started.elapsed();
+        let mut jumps = Vec::new();
+        for row in [app.state.count.saturating_sub(1), 0] {
+            app.state.select_row(row);
+            app.scroll_to_selection = true;
+            let requested = Instant::now();
+            loop {
+                let _ = crate::tests::run_ui(
+                    &ctx,
+                    super::tests::frame_input(1120.0, 740.0, vec![]),
+                    |ctx| app.draw_ui(ctx),
+                );
+                if app.state.rows.contains_key(&row)
+                    && app
+                        .state
+                        .details
+                        .as_ref()
+                        .is_some_and(|commit| Some(&commit.id) == app.state.selected.as_ref())
+                {
+                    break;
+                }
+                assert!(
+                    requested.elapsed() < Duration::from_secs(30),
+                    "deep jump to {row} did not settle"
+                );
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            jumps.push(requested.elapsed());
+        }
+        frames.sort();
+        eprintln!(
+            "Real repository: commits={}; first rows={:?}; complete={:?}; frame p95={:?}; deep jumps={:?}; retained rows={}",
+            app.state.count,
+            first,
+            complete,
+            frames[frames.len() * 95 / 100],
+            jumps,
+            app.state.rows.len()
+        );
+        assert!(app.state.rows.len() <= stream::CACHE_ROWS);
+        Ok(())
+    }
+
+    #[test]
     #[ignore = "set GG_TEST_REPOSITORY to a packed 100,000-commit fixture and GG_OFFLINE=1"]
     fn packed_history_first_frame_and_deep_navigation() -> Result<(), Box<dyn std::error::Error>> {
         let path =

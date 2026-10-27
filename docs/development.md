@@ -58,6 +58,12 @@ GG_OFFLINE=1 GG_TEST_REPOSITORY=/path/to/fixture cargo test -p git-good packed_h
 
 This opt-in check records first rows, indexing, in-memory frame latency, and deep/back navigation after eviction. Record results in [verification](verification.md).
 
+Measure a real multi-ref repository (the same opt-in test records first rows, completion, frame p95, deep jumps, and retained rows):
+
+```sh
+GG_OFFLINE=1 GG_TEST_REPOSITORY=/path/to/large-repository cargo test --release -p git-good real_repository_history_first_frame_and_deep_navigation -- --ignored --nocapture
+```
+
 Measure M1 with a packed 10,000-file change and a 1-MiB text comparison:
 
 ```sh

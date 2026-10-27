@@ -635,6 +635,24 @@ Linux x86_64 · Rust 1.99.1 · local Git fixtures.
 - Native X11 at 720×480: [full file](screenshots/m7-file-narrow-full.png) and [second change](screenshots/m7-file-narrow-change.png).
 - Full-file reads and reading navigation never write objects, refs, the index, or working files.
 
+## Real-repository performance · VS Code · 2026-10-27
+
+Linux x86_64 · Rust 1.99.1 · release build · `/home/mirko/dev/vscode` (194,924 commits reachable from all refs, 6,205 refs: 1 local branch, 5,804 remote branches, 400 tags; 1.7 GiB packed objects). Filesystem cache was warm after repeated fixture inspection; these are not cold-start numbers.
+
+| Check | Result |
+| --- | --- |
+| `git good history` CLI (streams 66 MiB JSON) | 13.91 s wall, 206 MiB peak RSS |
+| `git good refs` CLI | 1.01 s wall, 125 MiB peak RSS |
+| `git good status` CLI | 2.10 s wall, 118 MiB peak RSS |
+| Native history first rows | 6.70 s |
+| Native history complete | 27.0 s |
+| In-memory history frame p95 | 34.5 ms |
+| Deep jumps to oldest and back | 70.7 ms / 72.9 ms |
+| Retained history rows | 94 (within the 768-row cache) |
+| Native test peak RSS | 293 MiB |
+
+The production worker test `real_repository_history_first_frame_and_deep_navigation` now records this shape for any `GG_TEST_REPOSITORY`. **Finding:** first rows take 6.7 s against the 500 ms M0 target on this real multi-ref repository. The delay is dominated by history setup/topological traversal over 6,205 refs and 194,924 commits before the first page; `git log --topo-order --all -n 1` itself takes about 2 s here. Input-to-frame p95 (34.5 ms) is below the 50 ms interaction target but above the 16 ms cached-frame target. Deep jumps and retained-row bounds pass. A follow-up should avoid the duplicate refs read and make the first history page independent of full topological setup; no optimization is included in this measurement.
+
 ## M7 worktrees · 2026-10-27
 
 Linux x86_64 · Rust 1.99.1 · Xvfb/llvmpipe · disposable Git fixture (`/tmp/opencode/gg-worktrees`: main plus a linked `feature` worktree with a modified `a.txt`).
