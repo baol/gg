@@ -296,6 +296,14 @@ Native review: the refs sidebar and status line show the current branch upstream
 - Backup tests assert `gg_git::backup::list` returns the private reference, kind, commit, subject, and commit time while the refs snapshot continues to exclude `refs/gg/`.
 - egui tests render the **Reorder and squash** modal with ordered rows, up/down icon controls, Squash choices, autostash, and the backup warning at 720 and 1120 widths. A submitted rewrite closes the configuration; the operation area shows **Rewriting commits…**, then **Refreshing history…** until the replacement history generation is accepted, and Escape is no longer needed to dismiss a blocking modal. The Backups window renders the entry list, Open commit, Reset branch here, Create branch here…, Copy hash, and Copy ref at 1120 width. The operation area names an in-progress rebase; Backups stays in Repository and outcome recovery.
 
+## M7 worktrees
+
+- Git fixtures list main and linked worktrees, branch/detached/bare labels, current/main markers, and dirty status. Add supports new and existing branches; checked-out branches and nonempty destinations are rejected with the exact path/reason.
+- Remove blocks main, current, dirty, locked, missing/prunable, and status-unavailable worktrees. A clean linked worktree is removed without force and disappears from the next listing.
+- CLI `git good worktree list|add|remove` returns the same inventory and receipts; tests cover list counts, add, checked-out-branch rejection, dirty removal rejection, clean removal, and the resulting inventory.
+- The egui window renders at 720×480 inside the viewport with branch/path, Current/Modified, Open, and Remove controls. A state test round-trips commit selection, filter, pixel place, narrow details, and details visibility per worktree; the existing draft test keeps Local Changes drafts isolated by canonical worktree.
+- Create/Remove run on one worker; a failed add keeps the create dialog and a failed remove keeps the confirmation and visible error. Native captures cover the wide/narrow inventory and the create form.
+
 ## M7 image diffs
 
 - PNG and JPEG decode with exact dimensions and preserved alpha; corrupt, oversized, unknown, binary, absent, and budget states keep metadata and the bounded hexadecimal fallback.

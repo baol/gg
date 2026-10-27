@@ -14,7 +14,7 @@ Contracts: [file reading and history](architecture.md#file-reading-and-history--
 2. **File history · complete.** Follow the selected file through a worker-backed cursor over content versions: skip unchanged commits, follow renames, and name the change kind, commit, subject, author, date, and old path. **Older version**/**Newer version** change the reader's comparison source and disable at the boundaries with a visible reason instead of wrapping; **Before**/**After** remain inspection sides. A unique predecessor is followed silently; ambiguous predecessors show a chooser and never default to the first parent. **Full file** shows the current version and **Diff** shows the previous-to-current edge. Preload a bounded number of versions and page older ones; `H` opens the version strip in the shared reader and `Esc` closes history before the reading view, file list, and review. Coherence I4 moves history from its former full-screen sub-view into the shared reader.
 3. **Blame and line/range history · complete.** Attribute each line to a commit and open the same version timeline anchored to `path bytes + revision + start_line..end_line`. Map a single line through blame and range boundaries through diff hunks, and ask which predecessor to follow when a range spans divergent hunks. Deleted lines anchor the before side explicitly instead of dropping the place. `B` opens blame.
 4. **Image diffs · complete.** Compare images with explicit dimensions, fit modes, and a side-by-side or swipe presentation while keeping the bounded preview and export rules.
-5. **Worktrees · planned.** List, create, open, and remove worktrees without disturbing user files; keep each worktree's drafts and selection separate.
+5. **Worktrees · complete.** List, create, open, and remove worktrees without disturbing user files; keep each worktree's drafts and selection separate.
 6. **Submodules · planned.** Show submodule status, referenced commits, and explicit update actions without silently changing the parent repository.
 7. **Git LFS · planned.** Identify LFS pointers, show their object identity, and keep fetch/smudge actions explicit.
 8. **Commit and tag signing · planned.** Verify signatures where the repository provides them and keep signing configuration explicit.
@@ -67,7 +67,7 @@ Goal: consolidate navigation, reading, scoped commands, operations, and recovery
 | Recovery and intent | Recovery shares one source selector and returns to its selected entry; stash restore options and branch-creation switch choice are explicit; blocked intent is reoffered and revalidated, never auto-executed | egui interaction, Git oracle, native review |
 | Coherence closeout | Connected review, Local Changes, conflict, recovery, stash, and branch journeys keep the same labels, placement, disable reasons, and return rules at 1120×740 and 720×480; no superseded control remains and every housed control stays inside the viewport | Native capture, geometry test, keyboard/pointer review |
 
-Implementation handoff: [phased implementation and verification prompts](implementation-prompts.md). These increments change no deferred M7 scope: worktrees, submodules, LFS, signing, and force push remain planned.
+Implementation handoff: [phased implementation and verification prompts](implementation-prompts.md). These increments change no deferred M7 scope: submodules, LFS, signing, and force push remain planned.
 
 ## UI-flow consolidation · pre-M7
 

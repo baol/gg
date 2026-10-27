@@ -635,6 +635,21 @@ Linux x86_64 · Rust 1.99.1 · local Git fixtures.
 - Native X11 at 720×480: [full file](screenshots/m7-file-narrow-full.png) and [second change](screenshots/m7-file-narrow-change.png).
 - Full-file reads and reading navigation never write objects, refs, the index, or working files.
 
+## M7 worktrees · 2026-10-27
+
+Linux x86_64 · Rust 1.99.1 · Xvfb/llvmpipe · disposable Git fixture (`/tmp/opencode/gg-worktrees`: main plus a linked `feature` worktree with a modified `a.txt`).
+
+- `cargo fmt --all -- --check` passed.
+- `cargo test --workspace --locked` passed: 453 tests, 0 failures, 3 ignored opt-in performance checks. This includes 237 `git-good` unit tests and 35 CLI tests.
+- `cargo clippy --workspace --all-targets --locked -- -D warnings` passed.
+- **Repository → Worktrees…** lists the main and linked worktrees with exact paths, branch/detached/bare labels, current/main markers, lock/prunable reasons, and clean/modified/unavailable status. The window clamps inside 720×480 and keeps Open and Remove controls reachable.
+- **Create worktree…** accepts an absent or empty destination and either an existing local branch or a new branch with a start revision. A branch checked out elsewhere is named with its path instead of forced. Add runs on a worker, keeps the dialog on failure, and lists the worktree only after success.
+- **Open** saves the current worktree's selection, filter, pixel place, narrow-details state, and Local Changes draft before loading the target. Each worktree restores its own state; a new worktree starts empty.
+- **Remove…** re-lists and blocks main, current, dirty, locked, missing/prunable, and status-unavailable worktrees with explicit reasons. Confirmation names the exact path and branch, and `git worktree remove` runs without force. Missing registrations are not pruned here.
+- CLI `git good worktree list|add|remove` returns the same inventory and receipts as JSON. Tests cover new/existing branches, checked-out branches, nonempty destinations, dirty/main removal, and clean removal.
+- Native X11: [wide worktree inventory with a modified linked worktree](screenshots/m7-worktrees-wide.png), [narrow inventory inside 720×480](screenshots/m7-worktrees-narrow.png), and [the shared create form](screenshots/m7-worktree-create.png).
+- Limitations: only Linux/X11, the dark theme, and llvmpipe were inspected natively. Native Open and Remove confirmation flows were exercised through egui state tests rather than separate captures. Locked/prunable states and large worktree inventories were not natively reproduced. Prune is intentionally not offered.
+
 ## M7 image diffs · 2026-10-27
 
 Linux x86_64 · Rust 1.99.1 · Xvfb/llvmpipe · disposable Git fixture (`/tmp/opencode/gg-images`: a 120×80 RGBA PNG replaced by a 160×100 RGBA PNG across two commits).

@@ -48,6 +48,8 @@ mod stream;
 mod sync_cli;
 mod tag_cli;
 mod thumbnails;
+mod worktree_cli;
+mod worktree_worker;
 use eframe::egui;
 #[cfg(test)]
 use gg_engine::History;
@@ -63,7 +65,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("--help")) {
         println!(
-            "gg · good git\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good refs [PATH]      Print branches, remotes, tags, and HEAD as JSON\ngit-good status [PATH] [--file PATH --area AREA]   Print working status or diff as JSON\ngit-good stage --file PATH [--hunk HEADER]... [--repo PATH]   Stage one file or selected hunks\ngit-good unstage --file PATH [--repo PATH]   Unstage one file\ngit-good commit [--amend] -m MESSAGE [--repo PATH]   Commit the index or amend HEAD after Git hooks\ngit-good reflog [REF] [--repo PATH]   Print reflog entries as JSON\ngit-good blame PATH [--revision REF] [--lines START,END] [--repo PATH]   Print line attribution as JSON\ngit-good switch [--create] BRANCH [--repo PATH]   Switch to or create a local branch\ngit-good fetch [REMOTE] [--prune] [--repo PATH]   Fetch and update remote-tracking refs\ngit-good push [REMOTE] [BRANCH] [--set-upstream] [--repo PATH]   Push a local branch without force\ngit-good clone URL [PATH]   Clone a repository and open it\ngit-good stash <list|push|apply|pop|drop> [OPTIONS] [--repo PATH]   List or mutate stashes\ngit-good cherry-pick COMMIT [--repo PATH]   Apply a commit\ngit-good revert COMMIT [--repo PATH]   Invert a commit\ngit-good merge REF [--no-ff] [--repo PATH]   Merge a branch, remote, or tag\ngit-good rebase REF [--autostash] [--repo PATH]   Rebase the current branch onto a branch, remote, or tag\ngit-good rebase --continue|--skip|--abort [--repo PATH]   Recover an in-progress rebase\ngit-good rewrite --from COMMIT --pick COMMIT... --squash COMMIT... [--autostash] [--repo PATH]   Reorder or squash a linear range\ngit-good rewrite --continue|--skip|--abort [--repo PATH]   Recover an in-progress rewrite\ngit-good conflicts [--repo PATH]   List unmerged paths\ngit-good conflict --file PATH [--use ours|theirs|--stage] [--repo PATH]   Read or resolve a conflict\ngit-good reset --soft|--mixed|--hard COMMIT [--repo PATH]   Reset the current branch\ngit-good branch --delete BRANCH [--force] [--repo PATH]   Delete a local branch\ngit-good branch --create NAME [--at REF] [--repo PATH]   Create a local branch without switching\ngit-good tag --delete TAG [--repo PATH]   Delete a local tag\ngit-good show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]   Review or export\n\nBrowse commits reachable from HEAD and all local, remote, and tag refs."
+            "gg · good git\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good refs [PATH]      Print branches, remotes, tags, and HEAD as JSON\ngit-good status [PATH] [--file PATH --area AREA]   Print working status or diff as JSON\ngit-good stage --file PATH [--hunk HEADER]... [--repo PATH]   Stage one file or selected hunks\ngit-good unstage --file PATH [--repo PATH]   Unstage one file\ngit-good commit [--amend] -m MESSAGE [--repo PATH]   Commit the index or amend HEAD after Git hooks\ngit-good reflog [REF] [--repo PATH]   Print reflog entries as JSON\ngit-good blame PATH [--revision REF] [--lines START,END] [--repo PATH]   Print line attribution as JSON\ngit-good worktree <list|add|remove> [OPTIONS] [--repo PATH]   List, add, or remove worktrees\ngit-good switch [--create] BRANCH [--repo PATH]   Switch to or create a local branch\ngit-good fetch [REMOTE] [--prune] [--repo PATH]   Fetch and update remote-tracking refs\ngit-good push [REMOTE] [BRANCH] [--set-upstream] [--repo PATH]   Push a local branch without force\ngit-good clone URL [PATH]   Clone a repository and open it\ngit-good stash <list|push|apply|pop|drop> [OPTIONS] [--repo PATH]   List or mutate stashes\ngit-good cherry-pick COMMIT [--repo PATH]   Apply a commit\ngit-good revert COMMIT [--repo PATH]   Invert a commit\ngit-good merge REF [--no-ff] [--repo PATH]   Merge a branch, remote, or tag\ngit-good rebase REF [--autostash] [--repo PATH]   Rebase the current branch onto a branch, remote, or tag\ngit-good rebase --continue|--skip|--abort [--repo PATH]   Recover an in-progress rebase\ngit-good rewrite --from COMMIT --pick COMMIT... --squash COMMIT... [--autostash] [--repo PATH]   Reorder or squash a linear range\ngit-good rewrite --continue|--skip|--abort [--repo PATH]   Recover an in-progress rewrite\ngit-good conflicts [--repo PATH]   List unmerged paths\ngit-good conflict --file PATH [--use ours|theirs|--stage] [--repo PATH]   Read or resolve a conflict\ngit-good reset --soft|--mixed|--hard COMMIT [--repo PATH]   Reset the current branch\ngit-good branch --delete BRANCH [--force] [--repo PATH]   Delete a local branch\ngit-good branch --create NAME [--at REF] [--repo PATH]   Create a local branch without switching\ngit-good tag --delete TAG [--repo PATH]   Delete a local tag\ngit-good show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]   Review or export\n\nBrowse commits reachable from HEAD and all local, remote, and tag refs."
         );
         return Ok(());
     }
@@ -87,6 +89,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("blame")) {
         return blame_cli::run(args);
+    }
+    if first.as_deref() == Some(std::ffi::OsStr::new("worktree")) {
+        let sub = args
+            .next()
+            .ok_or("Use git-good worktree <list|add|remove> --help for usage")?;
+        return match sub.to_str() {
+            Some("list") => worktree_cli::list(args),
+            Some("add") => worktree_cli::add(args),
+            Some("remove") => worktree_cli::remove(args),
+            _ => Err("Use git-good worktree <list|add|remove>".into()),
+        };
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("refs")) {
         return refs_cli::run(args);
@@ -713,6 +726,46 @@ fn commit_action_menu(
     command
 }
 
+fn worktree_path(bytes: &[u8]) -> PathBuf {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        PathBuf::from(std::ffi::OsStr::from_bytes(bytes))
+    }
+    #[cfg(not(unix))]
+    {
+        PathBuf::from(String::from_utf8_lossy(bytes).into_owned())
+    }
+}
+
+#[derive(Clone, Default)]
+struct WorktreeState {
+    selected: Option<String>,
+    query: String,
+    scroll_offset: f32,
+    narrow_details: bool,
+    details_visible: bool,
+}
+
+struct WorktreeWindow {
+    snapshot: Option<gg_engine::worktree::Snapshot>,
+    selected: Option<usize>,
+    error: Option<String>,
+    notice: Option<String>,
+    create: Option<CreateWorktreeDialog>,
+    confirm_remove: Option<usize>,
+    busy: Option<String>,
+    pending: Option<worktree_worker::Action>,
+}
+
+struct CreateWorktreeDialog {
+    destination: String,
+    create: bool,
+    branch: String,
+    at: String,
+    error: Option<String>,
+}
+
 struct Browser {
     logo: Option<egui::TextureHandle>,
     path: String,
@@ -764,6 +817,10 @@ struct Browser {
     tag_delete: Option<TagDeleteDialog>,
     create_branch: Option<CreateBranchDialog>,
     recovery: Option<RecoveryView>,
+    worktree_window: Option<WorktreeWindow>,
+    worktree_worker: Option<worktree_worker::Worker>,
+    worktree_generation: u64,
+    worktree_states: std::collections::HashMap<PathBuf, WorktreeState>,
     refs_visible: bool,
     refs_query: String,
     state: state::State,
@@ -841,6 +898,10 @@ impl Browser {
             tag_delete: None,
             create_branch: None,
             recovery: None,
+            worktree_window: None,
+            worktree_worker: None,
+            worktree_generation: 0,
+            worktree_states: std::collections::HashMap::new(),
             refs_visible: true,
             refs_query: String::new(),
             state: state::State::default(),
@@ -2313,6 +2374,433 @@ impl Browser {
         }
     }
 
+    fn open_worktrees(&mut self, ctx: &egui::Context) {
+        if self.worktree_window.is_none() {
+            self.worktree_window = Some(WorktreeWindow {
+                snapshot: None,
+                selected: None,
+                error: None,
+                notice: None,
+                create: None,
+                confirm_remove: None,
+                busy: None,
+                pending: None,
+            });
+        }
+        if self
+            .worktree_window
+            .as_ref()
+            .is_some_and(|window| window.snapshot.is_none() && window.busy.is_none())
+        {
+            self.request_worktrees(ctx, worktree_worker::Action::List);
+        }
+    }
+
+    fn request_worktrees(&mut self, ctx: &egui::Context, action: worktree_worker::Action) {
+        let repo = self
+            .stash_path()
+            .unwrap_or_else(|| PathBuf::from(&self.path));
+        if self.worktree_worker.is_none() {
+            match worktree_worker::Worker::start(ctx.clone()) {
+                Ok(worker) => self.worktree_worker = Some(worker),
+                Err(error) => {
+                    if let Some(window) = &mut self.worktree_window {
+                        window.error = Some(error);
+                        window.busy = None;
+                    }
+                    return;
+                }
+            }
+        }
+        self.worktree_generation += 1;
+        let generation = self.worktree_generation;
+        let label = match &action {
+            worktree_worker::Action::List => "Reading worktrees…",
+            worktree_worker::Action::Add(_) => "Adding worktree…",
+            worktree_worker::Action::Remove(_) => "Removing worktree…",
+        };
+        if let Some(window) = &mut self.worktree_window {
+            window.busy = Some(label.into());
+            window.error = None;
+            window.notice = None;
+            window.pending = Some(action.clone());
+        }
+        if let Some(worker) = &self.worktree_worker {
+            worker.request(generation, repo, action);
+        }
+    }
+
+    fn poll_worktrees(&mut self) {
+        let Some(update) = self
+            .worktree_worker
+            .as_ref()
+            .and_then(worktree_worker::Worker::poll)
+        else {
+            return;
+        };
+        if update.generation != self.worktree_generation {
+            return;
+        }
+        let Some(window) = &mut self.worktree_window else {
+            return;
+        };
+        window.busy = None;
+        match update.result {
+            Ok(snapshot) => {
+                let len = snapshot.worktrees.len();
+                window.snapshot = Some(snapshot);
+                window.selected = window
+                    .selected
+                    .map(|index| index.min(len.saturating_sub(1)));
+                if window.selected.is_none() && len > 0 {
+                    window.selected = Some(0);
+                }
+                window.error = None;
+                if let Some(notice) = update.notice {
+                    if notice.starts_with("Added") {
+                        window.create = None;
+                    } else if notice.starts_with("Removed") {
+                        window.confirm_remove = None;
+                    }
+                    window.notice = Some(notice);
+                }
+                window.pending = None;
+            }
+            Err(error) => {
+                if let Some(dialog) = &mut window.create {
+                    dialog.error = Some(error.clone());
+                }
+                window.error = Some(error);
+            }
+        }
+    }
+
+    fn worktree_key(&self) -> PathBuf {
+        let path = self
+            .state
+            .history
+            .as_ref()
+            .map(|history| history.path.clone())
+            .unwrap_or_else(|| PathBuf::from(&self.path));
+        std::fs::canonicalize(&path).unwrap_or(path)
+    }
+
+    fn save_worktree_state(&mut self) {
+        let key = self.worktree_key();
+        self.worktree_states.insert(
+            key,
+            WorktreeState {
+                selected: self.state.selected.clone(),
+                query: self.state.query.clone(),
+                scroll_offset: self.scroll_offset,
+                narrow_details: self.narrow_details,
+                details_visible: self.details_visible,
+            },
+        );
+    }
+
+    fn restore_worktree_state(&mut self, path: &PathBuf) {
+        let key = std::fs::canonicalize(path).unwrap_or_else(|_| path.clone());
+        let state = self.worktree_states.get(&key).cloned().unwrap_or_default();
+        self.state.query = state.query;
+        self.state.selected = state.selected;
+        self.scroll_offset = state.scroll_offset;
+        self.restore_offset = Some(state.scroll_offset);
+        self.narrow_details = state.narrow_details;
+        self.details_visible = state.details_visible;
+        self.restore_row = None;
+        self.scroll_to_selection = false;
+    }
+
+    fn switch_worktree(&mut self, ctx: &egui::Context, path: PathBuf) {
+        self.save_worktree_state();
+        if let Some(working) = &self.working {
+            self.working_drafts
+                .insert(working.repository_key(), working.capture_draft());
+        }
+        self.working = None;
+        self.review = None;
+        self.recovery = None;
+        self.conflict_view = None;
+        self.stash_window = None;
+        self.worktree_window = None;
+        self.edit_path = false;
+        self.path = path.to_string_lossy().into_owned();
+        self.restore_worktree_state(&path);
+        self.load(ctx);
+    }
+
+    fn draw_worktrees(&mut self, ctx: &egui::Context) {
+        self.poll_worktrees();
+        let branches = self
+            .state
+            .refs
+            .items
+            .iter()
+            .filter(|item| item.kind == gg_engine::refs::RefKind::Branch)
+            .map(|item| item.name.clone())
+            .collect::<Vec<_>>();
+        let Some(window) = &mut self.worktree_window else {
+            return;
+        };
+        let mut open = true;
+        let mut refresh = false;
+        let mut create_open = false;
+        let mut open_path = None;
+        let mut remove_open = None;
+        let mut submit_create = None;
+        let mut cancel_create = false;
+        let mut submit_remove = None;
+        let mut cancel_remove = false;
+        let max_width = (ctx.content_rect().width() - 24.0).max(360.0);
+        egui::Window::new("Worktrees")
+            .id(egui::Id::unique("worktrees"))
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(true)
+            .default_width(max_width.min(760.0))
+            .max_width(max_width)
+            .default_height(420.0)
+            .default_pos(ctx.content_rect().center())
+            .pivot(egui::Align2::CENTER_CENTER)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    if ui
+                        .add_enabled(window.busy.is_none(), egui::Button::new("Refresh"))
+                        .clicked()
+                    {
+                        refresh = true;
+                    }
+                    if ui
+                        .add_enabled(window.busy.is_none(), egui::Button::new("Create worktree…"))
+                        .clicked()
+                    {
+                        create_open = true;
+                    }
+                    if let Some(busy) = &window.busy {
+                        ui.spinner();
+                        ui.weak(busy);
+                    }
+                });
+                if let Some(error) = &window.error {
+                    ui.colored_label(ui.visuals().error_fg_color, error);
+                }
+                if let Some(notice) = &window.notice {
+                    ui.colored_label(ui.visuals().hyperlink_color, notice);
+                }
+                ui.separator();
+                let Some(snapshot) = &window.snapshot else {
+                    ui.weak(if window.busy.is_some() {
+                        "Reading worktrees…"
+                    } else {
+                        "Worktrees unavailable."
+                    });
+                    return;
+                };
+                for (index, worktree) in snapshot.worktrees.iter().enumerate() {
+                    ui.horizontal(|ui| {
+                        let selected = window.selected == Some(index);
+                        if ui
+                            .selectable_label(
+                                selected,
+                                format!("{}  {}", worktree.branch_label(), worktree.path),
+                            )
+                            .clicked()
+                        {
+                            window.selected = Some(index);
+                        }
+                        ui.weak(worktree.status_label());
+                        if worktree.main {
+                            ui.weak("main");
+                        }
+                        let path = worktree_path(&worktree.path_bytes);
+                        let can_open = worktree.prunable.is_none() && path.exists();
+                        if ui
+                            .add_enabled(!worktree.current && can_open, egui::Button::new("Open"))
+                            .on_disabled_hover_text(if worktree.current {
+                                "This is the current worktree"
+                            } else {
+                                "The worktree path is missing"
+                            })
+                            .clicked()
+                        {
+                            open_path = Some(path.clone());
+                        }
+                        let removable = worktree.can_remove();
+                        if ui
+                            .add_enabled(removable.is_ok(), egui::Button::new("Remove…"))
+                            .on_disabled_hover_text(
+                                removable
+                                    .err()
+                                    .unwrap_or_else(|| "Remove this worktree".into()),
+                            )
+                            .clicked()
+                        {
+                            remove_open = Some(index);
+                        }
+                    });
+                    if let Some(lock) = &worktree.locked {
+                        ui.weak(format!("Locked: {lock}"));
+                    }
+                    if let Some(reason) = &worktree.prunable {
+                        ui.weak(format!("Missing: {reason}"));
+                    }
+                }
+                if snapshot.worktrees.is_empty() {
+                    ui.weak("No worktrees registered.");
+                }
+            });
+        if let Some(dialog) = &mut window.create {
+            let mut dialog_open = true;
+            egui::Window::new("Create worktree")
+                .id(egui::Id::unique("create-worktree"))
+                .open(&mut dialog_open)
+                .collapsible(false)
+                .resizable(false)
+                .default_width(460.0)
+                .default_pos(ctx.content_rect().center())
+                .pivot(egui::Align2::CENTER_CENTER)
+                .show(ctx, |ui| {
+                    ui.label("Destination");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut dialog.destination).desired_width(360.0),
+                    );
+                    ui.radio_value(&mut dialog.create, false, "Existing branch");
+                    ui.radio_value(&mut dialog.create, true, "New branch");
+                    if dialog.create {
+                        ui.label("New branch");
+                        ui.add(egui::TextEdit::singleline(&mut dialog.branch).desired_width(260.0));
+                        ui.label("Start at");
+                        ui.add(egui::TextEdit::singleline(&mut dialog.at).desired_width(260.0));
+                    } else if branches.is_empty() {
+                        ui.weak("No local branches are available.");
+                    } else {
+                        egui::ComboBox::from_id_salt("worktree-branch")
+                            .selected_text(if dialog.branch.is_empty() {
+                                "Choose a branch"
+                            } else {
+                                &dialog.branch
+                            })
+                            .width(260.0)
+                            .show_ui(ui, |ui| {
+                                for branch in &branches {
+                                    ui.selectable_value(&mut dialog.branch, branch.clone(), branch);
+                                }
+                            });
+                    }
+                    if let Some(error) = &dialog.error {
+                        ui.colored_label(ui.visuals().error_fg_color, error);
+                    }
+                    ui.horizontal(|ui| {
+                        let ready = !dialog.destination.trim().is_empty()
+                            && !dialog.branch.trim().is_empty()
+                            && window.busy.is_none();
+                        if ui.add_enabled(ready, egui::Button::new("Create")).clicked() {
+                            submit_create = Some((
+                                PathBuf::from(dialog.destination.trim()),
+                                dialog.create,
+                                dialog.branch.trim().to_string(),
+                                dialog.at.trim().to_string(),
+                            ));
+                        }
+                        if ui.button("Cancel").clicked() {
+                            cancel_create = true;
+                        }
+                    });
+                });
+            if !dialog_open {
+                cancel_create = true;
+            }
+        }
+        if let Some(index) = window.confirm_remove
+            && let Some(snapshot) = &window.snapshot
+            && let Some(worktree) = snapshot.worktrees.get(index)
+        {
+            let mut confirm = true;
+            egui::Window::new("Remove worktree")
+                .id(egui::Id::unique("remove-worktree"))
+                .open(&mut confirm)
+                .collapsible(false)
+                .resizable(false)
+                .default_pos(ctx.content_rect().center())
+                .pivot(egui::Align2::CENTER_CENTER)
+                .show(ctx, |ui| {
+                    ui.label(format!(
+                        "Remove {} at {}?",
+                        worktree.branch_label(),
+                        worktree.path
+                    ));
+                    ui.weak("Worktree removal is refused for dirty, locked, missing, main, and current worktrees. No force option is offered.");
+                    if let Some(error) = &window.error {
+                        ui.colored_label(ui.visuals().error_fg_color, error);
+                    }
+                    ui.horizontal(|ui| {
+                        if ui
+                            .add_enabled(window.busy.is_none(), egui::Button::new("Remove"))
+                            .clicked()
+                        {
+                            submit_remove = Some(worktree_path(&worktree.path_bytes));
+                        }
+                        if ui.button("Cancel").clicked() {
+                            cancel_remove = true;
+                        }
+                    });
+                });
+            if !confirm {
+                cancel_remove = true;
+            }
+        }
+        if open_path.is_some() {
+            self.worktree_window = None;
+        }
+        if refresh {
+            self.request_worktrees(ctx, worktree_worker::Action::List);
+        }
+        if create_open && let Some(window) = &mut self.worktree_window {
+            window.create = Some(CreateWorktreeDialog {
+                destination: String::new(),
+                create: true,
+                branch: String::new(),
+                at: "HEAD".into(),
+                error: None,
+            });
+        }
+        if let Some(index) = remove_open
+            && let Some(window) = &mut self.worktree_window
+        {
+            window.confirm_remove = Some(index);
+        }
+        if let Some((destination, create, branch, at)) = submit_create
+            && let Some(window) = &mut self.worktree_window
+        {
+            let request = gg_engine::worktree::AddRequest {
+                destination,
+                branch: (!create).then_some(branch.clone()),
+                create: create.then_some(branch),
+                at: (create && !at.is_empty()).then_some(at),
+            };
+            if let Some(dialog) = &mut window.create {
+                dialog.error = None;
+            }
+            self.request_worktrees(ctx, worktree_worker::Action::Add(request));
+        }
+        if let Some(path) = submit_remove {
+            self.request_worktrees(ctx, worktree_worker::Action::Remove(path));
+        }
+        if cancel_create && let Some(window) = &mut self.worktree_window {
+            window.create = None;
+        }
+        if cancel_remove && let Some(window) = &mut self.worktree_window {
+            window.confirm_remove = None;
+        }
+        if !open {
+            self.worktree_window = None;
+        }
+        if let Some(path) = open_path {
+            self.switch_worktree(ctx, path);
+        }
+    }
+
     fn open_recovery_review(
         &mut self,
         ctx: &egui::Context,
@@ -2790,6 +3278,17 @@ impl Browser {
                         if let Some(history) = &self.state.history {
                             self.recovery = Some(RecoveryView::new(history.path.clone()));
                         }
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(
+                            self.state.history.is_some(),
+                            egui::Button::new("Worktrees…"),
+                        )
+                        .on_hover_text("List, create, open, or remove linked worktrees")
+                        .clicked()
+                    {
+                        self.open_worktrees(ctx);
                         ui.close();
                     }
                     ui.separator();
@@ -3480,6 +3979,7 @@ impl Browser {
         if !recovery_open {
             self.recovery = None;
         }
+        self.draw_worktrees(ctx);
         if let Some(action) = recovery_action {
             match action {
                 RecoveryToolAction::Reflog(action) => match action {
@@ -7124,6 +7624,142 @@ mod tests {
             );
         }
         Ok(())
+    }
+
+    #[test]
+    fn switching_worktree_restores_its_selection_and_filter() {
+        let mut app = layout_fixture();
+        app.state.selected = Some("a".repeat(40));
+        app.state.query = "old".into();
+        app.scroll_offset = 44.0;
+        app.save_worktree_state();
+        let feature = PathBuf::from("/projects/feature");
+        app.worktree_states.insert(
+            feature.clone(),
+            WorktreeState {
+                selected: Some("b".repeat(40)),
+                query: "new".into(),
+                scroll_offset: 88.0,
+                narrow_details: false,
+                details_visible: false,
+            },
+        );
+        let ctx = egui::Context::default();
+        app.switch_worktree(&ctx, feature);
+        assert_eq!(app.path, "/projects/feature");
+        assert_eq!(app.state.query, "new");
+        assert_eq!(app.state.selected.as_deref(), Some("b".repeat(40).as_str()));
+        assert_eq!(app.scroll_offset, 88.0);
+        assert!(!app.details_visible);
+    }
+
+    #[test]
+    fn worktree_window_lists_state_and_fits_the_narrow_viewport() {
+        let snapshot = gg_engine::worktree::Snapshot {
+            worktrees: vec![
+                gg_engine::worktree::Worktree {
+                    path: "/projects/main".into(),
+                    path_bytes: b"/projects/main".to_vec(),
+                    head: Some("a".repeat(40)),
+                    branch: Some("main".into()),
+                    detached: false,
+                    bare: false,
+                    locked: None,
+                    prunable: None,
+                    current: true,
+                    main: true,
+                    dirty: Some(false),
+                },
+                gg_engine::worktree::Worktree {
+                    path: "/projects/feature".into(),
+                    path_bytes: b"/projects/feature".to_vec(),
+                    head: Some("b".repeat(40)),
+                    branch: Some("feature".into()),
+                    detached: false,
+                    bare: false,
+                    locked: None,
+                    prunable: None,
+                    current: false,
+                    main: false,
+                    dirty: Some(true),
+                },
+            ],
+        };
+        for width in [720.0, 1120.0] {
+            let ctx = egui::Context::default();
+            let mut app = layout_fixture();
+            app.worktree_window = Some(WorktreeWindow {
+                snapshot: Some(snapshot.clone()),
+                selected: Some(1),
+                error: None,
+                notice: None,
+                create: None,
+                confirm_remove: None,
+                busy: None,
+                pending: None,
+            });
+            let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let output = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let text = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            for expected in [
+                "Worktrees",
+                "main",
+                "feature",
+                "Current",
+                "Modified",
+                "Open",
+                "Remove…",
+            ] {
+                assert!(
+                    text.iter().any(|line| line.contains(expected)),
+                    "missing {expected} at {width}: {text:?}"
+                );
+            }
+            if width <= 720.0 {
+                let rect = ctx.memory(|memory| memory.area_rect(egui::Id::unique("worktrees")));
+                assert!(rect.is_some(), "the worktree window is laid out");
+                if let Some(rect) = rect {
+                    assert!(
+                        rect.min.x >= 0.0 && rect.max.x <= 720.0,
+                        "worktree window leaves the viewport: {rect:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn worktree_state_round_trips_selection_filters_and_place() {
+        let mut app = layout_fixture();
+        app.state.selected = Some("a".repeat(40));
+        app.state.query = "needle".into();
+        app.scroll_offset = 88.0;
+        app.narrow_details = true;
+        app.details_visible = false;
+        app.save_worktree_state();
+        let key = app.worktree_key();
+        app.state.selected = None;
+        app.state.query.clear();
+        app.scroll_offset = 0.0;
+        app.narrow_details = false;
+        app.details_visible = true;
+        app.restore_worktree_state(&key);
+        assert_eq!(app.state.selected.as_deref(), Some("a".repeat(40).as_str()));
+        assert_eq!(app.state.query, "needle");
+        assert_eq!(app.scroll_offset, 88.0);
+        assert!(app.narrow_details);
+        assert!(!app.details_visible);
     }
 
     #[test]

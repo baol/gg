@@ -194,6 +194,7 @@ pub mod status;
 pub mod sync;
 pub mod tag;
 pub mod working_diff;
+pub mod worktree;
 
 pub mod unstage;
 

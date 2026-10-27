@@ -2168,6 +2168,88 @@ fn blame_cli_reports_attributed_ranges_and_errors() -> Result {
 }
 
 #[test]
+fn worktree_cli_lists_adds_and_removes() -> Result {
+    let repo = tempfile::tempdir()?;
+    init(repo.path(), &["-b", "main"])?;
+    git(repo.path(), &["config", "user.name", "Test"])?;
+    git(repo.path(), &["config", "user.email", "test@example.org"])?;
+    std::fs::write(repo.path().join("a"), b"base\n")?;
+    git(repo.path(), &["add", "a"])?;
+    git(repo.path(), &["commit", "-qm", "base"])?;
+    let binary = env!("CARGO_BIN_EXE_git-good");
+
+    let out = Command::new(binary)
+        .args(["worktree", "list", "--repo"])
+        .arg(repo.path())
+        .output()?;
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let list: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(list["operation"], "worktree list");
+    assert_eq!(list["worktrees"].as_array().map(Vec::len), Some(1));
+    assert_eq!(list["worktrees"][0]["main"], true);
+
+    let linked = tempfile::tempdir()?;
+    let destination = linked.path().join("linked");
+    let out = Command::new(binary)
+        .args(["worktree", "add"])
+        .arg(&destination)
+        .args(["--create", "feature", "--repo"])
+        .arg(repo.path())
+        .output()?;
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let added: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(added["operation"], "worktree add");
+    assert_eq!(added["branch"], "feature");
+
+    let out = Command::new(binary)
+        .args(["worktree", "add"])
+        .arg(linked.path().join("second"))
+        .args(["--branch", "feature", "--repo"])
+        .arg(repo.path())
+        .output()?;
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("already checked out"));
+
+    std::fs::write(destination.join("a"), b"dirty\n")?;
+    let out = Command::new(binary)
+        .args(["worktree", "remove"])
+        .arg(&destination)
+        .args(["--repo"])
+        .arg(repo.path())
+        .output()?;
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("local changes"));
+    std::fs::write(destination.join("a"), b"base\n")?;
+
+    let out = Command::new(binary)
+        .args(["worktree", "remove"])
+        .arg(&destination)
+        .args(["--repo"])
+        .arg(repo.path())
+        .output()?;
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let out = Command::new(binary)
+        .args(["worktree", "list", "--repo"])
+        .arg(repo.path())
+        .output()?;
+    let list: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(list["worktrees"].as_array().map(Vec::len), Some(1));
+    Ok(())
+}
+
+#[test]
 fn branch_create_at_cli_does_not_switch() -> Result {
     let repo = tempfile::tempdir()?;
     init(repo.path(), &["-b", "main"])?;

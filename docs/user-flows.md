@@ -19,7 +19,7 @@ Follow-up design direction: [coherent interaction proposal](ui-coherence.md) and
 | M7: file reading and file history | Complete increments inside an unfinished milestone | Read a complete file and follow content versions and renames | F02, F11; Reading and File history mockups |
 | M7: blame and line/range history | Complete | Explain a line's origin without losing the selected range | F12; Blame mockup |
 | M7: image comparison | Complete | Compare dimensions and pixels across revisions | F13; Images mockup |
-| M7: worktrees | Planned | Work on another branch with isolated drafts and selection | F14; Worktrees mockup |
+| M7: worktrees | Complete | Work on another branch with isolated drafts and selection | F14; Worktrees mockup |
 | M7: submodules and LFS | Planned | Understand nested revisions and pointer/object availability | F15–F16; Submodule and LFS mockups |
 | M7: signing | Planned | Distinguish signature validity, trust, and signing setup | F17; Signing mockup |
 
@@ -204,7 +204,7 @@ flowchart TD
 
 **States:** unsupported format, decoding failure, and preview budgets show metadata and export rather than an empty canvas. Wide layouts offer side-by-side and swipe; narrow layouts stack named before/after previews. Fit never upscales, and Actual size shows 100% with scrolling. **Completion:** the user understands the visual change and the exact dimensions. **Mockup:** Images demonstrates side-by-side/stacked previews and the swipe boundary.
 
-### F14 · Manage isolated worktrees · proposed M7
+### F14 · Manage isolated worktrees · M7
 
 **Entry proposal:** Repository → Worktrees. List canonical path, branch/detached state, current/other worktree, dirty state, and availability.
 
@@ -213,7 +213,7 @@ flowchart TD
 3. Returning restores the original worktree's state; a new worktree starts with separate drafts.
 4. Remove identifies exact path/branch and rechecks dirty state. Proposed default blocks dirty removal and offers Open to inspect. Confirm clean removal; do not add a force/delete-user-files route in this design. Main/locked/unavailable worktrees show explicit restrictions and actionable details.
 
-**Completion:** the correct worktree is active or removed without state leakage. **Mockup:** Worktrees → Open with a visible draft-isolation receipt. **Decision before implementation:** removal/unregistration behavior for missing paths and locked worktrees needs an owning architecture contract.
+**Completion:** the correct worktree is active or removed without state leakage. **Mockup:** Worktrees → Open with a visible draft-isolation receipt. Missing paths stay blocked and unpruned; locked worktrees report their reason and cannot be removed.
 
 ### F15 · Inspect and update a submodule · proposed M7
 
