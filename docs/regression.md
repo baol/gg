@@ -304,7 +304,7 @@ Native review: the refs sidebar and status line show the current branch upstream
 - The shared reader test renders the author/short-commit column and the selected line's author, email, relative time, commit, and subject. Attribution is available only on the committed After side; working-tree content disables it with a reason.
 - Engine mapping tests cover context lines, introduced lines, deleted lines, a range containing either, and an unavailable line. Introduced or absent content is reported for the whole range rather than silently shrinking it.
 - The file-history strip test names the selected line/range and its boundary reason. A worker maps each edge; Older/Newer stay disabled while mapping or after an introduced/absent boundary, so the place never jumps to unrelated content.
-- Native captures cover wide/narrow attribution, a mapped line through two older versions, an introduced-line boundary, and Open commit handing the blamed commit to the ordinary review. Deleted-line history entered from the Before side remains planned.
+- Native captures cover wide/narrow attribution, a mapped line through two older versions, an introduced-line boundary, and Open commit handing the blamed commit to the ordinary review. Before-side attribution availability and the initial older-version index are asserted separately; an ambiguous file edge uses the existing predecessor chooser before any range mapping.
 
 ## M7 file reading surface
 

@@ -4,7 +4,7 @@ use crate::{
     review_worker::{Update, Worker},
 };
 use eframe::egui;
-use gg_engine::review::*;
+use gg_engine::{file::ReadingSide, review::*};
 use std::{collections::BTreeMap, ops::Range};
 const ROW: f32 = 26.0;
 
@@ -124,10 +124,15 @@ impl Review {
     }
 
     fn open_history_now(&mut self, ctx: &egui::Context) {
-        self.open_history_now_with_lines(ctx, None);
+        self.open_history_now_with_lines(ctx, None, 0);
     }
 
-    fn open_history_now_with_lines(&mut self, ctx: &egui::Context, lines: Option<(usize, usize)>) {
+    fn open_history_now_with_lines(
+        &mut self,
+        ctx: &egui::Context,
+        lines: Option<(usize, usize)>,
+        start_index: usize,
+    ) {
         if self.history.is_some() {
             return;
         }
@@ -153,6 +158,7 @@ impl Review {
             change.path.clone(),
             change.path_bytes.clone(),
             lines,
+            start_index,
             ctx,
         ));
     }
@@ -208,6 +214,7 @@ impl Review {
             change.path.clone(),
             change.path_bytes.clone(),
             None,
+            0,
             ctx,
         ));
     }
@@ -306,7 +313,12 @@ impl Review {
             self.diff.draw(ui);
         }
         if let Some(lines) = self.diff.take_line_history() {
-            self.open_history_now_with_lines(ctx, Some(lines));
+            let start_index = if self.diff.place().side == ReadingSide::Before {
+                1
+            } else {
+                0
+            };
+            self.open_history_now_with_lines(ctx, Some(lines), start_index);
         }
     }
     /// Return true when Back is explicitly requested.
@@ -343,16 +355,15 @@ impl Review {
             self.close_history(ctx);
         }
         self.reconcile_history_selection(ctx);
-        let attribution_revision = self
-            .history
-            .as_ref()
-            .and_then(|history| history.current_revision())
-            .or_else(|| {
-                self.comparison
-                    .as_ref()
-                    .map(|comparison| comparison.commit.clone())
-            });
-        self.diff.set_attribution_revision(attribution_revision);
+        let (attribution_after, attribution_before) = if let Some(history) = &self.history {
+            (history.current_revision(), history.predecessor_revision())
+        } else if let Some(comparison) = &self.comparison {
+            (Some(comparison.commit.clone()), comparison.parent.clone())
+        } else {
+            (None, None)
+        };
+        self.diff
+            .set_attribution_revisions(attribution_after, attribution_before);
         if !export_open
             && crate::navigation::available(ctx)
             && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::B))

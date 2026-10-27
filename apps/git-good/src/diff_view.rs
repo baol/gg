@@ -70,6 +70,7 @@ pub struct DiffView {
     reveal: bool,
     attribution: bool,
     blame_revision: Option<String>,
+    blame_before: Option<String>,
     blame_generation: u64,
     blame_worker: Option<blame_worker::Worker>,
     blame: Option<Blame>,
@@ -132,6 +133,7 @@ impl Default for DiffView {
             reveal: false,
             attribution: false,
             blame_revision: None,
+            blame_before: None,
             blame_generation: 0,
             blame_worker: None,
             blame: None,
@@ -231,11 +233,19 @@ impl DiffView {
 
     /// Name the commit whose content owns the After side. `None` disables
     /// attribution, such as for working-tree content.
+    #[cfg(test)]
     pub fn set_attribution_revision(&mut self, revision: Option<String>) {
-        if self.blame_revision == revision {
+        self.set_attribution_revisions(revision, None);
+    }
+
+    /// Name the commits that own the After and Before sides. Either may be
+    /// absent when that side has no committed content.
+    pub fn set_attribution_revisions(&mut self, after: Option<String>, before: Option<String>) {
+        if self.blame_revision == after && self.blame_before == before {
             return;
         }
-        self.blame_revision = revision;
+        self.blame_revision = after;
+        self.blame_before = before;
         self.blame = None;
         self.blame_error = None;
         self.blame_loading = false;
@@ -260,10 +270,11 @@ impl DiffView {
 
     /// Whether attribution can be shown for the current comparison.
     pub fn attribution_available(&self) -> bool {
-        self.mode == Mode::Full
-            && self.side == ReadingSide::After
-            && self.working.is_none()
-            && self.blame_revision.is_some()
+        let revision = match self.side {
+            ReadingSide::After => &self.blame_revision,
+            ReadingSide::Before => &self.blame_before,
+        };
+        self.mode == Mode::Full && self.working.is_none() && revision.is_some()
     }
 
     /// Toggle the attribution overlay and start its bounded read.
@@ -288,7 +299,11 @@ impl DiffView {
     }
 
     fn request_blame(&mut self, ctx: &egui::Context) {
-        let Some(revision) = self.blame_revision.clone() else {
+        let revision = match self.side {
+            ReadingSide::After => self.blame_revision.clone(),
+            ReadingSide::Before => self.blame_before.clone(),
+        };
+        let Some(revision) = revision else {
             return;
         };
         let Some(change) = self.change.as_ref() else {
@@ -1154,6 +1169,10 @@ impl DiffView {
         self.restoring = None;
         let line = self.current_line().unwrap_or(1);
         self.side = side;
+        self.blame = None;
+        self.blame_error = None;
+        self.blame_loading = false;
+        self.blame_generation += 1;
         self.full = None;
         self.full_side = side;
         if self.mode == Mode::Full {
@@ -1646,17 +1665,14 @@ impl DiffView {
                 } else {
                     "Show attribution"
                 };
-                if ui
+                let response = ui
                     .add_enabled(available, egui::Button::new(label))
                     .on_disabled_hover_text(if self.working.is_some() {
                         "Attribution is available for committed content"
-                    } else if self.side != ReadingSide::After {
-                        "Attribution follows the After side"
                     } else {
-                        "Open a committed file to attribute its lines"
-                    })
-                    .clicked()
-                {
+                        "This side has no committed revision"
+                    });
+                if response.clicked() {
                     actions.push(Action::Attribution);
                 }
             }
@@ -1667,13 +1683,11 @@ impl DiffView {
                         ReadingSide::Before => capabilities.full_before,
                         ReadingSide::After => capabilities.full_after,
                     };
-                    if ui
-                        .add_enabled(
-                            side != self.side && available,
-                            egui::Button::new(self.side_label(side)),
-                        )
-                        .clicked()
-                    {
+                    let response = ui.add_enabled(
+                        side != self.side && available,
+                        egui::Button::new(self.side_label(side)),
+                    );
+                    if response.clicked() {
                         actions.push(Action::Side(side));
                     }
                 }
@@ -2608,6 +2622,12 @@ mod tests {
         view.set_attribution_revision(Some("HEAD".into()));
         assert!(view.attribution_available());
 
+        view.side = ReadingSide::Before;
+        view.set_attribution_revisions(None, Some("parent".into()));
+        assert!(view.attribution_available());
+
+        view.side = ReadingSide::After;
+        view.set_attribution_revisions(Some("HEAD".into()), None);
         view.attribution = false;
         view.change = None;
         view.toggle_attribution(&ctx);

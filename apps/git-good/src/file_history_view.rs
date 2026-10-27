@@ -45,6 +45,7 @@ pub struct FileHistory {
     error: Option<String>,
     close: bool,
     line: Option<(usize, usize)>,
+    initial_index: Option<usize>,
     line_note: Option<String>,
     line_older_blocked: Option<String>,
     line_newer_blocked: Option<String>,
@@ -61,6 +62,7 @@ impl FileHistory {
         file: String,
         path_bytes: Vec<u8>,
         line: Option<(usize, usize)>,
+        start_index: usize,
         ctx: &egui::Context,
     ) -> Self {
         let mut view = Self {
@@ -78,6 +80,7 @@ impl FileHistory {
             error: None,
             close: false,
             line,
+            initial_index: (line.is_some() && start_index > 0).then_some(start_index),
             line_note: None,
             line_older_blocked: None,
             line_newer_blocked: None,
@@ -212,6 +215,12 @@ impl FileHistory {
                 self.index = self.index.min(timeline.versions.len() - 1);
             }
         }
+        if let Some(initial) = self.initial_index.take()
+            && let Some(timeline) = &self.timeline
+            && !timeline.versions.is_empty()
+        {
+            self.index = initial.min(timeline.versions.len() - 1);
+        }
         if let Some(index) = self.choosing
             && self
                 .timeline
@@ -244,6 +253,15 @@ impl FileHistory {
     /// Commit that owns the currently displayed content version.
     pub fn current_revision(&self) -> Option<String> {
         self.current().map(|version| version.commit.clone())
+    }
+
+    /// Commit that owns the adjacent older content version, when loaded.
+    pub fn predecessor_revision(&self) -> Option<String> {
+        self.timeline
+            .as_ref()?
+            .versions
+            .get(self.index + 1)
+            .map(|version| version.commit.clone())
     }
 
     fn current(&self) -> Option<&FileVersion> {
@@ -763,6 +781,7 @@ impl FileHistory {
             error: None,
             close: false,
             line: None,
+            initial_index: None,
             line_note: None,
             line_older_blocked: None,
             line_newer_blocked: None,
@@ -855,6 +874,29 @@ mod tests {
 
     fn view(timeline: Timeline) -> FileHistory {
         FileHistory::fixture(b"src/lib.rs".to_vec(), timeline, 0)
+    }
+
+    #[test]
+    fn initial_line_history_index_selects_the_before_version() {
+        let timeline = Timeline::new(
+            vec![
+                version(Predecessor::Linked, Some(HistoryKind::Modified)),
+                version(Predecessor::Oldest, Some(HistoryKind::Added)),
+            ],
+            true,
+            None,
+        );
+        let mut history = view(timeline.clone());
+        history.line = Some((2, 2));
+        history.initial_index = Some(1);
+        history.accept(Update {
+            generation: 1,
+            timeline: Some(timeline),
+            busy: false,
+            error: None,
+        });
+        assert_eq!(history.index, 1);
+        assert!(history.initial_index.is_none());
     }
 
     #[test]
