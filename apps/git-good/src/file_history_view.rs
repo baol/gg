@@ -7,14 +7,28 @@ use crate::{
     bounded_text,
     diff_view::DiffView,
     file_history_worker::{Update, Worker},
-    navigation,
+    line_map_worker, navigation,
 };
 use eframe::egui;
 use gg_engine::{
-    file_history::{FileVersion, HistoryKind, PRELOAD, Predecessor, Timeline, VersionCandidate},
+    file::ReadingSide,
+    file_history::{
+        FileVersion, HistoryKind, LineMap, PRELOAD, Predecessor, Timeline, VersionCandidate,
+    },
     review::{ChangeKind, FileChange},
 };
 use std::path::PathBuf;
+
+#[derive(Clone, Copy)]
+enum MapDirection {
+    Older,
+    Newer,
+}
+
+struct PendingMap {
+    target: usize,
+    direction: MapDirection,
+}
 
 pub struct FileHistory {
     generation: u64,
@@ -30,6 +44,14 @@ pub struct FileHistory {
     choosing: Option<usize>,
     error: Option<String>,
     close: bool,
+    line: Option<(usize, usize)>,
+    line_note: Option<String>,
+    line_older_blocked: Option<String>,
+    line_newer_blocked: Option<String>,
+    mapping: bool,
+    map_generation: u64,
+    map_worker: Option<line_map_worker::Worker>,
+    pending_map: Option<PendingMap>,
 }
 
 impl FileHistory {
@@ -38,6 +60,7 @@ impl FileHistory {
         revision: String,
         file: String,
         path_bytes: Vec<u8>,
+        line: Option<(usize, usize)>,
         ctx: &egui::Context,
     ) -> Self {
         let mut view = Self {
@@ -54,6 +77,14 @@ impl FileHistory {
             choosing: None,
             error: None,
             close: false,
+            line,
+            line_note: None,
+            line_older_blocked: None,
+            line_newer_blocked: None,
+            mapping: false,
+            map_generation: 0,
+            map_worker: None,
+            pending_map: None,
         };
         view.start(ctx);
         view
@@ -67,6 +98,11 @@ impl FileHistory {
         self.busy = true;
         self.choosing = None;
         self.error = None;
+        self.mapping = false;
+        self.pending_map = None;
+        self.line_note = None;
+        self.line_older_blocked = None;
+        self.line_newer_blocked = None;
         match Worker::start(ctx.clone()) {
             Ok(worker) => {
                 worker.open(
@@ -109,10 +145,48 @@ impl FileHistory {
 
     /// Accept current worker output. History is polled while its strip is open.
     pub fn poll(&mut self) {
+        self.poll_line_map();
         let Some(update) = self.worker.as_ref().and_then(Worker::poll) else {
             return;
         };
         self.accept(update);
+    }
+
+    fn poll_line_map(&mut self) {
+        let Some(update) = self
+            .map_worker
+            .as_ref()
+            .and_then(line_map_worker::Worker::poll)
+        else {
+            return;
+        };
+        if update.generation != self.map_generation {
+            return;
+        }
+        self.mapping = false;
+        let Some(pending) = self.pending_map.take() else {
+            return;
+        };
+        match update.result {
+            Ok(LineMap::Mapped { start, end }) => {
+                self.index = pending.target;
+                self.line = Some((start, end));
+                self.line_note = None;
+                self.line_older_blocked = None;
+                self.line_newer_blocked = None;
+            }
+            Ok(boundary) => {
+                let reason = boundary.reason().unwrap_or("Line could not be mapped");
+                match pending.direction {
+                    MapDirection::Older => self.line_older_blocked = Some(reason.into()),
+                    MapDirection::Newer => self.line_newer_blocked = Some(reason.into()),
+                }
+                self.line_note = Some(reason.into());
+            }
+            Err(error) => {
+                self.line_note = Some(error);
+            }
+        }
     }
 
     fn accept(&mut self, update: Update) {
@@ -181,6 +255,9 @@ impl FileHistory {
     }
 
     fn can_older(&self) -> bool {
+        if self.mapping || self.line_older_blocked.is_some() {
+            return false;
+        }
         let Some(timeline) = &self.timeline else {
             return false;
         };
@@ -194,10 +271,16 @@ impl FileHistory {
     }
 
     fn can_newer(&self) -> bool {
-        self.index > 0
+        !self.mapping && self.line_newer_blocked.is_none() && self.index > 0
     }
 
     fn older_reason(&self) -> Option<String> {
+        if let Some(reason) = &self.line_older_blocked {
+            return Some(reason.clone());
+        }
+        if self.mapping {
+            return Some("Mapping line…".into());
+        }
         self.timeline
             .as_ref()?
             .before_reason(self.index, self.pending())
@@ -212,8 +295,12 @@ impl FileHistory {
             return;
         };
         if self.index + 1 < timeline.versions.len() {
-            self.index += 1;
-            self.ensure_loaded(ctx);
+            if self.line.is_some() && self.line_older_blocked.is_none() {
+                self.start_line_map(ctx, MapDirection::Older);
+            } else {
+                self.index += 1;
+                self.ensure_loaded(ctx);
+            }
         } else if matches!(
             self.last().map(|version| &version.previous),
             Some(Predecessor::More)
@@ -225,6 +312,102 @@ impl FileHistory {
 
     fn newer(&mut self) {
         self.index = self.index.saturating_sub(1);
+    }
+
+    fn newer_with_map(&mut self, ctx: &egui::Context) {
+        if self.line.is_some() && self.line_newer_blocked.is_none() && !self.mapping {
+            self.start_line_map(ctx, MapDirection::Newer);
+        } else {
+            self.newer();
+        }
+    }
+
+    fn start_line_map(&mut self, ctx: &egui::Context, direction: MapDirection) {
+        let Some((start, end)) = self.line else {
+            return;
+        };
+        let Some(version) = self.current().cloned() else {
+            return;
+        };
+        let Some(timeline) = &self.timeline else {
+            return;
+        };
+        let (target, other) = match direction {
+            MapDirection::Older => {
+                let Some(older) = timeline.versions.get(self.index + 1).cloned() else {
+                    return;
+                };
+                (self.index + 1, older)
+            }
+            MapDirection::Newer => {
+                if self.index == 0 {
+                    return;
+                }
+                let Some(newer) = timeline.versions.get(self.index - 1).cloned() else {
+                    return;
+                };
+                (self.index - 1, newer)
+            }
+        };
+        if other.side.is_none() {
+            let reason = "File absent in that version";
+            match direction {
+                MapDirection::Older => self.line_older_blocked = Some(reason.into()),
+                MapDirection::Newer => self.line_newer_blocked = Some(reason.into()),
+            }
+            self.line_note = Some(reason.into());
+            return;
+        }
+        let change = FileChange {
+            path: version.path.clone(),
+            path_bytes: version.path_bytes.clone(),
+            kind: version
+                .kind
+                .map(HistoryKind::change_kind)
+                .unwrap_or(ChangeKind::Modified),
+            old: match direction {
+                MapDirection::Older => other.side.clone(),
+                MapDirection::Newer => version.side.clone(),
+            },
+            new: match direction {
+                MapDirection::Older => version.side.clone(),
+                MapDirection::Newer => other.side.clone(),
+            },
+        };
+        if change.old.is_none() || change.new.is_none() {
+            return;
+        }
+        if self.map_worker.is_none() {
+            match line_map_worker::Worker::start(ctx.clone()) {
+                Ok(worker) => self.map_worker = Some(worker),
+                Err(error) => {
+                    self.line_note = Some(error);
+                    return;
+                }
+            }
+        }
+        self.map_generation += 1;
+        self.mapping = true;
+        self.pending_map = Some(PendingMap { target, direction });
+        self.line_note = None;
+        match direction {
+            MapDirection::Older => self.line_older_blocked = None,
+            MapDirection::Newer => self.line_newer_blocked = None,
+        }
+        if let Some(worker) = &self.map_worker {
+            worker.request(
+                self.map_generation,
+                self.repo.clone(),
+                change,
+                match direction {
+                    MapDirection::Older => ReadingSide::After,
+                    MapDirection::Newer => ReadingSide::Before,
+                },
+                start,
+                end,
+            );
+        }
+        ctx.request_repaint();
     }
 
     fn request_more(&mut self, ctx: &egui::Context) {
@@ -393,7 +576,7 @@ impl FileHistory {
         let newer =
             ctx.input_mut(|input| input.consume_key(egui::Modifiers::ALT, egui::Key::ArrowRight));
         if newer {
-            self.newer();
+            self.newer_with_map(ctx);
         }
         ctx.input_mut(|input| {
             input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)
@@ -421,7 +604,7 @@ impl FileHistory {
                 .on_disabled_hover_text("Newest version")
                 .clicked()
             {
-                self.newer();
+                self.newer_with_map(ctx);
             }
             if let Some(timeline) = &self.timeline {
                 ui.weak(timeline.position(self.index));
@@ -453,10 +636,25 @@ impl FileHistory {
             {
                 detail.push_str(&format!(" · from {old}"));
             }
-            let reason = if !self.can_older() {
+            if let Some((start, end)) = self.line {
+                if start == end {
+                    detail.push_str(&format!(" · line {start}"));
+                } else {
+                    detail.push_str(&format!(" · lines {start}–{end}"));
+                }
+            }
+            if let Some(note) = &self.line_note {
+                detail.push_str(" · ");
+                detail.push_str(note);
+            }
+            let reason = if self.line_note.is_some() {
+                None
+            } else if !self.can_older() {
                 self.older_reason()
             } else if !self.can_newer() {
-                self.newer_reason().map(str::to_owned)
+                self.line_newer_blocked
+                    .clone()
+                    .or_else(|| self.newer_reason().map(str::to_owned))
             } else {
                 None
             };
@@ -564,6 +762,14 @@ impl FileHistory {
             choosing: None,
             error: None,
             close: false,
+            line: None,
+            line_note: None,
+            line_older_blocked: None,
+            line_newer_blocked: None,
+            mapping: false,
+            map_generation: 0,
+            map_worker: None,
+            pending_map: None,
         }
     }
 
@@ -649,6 +855,40 @@ mod tests {
 
     fn view(timeline: Timeline) -> FileHistory {
         FileHistory::fixture(b"src/lib.rs".to_vec(), timeline, 0)
+    }
+
+    #[test]
+    fn line_history_names_the_anchor_and_boundary() {
+        let timeline = Timeline::new(
+            vec![
+                version(Predecessor::Linked, Some(HistoryKind::Modified)),
+                version(Predecessor::Oldest, Some(HistoryKind::Added)),
+            ],
+            true,
+            None,
+        );
+        let mut history = view(timeline);
+        history.line = Some((2, 3));
+        history.line_note = Some("Line introduced in this version".into());
+        let ctx = egui::Context::default();
+        let output = crate::tests::run_ui(
+            &ctx,
+            crate::tests::frame_input(1120.0, 740.0, vec![]),
+            |ui| history.draw_strip(ui, &ctx),
+        );
+        let text = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            text.iter().any(|line| line.contains("lines 2–3")
+                && line.contains("Line introduced in this version")),
+            "{text:?}"
+        );
     }
 
     #[test]

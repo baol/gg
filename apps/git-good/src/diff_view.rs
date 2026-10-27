@@ -75,6 +75,7 @@ pub struct DiffView {
     blame: Option<Blame>,
     blame_error: Option<String>,
     blame_loading: bool,
+    line_history: Option<(usize, usize)>,
     offset: f32,
     reset: bool,
     mode: Mode,
@@ -135,6 +136,7 @@ impl Default for DiffView {
             blame: None,
             blame_error: None,
             blame_loading: false,
+            line_history: None,
             offset: 0.0,
             reset: false,
             mode: Mode::Diff,
@@ -241,6 +243,11 @@ impl DiffView {
     #[cfg(test)]
     pub fn attribution_active(&self) -> bool {
         self.attribution
+    }
+
+    /// Take a line-history request raised by the attribution strip.
+    pub fn take_line_history(&mut self) -> Option<(usize, usize)> {
+        self.line_history.take()
     }
 
     /// Whether attribution can be shown for the current comparison.
@@ -1531,12 +1538,20 @@ impl DiffView {
         else {
             return;
         };
+        let range = match (self.cursor, self.anchor) {
+            (Some(cursor), Some(anchor)) => (cursor.min(anchor) + 1, cursor.max(anchor) + 1),
+            (Some(cursor), None) => (cursor + 1, cursor + 1),
+            _ => (line.line, line.line),
+        };
         ui.horizontal_wrapped(|ui| {
             ui.strong(line.author.clone());
             ui.weak(line.email.clone());
             ui.weak(relative_time(line.time));
             ui.weak(line.short_commit());
             ui.label(line.summary.clone());
+            if ui.button("Line history").clicked() {
+                self.line_history = Some(range);
+            }
         });
     }
 

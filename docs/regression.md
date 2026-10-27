@@ -302,7 +302,9 @@ Native review: the refs sidebar and status line show the current branch upstream
 - Missing paths and revisions, out-of-range starts, cancellation, binary content, gitlinks, and symlinks return explicit errors rather than empty attribution.
 - CLI `git good blame PATH [--revision REF] [--lines START,END] [--repo PATH]` returns JSON with the exact path, range, and line metadata; a missing path exits non-zero.
 - The shared reader test renders the author/short-commit column and the selected line's author, email, relative time, commit, and subject. Attribution is available only on the committed After side; working-tree content disables it with a reason.
-- Line and range history mapping through the version timeline is not implemented yet; the plan increment remains in progress.
+- Engine mapping tests cover context lines, introduced lines, deleted lines, a range containing either, and an unavailable line. Introduced or absent content is reported for the whole range rather than silently shrinking it.
+- The file-history strip test names the selected line/range and its boundary reason. A worker maps each edge; Older/Newer stay disabled while mapping or after an introduced/absent boundary, so the place never jumps to unrelated content.
+- Native captures cover wide/narrow attribution, a mapped line through two older versions, and an introduced-line boundary. Open commit from the attribution strip and deleted-line history from the Before side remain planned.
 
 ## M7 file reading surface
 

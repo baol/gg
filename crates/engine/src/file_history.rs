@@ -1,5 +1,9 @@
 //! Version-cursor file history: content states, edges, and bounded navigation.
-use crate::review::{ChangeKind, FileSide, display_path};
+use crate::{
+    diff::{DiffRow, RowKind},
+    file::ReadingSide,
+    review::{ChangeKind, FileSide, display_path},
+};
 use serde::{Deserialize, Serialize};
 
 /// Versions loaded ahead of the cursor so a step is usually immediate.
@@ -199,6 +203,75 @@ impl Timeline {
     }
 }
 
+/// Result of mapping a selected line range through one content edge.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LineMap {
+    /// The whole range maps to the target side.
+    Mapped { start: usize, end: usize },
+    /// The selected content was introduced at this edge; the earlier side has no range.
+    Introduced,
+    /// The selected content was deleted at this edge; the later side has no range.
+    Absent,
+    /// The source line is outside the compared content or the edge has no text rows.
+    Unavailable,
+}
+
+impl LineMap {
+    pub fn reason(&self) -> Option<&'static str> {
+        match self {
+            Self::Mapped { .. } => None,
+            Self::Introduced => Some("Line introduced in this version"),
+            Self::Absent => Some("Line absent in this version"),
+            Self::Unavailable => Some("Line could not be mapped through this edge"),
+        }
+    }
+}
+
+/// Map an inclusive one-based range through one edge's diff rows.
+///
+/// `from` names the side the range belongs to. Context rows map to the other
+/// side; an added line has no earlier mapping and a deleted line has no later
+/// mapping. A range that includes either is reported as a whole instead of
+/// silently shrinking.
+pub fn map_lines(rows: &[DiffRow], from: ReadingSide, start: usize, end: usize) -> LineMap {
+    let (start, end) = if start <= end {
+        (start, end)
+    } else {
+        (end, start)
+    };
+    let mut mapped = Vec::new();
+    for line in start..=end {
+        let row = rows.iter().find(|row| match from {
+            ReadingSide::After => row.new_line == Some(line),
+            ReadingSide::Before => row.old_line == Some(line),
+        });
+        let Some(row) = row else {
+            return LineMap::Unavailable;
+        };
+        let target = match from {
+            ReadingSide::After => row.old_line,
+            ReadingSide::Before => row.new_line,
+        };
+        match target {
+            Some(target) => mapped.push(target),
+            None if from == ReadingSide::After && row.kind == RowKind::Added => {
+                return LineMap::Introduced;
+            }
+            None if from == ReadingSide::Before && row.kind == RowKind::Deleted => {
+                return LineMap::Absent;
+            }
+            None => return LineMap::Unavailable,
+        }
+    }
+    match (mapped.iter().min(), mapped.iter().max()) {
+        (Some(start), Some(end)) => LineMap::Mapped {
+            start: *start,
+            end: *end,
+        },
+        _ => LineMap::Unavailable,
+    }
+}
+
 /// Classify the edge between two content states.
 pub fn edge_kind(
     old: Option<&FileSide>,
@@ -372,5 +445,52 @@ mod tests {
         );
         assert!(timeline.predecessor(0).is_some());
         assert!(timeline.predecessor(1).is_none());
+    }
+
+    fn row(kind: RowKind, old_line: Option<usize>, new_line: Option<usize>) -> DiffRow {
+        DiffRow {
+            kind,
+            old_line,
+            new_line,
+            text: String::new(),
+            bytes: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn line_mapping_keeps_ranges_whole_and_names_introduced_or_absent_content() {
+        let rows = vec![
+            row(RowKind::Context, Some(1), Some(1)),
+            row(RowKind::Deleted, Some(2), None),
+            row(RowKind::Added, None, Some(2)),
+            row(RowKind::Context, Some(3), Some(3)),
+        ];
+        assert_eq!(
+            map_lines(&rows, ReadingSide::After, 1, 1),
+            LineMap::Mapped { start: 1, end: 1 }
+        );
+        assert_eq!(
+            map_lines(&rows, ReadingSide::After, 2, 2),
+            LineMap::Introduced
+        );
+        assert_eq!(map_lines(&rows, ReadingSide::Before, 2, 2), LineMap::Absent);
+        assert_eq!(
+            map_lines(&rows, ReadingSide::Before, 3, 3),
+            LineMap::Mapped { start: 3, end: 3 }
+        );
+        assert_eq!(
+            map_lines(&rows, ReadingSide::After, 1, 3),
+            LineMap::Introduced
+        );
+        assert_eq!(map_lines(&rows, ReadingSide::Before, 1, 3), LineMap::Absent);
+        assert_eq!(
+            map_lines(&rows, ReadingSide::After, 9, 9),
+            LineMap::Unavailable
+        );
+        assert_eq!(
+            LineMap::Introduced.reason(),
+            Some("Line introduced in this version")
+        );
+        assert_eq!(LineMap::Mapped { start: 1, end: 2 }.reason(), None);
     }
 }

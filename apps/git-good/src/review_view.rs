@@ -114,6 +114,10 @@ impl Review {
     }
 
     fn open_history_now(&mut self, ctx: &egui::Context) {
+        self.open_history_now_with_lines(ctx, None);
+    }
+
+    fn open_history_now_with_lines(&mut self, ctx: &egui::Context, lines: Option<(usize, usize)>) {
         if self.history.is_some() {
             return;
         }
@@ -138,6 +142,7 @@ impl Review {
             revision,
             change.path.clone(),
             change.path_bytes.clone(),
+            lines,
             ctx,
         ));
     }
@@ -192,6 +197,7 @@ impl Review {
             revision,
             change.path.clone(),
             change.path_bytes.clone(),
+            None,
             ctx,
         ));
     }
@@ -288,6 +294,9 @@ impl Review {
             self.diff.draw_reading(ui);
         } else {
             self.diff.draw(ui);
+        }
+        if let Some(lines) = self.diff.take_line_history() {
+            self.open_history_now_with_lines(ctx, Some(lines));
         }
     }
     /// Return true when Back is explicitly requested.

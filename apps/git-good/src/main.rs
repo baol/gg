@@ -19,6 +19,7 @@ mod graph;
 mod history_view;
 #[cfg(test)]
 mod interaction_tests;
+mod line_map_worker;
 mod merge_cli;
 mod mutation_cli;
 mod navigation;

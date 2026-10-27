@@ -640,13 +640,14 @@ Linux x86_64 · Rust 1.99.1 · local Git fixtures.
 Linux x86_64 · Rust 1.99.1 · Xvfb/llvmpipe · disposable Git fixture (`/tmp/opencode/gg-blame`: six-line `src/app.rs` with three authors and three commits).
 
 - `cargo fmt --all -- --check` passed.
-- `cargo test --workspace --locked` passed: 438 tests, 0 failures, 3 ignored opt-in performance checks. This includes 230 `git-good` unit tests and 34 CLI tests.
+- `cargo test --workspace --locked` passed: 440 tests, 0 failures, 3 ignored opt-in performance checks. This includes 231 `git-good` unit tests and 34 CLI tests.
 - `cargo clippy --workspace --all-targets --locked -- -D warnings` passed.
 - `gg_git::blame::read` resolves the committed path and revision, checks the regular-blob budget (2 MiB and 100,000 lines), refuses binary content, gitlinks, and symlinks, clamps a requested range to the file, and parses `git blame --line-porcelain` into author, email, author time, subject, current line, and origin line. A cancelled request returns an explicit cancellation.
 - `git good blame PATH [--revision REF] [--lines START,END] [--repo PATH]` returns the same bounded result as JSON. The CLI test attributes a two-commit file, requests a two-line range, and exits non-zero for a missing path.
 - In the shared reader, **Show attribution** appears in Full file on the committed After side; `B` toggles it. The column names the author and short commit for each source line, and the selected line names author, email, relative time, short commit, and subject. Working-tree content disables attribution with an explicit reason. The worker is generation-keyed and cancellable, so a new file or revision supersedes older attribution.
-- Native X11: [wide attribution with three authors](screenshots/m7-blame-wide.png) and [narrow attribution with the selected line named](screenshots/m7-blame-narrow.png).
-- Limitations: line and range history mapping through the shared version timeline remains in progress; attribution currently covers the After side only, does not infer uncommitted content, and does not yet expose Open commit or Line history actions from the attribution strip. Only Linux/X11, the dark theme, and llvmpipe were inspected natively.
+- **Line history** opens the existing version timeline anchored to the selected line or range. Each Older/Newer step maps through the edge on a cancellable worker: context lines map, an introduced line or range stops with **Line introduced in this version**, a deleted line or range stops with **Line absent in this version**, and the range is never silently shrunk. The existing predecessor chooser remains the authority for ambiguous merge edges.
+- Native X11: [wide attribution with three authors](screenshots/m7-blame-wide.png), [narrow attribution with the selected line named](screenshots/m7-blame-narrow.png), [line history mapped through two older versions](screenshots/m7-line-history-wide.png), [narrow line history](screenshots/m7-line-history-narrow.png), and [an introduced-line boundary that disables Older version](screenshots/m7-line-history-boundary.png).
+- Limitations: attribution covers the After side only and does not infer uncommitted content. Open commit from the attribution strip and deleted-line history entered from the Before side remain planned. The increment stays in progress until those actions and the divergent-range chooser are exercised end to end. Only Linux/X11, the dark theme, and llvmpipe were inspected natively.
 
 ## M7 file history · 2026-10-25
 
