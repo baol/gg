@@ -77,6 +77,7 @@ mod tests {
     }
 }
 
+pub mod blame;
 pub mod conflict;
 pub mod diff;
 pub mod file;

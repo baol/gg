@@ -171,6 +171,7 @@ impl gg_engine::HistoryReader for Session {
 }
 
 pub mod backup;
+pub mod blame;
 pub mod blob;
 pub mod branch;
 pub mod commit;

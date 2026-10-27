@@ -2104,6 +2104,70 @@ fn commit_amend_and_reflog_cli() -> Result {
 }
 
 #[test]
+fn blame_cli_reports_attributed_ranges_and_errors() -> Result {
+    let repo = tempfile::tempdir()?;
+    init(repo.path(), &["-b", "main"])?;
+    git(repo.path(), &["config", "user.name", "Test"])?;
+    git(repo.path(), &["config", "user.email", "test@example.org"])?;
+    std::fs::write(repo.path().join("a"), b"one\ntwo\nthree\n")?;
+    git(repo.path(), &["add", "a"])?;
+    git(repo.path(), &["commit", "-qm", "base"])?;
+    let base = String::from_utf8(git_output(repo.path(), &["rev-parse", "HEAD"])?)?
+        .trim()
+        .to_string();
+    std::fs::write(repo.path().join("a"), b"one\nTWO\nthree\nfour\n")?;
+    git(repo.path(), &["commit", "-qam", "change"])?;
+    let head = String::from_utf8(git_output(repo.path(), &["rev-parse", "HEAD"])?)?
+        .trim()
+        .to_string();
+
+    let binary = env!("CARGO_BIN_EXE_git-good");
+    let out = Command::new(binary)
+        .args(["blame", "a", "--repo"])
+        .arg(repo.path())
+        .output()?;
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let blame: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(blame["operation"], "blame");
+    assert_eq!(blame["path"], "a");
+    assert_eq!(blame["start_line"], 1);
+    assert_eq!(blame["end_line"], 4);
+    assert_eq!(blame["lines"][0]["commit"], base);
+    assert_eq!(blame["lines"][1]["commit"], head);
+    assert_eq!(blame["lines"][1]["line"], 2);
+    assert_eq!(blame["lines"][1]["author"], "Test");
+    assert_eq!(blame["lines"][1]["email"], "test@example.org");
+    assert_eq!(blame["lines"][1]["summary"], "change");
+
+    let out = Command::new(binary)
+        .args(["blame", "a", "--lines", "2,3", "--repo"])
+        .arg(repo.path())
+        .output()?;
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let range: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(range["start_line"], 2);
+    assert_eq!(range["end_line"], 3);
+    assert_eq!(range["lines"].as_array().map(Vec::len), Some(2));
+    assert_eq!(range["lines"][0]["commit"], head);
+    assert_eq!(range["lines"][1]["commit"], base);
+
+    let out = Command::new(binary)
+        .args(["blame", "missing", "--repo"])
+        .arg(repo.path())
+        .output()?;
+    assert!(!out.status.success());
+    Ok(())
+}
+
+#[test]
 fn branch_create_at_cli_does_not_switch() -> Result {
     let repo = tempfile::tempdir()?;
     init(repo.path(), &["-b", "main"])?;
