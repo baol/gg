@@ -296,6 +296,14 @@ Native review: the refs sidebar and status line show the current branch upstream
 - Backup tests assert `gg_git::backup::list` returns the private reference, kind, commit, subject, and commit time while the refs snapshot continues to exclude `refs/gg/`.
 - egui tests render the **Reorder and squash** modal with ordered rows, up/down icon controls, Squash choices, autostash, and the backup warning at 720 and 1120 widths. A submitted rewrite closes the configuration; the operation area shows **Rewriting commits…**, then **Refreshing history…** until the replacement history generation is accepted, and Escape is no longer needed to dismiss a blocking modal. The Backups window renders the entry list, Open commit, Reset branch here, Create branch here…, Copy hash, and Copy ref at 1120 width. The operation area names an in-progress rebase; Backups stays in Repository and outcome recovery.
 
+## M7 blame attribution
+
+- Git fixtures attribute the full file and a bounded line range, keep origin line numbers, and preserve author, email, author time, and subject through a content change.
+- Missing paths and revisions, out-of-range starts, cancellation, binary content, gitlinks, and symlinks return explicit errors rather than empty attribution.
+- CLI `git good blame PATH [--revision REF] [--lines START,END] [--repo PATH]` returns JSON with the exact path, range, and line metadata; a missing path exits non-zero.
+- The shared reader test renders the author/short-commit column and the selected line's author, email, relative time, commit, and subject. Attribution is available only on the committed After side; working-tree content disables it with a reason.
+- Line and range history mapping through the version timeline is not implemented yet; the plan increment remains in progress.
+
 ## M7 file reading surface
 
 - Engine file tests cover exact line splitting with CRLF and a missing final newline, changed markers for each side from unified rows, contiguous change groups, empty/binary/over-budget summaries, and one-based inclusive `Place` normalization with exact path bytes.

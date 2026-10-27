@@ -635,6 +635,19 @@ Linux x86_64 · Rust 1.99.1 · local Git fixtures.
 - Native X11 at 720×480: [full file](screenshots/m7-file-narrow-full.png) and [second change](screenshots/m7-file-narrow-change.png).
 - Full-file reads and reading navigation never write objects, refs, the index, or working files.
 
+## M7 blame attribution · 2026-10-27
+
+Linux x86_64 · Rust 1.99.1 · Xvfb/llvmpipe · disposable Git fixture (`/tmp/opencode/gg-blame`: six-line `src/app.rs` with three authors and three commits).
+
+- `cargo fmt --all -- --check` passed.
+- `cargo test --workspace --locked` passed: 438 tests, 0 failures, 3 ignored opt-in performance checks. This includes 230 `git-good` unit tests and 34 CLI tests.
+- `cargo clippy --workspace --all-targets --locked -- -D warnings` passed.
+- `gg_git::blame::read` resolves the committed path and revision, checks the regular-blob budget (2 MiB and 100,000 lines), refuses binary content, gitlinks, and symlinks, clamps a requested range to the file, and parses `git blame --line-porcelain` into author, email, author time, subject, current line, and origin line. A cancelled request returns an explicit cancellation.
+- `git good blame PATH [--revision REF] [--lines START,END] [--repo PATH]` returns the same bounded result as JSON. The CLI test attributes a two-commit file, requests a two-line range, and exits non-zero for a missing path.
+- In the shared reader, **Show attribution** appears in Full file on the committed After side; `B` toggles it. The column names the author and short commit for each source line, and the selected line names author, email, relative time, short commit, and subject. Working-tree content disables attribution with an explicit reason. The worker is generation-keyed and cancellable, so a new file or revision supersedes older attribution.
+- Native X11: [wide attribution with three authors](screenshots/m7-blame-wide.png) and [narrow attribution with the selected line named](screenshots/m7-blame-narrow.png).
+- Limitations: line and range history mapping through the shared version timeline remains in progress; attribution currently covers the After side only, does not infer uncommitted content, and does not yet expose Open commit or Line history actions from the attribution strip. Only Linux/X11, the dark theme, and llvmpipe were inspected natively.
+
 ## M7 file history · 2026-10-25
 
 Linux x86_64 · Rust 1.99.1 · local Git fixtures.

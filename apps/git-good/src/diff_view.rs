@@ -1,11 +1,12 @@
 //! Virtualized source rows with pinned identity, fixed gutters, and horizontal scrolling.
 use crate::{
-    bounded_text,
+    blame_worker, bounded_text,
     diff_worker::{Mode, Update, Worker},
     reader,
 };
 use eframe::egui;
 use gg_engine::{
+    blame::Blame,
     diff::{DiffKind, DiffRow, FileDiff, RowKind},
     file::{FileText, ReadingSide},
     review::FileChange,
@@ -67,6 +68,13 @@ pub struct DiffView {
     last_scroll: f64,
     staged: Option<Update>,
     reveal: bool,
+    attribution: bool,
+    blame_revision: Option<String>,
+    blame_generation: u64,
+    blame_worker: Option<blame_worker::Worker>,
+    blame: Option<Blame>,
+    blame_error: Option<String>,
+    blame_loading: bool,
     offset: f32,
     reset: bool,
     mode: Mode,
@@ -120,6 +128,13 @@ impl Default for DiffView {
             last_scroll: f64::NEG_INFINITY,
             staged: None,
             reveal: false,
+            attribution: false,
+            blame_revision: None,
+            blame_generation: 0,
+            blame_worker: None,
+            blame: None,
+            blame_error: None,
+            blame_loading: false,
             offset: 0.0,
             reset: false,
             mode: Mode::Diff,
@@ -151,6 +166,7 @@ enum Action {
     Mode(Mode),
     Side(ReadingSide),
     Change(isize),
+    Attribution,
 }
 
 impl DiffView {
@@ -186,6 +202,10 @@ impl DiffView {
         self.error = None;
         self.staged = None;
         self.reveal = true;
+        self.blame = None;
+        self.blame_error = None;
+        self.blame_loading = false;
+        self.blame_generation += 1;
         self.sent = None;
         self.full = None;
         self.cursor = None;
@@ -202,6 +222,125 @@ impl DiffView {
         self.full_side = self.side;
         self.send(ctx);
         ctx.request_repaint();
+    }
+
+    /// Name the commit whose content owns the After side. `None` disables
+    /// attribution, such as for working-tree content.
+    pub fn set_attribution_revision(&mut self, revision: Option<String>) {
+        if self.blame_revision == revision {
+            return;
+        }
+        self.blame_revision = revision;
+        self.blame = None;
+        self.blame_error = None;
+        self.blame_loading = false;
+        self.blame_generation += 1;
+    }
+
+    /// Whether the attribution overlay is currently requested.
+    #[cfg(test)]
+    pub fn attribution_active(&self) -> bool {
+        self.attribution
+    }
+
+    /// Whether attribution can be shown for the current comparison.
+    pub fn attribution_available(&self) -> bool {
+        self.mode == Mode::Full
+            && self.side == ReadingSide::After
+            && self.working.is_none()
+            && self.blame_revision.is_some()
+    }
+
+    /// Toggle the attribution overlay and start its bounded read.
+    pub fn toggle_attribution(&mut self, ctx: &egui::Context) {
+        if !self.attribution && self.mode != Mode::Full {
+            self.set_mode(Mode::Full, ctx);
+        }
+        if !self.attribution && !self.attribution_available() {
+            return;
+        }
+        self.attribution = !self.attribution;
+        if self.attribution {
+            if self.blame.is_none() && !self.blame_loading {
+                self.request_blame(ctx);
+            }
+        } else {
+            self.blame = None;
+            self.blame_error = None;
+            self.blame_loading = false;
+            self.blame_generation += 1;
+        }
+    }
+
+    fn request_blame(&mut self, ctx: &egui::Context) {
+        let Some(revision) = self.blame_revision.clone() else {
+            return;
+        };
+        let Some(change) = self.change.as_ref() else {
+            return;
+        };
+        if self.working.is_some() {
+            self.blame_error = Some("Attribution is available for committed content.".into());
+            self.blame_loading = false;
+            return;
+        }
+        if self.blame_worker.is_none() {
+            match blame_worker::Worker::start(ctx.clone()) {
+                Ok(worker) => self.blame_worker = Some(worker),
+                Err(error) => {
+                    self.blame_error = Some(error);
+                    self.blame_loading = false;
+                    return;
+                }
+            }
+        }
+        self.blame_generation += 1;
+        self.blame = None;
+        self.blame_error = None;
+        self.blame_loading = true;
+        if let Some(worker) = &self.blame_worker {
+            worker.request(
+                self.blame_generation,
+                self.path.clone(),
+                revision,
+                change.path_bytes.clone(),
+            );
+        }
+        ctx.request_repaint();
+    }
+
+    fn poll_blame(&mut self) {
+        let Some(update) = self
+            .blame_worker
+            .as_ref()
+            .and_then(blame_worker::Worker::poll)
+        else {
+            return;
+        };
+        if update.generation != self.blame_generation {
+            return;
+        }
+        self.blame_loading = false;
+        match update.result {
+            Ok(blame) => {
+                self.blame = Some(blame);
+                self.blame_error = None;
+            }
+            Err(error) => {
+                self.blame = None;
+                self.blame_error = Some(error);
+            }
+        }
+    }
+
+    fn sync_blame(&mut self, ctx: &egui::Context) {
+        if self.attribution
+            && self.blame.is_none()
+            && !self.blame_loading
+            && self.blame_error.is_none()
+        {
+            self.request_blame(ctx);
+        }
     }
 
     /// Select a version edge. When `known` is false the earlier side is not
@@ -358,6 +497,10 @@ impl DiffView {
         self.error = None;
         self.staged = None;
         self.reveal = true;
+        self.blame = None;
+        self.blame_error = None;
+        self.blame_loading = false;
+        self.blame_generation += 1;
         self.sent = None;
         self.full = None;
         self.cursor = None;
@@ -1359,6 +1502,16 @@ impl DiffView {
         } else {
             parts.push("Loading selected-file diff…".into());
         }
+        if self.attribution {
+            if self.blame_loading {
+                parts.push("Loading attribution…".into());
+            } else if let Some(error) = &self.blame_error {
+                parts.push(format!(
+                    "Attribution unavailable: {}",
+                    error.lines().next().unwrap_or_default()
+                ));
+            }
+        }
         if parts.is_empty() {
             return;
         }
@@ -1370,9 +1523,28 @@ impl DiffView {
         );
     }
 
+    fn draw_attribution(&mut self, ui: &mut egui::Ui) {
+        let Some(line) = self
+            .cursor
+            .and_then(|index| self.blame.as_ref().and_then(|blame| blame.line(index + 1)))
+            .cloned()
+        else {
+            return;
+        };
+        ui.horizontal_wrapped(|ui| {
+            ui.strong(line.author.clone());
+            ui.weak(line.email.clone());
+            ui.weak(relative_time(line.time));
+            ui.weak(line.short_commit());
+            ui.label(line.summary.clone());
+        });
+    }
+
     fn draw_inner(&mut self, ui: &mut egui::Ui, keyboard: bool) {
         self.bounds = ui.max_rect();
         let ctx = ui.ctx().clone();
+        self.poll_blame();
+        self.sync_blame(&ctx);
         self.export.draw(&ctx);
         let (point, active, now) = ctx.input(|i| {
             (
@@ -1440,6 +1612,27 @@ impl DiffView {
             {
                 actions.push(Action::Mode(Mode::Full));
             }
+            if self.mode == Mode::Full {
+                let available = self.attribution_available();
+                let label = if self.attribution {
+                    "Hide attribution"
+                } else {
+                    "Show attribution"
+                };
+                if ui
+                    .add_enabled(available, egui::Button::new(label))
+                    .on_disabled_hover_text(if self.working.is_some() {
+                        "Attribution is available for committed content"
+                    } else if self.side != ReadingSide::After {
+                        "Attribution follows the After side"
+                    } else {
+                        "Open a committed file to attribute its lines"
+                    })
+                    .clicked()
+                {
+                    actions.push(Action::Attribution);
+                }
+            }
             if self.mode == Mode::Full && self.edge_known {
                 ui.separator();
                 for side in [ReadingSide::Before, ReadingSide::After] {
@@ -1504,9 +1697,13 @@ impl DiffView {
                 Action::Mode(mode) => self.set_mode(mode, &ctx),
                 Action::Side(side) => self.set_side(side, &ctx),
                 Action::Change(direction) => self.jump_change(direction, &ctx),
+                Action::Attribution => self.toggle_attribution(&ctx),
             }
         }
         self.draw_status(ui);
+        if self.attribution && self.mode == Mode::Full {
+            self.draw_attribution(ui);
+        }
         if let Some(error) = &self.error {
             bounded_text::field(ui, error, egui::FontId::proportional(12.0), 22.0);
             if ui
@@ -1889,7 +2086,9 @@ impl DiffView {
             scroll = scroll.vertical_scroll_offset(self.offset);
         }
         ui.spacing_mut().item_spacing.y = 0.0;
-        let width = (70.0 + self.columns as f32 * 8.0).max(ui.available_width());
+        let blame = self.attribution.then_some(self.blame.as_ref()).flatten();
+        let gutter = if blame.is_some() { 156.0 } else { 0.0 };
+        let width = (70.0 + gutter + self.columns as f32 * 8.0).max(ui.available_width());
         let shift = ctx.input(|input| input.modifiers.shift);
         let side = self.side;
         let (cursor, anchor) = (self.cursor, self.anchor);
@@ -1928,9 +2127,23 @@ impl DiffView {
                 } else if line.changed {
                     ui.painter().rect_filled(rect, 0.0, fill);
                 }
+                if let Some(entry) = blame.and_then(|blame| blame.line(line.number)) {
+                    let clip = egui::Rect::from_min_max(
+                        rect.min + egui::vec2(4.0, 0.0),
+                        rect.min + egui::vec2(gutter - 6.0, HEIGHT),
+                    )
+                    .intersect(ui.clip_rect());
+                    ui.painter().with_clip_rect(clip).text(
+                        rect.min + egui::vec2(4.0, HEIGHT / 2.0),
+                        egui::Align2::LEFT_CENTER,
+                        format!("{} · {}", entry.author, entry.short_commit()),
+                        egui::FontId::proportional(10.0),
+                        ui.visuals().weak_text_color(),
+                    );
+                }
                 let font = egui::FontId::monospace(12.0);
                 ui.painter().text(
-                    rect.min + egui::vec2(40.0, HEIGHT / 2.0),
+                    rect.min + egui::vec2(40.0 + gutter, HEIGHT / 2.0),
                     egui::Align2::RIGHT_CENTER,
                     line.number.to_string(),
                     egui::FontId::monospace(11.0),
@@ -1939,16 +2152,17 @@ impl DiffView {
                 if line.changed {
                     ui.painter().rect_filled(
                         egui::Rect::from_min_size(
-                            rect.min + egui::vec2(46.0, 3.0),
+                            rect.min + egui::vec2(46.0 + gutter, 3.0),
                             egui::vec2(3.0, HEIGHT - 6.0),
                         ),
                         1.0,
                         color,
                     );
                 }
-                let origin = rect.min + egui::vec2(58.0, HEIGHT / 2.0);
-                let clip = egui::Rect::from_min_max(rect.min + egui::vec2(58.0, 0.0), rect.max)
-                    .intersect(ui.clip_rect());
+                let origin = rect.min + egui::vec2(58.0 + gutter, HEIGHT / 2.0);
+                let clip =
+                    egui::Rect::from_min_max(rect.min + egui::vec2(58.0 + gutter, 0.0), rect.max)
+                        .intersect(ui.clip_rect());
                 let (start, end, advance) = ui.fonts_mut(|fonts| {
                     visible_text(
                         &line.text,
@@ -1984,6 +2198,23 @@ impl DiffView {
         self.cursor = new_cursor;
         self.anchor = new_anchor;
         self.send(ctx);
+    }
+}
+
+fn relative_time(seconds: i64) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs() as i64)
+        .unwrap_or_default();
+    let delta = (now - seconds).max(0);
+    if delta < 60 {
+        "just now".into()
+    } else if delta < 3_600 {
+        format!("{}m ago", delta / 60)
+    } else if delta < 86_400 {
+        format!("{}h ago", delta / 3_600)
+    } else {
+        format!("{}d ago", delta / 86_400)
     }
 }
 
@@ -2249,6 +2480,111 @@ mod tests {
         frame(&mut view, vec![]);
         assert_eq!(view.displayed_generation, 2);
         assert!(!view.reveal);
+    }
+
+    #[test]
+    fn attribution_column_and_selected_line_metadata_render() {
+        let ctx = egui::Context::default();
+        let mut view = DiffView::default();
+        let change = file("a.txt", true, true);
+        view.displayed = Some(change);
+        view.mode = Mode::Full;
+        view.side = ReadingSide::After;
+        view.displayed_mode = Mode::Full;
+        view.displayed_side = ReadingSide::After;
+        view.displayed_generation = 1;
+        view.generation = 1;
+        view.count = 2;
+        view.full = Some(FileText {
+            kind: gg_engine::file::FileKind::Text,
+            side: ReadingSide::After,
+            size: 8,
+            complete: true,
+            note: String::new(),
+            lines: vec![
+                gg_engine::file::FileLine {
+                    number: 1,
+                    text: "one".into(),
+                    bytes: b"one\n".to_vec(),
+                    changed: false,
+                },
+                gg_engine::file::FileLine {
+                    number: 2,
+                    text: "two".into(),
+                    bytes: b"two\n".to_vec(),
+                    changed: true,
+                },
+            ],
+        });
+        view.attribution = true;
+        view.blame_revision = Some("HEAD".into());
+        view.blame = Some(gg_engine::blame::Blame {
+            revision: "HEAD".into(),
+            path: "a.txt".into(),
+            path_bytes: b"a.txt".to_vec(),
+            start_line: 1,
+            end_line: 2,
+            lines: vec![
+                gg_engine::blame::Line {
+                    line: 1,
+                    origin_line: 1,
+                    commit: "a".repeat(40),
+                    author: "Ada".into(),
+                    email: "ada@example.org".into(),
+                    time: 1,
+                    summary: "first".into(),
+                },
+                gg_engine::blame::Line {
+                    line: 2,
+                    origin_line: 2,
+                    commit: "b".repeat(40),
+                    author: "Grace".into(),
+                    email: "grace@example.org".into(),
+                    time: 1,
+                    summary: "second".into(),
+                },
+            ],
+            complete: true,
+            note: None,
+        });
+        view.cursor = Some(0);
+        let output = crate::tests::run_ui(
+            &ctx,
+            crate::tests::frame_input(720.0, 480.0, vec![]),
+            |ui| view.draw(ui),
+        );
+        let text = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            text.iter().any(|line| line.contains("Ada · aaaaaaaa")),
+            "{text:?}"
+        );
+        assert!(
+            text.iter().any(|line| line.contains("Grace · bbbbbbbb")),
+            "{text:?}"
+        );
+        for expected in ["Ada", "ada@example.org", "first"] {
+            assert!(
+                text.iter().any(|line| line.contains(expected)),
+                "missing {expected}: {text:?}"
+            );
+        }
+
+        view.set_attribution_revision(None);
+        assert!(!view.attribution_available());
+        view.set_attribution_revision(Some("HEAD".into()));
+        assert!(view.attribution_available());
+
+        view.attribution = false;
+        view.change = None;
+        view.toggle_attribution(&ctx);
+        assert!(view.attribution_active());
     }
 
     #[test]

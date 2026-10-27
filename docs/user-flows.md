@@ -17,7 +17,7 @@ Follow-up design direction: [coherent interaction proposal](ui-coherence.md) and
 | M5: integration and recovery | Complete | Stash, merge, cherry-pick, revert, resolve and recover | F07–F09; Integrate, Conflicts, and Stash mockups |
 | M6: rewriting and recovery | Complete | Amend, rebase, reorder/squash, inspect reflog and backups | F04, F08, F10; Rewrite and Recovery mockups |
 | M7: file reading and file history | Complete increments inside an unfinished milestone | Read a complete file and follow content versions and renames | F02, F11; Reading and File history mockups |
-| M7: blame and line/range history | Planned | Explain a line's origin without losing the selected range | F12; Blame mockup |
+| M7: blame and line/range history | In progress; attribution shipped | Explain a line's origin without losing the selected range | F12; Blame mockup |
 | M7: image comparison | Planned; binary previews/export already exist | Compare dimensions and pixels across revisions | F13; Images mockup |
 | M7: worktrees | Planned | Work on another branch with isolated drafts and selection | F14; Worktrees mockup |
 | M7: submodules and LFS | Planned | Understand nested revisions and pointer/object availability | F15–F16; Submodule and LFS mockups |
@@ -183,9 +183,9 @@ flowchart TD
 
 **Completion:** a version/edge is selected without repository mutation. **Mockup:** File history includes version navigation and a predecessor-choice scenario.
 
-### F12 · Attribute and trace a line or range · proposed M7
+### F12 · Attribute and trace a line or range · partly implemented M7
 
-**Entry:** line/range selection in Reading → Blame/B. **Contract already specified:** anchor exact path bytes, revision, and inclusive lines; map single lines through blame and ranges through diff hunks.
+**Entry:** line/range selection in Reading → **Show attribution** or `B`. Attribution is implemented for committed Full-file content; line/range history remains proposed. **Contract already specified:** anchor exact path bytes, revision, and inclusive lines; map single lines through blame and ranges through diff hunks.
 
 1. Show attribution beside source lines: origin commit, author, and date; selecting a line shows its complete metadata and Open commit/Line history actions. Keep the selected place visible when toggling attribution.
 2. Line history opens the same version timeline anchored to the place. Follow renames and remap line numbers; name both the current path/range and old path when changed.

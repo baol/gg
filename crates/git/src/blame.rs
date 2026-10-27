@@ -303,8 +303,11 @@ mod tests {
         fs::write(dir.path().join("binary"), [0, 1, 2, 3])?;
         git(dir.path(), &["add", "binary"])?;
         git(dir.path(), &["commit", "-qm", "binary"])?;
-        let error = read(dir.path(), "HEAD", b"binary", None, &|| false).unwrap_err();
-        assert!(error.contains("binary"), "{error}");
+        let result = read(dir.path(), "HEAD", b"binary", None, &|| false);
+        assert!(result.is_err(), "binary content must be refused");
+        if let Err(error) = result {
+            assert!(error.contains("binary"), "{error}");
+        }
         Ok(())
     }
 }

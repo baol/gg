@@ -167,6 +167,11 @@ impl FileHistory {
         &self.path_bytes
     }
 
+    /// Commit that owns the currently displayed content version.
+    pub fn current_revision(&self) -> Option<String> {
+        self.current().map(|version| version.commit.clone())
+    }
+
     fn current(&self) -> Option<&FileVersion> {
         self.timeline.as_ref()?.current(self.index)
     }

@@ -324,6 +324,22 @@ impl Review {
             self.close_history(ctx);
         }
         self.reconcile_history_selection(ctx);
+        let attribution_revision = self
+            .history
+            .as_ref()
+            .and_then(|history| history.current_revision())
+            .or_else(|| {
+                self.comparison
+                    .as_ref()
+                    .map(|comparison| comparison.commit.clone())
+            });
+        self.diff.set_attribution_revision(attribution_revision);
+        if !export_open
+            && crate::navigation::available(ctx)
+            && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::B))
+        {
+            self.diff.toggle_attribution(ctx);
+        }
         if self.history.is_none() {
             let (before, after) = self.reader_endpoints();
             self.diff.set_endpoints(before, after);

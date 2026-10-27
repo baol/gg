@@ -2,6 +2,7 @@ mod avatars;
 mod backups_view;
 mod binary_preview;
 mod blame_cli;
+mod blame_worker;
 mod bounded_text;
 mod branch_cli;
 mod branding;
