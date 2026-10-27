@@ -185,7 +185,7 @@ flowchart TD
 
 ### F12 · Attribute and trace a line or range · partly implemented M7
 
-**Entry:** line/range selection in Reading → **Show attribution** or `B`, then **Line history**. Attribution and line/range mapping are implemented for committed Full-file content. Open commit from the attribution strip and deleted-line history from the Before side remain planned. **Contract already specified:** anchor exact path bytes, revision, and inclusive lines; map single lines through blame and ranges through diff hunks.
+**Entry:** line/range selection in Reading → **Show attribution** or `B`, then **Line history**. Attribution, line/range mapping, and **Open commit** are implemented for committed Full-file content. Deleted-line history entered from the Before side remains planned. **Contract already specified:** anchor exact path bytes, revision, and inclusive lines; map single lines through blame and ranges through diff hunks.
 
 1. Show attribution beside source lines: origin commit, author, and date; selecting a line shows its complete metadata and Open commit/Line history actions. Keep the selected place visible when toggling attribution.
 2. Line history opens the same version timeline anchored to the place. Follow renames and remap line numbers; name both the current path/range and old path when changed.

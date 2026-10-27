@@ -2262,6 +2262,32 @@ impl Browser {
         }
     }
 
+    fn open_review_at(
+        &mut self,
+        ctx: &egui::Context,
+        revision: String,
+        subject: String,
+        return_location: Option<return_location::ReturnLocation>,
+    ) {
+        let Some(history) = &self.state.history else {
+            return;
+        };
+        let mut review = review_view::Review::new(
+            gg_engine::review::ReviewRequest {
+                path: history.path.clone(),
+                revision,
+                parent: None,
+                against: None,
+            },
+            subject,
+            ctx,
+        );
+        if let Some(location) = return_location {
+            review.set_return_location(location);
+        }
+        self.review = Some(review);
+    }
+
     fn open_recovery(&mut self, ctx: &egui::Context, source: return_location::RecoverySource) {
         if let Some(path) = self.stash_path() {
             let view = self.recovery.get_or_insert_with(|| RecoveryView::new(path));
@@ -4496,6 +4522,18 @@ impl Browser {
                 } else {
                     self.restore_offset = Some(self.scroll_offset);
                 }
+                ctx.request_repaint();
+            } else if let Some((revision, subject)) = self
+                .review
+                .as_mut()
+                .and_then(|review| review.take_open_commit())
+            {
+                let location = self
+                    .review
+                    .as_ref()
+                    .and_then(|review| review.return_location().cloned());
+                self.review = None;
+                self.open_review_at(ctx, revision, subject, location);
                 ctx.request_repaint();
             }
             return;

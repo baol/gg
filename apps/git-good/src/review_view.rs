@@ -92,6 +92,16 @@ impl Review {
         self.return_location.take()
     }
 
+    /// Caller state to preserve when this review hands off to another commit.
+    pub fn return_location(&self) -> Option<&crate::return_location::ReturnLocation> {
+        self.return_location.as_ref()
+    }
+
+    /// Take a commit request raised by the attribution strip.
+    pub fn take_open_commit(&mut self) -> Option<(String, String)> {
+        self.diff.take_open_commit()
+    }
+
     /// Exact endpoint labels shared by the identity strip and the reader.
     fn reader_endpoints(&self) -> (String, String) {
         let after_id = self
