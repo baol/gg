@@ -202,7 +202,7 @@ flowchart TD
 2. Choose Side by side or Swipe; a labeled slider controls the boundary, including by keyboard. Pair Fit/Actual size with visible zoom context; preserve side identity when changing presentation.
 3. Different dimensions stay visible; do not stretch one image to pretend the sizes match. Transparency needs a neutral checkerboard. Export before/after uses the original complete content and new-file rules.
 
-**States:** unsupported format, decoding failure, and preview budgets show metadata and export rather than an empty canvas. Wide layouts offer side-by-side and swipe; narrow layouts stack named before/after previews. Fit never upscales, and Actual size shows 100% with scrolling. **Onion skin (planned):** a third wide presentation overlays Before and After with a keyboard-adjustable opacity slider; it preserves each image’s dimensions, requires both sides, and keeps export per side. It is not implemented yet. **Completion:** the user understands the visual change and the exact dimensions. **Mockup:** Images demonstrates side-by-side/stacked previews and the swipe boundary.
+**States:** unsupported format, decoding failure, and preview budgets show metadata and export rather than an empty canvas. Wide layouts offer side-by-side and swipe; narrow layouts stack named before/after previews. Fit never upscales, and Actual size shows 100% with scrolling. **Onion skin:** a third wide presentation draws Before full and overlays After with a labeled, keyboard-adjustable opacity slider (default 50%); it preserves each image’s dimensions, requires both sides, and keeps export per side. **Completion:** the user understands the visual change and the exact dimensions. **Mockup:** Images demonstrates side-by-side/stacked previews and the swipe boundary.
 
 ### F14 · Manage isolated worktrees · M7
 
@@ -249,7 +249,7 @@ flowchart TD
 
 ## Review and delivery sequence
 
-The plan sequence is now: blame/line history → image diffs → worktrees → submodules → LFS → signing, with onion skin planned as an image-diff extension. Blame/line history, image diffs, worktrees, submodules, review-time LFS, and signing are complete; reuse the shipped history cursor rather than creating a second timeline. Onion skin and the LFS working-tree/materialization extensions remain planned. No date or new milestone commitment is inferred.
+The plan sequence is now: blame/line history → image diffs → worktrees → submodules → LFS → signing, with onion skin as an image-diff extension. Blame/line history, image diffs, worktrees, submodules, review-time LFS, signing, and onion skin are complete; reuse the shipped history cursor rather than creating a second timeline. The LFS working-tree/materialization extensions remain planned. No date or new milestone commitment is inferred.
 
 | Review scenario | Expected observation |
 | --- | --- |

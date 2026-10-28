@@ -653,6 +653,19 @@ Linux x86_64 · Rust 1.99.1 · release build · `/home/mirko/dev/vscode` (194,92
 
 The production worker test `real_repository_history_first_frame_and_deep_navigation` now records this shape for any `GG_TEST_REPOSITORY`. The initial measurement was 6.70 s to first rows and 27.0 s to complete. **Optimization:** when the union has more than 512 divergent tips, history now delegates topological ordering to `git rev-list --topo-order --stdin` and reads commit metadata through gitoxide; the refs snapshot is reused instead of scanned twice. The two measured runs after the change reached first rows in 2.3–2.8 s and completion in 17.1–18.6 s, with the same 194,924 commits and the same first 20 commit IDs as `git rev-list --topo-order --all`. CLI history dropped from 13.91 s to 3.92 s. **Remaining gap:** first rows still miss the 500 ms M0 target because full topological order over 194,924 commits and 6,205 refs takes about 1.7 s in Git itself before its first line. Meeting 500 ms would require a provisional HEAD-only page or a persisted ordering cache, which would change the current all-refs topo contract. Input-to-frame p95 stays below the 50 ms interaction target but above the 16 ms cached-frame target; one back jump reached 111 ms. Deep jumps and retained-row bounds otherwise pass, and the result is recorded for the next decision.
 
+## M7 image onion skin · 2026-10-28
+
+Linux x86_64 · Rust 1.99.1 · Xvfb/llvmpipe · disposable Git fixture (`/tmp/opencode/gg-images`: a 120×80 RGBA PNG replaced by a 160×100 RGBA PNG across two commits).
+
+- `cargo fmt --all -- --check` passed.
+- `cargo test --workspace --locked` passed: 480 tests, 0 failures, 4 ignored opt-in performance checks.
+- `cargo clippy --workspace --all-targets --locked -- -D warnings` passed.
+- **Onion skin** is a third wide presentation beside Side by side and Swipe. Before is drawn at full opacity and After is overlaid with normal alpha blending, initially at 50%. The labeled opacity slider is keyboard-adjustable when focused; five Right-arrow presses changed the native capture from 50% to 70%.
+- Each image keeps its own dimensions when centered: the 120×80 Before and 160×100 After are not stretched to a common size. Fit never upscales, Actual size remains available with scrolling, the theme-aware checkerboard stays visible around the canvas, and per-side metadata and export are unchanged.
+- At widths below 800 px the control row keeps the stacked before/after presentation and does not offer Onion skin. Selecting Onion skin when either side is absent shows that both images are required and retains the explicit absent-side state instead of blending.
+- Unit tests cover the wide-only control, the default 50%/adjusted opacity label, overlay metadata, alpha conversion, and the one-sided fallback. Native X11 at 1120×740: [Onion skin at 50%](screenshots/m7-onion-wide.png) and [after keyboard adjustment to 70%](screenshots/m7-onion-adjusted.png). At 720×480: [stacked preview with no Onion skin control](screenshots/m7-onion-narrow.png).
+- Limitations: only Linux/X11, the dark theme, and llvmpipe were inspected natively. Difference/heatmap and other blend modes remain separate work, and this increment adds no pan/zoom beyond Fit and Actual size.
+
 ## M7 commit and tag signing · 2026-10-28
 
 Linux x86_64 · Rust 1.99.1 · Xvfb/llvmpipe · disposable Git fixture (`/tmp/opencode/gg-sign`) · isolated OpenPGP home (`/tmp/opencode/gnupg`, test key only) · empty keyring (`/tmp/opencode/emptygnupg`) for the unknown-key state.
@@ -723,7 +736,7 @@ Linux x86_64 · Rust 1.99.1 · Xvfb/llvmpipe · disposable Git fixture (`/tmp/op
 - **Side by side** is the wide default. **Swipe** aligns each image by its own dimensions without stretching, clips After over Before at a labeled boundary, supports the slider's keyboard arrows and canvas dragging, and paints a theme-aware checkerboard behind transparency. **Fit** preserves aspect ratio and never upscales; **Actual size** shows natural pixels with a 100% label and scrolling. At 720 width the view stacks named Before/After previews instead of forcing a narrow swipe.
 - Preserved alpha is asserted from a decoded RGBA image. Aspect-ratio fitting, non-upscaling, presentation controls, dimensions, and swipe labels are covered by egui tests; export continues through the existing exact-byte route.
 - Native X11: [wide side-by-side with dimensions and byte sizes](screenshots/m7-image-wide.png), [wide swipe with the labeled boundary and checkerboard](screenshots/m7-image-swipe.png), and [narrow stacked previews](screenshots/m7-image-narrow.png).
-- Limitations: only Linux/X11, the dark theme, and llvmpipe were inspected natively. There is no pixel-difference heatmap, onion-skin blend, free pan/zoom beyond Actual size, or animation; those were not part of this increment.
+- Limitations: only Linux/X11, the dark theme, and llvmpipe were inspected natively. There is no pixel-difference heatmap, free pan/zoom beyond Actual size, or animation; those were not part of this increment. Onion skin is recorded separately.
 
 ## M7 blame attribution · 2026-10-27
 
