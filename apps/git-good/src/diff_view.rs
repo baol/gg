@@ -292,7 +292,6 @@ impl DiffView {
         self.lfs_request.take()
     }
 
-    #[cfg(test)]
     fn is_lfs(&self) -> bool {
         let pointer = |text: &str| text.starts_with("version https://git-lfs.github.com/spec/v1");
         self.info
@@ -1475,15 +1474,7 @@ impl DiffView {
                     ctx.copy_text(native.unwrap_or(&change.path).to_owned());
                     ui.close();
                 }
-                let gitlink = change
-                    .old
-                    .as_ref()
-                    .is_some_and(|side| side.mode == 0o160000)
-                    || change
-                        .new
-                        .as_ref()
-                        .is_some_and(|side| side.mode == 0o160000);
-                if !gitlink {
+                if self.working.is_none() && self.is_lfs() {
                     ui.separator();
                     if ui.button("LFS details…").clicked() {
                         self.lfs_request = Some(change.clone());
