@@ -1,15 +1,36 @@
-//! Inspect an LFS pointer and fetch its object explicitly.
-use gg_engine::review::{ChangeKind, FileChange, FileSide};
+//! Inspect an LFS pointer from history or Local Changes and fetch its object explicitly.
+use gg_engine::{
+    review::{ChangeKind, FileChange, FileSide},
+    status::{Area, Kind, StatusEntry, WorkingRequest},
+};
 use std::{ffi::OsString, path::Path, path::PathBuf, process::Command};
 
+enum Target {
+    Change(FileChange),
+    Working(WorkingRequest),
+}
+
+impl Target {
+    fn scope(&self) -> &'static str {
+        match self {
+            Self::Change(_) => "revision",
+            Self::Working(_) => "working",
+        }
+    }
+}
+
 pub fn status(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::error::Error>> {
-    let (path, change) = parse(args)?;
-    let details = gg_git::lfs::read(&path, &change)?;
+    let (path, target) = parse(args)?;
+    let details = match &target {
+        Target::Change(change) => gg_git::lfs::read(&path, change)?,
+        Target::Working(working) => gg_git::lfs::read_working(&path, working)?,
+    };
     serde_json::to_writer(
         std::io::stdout().lock(),
         &serde_json::json!({
             "operation": "lfs status",
             "repository": display_repository(&path),
+            "scope": target.scope(),
             "lfs": details,
         }),
     )?;
@@ -18,13 +39,17 @@ pub fn status(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::e
 }
 
 pub fn fetch(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::error::Error>> {
-    let (path, change) = parse(args)?;
-    let (details, receipt) = gg_git::lfs::fetch(&path, &change)?;
+    let (path, target) = parse(args)?;
+    let (details, receipt) = match &target {
+        Target::Change(change) => gg_git::lfs::fetch(&path, change)?,
+        Target::Working(working) => gg_git::lfs::fetch_working(&path, working)?,
+    };
     serde_json::to_writer(
         std::io::stdout().lock(),
         &serde_json::json!({
             "operation": "lfs fetch",
             "repository": display_repository(&path),
+            "scope": target.scope(),
             "lfs": details,
             "receipt": receipt,
         }),
@@ -35,10 +60,12 @@ pub fn fetch(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::er
 
 fn parse(
     mut args: impl Iterator<Item = OsString>,
-) -> Result<(PathBuf, FileChange), Box<dyn std::error::Error>> {
+) -> Result<(PathBuf, Target), Box<dyn std::error::Error>> {
     let mut repo = std::env::current_dir()?;
     let mut revision = "HEAD".to_string();
+    let mut revision_set = false;
     let mut before = None;
+    let mut area = None;
     let mut file = None;
     while let Some(arg) = args.next() {
         match arg.to_str() {
@@ -49,6 +76,7 @@ fn parse(
                     .ok_or("--revision needs a commit")?
                     .into_string()
                     .map_err(|_| "Revision must be UTF-8")?;
+                revision_set = true;
             }
             Some("--before") => {
                 before = Some(
@@ -58,6 +86,18 @@ fn parse(
                         .map_err(|_| "Before revision must be UTF-8")?,
                 );
             }
+            Some("--area") => {
+                let value = args
+                    .next()
+                    .ok_or("--area needs staged|unstaged|untracked|conflict")?;
+                area = Some(match value.to_str() {
+                    Some("staged") => Area::Staged,
+                    Some("unstaged") => Area::Unstaged,
+                    Some("untracked") => Area::Untracked,
+                    Some("conflict") => Area::Conflict,
+                    _ => return Err(usage().into()),
+                });
+            }
             Some(value) if value.starts_with("--") => return Err(usage().into()),
             _ if file.is_none() => file = Some(arg),
             _ => return Err(usage().into()),
@@ -66,18 +106,29 @@ fn parse(
     let file = file.ok_or_else(|| usage().to_string())?;
     let path_bytes = path_bytes(&file)?;
     let display = String::from_utf8_lossy(&path_bytes).into_owned();
+    if let Some(area) = area {
+        if revision_set || before.is_some() {
+            return Err("--area cannot be combined with --revision or --before".into());
+        }
+        let entry = StatusEntry::new(area, Kind::Modified, &path_bytes);
+        let working = WorkingRequest {
+            repository: gg_git::status::Session::open(&repo)?.identity,
+            entry,
+        };
+        return Ok((repo, Target::Working(working)));
+    }
     let after = side(&repo, &format!("{revision}:{display}"))?;
     let before_ref = before.unwrap_or_else(|| format!("{revision}^"));
     let before = side(&repo, &format!("{before_ref}:{display}"))?;
     Ok((
         repo,
-        FileChange {
+        Target::Change(FileChange {
             path: display,
             path_bytes,
             kind: ChangeKind::Modified,
             old: before,
             new: after,
-        },
+        }),
     ))
 }
 
@@ -115,7 +166,7 @@ fn path_bytes(path: &std::ffi::OsStr) -> Result<Vec<u8>, Box<dyn std::error::Err
 }
 
 fn usage() -> &'static str {
-    "Usage: git good lfs <status|fetch> PATH [--revision REF] [--before REF] [--repo PATH]"
+    "Usage: git good lfs <status|fetch> PATH [--area staged|unstaged|untracked|conflict] [--revision REF] [--before REF] [--repo PATH]"
 }
 
 fn display_repository(path: &Path) -> String {

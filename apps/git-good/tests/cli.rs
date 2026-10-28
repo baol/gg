@@ -2558,6 +2558,75 @@ fn signature_cli_reports_config_and_unsigned_commit() -> Result {
 }
 
 #[test]
+fn lfs_cli_working_areas_report_index_and_worktree_pointers() -> Result {
+    let repo = tempfile::tempdir()?;
+    init(repo.path(), &["-b", "main"])?;
+    git(repo.path(), &["config", "user.name", "Test"])?;
+    git(repo.path(), &["config", "user.email", "test@example.org"])?;
+    let first = "1111111111111111111111111111111111111111111111111111111111111111";
+    let second = "2222222222222222222222222222222222222222222222222222222222222222";
+    let third = "3333333333333333333333333333333333333333333333333333333333333333";
+    let pointer = |oid: &str, size: u64| {
+        format!("version https://git-lfs.github.com/spec/v1\noid sha256:{oid}\nsize {size}\n")
+    };
+    std::fs::write(repo.path().join("asset.bin"), pointer(first, 10))?;
+    git(repo.path(), &["add", "asset.bin"])?;
+    git(repo.path(), &["commit", "-qm", "base pointer"])?;
+    let binary = env!("CARGO_BIN_EXE_git-good");
+    let status = |area: &str, path: &str| -> Result<serde_json::Value> {
+        let out = Command::new(binary)
+            .args(["lfs", "status", path, "--area", area, "--repo"])
+            .arg(repo.path())
+            .output()?;
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        Ok(serde_json::from_slice(&out.stdout)?)
+    };
+
+    std::fs::write(repo.path().join("asset.bin"), pointer(second, 20))?;
+    let unstaged = status("unstaged", "asset.bin")?;
+    assert_eq!(unstaged["scope"], "working");
+    assert_eq!(unstaged["lfs"]["before"]["oid"], first);
+    assert_eq!(unstaged["lfs"]["after"]["oid"], second);
+
+    git(repo.path(), &["add", "asset.bin"])?;
+    let staged = status("staged", "asset.bin")?;
+    assert_eq!(staged["scope"], "working");
+    assert_eq!(staged["lfs"]["before"]["oid"], first);
+    assert_eq!(staged["lfs"]["after"]["oid"], second);
+
+    std::fs::write(repo.path().join("new.bin"), pointer(third, 30))?;
+    let untracked = status("untracked", "new.bin")?;
+    assert_eq!(untracked["scope"], "working");
+    assert!(untracked["lfs"]["before"].is_null());
+    assert_eq!(untracked["lfs"]["after"]["oid"], third);
+
+    let out = Command::new(binary)
+        .args([
+            "lfs",
+            "status",
+            "asset.bin",
+            "--area",
+            "staged",
+            "--revision",
+            "HEAD",
+            "--repo",
+        ])
+        .arg(repo.path())
+        .output()?;
+    assert!(!out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("cannot be combined"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    Ok(())
+}
+
+#[test]
 fn branch_create_at_cli_does_not_switch() -> Result {
     let repo = tempfile::tempdir()?;
     init(repo.path(), &["-b", "main"])?;

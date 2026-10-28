@@ -26,6 +26,22 @@ pub enum StageScope {
 
 /// One validated staging or discard command, expressed independently of the
 /// mutation crate. `changes` are `(row kind, old-or-new side line)` pairs.
+/// One LFS inspection target: an immutable review comparison or a Local Changes entry.
+#[derive(Clone)]
+pub enum LfsRequest {
+    Change(FileChange),
+    Working(WorkingRequest),
+}
+
+impl LfsRequest {
+    pub fn path(&self) -> &str {
+        match self {
+            Self::Change(change) => &change.path,
+            Self::Working(working) => &working.entry.path,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct StageEdit {
     pub scope: StageScope,
@@ -79,7 +95,7 @@ pub struct DiffView {
     line_history: Option<(usize, usize)>,
     open_commit: Option<(String, String)>,
     submodule_request: Option<SubmoduleRequest>,
-    lfs_request: Option<FileChange>,
+    lfs_request: Option<LfsRequest>,
     offset: f32,
     reset: bool,
     mode: Mode,
@@ -288,7 +304,7 @@ impl DiffView {
     }
 
     /// Take an LFS-details request raised by File actions.
-    pub fn take_lfs_request(&mut self) -> Option<FileChange> {
+    pub fn take_lfs_request(&mut self) -> Option<LfsRequest> {
         self.lfs_request.take()
     }
 
@@ -1474,10 +1490,15 @@ impl DiffView {
                     ctx.copy_text(native.unwrap_or(&change.path).to_owned());
                     ui.close();
                 }
-                if self.working.is_none() && self.is_lfs() {
+                if self.is_lfs() {
+                    let request = self
+                        .working
+                        .clone()
+                        .map(LfsRequest::Working)
+                        .or_else(|| Some(LfsRequest::Change(change.clone())));
                     ui.separator();
                     if ui.button("LFS details…").clicked() {
-                        self.lfs_request = Some(change.clone());
+                        self.lfs_request = request;
                         ui.close();
                     }
                 }
@@ -2630,8 +2651,49 @@ mod tests {
             ..Default::default()
         };
         assert!(view.is_lfs());
-        view.lfs_request = Some(change);
+        view.lfs_request = Some(LfsRequest::Change(change));
         assert!(view.take_lfs_request().is_some());
+    }
+
+    #[test]
+    fn working_pointer_exposes_a_working_lfs_request() {
+        let working = WorkingRequest {
+            repository: StatusIdentity {
+                path: PathBuf::from("/repo"),
+                head: Some("a".repeat(40)),
+                index: "b".repeat(40),
+                base_tree: None,
+            },
+            entry: StatusEntry::new(Area::Unstaged, Kind::Modified, b"asset.bin"),
+        };
+        let mut doc = FileDiff::summary(DiffKind::Text, 1, 1, "");
+        doc.rows.push(DiffRow {
+            kind: RowKind::Context,
+            old_line: Some(1),
+            new_line: Some(1),
+            text: "version https://git-lfs.github.com/spec/v1".into(),
+            bytes: Vec::new(),
+        });
+        let mut view = DiffView {
+            change: Some(FileChange {
+                path: "asset.bin".into(),
+                path_bytes: b"asset.bin".to_vec(),
+                kind: gg_engine::review::ChangeKind::Modified,
+                old: None,
+                new: None,
+            }),
+            working: Some(working.clone()),
+            info: Some(doc),
+            ..Default::default()
+        };
+        assert!(view.is_lfs());
+        let request = LfsRequest::Working(working);
+        assert_eq!(request.path(), "asset.bin");
+        view.lfs_request = Some(request);
+        assert!(matches!(
+            view.take_lfs_request(),
+            Some(LfsRequest::Working(_))
+        ));
     }
 
     #[test]

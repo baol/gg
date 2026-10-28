@@ -1,8 +1,6 @@
-//! One LFS pointer inspection or explicit object fetch.
-use gg_engine::{
-    lfs::{Details, FetchReceipt},
-    review::FileChange,
-};
+//! One LFS pointer inspection, explicit object fetch, and bounded content preview.
+use crate::{binary_preview, diff_view::LfsRequest};
+use gg_engine::lfs::{Details, FetchReceipt};
 use std::{
     path::PathBuf,
     sync::{
@@ -12,10 +10,13 @@ use std::{
     thread,
 };
 
+/// Content previews stop at 2 MiB; export remains exact.
+const PREVIEW_LIMIT: u64 = 2 * 1024 * 1024;
+
 #[derive(Clone)]
 pub enum Action {
-    Read(FileChange),
-    Fetch(FileChange),
+    Read(LfsRequest),
+    Fetch(LfsRequest),
 }
 
 #[derive(Clone)]
@@ -25,9 +26,16 @@ struct Request {
     action: Action,
 }
 
+pub struct Loaded {
+    pub details: Details,
+    pub receipt: Option<FetchReceipt>,
+    pub content: Option<binary_preview::Preview>,
+    pub preview_note: Option<String>,
+}
+
 pub struct Update {
     pub generation: u64,
-    pub result: Result<(Details, Option<FetchReceipt>), String>,
+    pub result: Result<Loaded, String>,
 }
 
 pub struct Worker {
@@ -36,6 +44,33 @@ pub struct Worker {
     generation: Arc<AtomicU64>,
     stop: Arc<AtomicBool>,
     thread: thread::Thread,
+}
+
+fn loaded(repo: &std::path::Path, details: Details, receipt: Option<FetchReceipt>) -> Loaded {
+    let preview_note = match details.target() {
+        None => None,
+        Some(pointer) if !pointer.available => {
+            Some("Fetch the object to preview its content.".into())
+        }
+        Some(pointer) => match gg_git::lfs::read_object(repo, &pointer.oid, PREVIEW_LIMIT) {
+            Ok(Some(bytes)) => {
+                return Loaded {
+                    details,
+                    receipt,
+                    content: Some(binary_preview::decode(&bytes)),
+                    preview_note: None,
+                };
+            }
+            Ok(None) => Some("The LFS object is not available locally.".into()),
+            Err(error) => Some(error),
+        },
+    };
+    Loaded {
+        details,
+        receipt,
+        content: None,
+        preview_note,
+    }
 }
 
 impl Worker {
@@ -64,11 +99,27 @@ impl Worker {
                         continue;
                     }
                     let result = match &request.action {
-                        Action::Read(change) => {
-                            gg_git::lfs::read(&request.repo, change).map(|details| (details, None))
+                        Action::Read(target) => match target {
+                            LfsRequest::Change(change) => gg_git::lfs::read(&request.repo, change)
+                                .map(|details| loaded(&request.repo, details, None)),
+                            LfsRequest::Working(working) => {
+                                gg_git::lfs::read_working(&request.repo, working)
+                                    .map(|details| loaded(&request.repo, details, None))
+                            }
+                        },
+                        Action::Fetch(target) => {
+                            let fetched = match target {
+                                LfsRequest::Change(change) => {
+                                    gg_git::lfs::fetch(&request.repo, change)
+                                }
+                                LfsRequest::Working(working) => {
+                                    gg_git::lfs::fetch_working(&request.repo, working)
+                                }
+                            };
+                            fetched.map(|(details, receipt)| {
+                                loaded(&request.repo, details, Some(receipt))
+                            })
                         }
-                        Action::Fetch(change) => gg_git::lfs::fetch(&request.repo, change)
-                            .map(|(details, receipt)| (details, Some(receipt))),
                     };
                     if g.load(Ordering::Relaxed) != current {
                         continue;

@@ -228,6 +228,47 @@ fn checkerboard(painter: &egui::Painter, rect: egui::Rect, visuals: &egui::Visua
     }
 }
 
+/// Draw one bounded LFS content preview with the same fit and checkerboard rules as image differences.
+pub fn show_single(
+    ui: &mut egui::Ui,
+    preview: &Preview,
+    texture: &mut Option<egui::TextureHandle>,
+) {
+    if let Some(image) = &preview.image {
+        if texture.is_none() {
+            *texture = Some(ui.ctx().load_texture(
+                "lfs-content",
+                image.clone(),
+                egui::TextureOptions::LINEAR,
+            ));
+        }
+        if let Some(texture) = texture {
+            let natural = texture.size_vec2();
+            let bounds = egui::vec2(ui.available_width().max(40.0), 240.0);
+            let size = fit_size(natural, bounds);
+            let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+            checkerboard(ui.painter(), rect, ui.visuals());
+            ui.painter().image(
+                texture.id(),
+                rect,
+                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                egui::Color32::WHITE,
+            );
+        }
+    } else if !preview.hex.is_empty() {
+        egui::ScrollArea::both()
+            .id_salt("lfs-content-hex")
+            .max_height(180.0)
+            .show(ui, |ui| {
+                ui.add(
+                    egui::Label::new(egui::RichText::new(&preview.hex).monospace())
+                        .wrap_mode(egui::TextWrapMode::Extend),
+                );
+            });
+    }
+    ui.weak(&preview.note);
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Layout {
     SideBySide,
@@ -633,6 +674,44 @@ mod tests {
         assert!(result.note.contains("budget"));
         Ok(())
     }
+    #[test]
+    fn single_content_preview_draws_images_and_hex_within_a_bounded_height()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let pixels = image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+            12,
+            8,
+            image::Rgba([1, 2, 3, 255]),
+        ));
+        let mut encoded = Cursor::new(Vec::new());
+        pixels.write_to(&mut encoded, image::ImageFormat::Png)?;
+        for (bytes, expected) in [
+            (encoded.get_ref().to_vec(), "PNG"),
+            (b"plain content".to_vec(), "Hexadecimal preview"),
+        ] {
+            let preview = decode(&bytes);
+            let ctx = egui::Context::default();
+            let mut texture = None;
+            let output = crate::tests::run_ui(
+                &ctx,
+                crate::tests::frame_input(720.0, 480.0, vec![]),
+                |ctx| {
+                    egui::CentralPanel::default()
+                        .show(ctx, |ui| show_single(ui, &preview, &mut texture));
+                },
+            );
+            let text = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert!(text.iter().any(|line| line.contains(expected)), "{text:?}");
+        }
+        Ok(())
+    }
+
     #[test]
     fn onion_skin_overlays_after_and_requires_both_images() -> Result<(), Box<dyn std::error::Error>>
     {

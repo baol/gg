@@ -71,7 +71,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("--help")) {
         println!(
-            "gg · good git\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good refs [PATH]      Print branches, remotes, tags, and HEAD as JSON\ngit-good status [PATH] [--file PATH --area AREA]   Print working status or diff as JSON\ngit-good stage --file PATH [--hunk HEADER]... [--repo PATH]   Stage one file or selected hunks\ngit-good unstage --file PATH [--repo PATH]   Unstage one file\ngit-good commit [--amend] [--sign|--no-sign] -m MESSAGE [--repo PATH]   Commit the index or amend HEAD after Git hooks\ngit-good reflog [REF] [--repo PATH]   Print reflog entries as JSON\ngit-good blame PATH [--revision REF] [--lines START,END] [--repo PATH]   Print line attribution as JSON\ngit-good worktree <list|add|remove> [OPTIONS] [--repo PATH]   List, add, or remove worktrees\ngit-good submodule <status|update> PATH [OPTIONS] [--repo PATH]   Inspect or update a gitlink submodule\ngit-good lfs <status|fetch> PATH [--revision REF] [--before REF] [--repo PATH]   Inspect or fetch an LFS pointer\ngit-good signature <config|verify> [REF] [--repo PATH]   Read signing config or verify a commit/tag\ngit-good switch [--create] BRANCH [--repo PATH]   Switch to or create a local branch\ngit-good fetch [REMOTE] [--prune] [--repo PATH]   Fetch and update remote-tracking refs\ngit-good push [REMOTE] [BRANCH] [--set-upstream] [--repo PATH]   Push a local branch without force\ngit-good clone URL [PATH]   Clone a repository and open it\ngit-good stash <list|push|apply|pop|drop> [OPTIONS] [--repo PATH]   List or mutate stashes\ngit-good cherry-pick COMMIT [--repo PATH]   Apply a commit\ngit-good revert COMMIT [--repo PATH]   Invert a commit\ngit-good merge REF [--no-ff] [--repo PATH]   Merge a branch, remote, or tag\ngit-good rebase REF [--autostash] [--repo PATH]   Rebase the current branch onto a branch, remote, or tag\ngit-good rebase --continue|--skip|--abort [--repo PATH]   Recover an in-progress rebase\ngit-good rewrite --from COMMIT --pick COMMIT... --squash COMMIT... [--autostash] [--repo PATH]   Reorder or squash a linear range\ngit-good rewrite --continue|--skip|--abort [--repo PATH]   Recover an in-progress rewrite\ngit-good conflicts [--repo PATH]   List unmerged paths\ngit-good conflict --file PATH [--use ours|theirs|--stage] [--repo PATH]   Read or resolve a conflict\ngit-good reset --soft|--mixed|--hard COMMIT [--repo PATH]   Reset the current branch\ngit-good branch --delete BRANCH [--force] [--repo PATH]   Delete a local branch\ngit-good branch --create NAME [--at REF] [--repo PATH]   Create a local branch without switching\ngit-good tag --delete TAG [--repo PATH]   Delete a local tag
+            "gg · good git\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good refs [PATH]      Print branches, remotes, tags, and HEAD as JSON\ngit-good status [PATH] [--file PATH --area AREA]   Print working status or diff as JSON\ngit-good stage --file PATH [--hunk HEADER]... [--repo PATH]   Stage one file or selected hunks\ngit-good unstage --file PATH [--repo PATH]   Unstage one file\ngit-good commit [--amend] [--sign|--no-sign] -m MESSAGE [--repo PATH]   Commit the index or amend HEAD after Git hooks\ngit-good reflog [REF] [--repo PATH]   Print reflog entries as JSON\ngit-good blame PATH [--revision REF] [--lines START,END] [--repo PATH]   Print line attribution as JSON\ngit-good worktree <list|add|remove> [OPTIONS] [--repo PATH]   List, add, or remove worktrees\ngit-good submodule <status|update> PATH [OPTIONS] [--repo PATH]   Inspect or update a gitlink submodule\ngit-good lfs <status|fetch> PATH [--area staged|unstaged|untracked|conflict] [--revision REF] [--before REF] [--repo PATH]   Inspect or fetch an LFS pointer\ngit-good signature <config|verify> [REF] [--repo PATH]   Read signing config or verify a commit/tag\ngit-good switch [--create] BRANCH [--repo PATH]   Switch to or create a local branch\ngit-good fetch [REMOTE] [--prune] [--repo PATH]   Fetch and update remote-tracking refs\ngit-good push [REMOTE] [BRANCH] [--set-upstream] [--repo PATH]   Push a local branch without force\ngit-good clone URL [PATH]   Clone a repository and open it\ngit-good stash <list|push|apply|pop|drop> [OPTIONS] [--repo PATH]   List or mutate stashes\ngit-good cherry-pick COMMIT [--repo PATH]   Apply a commit\ngit-good revert COMMIT [--repo PATH]   Invert a commit\ngit-good merge REF [--no-ff] [--repo PATH]   Merge a branch, remote, or tag\ngit-good rebase REF [--autostash] [--repo PATH]   Rebase the current branch onto a branch, remote, or tag\ngit-good rebase --continue|--skip|--abort [--repo PATH]   Recover an in-progress rebase\ngit-good rewrite --from COMMIT --pick COMMIT... --squash COMMIT... [--autostash] [--repo PATH]   Reorder or squash a linear range\ngit-good rewrite --continue|--skip|--abort [--repo PATH]   Recover an in-progress rewrite\ngit-good conflicts [--repo PATH]   List unmerged paths\ngit-good conflict --file PATH [--use ours|theirs|--stage] [--repo PATH]   Read or resolve a conflict\ngit-good reset --soft|--mixed|--hard COMMIT [--repo PATH]   Reset the current branch\ngit-good branch --delete BRANCH [--force] [--repo PATH]   Delete a local branch\ngit-good branch --create NAME [--at REF] [--repo PATH]   Create a local branch without switching\ngit-good tag --delete TAG [--repo PATH]   Delete a local tag
 git-good tag --create TAG --at REF -m MESSAGE [--sign] [--repo PATH]   Create an annotated or signed tag\ngit-good show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]   Review or export\n\nBrowse commits reachable from HEAD and all local, remote, and tag refs."
         );
         return Ok(());
@@ -843,8 +843,11 @@ struct SubmoduleWindow {
 }
 
 struct LfsWindow {
-    change: gg_engine::review::FileChange,
+    request: crate::diff_view::LfsRequest,
     details: Option<gg_engine::lfs::Details>,
+    content: Option<crate::binary_preview::Preview>,
+    preview_note: Option<String>,
+    texture: Option<egui::TextureHandle>,
     error: Option<String>,
     notice: Option<String>,
     busy: Option<String>,
@@ -3619,16 +3622,19 @@ impl Browser {
         }
     }
 
-    fn open_lfs(&mut self, ctx: &egui::Context, change: gg_engine::review::FileChange) {
+    fn open_lfs(&mut self, ctx: &egui::Context, request: crate::diff_view::LfsRequest) {
         self.lfs_window = Some(LfsWindow {
-            change: change.clone(),
+            request: request.clone(),
             details: None,
+            content: None,
+            preview_note: None,
+            texture: None,
             error: None,
             notice: None,
             busy: None,
             confirm_fetch: false,
         });
-        self.request_lfs(ctx, lfs_worker::Action::Read(change));
+        self.request_lfs(ctx, lfs_worker::Action::Read(request));
     }
 
     fn request_lfs(&mut self, ctx: &egui::Context, action: lfs_worker::Action) {
@@ -3675,10 +3681,13 @@ impl Browser {
         };
         window.busy = None;
         match update.result {
-            Ok((details, receipt)) => {
-                window.details = Some(details);
+            Ok(loaded) => {
+                window.details = Some(loaded.details);
+                window.content = loaded.content;
+                window.preview_note = loaded.preview_note;
+                window.texture = None;
                 window.error = None;
-                if let Some(receipt) = receipt {
+                if let Some(receipt) = loaded.receipt {
                     window.notice = Some(if receipt.available {
                         format!("Fetched {} ({}).", receipt.oid, lfs_bytes(receipt.size))
                     } else {
@@ -3692,7 +3701,11 @@ impl Browser {
 
     fn draw_lfs(&mut self, ctx: &egui::Context) {
         self.poll_lfs();
-        let Some(change) = self.lfs_window.as_ref().map(|window| window.change.clone()) else {
+        let Some(request) = self
+            .lfs_window
+            .as_ref()
+            .map(|window| window.request.clone())
+        else {
             return;
         };
         let mut open = true;
@@ -3714,7 +3727,7 @@ impl Browser {
                 .default_pos(ctx.content_rect().center())
                 .pivot(egui::Align2::CENTER_CENTER)
                 .show(ctx, |ui| {
-                    ui.label(egui::RichText::new(&change.path).monospace().strong());
+                    ui.label(egui::RichText::new(request.path()).monospace().strong());
                     if let Some(details) = &window.details {
                         ui.weak(details.status_label());
                         for (label, pointer) in [
@@ -3744,6 +3757,22 @@ impl Browser {
                         }
                         if let Some(note) = &details.note {
                             ui.weak(note);
+                        }
+                        if window.content.is_some() || window.preview_note.is_some() {
+                            ui.add_space(6.0);
+                            ui.separator();
+                            ui.label(egui::RichText::new("Content preview").strong());
+                            if let Some(content) = &window.content {
+                                crate::binary_preview::show_single(
+                                    ui,
+                                    content,
+                                    &mut window.texture,
+                                );
+                            }
+                            if let Some(note) = &window.preview_note {
+                                ui.weak(note);
+                            }
+                            ui.weak("Bounded preview; export keeps the complete original bytes.");
                         }
                         let fetch = details.can_fetch();
                         if ui
@@ -3821,7 +3850,7 @@ impl Browser {
             if let Some(window) = &mut self.lfs_window {
                 window.confirm_fetch = false;
             }
-            self.request_lfs(ctx, lfs_worker::Action::Fetch(change));
+            self.request_lfs(ctx, lfs_worker::Action::Fetch(request));
         }
         if !open {
             self.lfs_window = None;
@@ -6048,6 +6077,13 @@ impl Browser {
                 .and_then(|working| working.take_submodule_request())
             {
                 self.open_submodule(ctx, request);
+            }
+            if let Some(request) = self
+                .working
+                .as_mut()
+                .and_then(|working| working.take_lfs_request())
+            {
+                self.open_lfs(ctx, request);
             }
             let committed = self
                 .working
@@ -8793,14 +8829,17 @@ mod tests {
             let ctx = egui::Context::default();
             let mut app = layout_fixture();
             app.lfs_window = Some(LfsWindow {
-                change: gg_engine::review::FileChange {
+                request: crate::diff_view::LfsRequest::Change(gg_engine::review::FileChange {
                     path: "asset.bin".into(),
                     path_bytes: b"asset.bin".to_vec(),
                     kind: gg_engine::review::ChangeKind::Modified,
                     old: None,
                     new: None,
-                },
+                }),
                 details: Some(details.clone()),
+                content: Some(crate::binary_preview::decode(b"fetched content")),
+                preview_note: None,
+                texture: None,
                 error: None,
                 notice: None,
                 busy: None,
@@ -8826,6 +8865,9 @@ mod tests {
                 oid,
                 "12.1 KiB",
                 "git-lfs is not installed",
+                "Content preview",
+                "Hexadecimal preview",
+                "Bounded preview",
                 "Fetch object…",
             ] {
                 assert!(

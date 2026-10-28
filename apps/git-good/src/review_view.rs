@@ -108,7 +108,7 @@ impl Review {
     }
 
     /// Take an LFS-details request raised by the reader.
-    pub fn take_lfs_request(&mut self) -> Option<FileChange> {
+    pub fn take_lfs_request(&mut self) -> Option<crate::diff_view::LfsRequest> {
         self.diff.take_lfs_request()
     }
 

@@ -323,6 +323,13 @@ Native review: the refs sidebar and status line show the current branch upstream
 - CLI `git good lfs status|fetch` returns the same details/receipt; the status test asserts pointer identity, size, and missing availability. A successful network fetch remains unverified because `git-lfs` is not installed.
 - The LFS details window renders at 720×480 inside the viewport with path, Before/After identity, availability, installation state, remote, and Fetch object.
 
+## M7 Git LFS working pointers and preview
+
+- Local Changes LFS sides follow the selected area: Staged HEAD→index, Unstaged index→working, Untracked absent→working. Working-file pointer reads are bounded to 4 KiB; plain working text is not treated as LFS; conflicts keep an explicit resolve-first note.
+- The selected available object produces a bounded preview (image when decodable, otherwise hexadecimal); missing, over-2-MiB, and unreadable objects stay explicit. Preview never writes working files or stages.
+- CLI `lfs status|fetch --area` returns working-scope details and rejects combining `--area` with revision flags.
+- Native captures cover working pointer details with a PNG preview and the narrow window. A successful network fetch and smudging/materialization remain unverified/planned.
+
 ## M7 submodules
 
 - Git fixtures report parent index commit, nested HEAD, initialized/dirty state, URL, and recorded-object availability. Dirty nested content, a recorded commit that differs from the index, and a missing recorded object block Update.

@@ -1,4 +1,7 @@
-use gg_engine::review::{ChangeKind, FileChange, FileSide};
+use gg_engine::{
+    review::{ChangeKind, FileChange, FileSide},
+    status::{Area, Kind, StatusEntry, WorkingRequest},
+};
 use std::{error::Error, path::Path, process::Command};
 type Result<T = ()> = std::result::Result<T, Box<dyn Error>>;
 
@@ -154,5 +157,106 @@ fn malformed_pointer_is_reported_without_treating_text_as_lfs() -> Result {
         "{:?}",
         details.note
     );
+    Ok(())
+}
+
+fn working(path: &Path, area: Area, kind: Kind, file: &str) -> Result<WorkingRequest> {
+    Ok(WorkingRequest {
+        repository: gg_git::status::Session::open(path)?.identity,
+        entry: StatusEntry::new(area, kind, file.as_bytes()),
+    })
+}
+
+#[test]
+fn working_staged_unstaged_and_untracked_pointers_use_their_own_sides() -> Result {
+    let dir = repo()?;
+    let first = "1111111111111111111111111111111111111111111111111111111111111111";
+    let second = "2222222222222222222222222222222222222222222222222222222222222222";
+    let third = "3333333333333333333333333333333333333333333333333333333333333333";
+    let untracked = "4444444444444444444444444444444444444444444444444444444444444444";
+    std::fs::write(dir.path().join("asset.bin"), pointer(first, 10))?;
+    git(dir.path(), &["add", "asset.bin"])?;
+    git(dir.path(), &["commit", "-qm", "first pointer"])?;
+
+    std::fs::write(dir.path().join("asset.bin"), pointer(second, 20))?;
+    git(dir.path(), &["add", "asset.bin"])?;
+    let staged = gg_git::lfs::read_working(
+        dir.path(),
+        &working(dir.path(), Area::Staged, Kind::Modified, "asset.bin")?,
+    )?;
+    assert_eq!(staged.before.as_ref().map(|p| p.oid.as_str()), Some(first));
+    assert_eq!(staged.after.as_ref().map(|p| p.oid.as_str()), Some(second));
+    assert!(
+        matches!(staged.status_label(), "Object missing" | "LFS unavailable"),
+        "{}",
+        staged.status_label()
+    );
+
+    std::fs::write(dir.path().join("asset.bin"), pointer(third, 30))?;
+    let unstaged = gg_git::lfs::read_working(
+        dir.path(),
+        &working(dir.path(), Area::Unstaged, Kind::Modified, "asset.bin")?,
+    )?;
+    assert_eq!(
+        unstaged.before.as_ref().map(|p| p.oid.as_str()),
+        Some(second)
+    );
+    assert_eq!(unstaged.after.as_ref().map(|p| p.oid.as_str()), Some(third));
+
+    std::fs::write(dir.path().join("new.bin"), pointer(untracked, 40))?;
+    let new = gg_git::lfs::read_working(
+        dir.path(),
+        &working(dir.path(), Area::Untracked, Kind::Added, "new.bin")?,
+    )?;
+    assert!(new.before.is_none());
+    assert_eq!(new.after.as_ref().map(|p| p.oid.as_str()), Some(untracked));
+    Ok(())
+}
+
+#[test]
+fn plain_working_text_and_conflicts_do_not_masquerade_as_pointers() -> Result {
+    let dir = repo()?;
+    std::fs::write(dir.path().join("plain.bin"), b"ordinary text\n")?;
+    let plain = gg_git::lfs::read_working(
+        dir.path(),
+        &working(dir.path(), Area::Untracked, Kind::Added, "plain.bin")?,
+    )?;
+    assert!(plain.before.is_none() && plain.after.is_none());
+    assert_eq!(plain.status_label(), "Not an LFS pointer");
+
+    let conflict = gg_git::lfs::read_working(
+        dir.path(),
+        &working(dir.path(), Area::Conflict, Kind::Conflicted, "asset.bin")?,
+    )?;
+    assert!(conflict.target().is_none());
+    assert!(
+        conflict
+            .note
+            .as_deref()
+            .is_some_and(|note| note.contains("resolve the conflict")),
+        "{:?}",
+        conflict.note
+    );
+    Ok(())
+}
+
+#[test]
+fn bounded_object_preview_reads_only_an_available_small_object() -> Result {
+    let dir = repo()?;
+    let oid = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+    let object = gg_git::lfs::object_path(dir.path(), oid).ok_or("missing object path")?;
+    assert!(gg_git::lfs::read_object(dir.path(), oid, 1024)?.is_none());
+    std::fs::create_dir_all(object.parent().ok_or("missing parent")?)?;
+    std::fs::write(&object, b"hello")?;
+    assert_eq!(
+        gg_git::lfs::read_object(dir.path(), oid, 16)?,
+        Some(b"hello".to_vec())
+    );
+    let error = match gg_git::lfs::read_object(dir.path(), oid, 3) {
+        Err(error) => error,
+        Ok(_) => return Err("over-limit preview unexpectedly succeeded".into()),
+    };
+    assert!(error.contains("limited to 3 B"), "{error}");
+    assert!(gg_git::lfs::object_path(dir.path(), "not-an-oid").is_none());
     Ok(())
 }

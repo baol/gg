@@ -666,6 +666,19 @@ Linux x86_64 · Rust 1.99.1 · Xvfb/llvmpipe · disposable Git fixture (`/tmp/op
 - Unit tests cover the wide-only control, the default 50%/adjusted opacity label, overlay metadata, alpha conversion, and the one-sided fallback. Native X11 at 1120×740: [Onion skin at 50%](screenshots/m7-onion-wide.png) and [after keyboard adjustment to 70%](screenshots/m7-onion-adjusted.png). At 720×480: [stacked preview with no Onion skin control](screenshots/m7-onion-narrow.png).
 - Limitations: only Linux/X11, the dark theme, and llvmpipe were inspected natively. Difference/heatmap and other blend modes remain separate work, and this increment adds no pan/zoom beyond Fit and Actual size.
 
+## M7 Git LFS working pointers and preview · 2026-10-28
+
+Linux x86_64 · Rust 1.99.1 · Xvfb/llvmpipe · disposable Git fixture (`/tmp/opencode/gg-lfs-local`: an index pointer and a different working pointer for a 120×80 RGBA PNG, with both objects present in the local LFS store).
+
+- `cargo fmt --all -- --check` passed.
+- `cargo test --workspace --locked` passed: 486 tests, 0 failures, 4 ignored opt-in performance checks. This includes 246 `git-good` unit tests and 41 CLI tests.
+- `cargo clippy --workspace --all-targets --locked -- -D warnings` passed.
+- Local Changes exposes **File actions → LFS details…** for a pointer comparison. Staged uses HEAD→index, Unstaged uses index→working file, and Untracked uses absent→working file; working-file reads stop at 4 KiB. Conflicts report that the path must be resolved instead of presenting an index stage. Git fixtures cover all four areas and plain working text.
+- The details window loads a bounded preview of the selected locally available object. A 120×80 PNG rendered with the checkerboard and fit rules; objects over 2 MiB, unreadable objects, missing objects, and non-image content keep an explicit note. Preview does not smudge, materialize, stage, or write working files.
+- CLI `git good lfs status|fetch PATH --area staged|unstaged|untracked|conflict` returns the same working-scope details and rejects combining `--area` with `--revision`/`--before`. The existing revision-scope CLI and receipt behavior is unchanged.
+- Native X11 at 1120×740: [Local Changes pointer with an available working-side object and PNG preview](screenshots/m7-lfs-working.png), and [the working-side object missing with an explicit fetch-to-preview note](screenshots/m7-lfs-working-missing.png). At 720×480: [the same details window and preview](screenshots/m7-lfs-working-narrow.png).
+- Limitations: `git-lfs` is not installed in this environment, so a successful network fetch remains unverified; the fabricated local object store exercises availability and preview only. Smudging/materializing fetched content into working files remains planned. Only Linux/X11, the dark theme, and llvmpipe were inspected natively.
+
 ## M7 commit and tag signing · 2026-10-28
 
 Linux x86_64 · Rust 1.99.1 · Xvfb/llvmpipe · disposable Git fixture (`/tmp/opencode/gg-sign`) · isolated OpenPGP home (`/tmp/opencode/gnupg`, test key only) · empty keyring (`/tmp/opencode/emptygnupg`) for the unknown-key state.
@@ -694,7 +707,7 @@ Linux x86_64 · Rust 1.99.1 · Xvfb/llvmpipe · disposable Git fixture (`/tmp/op
 - **Fetch object…** is enabled only for a missing target with `git-lfs` available. The confirmation names OID, size, and remote and states that fetching may download data and does not change or smudge working files. Fetch runs on a worker via `git lfs fetch [REMOTE] --include=<path>` and rescans availability. No automatic network, smudge/materialization, staging, or working-tree write is added.
 - `git good lfs status|fetch PATH [--revision REF] [--before REF] [--repo PATH]` returns the same bounded pointer details and receipt. Git fixtures cover canonical/malformed parsing, before/after pointers, plain text, missing objects, and locally available objects.
 - Native X11: [missing LFS object with fetch unavailable because git-lfs is not installed](screenshots/m7-lfs-missing.png), [object available in the local LFS store](screenshots/m7-lfs-available.png), and [the narrow LFS window](screenshots/m7-lfs-narrow.png).
-- Limitations: `git-lfs` is not installed in this environment, so a successful fetch was not exercised natively or in CI; the disabled state is reproducible. Local Changes/working-tree pointer handling and a bounded fetched-content preview remain planned. Only Linux/X11, the dark theme, and llvmpipe were inspected natively.
+- Limitations: `git-lfs` is not installed in this environment, so a successful fetch was not exercised natively or in CI; the disabled state is reproducible. Local Changes/working-tree pointers and bounded previews are recorded in the later M7 Git LFS working pointers and preview section. Only Linux/X11, the dark theme, and llvmpipe were inspected natively.
 
 ## M7 submodules · 2026-10-27
 

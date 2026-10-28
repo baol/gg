@@ -25,7 +25,7 @@ Send the shared brief plus one assignment to each subagent. Do not dispatch the 
 
 Default to **one implementation writer at a time** in the current checkout. Several tasks edit main.rs, reader code, and owning specifications. V1/V2 can review a frozen candidate concurrently using separate fixture directories and isolated displays. Coordinate expensive builds; never let agents mutate the same fixture or shared source concurrently.
 
-Deferred: image-diff blend modes beyond onion skin (such as difference heatmaps), LFS working-tree/materialization extensions, force push, and restart-persistent drafts. Preserve extension points without adding fake functional controls.
+Deferred: image-diff blend modes beyond onion skin (such as difference heatmaps), LFS smudging/materialization, force push, and restart-persistent drafts. Preserve extension points without adding fake functional controls.
 
 ## Shared brief — prepend to every assignment
 

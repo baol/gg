@@ -471,6 +471,11 @@ impl StatusView {
         self.reader.take_submodule_request()
     }
 
+    /// Take an LFS-details request raised by the reader.
+    pub(crate) fn take_lfs_request(&mut self) -> Option<crate::diff_view::LfsRequest> {
+        self.reader.take_lfs_request()
+    }
+
     pub(crate) fn capture_draft(&self) -> Draft {
         let (normal, amend) = if self.amend {
             (self.normal_draft.clone(), self.message.clone())

@@ -228,13 +228,13 @@ flowchart TD
 
 ### F16 · Inspect an LFS pointer and retrieve content · M7
 
-**Entry proposal:** select an LFS-managed file in Review or Local Changes.
+**Entry:** select an LFS-managed file in Review or Local Changes.
 
 1. Identify Pointer and show full SHA-256 object identity, declared size, and local-object availability separately from Git blob identity.
 2. If content is unavailable, retain the pointer view and offer explicit Fetch object with named remote and download size; do not fetch on selection or refresh.
-3. Run cancellable progress; after success mark content available and offer bounded preview where supported. Any working-file smudge/materialization must be a distinct explicit action with its own target/preconditions.
+3. Fetch runs on a worker and reports completion; after success the object is marked available and a bounded preview is offered. Selection and refresh never fetch. Any working-file smudge/materialization must be a distinct explicit action with its own target/preconditions.
 
-**States:** LFS executable/configuration missing, offline/auth failure, malformed pointer, oversized preview, and cancellation keep the pointer and next action. Never label pointer text as the fetched image. **Completion:** availability is accurate without hidden network or worktree writes. **Mockup:** LFS → Fetch object → locally available. Review-time pointer inspection and explicit object fetch are implemented; Local Changes/working-tree pointers and fetched-content preview remain planned. Fetch does not smudge or stage.
+**States:** LFS executable/configuration missing, offline/auth failure, malformed pointer, oversized preview, and cancellation keep the pointer and next action. Never label pointer text as the fetched image. **Completion:** availability is accurate without hidden network or worktree writes. **Mockup:** LFS → Fetch object → locally available. Review and Local Changes pointers, explicit fetch, and bounded locally-available previews are implemented; materializing content into working files remains planned. Fetch and preview do not smudge or stage.
 
 ### F17 · Verify signatures and sign deliberately · M7
 
@@ -249,7 +249,7 @@ flowchart TD
 
 ## Review and delivery sequence
 
-The plan sequence is now: blame/line history → image diffs → worktrees → submodules → LFS → signing, with onion skin as an image-diff extension. Blame/line history, image diffs, worktrees, submodules, review-time LFS, signing, and onion skin are complete; reuse the shipped history cursor rather than creating a second timeline. The LFS working-tree/materialization extensions remain planned. No date or new milestone commitment is inferred.
+The plan sequence is now: blame/line history → image diffs → worktrees → submodules → LFS → signing, with onion skin as an image-diff extension. Blame/line history, image diffs, worktrees, submodules, review-time and Local Changes LFS, signing, and onion skin are complete; reuse the shipped history cursor rather than creating a second timeline. LFS smudging/materialization remains planned. No date or new milestone commitment is inferred.
 
 | Review scenario | Expected observation |
 | --- | --- |
