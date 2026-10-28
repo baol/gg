@@ -118,7 +118,7 @@ Before connecting M1 controls, test Review/Back anchor restoration, active-view 
 - A real-fixture egui geometry test opens Recovery at 720×480, asserts the window rectangle stays inside both axes, and asserts Open commit and Copy ref still render. The default width is the smaller of 760 pixels and the available content width minus 24 pixels.
 - A reader regression reproduces the narrow file-list → reader transition with the resting pointer already over the reader. An explicit new selection publishes its diff once; the existing asynchronous-replacement test still waits for hover to clear.
 - A status-line test asserts the wide hint includes paging and copy ID while the narrow hint keeps `j/k`, review, details, history, and filter without clipping.
-- The Help window test rejects the retired `View, Stash, Help` menu sequence. The deferred-element list in [ui-coherence](ui-coherence.md#deferred-elements) covers attribution/line history, image diffs, worktrees, submodules, LFS, signing, force push, restart-persistent drafts, and the dedicated conflict workspace.
+- The Help window test rejects the retired `View, Stash, Help` menu sequence. The deferred-element list in [ui-coherence](ui-coherence.md#deferred-elements) covers LFS smudging/materialization, restart-persistent drafts, and the dedicated conflict workspace.
 
 ## M1 changed files
 
@@ -295,6 +295,13 @@ Native review: the refs sidebar and status line show the current branch upstream
 - CLI tests cover `git good rewrite --from COMMIT --pick COMMIT... --squash COMMIT...`, reorder and squash receipts, the backup ref, conflict abort, skip, and unknown-option errors. `git good rewrite --continue|--skip|--abort` targets the same Git rebase state.
 - Backup tests assert `gg_git::backup::list` returns the private reference, kind, commit, subject, and commit time while the refs snapshot continues to exclude `refs/gg/`.
 - egui tests render the **Reorder and squash** modal with ordered rows, up/down icon controls, Squash choices, autostash, and the backup warning at 720 and 1120 widths. A submitted rewrite closes the configuration; the operation area shows **Rewriting commits…**, then **Refreshing history…** until the replacement history generation is accepted, and Escape is no longer needed to dismiss a blocking modal. The Backups window renders the entry list, Open commit, Reset branch here, Create branch here…, Copy hash, and Copy ref at 1120 width. The operation area names an in-progress rebase; Backups stays in Repository and outcome recovery.
+
+## Force push with lease
+
+- Normal push remains non-force; the separate Repository action is the only force route and is disabled without an upstream remote-tracking ref.
+- The confirmation names the local branch, destination remote/branch, and lease commit and states that a changed remote rejects the rewrite. Bare `--force` is not parsed.
+- The engine passes the exact lease commit captured by the confirmation as `--force-with-lease=refs/heads/<remote-branch>:<lease>`; the CLI resolves that lease from the remote-tracking ref immediately before pushing. Missing and stale leases fail without changing the remote, including when a fetch updated the tracking ref after the dialog captured an older lease. A stale lease does not offer Retry push (which would become non-force).
+- Git fixtures cover stale rejection with the remote unchanged, fetch-updated lease success, receipt lease identity, and CLI rejection of bare `--force`. Native captures cover the dialog, a successful leased rewrite, a stale-lease failure, and the narrow dialog.
 
 ## M7 image onion skin
 

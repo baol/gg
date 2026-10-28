@@ -134,7 +134,10 @@ fn clone_fetch_push_upstream_and_non_fast_forward() -> Result {
         &target,
         Some("origin"),
         None,
-        true,
+        gg_git::sync::PushOptions {
+            set_upstream: true,
+            force_with_lease: None,
+        },
         false,
         &cancel,
         &mut |_| {},
@@ -143,6 +146,8 @@ fn clone_fetch_push_upstream_and_non_fast_forward() -> Result {
     assert_eq!(receipt.branch, "main");
     assert_eq!(receipt.upstream.as_deref(), Some("origin/main"));
     assert!(receipt.set_upstream);
+    assert!(!receipt.force_with_lease);
+    assert!(receipt.lease.is_none());
     assert_eq!(head(remote.path(), "refs/heads/main")?, local_head);
     assert_eq!(
         git(&target, &["config", "branch.main.remote"])?,
@@ -170,7 +175,7 @@ fn clone_fetch_push_upstream_and_non_fast_forward() -> Result {
         &target,
         Some("origin"),
         None,
-        false,
+        gg_git::sync::PushOptions::default(),
         false,
         &cancel,
         &mut |_| {},
@@ -251,5 +256,101 @@ fn scripts_cannot_inject_git_options_or_read_ambient_repository_state() -> Resul
         Err(error) => error,
     };
     assert!(!target.path().join("bad").exists());
+    Ok(())
+}
+
+#[test]
+fn force_with_lease_requires_a_matching_remote_tracking_ref() -> Result {
+    let remote = bare()?;
+    let source = repo()?;
+    push_all(source.path(), remote.path())?;
+    let remote_path = remote.path().to_string_lossy().into_owned();
+
+    let local = repo()?;
+    git(local.path(), &["remote", "add", "origin", &remote_path])?;
+    let error = match gg_git::sync::push_lease(local.path(), Some("origin"), Some("main")) {
+        Err(error) => error,
+        Ok(_) => {
+            return Err("force lease without a remote-tracking ref unexpectedly succeeded".into());
+        }
+    };
+    assert!(error.contains("remote-tracking"), "{error}");
+    git(local.path(), &["fetch", "origin"])?;
+    let initial = head(remote.path(), "refs/heads/main")?;
+
+    std::fs::write(source.path().join("a"), b"remote wins\n")?;
+    git(source.path(), &["commit", "-qam", "remote wins"])?;
+    push_all(source.path(), remote.path())?;
+    let remote_after_source = head(remote.path(), "refs/heads/main")?;
+    assert_ne!(remote_after_source, initial);
+
+    std::fs::write(local.path().join("b"), b"local only\n")?;
+    git(local.path(), &["add", "b"])?;
+    git(local.path(), &["commit", "-qm", "local only"])?;
+    let local_head = head(local.path(), "HEAD")?;
+    let cancel = no_cancel();
+
+    // The tracking ref still names the old remote commit, so the stale lease must reject the rewrite.
+    let old_lease = gg_git::sync::push_lease(local.path(), Some("origin"), Some("main"))?;
+    let error = match gg_git::sync::push(
+        local.path(),
+        Some("origin"),
+        Some("main"),
+        gg_git::sync::PushOptions {
+            set_upstream: false,
+            force_with_lease: Some(old_lease.clone()),
+        },
+        false,
+        &cancel,
+        &mut |_| {},
+    ) {
+        Ok(_) => return Err("stale force-with-lease unexpectedly succeeded".into()),
+        Err(error) => error,
+    };
+    assert!(error.contains("failed"), "{error}");
+    assert_eq!(head(remote.path(), "refs/heads/main")?, remote_after_source);
+    assert_eq!(head(local.path(), "HEAD")?, local_head);
+
+    // Fetch updates the tracking ref, but a confirmation that displayed the old lease must still fail.
+    git(local.path(), &["fetch", "origin"])?;
+    let lease = head(local.path(), "refs/remotes/origin/main")?;
+    assert_eq!(lease, remote_after_source);
+    let error = match gg_git::sync::push(
+        local.path(),
+        Some("origin"),
+        Some("main"),
+        gg_git::sync::PushOptions {
+            set_upstream: false,
+            force_with_lease: Some(old_lease),
+        },
+        false,
+        &cancel,
+        &mut |_| {},
+    ) {
+        Ok(_) => return Err("old confirmed lease unexpectedly succeeded after fetch".into()),
+        Err(error) => error,
+    };
+    assert!(error.contains("failed"), "{error}");
+    assert_eq!(head(remote.path(), "refs/heads/main")?, remote_after_source);
+    let receipt = gg_git::sync::push(
+        local.path(),
+        Some("origin"),
+        Some("main"),
+        gg_git::sync::PushOptions {
+            set_upstream: false,
+            force_with_lease: Some(gg_git::sync::push_lease(
+                local.path(),
+                Some("origin"),
+                Some("main"),
+            )?),
+        },
+        false,
+        &cancel,
+        &mut |_| {},
+    )?;
+    assert!(receipt.force_with_lease);
+    assert_eq!(receipt.lease.as_deref(), Some(lease.as_str()));
+    assert_eq!(head(remote.path(), "refs/heads/main")?, local_head);
+    assert_eq!(std::fs::read(local.path().join("b"))?, b"local only\n");
     Ok(())
 }

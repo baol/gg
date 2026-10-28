@@ -120,7 +120,9 @@ flowchart TD
 
 **Fetch:** select the explicit configured remote (or documented sole/default choice), optionally prune, then start. Fetch updates remote-tracking refs; it does not merge or change working files. Success refreshes history/refs while retaining selection. Cancel/failure preserves the previous display and offers Retry fetch.
 
-**Push:** show local branch, destination remote/branch, and upstream decision when missing. Start a non-force push; report progress and allow cancellation. A rejected push offers Details and Retry push; guide the user to fetch and inspect before integration, without automatic fetch, merge, rebase, or force push. Record upstream only after successful push. Credentials use Git configuration/helpers/SSH; output excludes secrets.
+**Push:** show local branch, destination remote/branch, and upstream decision when missing. Start a non-force push; report progress and allow cancellation. A rejected push offers Details and Retry push; guide the user to fetch and inspect before integration, without automatic fetch, merge, or rebase. Record upstream only after successful push. Credentials use Git configuration/helpers/SSH; output excludes secrets.
+
+**Force push with lease:** a separate explicit Repository action, enabled only with an upstream remote-tracking ref. The confirmation names the local branch, destination, and lease commit and warns that the remote branch must still match that lease. A missing/stale lease fails without changing the remote and does not offer a retry that falls back to non-force. Bare force is never offered.
 
 **Completion:** a receipt names the actual outcome; tracking refreshes when changed. **Mockup:** Network toggles rejected/pending/success states; Retry push is a simulation.
 

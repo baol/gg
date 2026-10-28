@@ -52,10 +52,12 @@ pub fn push(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::err
     let mut remote = None;
     let mut branch = None;
     let mut set_upstream = false;
+    let mut force_with_lease = false;
     while let Some(arg) = args.next() {
         match arg.to_str() {
             Some("--repo") => path = PathBuf::from(args.next().ok_or("--repo needs a path")?),
             Some("--set-upstream") if !set_upstream => set_upstream = true,
+            Some("--force-with-lease") if !force_with_lease => force_with_lease = true,
             Some(value) if value.starts_with("--") => return Err("Unknown push option".into()),
             _ if remote.is_none() => {
                 remote = Some(arg.into_string().map_err(|_| "Remote must be UTF-8")?);
@@ -65,17 +67,29 @@ pub fn push(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::err
             }
             _ => {
                 return Err(
-                    "Usage: git good push [REMOTE] [BRANCH] [--set-upstream] [--repo PATH]".into(),
+                    "Usage: git good push [REMOTE] [BRANCH] [--set-upstream] [--force-with-lease] [--repo PATH]".into(),
                 );
             }
         }
     }
+    let lease = if force_with_lease {
+        Some(gg_git::sync::push_lease(
+            &path,
+            remote.as_deref(),
+            branch.as_deref(),
+        )?)
+    } else {
+        None
+    };
     let mut progress = progress_writer();
     let receipt = gg_git::sync::push(
         &path,
         remote.as_deref(),
         branch.as_deref(),
-        set_upstream,
+        gg_git::sync::PushOptions {
+            set_upstream,
+            force_with_lease: lease,
+        },
         std::io::stdin().is_terminal(),
         &std::sync::atomic::AtomicBool::new(false),
         &mut progress.writer,
@@ -88,6 +102,8 @@ pub fn push(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::err
         "branch": receipt.branch,
         "upstream": receipt.upstream,
         "set_upstream": receipt.set_upstream,
+        "force_with_lease": receipt.force_with_lease,
+        "lease": receipt.lease,
         "complete": true,
     }))?;
     Ok(())

@@ -48,16 +48,18 @@ pub fn fetch(
     })
 }
 
-pub fn push(
-    path: &Path,
+#[derive(Clone, Debug, Default)]
+pub struct PushOptions {
+    pub set_upstream: bool,
+    /// The exact expected remote commit for `--force-with-lease`; `None` keeps the push non-force.
+    pub force_with_lease: Option<String>,
+}
+
+fn push_target(
+    repo: &gix::Repository,
     remote: Option<&str>,
     branch: Option<&str>,
-    set_upstream: bool,
-    interactive: bool,
-    cancel: &AtomicBool,
-    progress: &mut dyn FnMut(Progress),
-) -> Result<PushReceipt, String> {
-    let (repo, root) = open(path)?;
+) -> Result<(String, String, String), String> {
     let head = repo.head().map_err(|e| format!("Read HEAD: {e}"))?;
     if head.is_detached() {
         return Err("Push requires a local branch. Switch to a branch and retry.".into());
@@ -82,7 +84,7 @@ pub fn push(
     let configured_remote = repo
         .branch_remote_name(branch_full.shorten(), Direction::Fetch)
         .map(|name| name.as_bstr().to_string());
-    let remote = resolve_remote(&repo, remote, Direction::Push)?;
+    let remote = resolve_remote(repo, remote, Direction::Push)?;
     let configured_branch = if configured_remote.as_deref() == Some(remote.as_str()) {
         repo.branch_remote_ref_name(branch_full.as_ref(), Direction::Fetch)
             .transpose()
@@ -99,15 +101,63 @@ pub fn push(
         None
     };
     let remote_branch = configured_branch.unwrap_or_else(|| branch.clone());
+    Ok((branch, remote, remote_branch))
+}
+
+fn lease_id(repo: &gix::Repository, remote: &str, remote_branch: &str) -> Result<String, String> {
+    let tracking = format!("refs/remotes/{remote}/{remote_branch}");
+    repo.try_find_reference(tracking.as_str())
+        .map_err(|e| format!("Read remote-tracking ref {tracking}: {e}"))?
+        .and_then(|reference| reference.target().try_id().map(|id| id.to_string()))
+        .ok_or_else(|| {
+            format!(
+                "Force with lease requires the remote-tracking ref {remote}/{remote_branch}. Fetch first, then retry."
+            )
+        })
+}
+
+/// Read the exact lease commit for a forced push, without changing anything.
+pub fn push_lease(
+    path: &Path,
+    remote: Option<&str>,
+    branch: Option<&str>,
+) -> Result<String, String> {
+    let (repo, _) = open(path)?;
+    let (_, remote, remote_branch) = push_target(&repo, remote, branch)?;
+    lease_id(&repo, &remote, &remote_branch)
+}
+
+pub fn push(
+    path: &Path,
+    remote: Option<&str>,
+    branch: Option<&str>,
+    options: PushOptions,
+    interactive: bool,
+    cancel: &AtomicBool,
+    progress: &mut dyn FnMut(Progress),
+) -> Result<PushReceipt, String> {
+    let (repo, root) = open(path)?;
+    let (branch, remote, remote_branch) = push_target(&repo, remote, branch)?;
+    let lease = options.force_with_lease;
+    if let Some(lease) = &lease {
+        gix::ObjectId::from_hex(lease.as_bytes())
+            .map_err(|_| "Force-with-lease expected commit is invalid.".to_string())?;
+    }
     let mut args = vec!["push".to_string(), "--progress".to_string()];
-    if set_upstream {
+    if options.set_upstream {
         args.push("--set-upstream".to_string());
+    }
+    if let Some(lease) = &lease {
+        args.push(format!(
+            "--force-with-lease=refs/heads/{remote_branch}:{lease}"
+        ));
     }
     args.push(remote.clone());
     args.push(format!("refs/heads/{branch}:refs/heads/{remote_branch}"));
     let output = run_git(&root, &args, Operation::Push, interactive, cancel, progress)?;
     finish(output, format!("Push {branch} to {remote}/{remote_branch}"))?;
     let snapshot = crate::refs::read(path)?;
+    let full = format!("refs/heads/{branch}");
     let upstream = snapshot
         .tracking
         .iter()
@@ -117,7 +167,9 @@ pub fn push(
         remote,
         branch,
         upstream,
-        set_upstream,
+        set_upstream: options.set_upstream,
+        force_with_lease: lease.is_some(),
+        lease,
     })
 }
 

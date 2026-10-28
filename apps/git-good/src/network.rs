@@ -49,13 +49,17 @@ impl Worker {
         remote: Option<String>,
         branch: Option<String>,
         set_upstream: bool,
+        force_with_lease: Option<String>,
     ) -> Result<Self, String> {
         start(ctx, Operation::Push, move |cancel, progress| {
             gg_git::sync::push(
                 &path,
                 remote.as_deref(),
                 branch.as_deref(),
-                set_upstream,
+                gg_git::sync::PushOptions {
+                    set_upstream,
+                    force_with_lease,
+                },
                 false,
                 &cancel,
                 progress,

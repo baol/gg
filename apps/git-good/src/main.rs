@@ -71,7 +71,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("--help")) {
         println!(
-            "gg · good git\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good refs [PATH]      Print branches, remotes, tags, and HEAD as JSON\ngit-good status [PATH] [--file PATH --area AREA]   Print working status or diff as JSON\ngit-good stage --file PATH [--hunk HEADER]... [--repo PATH]   Stage one file or selected hunks\ngit-good unstage --file PATH [--repo PATH]   Unstage one file\ngit-good commit [--amend] [--sign|--no-sign] -m MESSAGE [--repo PATH]   Commit the index or amend HEAD after Git hooks\ngit-good reflog [REF] [--repo PATH]   Print reflog entries as JSON\ngit-good blame PATH [--revision REF] [--lines START,END] [--repo PATH]   Print line attribution as JSON\ngit-good worktree <list|add|remove> [OPTIONS] [--repo PATH]   List, add, or remove worktrees\ngit-good submodule <status|update> PATH [OPTIONS] [--repo PATH]   Inspect or update a gitlink submodule\ngit-good lfs <status|fetch> PATH [--area staged|unstaged|untracked|conflict] [--revision REF] [--before REF] [--repo PATH]   Inspect or fetch an LFS pointer\ngit-good signature <config|verify> [REF] [--repo PATH]   Read signing config or verify a commit/tag\ngit-good switch [--create] BRANCH [--repo PATH]   Switch to or create a local branch\ngit-good fetch [REMOTE] [--prune] [--repo PATH]   Fetch and update remote-tracking refs\ngit-good push [REMOTE] [BRANCH] [--set-upstream] [--repo PATH]   Push a local branch without force\ngit-good clone URL [PATH]   Clone a repository and open it\ngit-good stash <list|push|apply|pop|drop> [OPTIONS] [--repo PATH]   List or mutate stashes\ngit-good cherry-pick COMMIT [--repo PATH]   Apply a commit\ngit-good revert COMMIT [--repo PATH]   Invert a commit\ngit-good merge REF [--no-ff] [--repo PATH]   Merge a branch, remote, or tag\ngit-good rebase REF [--autostash] [--repo PATH]   Rebase the current branch onto a branch, remote, or tag\ngit-good rebase --continue|--skip|--abort [--repo PATH]   Recover an in-progress rebase\ngit-good rewrite --from COMMIT --pick COMMIT... --squash COMMIT... [--autostash] [--repo PATH]   Reorder or squash a linear range\ngit-good rewrite --continue|--skip|--abort [--repo PATH]   Recover an in-progress rewrite\ngit-good conflicts [--repo PATH]   List unmerged paths\ngit-good conflict --file PATH [--use ours|theirs|--stage] [--repo PATH]   Read or resolve a conflict\ngit-good reset --soft|--mixed|--hard COMMIT [--repo PATH]   Reset the current branch\ngit-good branch --delete BRANCH [--force] [--repo PATH]   Delete a local branch\ngit-good branch --create NAME [--at REF] [--repo PATH]   Create a local branch without switching\ngit-good tag --delete TAG [--repo PATH]   Delete a local tag
+            "gg · good git\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good refs [PATH]      Print branches, remotes, tags, and HEAD as JSON\ngit-good status [PATH] [--file PATH --area AREA]   Print working status or diff as JSON\ngit-good stage --file PATH [--hunk HEADER]... [--repo PATH]   Stage one file or selected hunks\ngit-good unstage --file PATH [--repo PATH]   Unstage one file\ngit-good commit [--amend] [--sign|--no-sign] -m MESSAGE [--repo PATH]   Commit the index or amend HEAD after Git hooks\ngit-good reflog [REF] [--repo PATH]   Print reflog entries as JSON\ngit-good blame PATH [--revision REF] [--lines START,END] [--repo PATH]   Print line attribution as JSON\ngit-good worktree <list|add|remove> [OPTIONS] [--repo PATH]   List, add, or remove worktrees\ngit-good submodule <status|update> PATH [OPTIONS] [--repo PATH]   Inspect or update a gitlink submodule\ngit-good lfs <status|fetch> PATH [--area staged|unstaged|untracked|conflict] [--revision REF] [--before REF] [--repo PATH]   Inspect or fetch an LFS pointer\ngit-good signature <config|verify> [REF] [--repo PATH]   Read signing config or verify a commit/tag\ngit-good switch [--create] BRANCH [--repo PATH]   Switch to or create a local branch\ngit-good fetch [REMOTE] [--prune] [--repo PATH]   Fetch and update remote-tracking refs\ngit-good push [REMOTE] [BRANCH] [--set-upstream] [--force-with-lease] [--repo PATH]   Push a local branch, with an explicit lease when rewriting\ngit-good clone URL [PATH]   Clone a repository and open it\ngit-good stash <list|push|apply|pop|drop> [OPTIONS] [--repo PATH]   List or mutate stashes\ngit-good cherry-pick COMMIT [--repo PATH]   Apply a commit\ngit-good revert COMMIT [--repo PATH]   Invert a commit\ngit-good merge REF [--no-ff] [--repo PATH]   Merge a branch, remote, or tag\ngit-good rebase REF [--autostash] [--repo PATH]   Rebase the current branch onto a branch, remote, or tag\ngit-good rebase --continue|--skip|--abort [--repo PATH]   Recover an in-progress rebase\ngit-good rewrite --from COMMIT --pick COMMIT... --squash COMMIT... [--autostash] [--repo PATH]   Reorder or squash a linear range\ngit-good rewrite --continue|--skip|--abort [--repo PATH]   Recover an in-progress rewrite\ngit-good conflicts [--repo PATH]   List unmerged paths\ngit-good conflict --file PATH [--use ours|theirs|--stage] [--repo PATH]   Read or resolve a conflict\ngit-good reset --soft|--mixed|--hard COMMIT [--repo PATH]   Reset the current branch\ngit-good branch --delete BRANCH [--force] [--repo PATH]   Delete a local branch\ngit-good branch --create NAME [--at REF] [--repo PATH]   Create a local branch without switching\ngit-good tag --delete TAG [--repo PATH]   Delete a local tag
 git-good tag --create TAG --at REF -m MESSAGE [--sign] [--repo PATH]   Create an annotated or signed tag\ngit-good show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]   Review or export\n\nBrowse commits reachable from HEAD and all local, remote, and tag refs."
         );
         return Ok(());
@@ -269,6 +269,14 @@ fn write_history_json(
 struct CloneDialog {
     url: String,
     destination: String,
+}
+
+struct ForcePushDialog {
+    branch: String,
+    remote: String,
+    remote_branch: String,
+    upstream: String,
+    lease: String,
 }
 
 struct StashDialog {
@@ -882,6 +890,8 @@ struct Browser {
     network_error: Option<String>,
     network_notice: Option<String>,
     clone_dialog: Option<CloneDialog>,
+    force_push: Option<ForcePushDialog>,
+    force_push_pending: bool,
     track_dialog: Option<String>,
     stash_dialog: Option<StashDialog>,
     stash_window: Option<StashWindow>,
@@ -973,6 +983,8 @@ impl Browser {
             network_error: None,
             network_notice: None,
             clone_dialog: None,
+            force_push: None,
+            force_push_pending: false,
             track_dialog: None,
             stash_dialog: None,
             stash_window: None,
@@ -1123,6 +1135,7 @@ impl Browser {
         if self.branch.is_some() || self.network.is_some() {
             return;
         }
+        self.force_push_pending = false;
         let Some(path) = self
             .state
             .history
@@ -1147,6 +1160,7 @@ impl Browser {
         if self.branch.is_some() || self.network.is_some() {
             return;
         }
+        self.force_push_pending = false;
         let Some(path) = self
             .state
             .history
@@ -1157,7 +1171,7 @@ impl Browser {
             return;
         };
         let set_upstream = self.state.refs.current_tracking().is_none();
-        match network::Worker::push(ctx, path, None, None, set_upstream) {
+        match network::Worker::push(ctx, path, None, None, set_upstream, None) {
             Ok(worker) => {
                 self.network = Some(worker);
                 self.network_progress = None;
@@ -1168,10 +1182,115 @@ impl Browser {
         }
     }
 
+    fn force_push_target(&self) -> Option<ForcePushDialog> {
+        let tracking = self.state.refs.current_tracking()?;
+        let lease = self
+            .state
+            .refs
+            .items
+            .iter()
+            .find(|item| item.full_name == tracking.upstream_full_name)
+            .map(|item| item.commit.clone())
+            .filter(|commit| !commit.is_empty())?;
+        Some(ForcePushDialog {
+            branch: tracking.branch.clone(),
+            remote: tracking.remote.clone(),
+            remote_branch: tracking.remote_branch.clone(),
+            upstream: tracking.upstream.clone(),
+            lease,
+        })
+    }
+
+    fn start_force_push(&mut self, ctx: &egui::Context, dialog: ForcePushDialog) {
+        if self.branch.is_some() || self.network.is_some() {
+            return;
+        }
+        let Some(path) = self
+            .state
+            .history
+            .as_ref()
+            .map(|history| history.path.clone())
+        else {
+            self.network_error = Some("Open a repository before pushing".into());
+            return;
+        };
+        self.force_push_pending = true;
+        match network::Worker::push(
+            ctx,
+            path,
+            Some(dialog.remote),
+            Some(dialog.branch),
+            false,
+            Some(dialog.lease),
+        ) {
+            Ok(worker) => {
+                self.network = Some(worker);
+                self.network_progress = None;
+                self.network_error = None;
+                self.network_notice = None;
+            }
+            Err(error) => {
+                self.force_push_pending = false;
+                self.network_error = Some(error);
+            }
+        }
+    }
+
+    fn draw_force_push(&mut self, ctx: &egui::Context) {
+        let Some(dialog) = &mut self.force_push else {
+            return;
+        };
+        let mut open = true;
+        let mut submit = false;
+        let mut cancel = false;
+        egui::Window::new("Force push with lease")
+            .id(egui::Id::unique("force-push-lease"))
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .default_width(440.0)
+            .default_pos(ctx.content_rect().center())
+            .pivot(egui::Align2::CENTER_CENTER)
+            .show(ctx, |ui| {
+                ui.label(format!(
+                    "Rewrite {}/{} with local {}?",
+                    dialog.remote, dialog.remote_branch, dialog.branch
+                ));
+                ui.weak(format!(
+                    "Lease: {} at {}",
+                    dialog.upstream,
+                    short_id(&dialog.lease)
+                ));
+                ui.weak("Git rejects this push if the remote branch no longer points at that lease, leaving the remote unchanged. This never uses bare --force.");
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    if ui
+                        .add_enabled(
+                            self.network.is_none() && self.branch.is_none(),
+                            egui::Button::new("Force push with lease"),
+                        )
+                        .clicked()
+                    {
+                        submit = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        cancel = true;
+                    }
+                });
+            });
+        if submit && let Some(dialog) = self.force_push.take() {
+            self.start_force_push(ctx, dialog);
+        }
+        if cancel || !open {
+            self.force_push = None;
+        }
+    }
+
     fn start_clone(&mut self, ctx: &egui::Context, url: String, destination: Option<PathBuf>) {
         if self.branch.is_some() || self.network.is_some() {
             return;
         }
+        self.force_push_pending = false;
         match network::Worker::clone(ctx, url, destination) {
             Ok(worker) => {
                 self.network = Some(worker);
@@ -1199,6 +1318,8 @@ impl Browser {
         result: Result<network::Outcome, String>,
         operation: Option<gg_engine::sync::Operation>,
     ) {
+        let force_push = self.force_push_pending;
+        self.force_push_pending = false;
         self.network = None;
         self.network_progress = None;
         match result {
@@ -1209,12 +1330,25 @@ impl Browser {
             }
             Ok(network::Outcome::Push(receipt)) => {
                 self.network_error = None;
-                self.network_notice = Some(match &receipt.upstream {
-                    Some(upstream) => format!(
-                        "Pushed {} to {} · upstream {upstream}",
-                        receipt.branch, receipt.remote
-                    ),
-                    None => format!("Pushed {} to {}", receipt.branch, receipt.remote),
+                self.network_notice = Some(if receipt.force_with_lease {
+                    format!(
+                        "Force-pushed {} to {} · lease {}",
+                        receipt.branch,
+                        receipt.upstream.as_deref().unwrap_or(&receipt.remote),
+                        receipt
+                            .lease
+                            .as_deref()
+                            .map(short_id)
+                            .unwrap_or_else(|| "revalidated".into())
+                    )
+                } else {
+                    match &receipt.upstream {
+                        Some(upstream) => format!(
+                            "Pushed {} to {} · upstream {upstream}",
+                            receipt.branch, receipt.remote
+                        ),
+                        None => format!("Pushed {} to {}", receipt.branch, receipt.remote),
+                    }
                 });
                 self.load(ctx);
             }
@@ -1241,8 +1375,16 @@ impl Browser {
                 self.load(ctx);
             }
             Err(error) => {
+                let error =
+                    if force_push && matches!(operation, Some(gg_engine::sync::Operation::Push)) {
+                        format!("Force push with lease failed: {error}")
+                    } else {
+                        error
+                    };
                 let recovery = match operation {
-                    Some(gg_engine::sync::Operation::Push) => Some(RecoveryAction::RetryPush),
+                    Some(gg_engine::sync::Operation::Push) if !force_push => {
+                        Some(RecoveryAction::RetryPush)
+                    }
                     Some(gg_engine::sync::Operation::Fetch) => Some(RecoveryAction::RetryFetch),
                     _ => None,
                 };
@@ -4407,6 +4549,24 @@ impl Browser {
                         self.start_push(ctx);
                         ui.close();
                     }
+                    let force_target = self.force_push_target();
+                    if ui
+                        .add_enabled(
+                            network_idle && force_target.is_some(),
+                            egui::Button::new("Force push with lease…"),
+                        )
+                        .on_hover_text(
+                            "Rewrite the upstream branch only if it still matches the fetched lease",
+                        )
+                        .on_disabled_hover_text(
+                            "Force with lease requires an upstream remote-tracking ref; track and fetch first",
+                        )
+                        .clicked()
+                        && let Some(target) = force_target
+                    {
+                        self.force_push = Some(target);
+                        ui.close();
+                    }
                     if ui
                         .add_enabled(network_idle, egui::Button::new("Clone…"))
                         .on_hover_text("Clone a repository and open it after success")
@@ -6065,6 +6225,7 @@ impl Browser {
         self.draw_lfs(ctx);
         self.draw_signature(ctx);
         self.draw_tag_create(ctx);
+        self.draw_force_push(ctx);
         if self.working.is_some() {
             let external = self.external_operation_reason();
             let close = self.working.as_mut().is_some_and(|working| {
@@ -8729,6 +8890,50 @@ mod tests {
             );
         }
         Ok(())
+    }
+
+    #[test]
+    fn force_push_dialog_names_the_lease_and_never_offers_bare_force() {
+        for width in [720.0, 1120.0] {
+            let ctx = egui::Context::default();
+            let mut app = layout_fixture();
+            app.force_push = Some(ForcePushDialog {
+                branch: "main".into(),
+                remote: "origin".into(),
+                remote_branch: "main".into(),
+                upstream: "origin/main".into(),
+                lease: "a".repeat(40),
+            });
+            let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let output = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let text = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            for expected in [
+                "Force push with lease",
+                "Rewrite origin/main with local main?",
+                "Lease: origin/main at aaaaaaaaaaaa",
+                "never uses bare --force",
+            ] {
+                assert!(
+                    text.iter().any(|line| line.contains(expected)),
+                    "missing {expected} at {width}: {text:?}"
+                );
+            }
+            assert!(
+                !text.iter().any(|line| line == &"Force push"),
+                "bare force push control surfaced at {width}: {text:?}"
+            );
+        }
     }
 
     #[test]

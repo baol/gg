@@ -25,7 +25,7 @@ Send the shared brief plus one assignment to each subagent. Do not dispatch the 
 
 Default to **one implementation writer at a time** in the current checkout. Several tasks edit main.rs, reader code, and owning specifications. V1/V2 can review a frozen candidate concurrently using separate fixture directories and isolated displays. Coordinate expensive builds; never let agents mutate the same fixture or shared source concurrently.
 
-Deferred: image-diff blend modes beyond onion skin (such as difference heatmaps), LFS smudging/materialization, force push, and restart-persistent drafts. Preserve extension points without adding fake functional controls.
+Deferred: image-diff blend modes beyond onion skin (such as difference heatmaps), LFS smudging/materialization and restart-persistent drafts. Preserve extension points without adding fake functional controls.
 
 ## Shared brief — prepend to every assignment
 
@@ -249,7 +249,7 @@ Standardize Back/Cancel/Close and Delete/Discard wording. Remove old entry point
 
 Tests: Git fixture oracles for stash options/conflicts, resets/backups, branch creation/switch partial success; real input paths for nested review return, source/selection retention, keyboard parity, canceled intent and worktree isolation. Copy exact identifiers.
 
-Do not expand into force push, worktree management, restart persistence or other deferred features.
+Do not expand into LFS smudging/materialization, restart persistence, or other deferred features.
 ~~~
 
 ## I8 · Coherence closeout

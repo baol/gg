@@ -40,6 +40,8 @@ pub struct PushReceipt {
     pub branch: String,
     pub upstream: Option<String>,
     pub set_upstream: bool,
+    pub force_with_lease: bool,
+    pub lease: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

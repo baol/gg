@@ -1289,6 +1289,148 @@ fn sync_cli_clones_fetches_pushes_and_reports_failures() -> Result {
 }
 
 #[test]
+fn sync_cli_force_with_lease_is_explicit_and_rejects_stale_leases() -> Result {
+    let remote = tempfile::tempdir()?;
+    git(remote.path(), &["init", "--bare", "-b", "main"])?;
+    let source = tempfile::tempdir()?;
+    init(source.path(), &["-b", "main"])?;
+    std::fs::write(source.path().join("a"), b"base\n")?;
+    git(source.path(), &["add", "a"])?;
+    git(
+        source.path(),
+        &[
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.org",
+            "commit",
+            "-qm",
+            "base",
+        ],
+    )?;
+    let remote_path = remote.path().to_string_lossy().into_owned();
+    git(
+        source.path(),
+        &["remote", "add", "origin", remote_path.as_str()],
+    )?;
+    git(source.path(), &["push", "-q", "origin", "main"])?;
+
+    let destination = tempfile::tempdir()?;
+    let target = destination.path().join("cloned");
+    let binary = env!("CARGO_BIN_EXE_git-good");
+    let out = Command::new(binary)
+        .arg("clone")
+        .arg(remote.path())
+        .arg(&target)
+        .output()?;
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    git(&target, &["config", "core.autocrlf", "false"])?;
+    std::fs::write(target.join("b"), b"local only\n")?;
+    git(&target, &["add", "b"])?;
+    git(
+        &target,
+        &[
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.org",
+            "commit",
+            "-qm",
+            "local only",
+        ],
+    )?;
+    let local_head = git_output(&target, &["rev-parse", "HEAD"])?;
+
+    std::fs::write(source.path().join("a"), b"remote wins\n")?;
+    git(
+        source.path(),
+        &[
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.org",
+            "commit",
+            "-qam",
+            "remote wins",
+        ],
+    )?;
+    git(source.path(), &["push", "-q", "origin", "main"])?;
+    let remote_after_source = git_output(remote.path(), &["rev-parse", "refs/heads/main"])?;
+
+    let push = |extra: &[&str]| -> Result<std::process::Output> {
+        Ok(Command::new(binary)
+            .args(["push", "origin", "main"])
+            .args(extra)
+            .arg("--repo")
+            .arg(&target)
+            .output()?)
+    };
+    let out = push(&["--force-with-lease"])?;
+    assert!(!out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("failed"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        git_output(remote.path(), &["rev-parse", "refs/heads/main"])?,
+        remote_after_source
+    );
+
+    let out = push(&["--force"])?;
+    assert!(!out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("Unknown push option"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        git_output(remote.path(), &["rev-parse", "refs/heads/main"])?,
+        remote_after_source
+    );
+
+    let out = Command::new(binary)
+        .args(["fetch", "origin", "--repo"])
+        .arg(&target)
+        .output()?;
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let lease = String::from_utf8(git_output(
+        &target,
+        &["rev-parse", "refs/remotes/origin/main"],
+    )?)?
+    .trim()
+    .to_string();
+    assert_eq!(
+        git_output(&target, &["rev-parse", "refs/remotes/origin/main"])?,
+        remote_after_source
+    );
+
+    let out = push(&["--force-with-lease"])?;
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let receipt: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(receipt["operation"], "push");
+    assert_eq!(receipt["force_with_lease"], true);
+    assert_eq!(receipt["lease"], lease);
+    assert_eq!(
+        git_output(remote.path(), &["rev-parse", "refs/heads/main"])?,
+        local_head
+    );
+    Ok(())
+}
+
+#[test]
 fn stash_cli_lists_pushes_applies_pops_and_drops() -> Result {
     let repo = tempfile::tempdir()?;
     init(repo.path(), &["-b", "main"])?;
