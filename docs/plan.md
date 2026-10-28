@@ -18,6 +18,7 @@ Contracts: [file reading and history](architecture.md#file-reading-and-history--
 6. **Submodules · complete.** Show submodule status, referenced commits, and explicit update actions without silently changing the parent repository.
 7. **Git LFS · planned.** Identify LFS pointers, show their object identity, and keep fetch/smudge actions explicit.
 8. **Commit and tag signing · planned.** Verify signatures where the repository provides them and keep signing configuration explicit.
+9. **Image onion skin · planned.** Add an **Onion skin** presentation alongside Side by side and Swipe for two present images. Draw Before full and After over it at an explicit opacity, defaulting to 50%, with a labeled keyboard-adjustable opacity control. Preserve Fit/Actual size, per-side dimensions and byte metadata, checkerboard transparency, and per-side export. Require both sides; one-sided/absent images keep the explicit absence state instead of blending. Normal alpha blending only; difference/heatmap modes are separate.
 
 ### Acceptance
 
@@ -67,7 +68,7 @@ Goal: consolidate navigation, reading, scoped commands, operations, and recovery
 | Recovery and intent | Recovery shares one source selector and returns to its selected entry; stash restore options and branch-creation switch choice are explicit; blocked intent is reoffered and revalidated, never auto-executed | egui interaction, Git oracle, native review |
 | Coherence closeout | Connected review, Local Changes, conflict, recovery, stash, and branch journeys keep the same labels, placement, disable reasons, and return rules at 1120×740 and 720×480; no superseded control remains and every housed control stays inside the viewport | Native capture, geometry test, keyboard/pointer review |
 
-Implementation handoff: [phased implementation and verification prompts](implementation-prompts.md). These increments change no deferred M7 scope: LFS, signing, and force push remain planned.
+Implementation handoff: [phased implementation and verification prompts](implementation-prompts.md). These increments change no deferred M7 scope: LFS, signing, onion skin, and force push remain planned.
 
 ## UI-flow consolidation · pre-M7
 

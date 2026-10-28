@@ -33,7 +33,7 @@ Keep Repository, Refs, View, and Help in the toolbar; stash and recovery tools l
 
 Retain selected commit, file, side, reading position, and filters through back navigation where the owning contracts specify them. Keep normal/amend drafts separately per canonical worktree. A pending worker disables duplicate/incompatible writes while browsing stays available; rewrite configuration closes on submission and its progress stays in the operation area. Never publish an old file's result under a new file's label.
 
-Keyboard paths mirror visible controls: arrows or j/k select; Enter/Right opens; Escape/Left returns one level; Alt+A opens Actions; H opens file history; B is planned for blame; brackets move changes; Alt+Up/Down moves files; Alt+Left/Right moves history versions. Editors retain their text keys. Keep focus visible, give disabled actions visible reasons, accompany color with text/symbols, and follow the design's 4.5:1 contrast requirement in both themes.
+Keyboard paths mirror visible controls: arrows or j/k select; Enter/Right opens; Escape/Left returns one level; Alt+A opens Actions; H opens file history; B toggles line attribution; brackets move changes; Alt+Up/Down moves files; Alt+Left/Right moves history versions. Editors retain their text keys. Keep focus visible, give disabled actions visible reasons, accompany color with text/symbols, and follow the design's 4.5:1 contrast requirement in both themes.
 
 The mockup selector is review tooling outside the product shell. Each screen is an interaction wireframe, not a native screenshot or a promise of final widget styling. **Narrow layout** demonstrates reflow, not a mobile product. Only scenario controls and the displayed primary flow actions simulate transitions; static context is presented as text. All proposed screen labels below are design recommendations.
 
@@ -45,7 +45,7 @@ flowchart TD
     History --> Review[Commit files and comparison]
     Review --> Read[Diff or Full file]
     Read --> Timeline[File or line history]
-    Read --> Blame[Blame: proposed]
+    Read --> Blame[Blame and line history]
     Open --> Local[Local Changes]
     Local --> Stage[Review and stage]
     Stage --> Commit[Commit or amend]
@@ -202,7 +202,7 @@ flowchart TD
 2. Choose Side by side or Swipe; a labeled slider controls the boundary, including by keyboard. Pair Fit/Actual size with visible zoom context; preserve side identity when changing presentation.
 3. Different dimensions stay visible; do not stretch one image to pretend the sizes match. Transparency needs a neutral checkerboard. Export before/after uses the original complete content and new-file rules.
 
-**States:** unsupported format, decoding failure, and preview budgets show metadata and export rather than an empty canvas. Wide layouts offer side-by-side and swipe; narrow layouts stack named before/after previews. Fit never upscales, and Actual size shows 100% with scrolling. **Completion:** the user understands the visual change and the exact dimensions. **Mockup:** Images demonstrates side-by-side/stacked previews and the swipe boundary.
+**States:** unsupported format, decoding failure, and preview budgets show metadata and export rather than an empty canvas. Wide layouts offer side-by-side and swipe; narrow layouts stack named before/after previews. Fit never upscales, and Actual size shows 100% with scrolling. **Onion skin (planned):** a third wide presentation overlays Before and After with a keyboard-adjustable opacity slider; it preserves each image’s dimensions, requires both sides, and keeps export per side. It is not implemented yet. **Completion:** the user understands the visual change and the exact dimensions. **Mockup:** Images demonstrates side-by-side/stacked previews and the swipe boundary.
 
 ### F14 · Manage isolated worktrees · M7
 
@@ -249,7 +249,7 @@ flowchart TD
 
 ## Review and delivery sequence
 
-Keep the plan's sequence: blame/line history → image diffs → worktrees → submodules → LFS → signing. Finish the blame place-mapping and divergent-range chooser first; reuse the shipped history cursor rather than creating a second timeline. For each remaining increment, settle the decisions called out above, define shared engine/CLI behavior, then implement native UI and verification together. No date or new milestone commitment is inferred.
+The plan sequence is now: blame/line history → image diffs → worktrees → submodules → LFS → signing, with onion skin planned as an image-diff extension. Blame/line history, image diffs, worktrees, and submodules are complete; reuse the shipped history cursor rather than creating a second timeline. For each remaining increment, settle the decisions called out above, define shared engine/CLI behavior, then implement native UI and verification together. No date or new milestone commitment is inferred.
 
 | Review scenario | Expected observation |
 | --- | --- |

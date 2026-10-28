@@ -125,7 +125,7 @@ Before changing production UI, update the owning architecture and plan contracts
 
 These controls appear in the design exploration but are intentionally not part of this delivery. They stay planned in [plan](plan.md) with honest extension points; no disabled or placeholder control pretends they work.
 
-- **Show attribution** and blame/line/range history: the reader keeps the saved comparison and version-cursor extension points, but no attribution button or fake line-history control ships until the algorithm and its bounds are specified.
+- **Onion skin**: a planned image presentation that overlays Before and After with an explicit opacity control; side-by-side and swipe are implemented, onion skin is not.
 - **Git LFS**: pointer identity and explicit fetch/smudge actions remain unimplemented.
 - **Commit and tag signing**: verification and signing configuration remain unimplemented.
 - **Force push**: push stays non-force; no force-with-lease or force toggle is offered.
