@@ -120,10 +120,7 @@ fn finish(
     )?;
     let conflicts = unmerged(path)?;
     let state = state(path)?;
-    if !output.status.success() && conflicts.is_empty() && state.is_none() && command != "abort" {
-        return Err(failure(&format!("{label} {}", operation.as_str()), &output));
-    }
-    if command == "abort" && !output.status.success() && state.is_some() {
+    if !output.status.success() {
         return Err(failure(&format!("{label} {}", operation.as_str()), &output));
     }
     let in_progress = state.is_some() || !conflicts.is_empty();

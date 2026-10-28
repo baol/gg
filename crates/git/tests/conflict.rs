@@ -80,6 +80,25 @@ fn stages_manually_resolved_content() -> Result {
 }
 
 #[test]
+fn nested_stage_uses_the_repository_relative_conflict_path() -> Result {
+    let dir = repo()?;
+    let p = dir.path();
+    conflicting(p)?;
+    let nested = p.join("nested");
+    std::fs::create_dir(&nested)?;
+    std::fs::write(nested.join("a"), b"unrelated\n")?;
+    std::fs::write(p.join("a"), b"resolved\n")?;
+
+    gg_git::conflict::stage(&nested, "a")?;
+
+    assert!(gg_git::conflict::unmerged(p)?.is_empty());
+    assert_eq!(std::fs::read(p.join("a"))?, b"resolved\n");
+    let status = String::from_utf8(git(p, &["status", "--porcelain"])?)?;
+    assert!(status.contains("?? nested/"), "{status}");
+    Ok(())
+}
+
+#[test]
 fn add_add_conflict_has_no_base() -> Result {
     let dir = repo()?;
     let p = dir.path();

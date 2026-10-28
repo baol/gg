@@ -39,7 +39,10 @@ pub fn list(path: &Path) -> Result<Snapshot, String> {
             }
         ));
     }
-    let current = std::fs::canonicalize(path).ok();
+    let current = gix::discover(path)
+        .ok()
+        .map(|repo| repo.workdir().unwrap_or_else(|| repo.path()).to_path_buf())
+        .and_then(|root| std::fs::canonicalize(root).ok());
     let mut worktrees = Vec::new();
     let mut fields: Vec<Vec<u8>> = Vec::new();
     for line in output.stdout.split(|byte| *byte == 0) {

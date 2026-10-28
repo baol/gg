@@ -47,6 +47,19 @@ fn status(path: &Path) -> Result<String> {
     Ok(String::from_utf8(git(path, &["status", "--porcelain"])?)?)
 }
 
+fn hook(path: &Path, name: &str, body: &str) -> Result {
+    let hooks = path.join(".git/hooks");
+    std::fs::create_dir_all(&hooks)?;
+    let file = hooks.join(name);
+    std::fs::write(&file, format!("#!/bin/sh\n{body}\n"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o755))?;
+    }
+    Ok(())
+}
+
 #[test]
 fn cherry_pick_applies_a_commit() -> Result {
     let dir = repo()?;
@@ -138,6 +151,38 @@ fn revert_inverts_a_commit_and_can_skip_a_conflict() -> Result {
     assert!(!clean.in_progress);
     assert_eq!(std::fs::read(p.join("a"))?, b"one\n");
     assert!(subject(p)?.starts_with("Revert"));
+    Ok(())
+}
+
+#[test]
+fn recovery_failures_are_errors() -> Result {
+    let dir = repo()?;
+    let p = dir.path();
+    let error =
+        match gg_git::mutation::abort_operation(p, gg_engine::mutation::Operation::CherryPick) {
+            Ok(_) => return Err("abort without an operation unexpectedly succeeded".into()),
+            Err(error) => error,
+        };
+    assert!(error.contains("Abort cherry-pick failed"), "{error}");
+
+    git(p, &["switch", "-qc", "other"])?;
+    std::fs::write(p.join("a"), b"other\n")?;
+    git(p, &["commit", "-qam", "other"])?;
+    git(p, &["switch", "-q", "main"])?;
+    std::fs::write(p.join("a"), b"main\n")?;
+    git(p, &["commit", "-qam", "main"])?;
+    gg_git::mutation::cherry_pick(p, "other")?;
+    std::fs::write(p.join("a"), b"resolved\n")?;
+    git(p, &["add", "a"])?;
+    hook(p, "commit-msg", "echo hook-blocked >&2\nexit 7")?;
+
+    let error =
+        match gg_git::mutation::continue_operation(p, gg_engine::mutation::Operation::CherryPick) {
+            Ok(_) => return Err("continue with a failing hook unexpectedly succeeded".into()),
+            Err(error) => error,
+        };
+    assert!(error.contains("hook-blocked"), "{error}");
+    assert!(gg_git::mutation::state(p)?.is_some());
     Ok(())
 }
 

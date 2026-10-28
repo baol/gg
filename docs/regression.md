@@ -93,6 +93,7 @@ Before connecting M1 controls, test Review/Back anchor restoration, active-view 
 - Network operations show phase/percent/message with Cancel in the area; branch operations show their label there. Duplicate submission is refused and incompatible mutations stay disabled for the duration.
 - Opening a repository with an existing operation detects it on the first completed history load. Switching repositories (including a successful clone) drops the previous workers, network/stash/branch notices, outcome, conflict view, and refresh state; old operations are not re-detected while the requested history is still loading, late results are ignored, and the new repository is detected independently. Open is disabled while work owns the area, including the path-field Enter route.
 - Local Changes disables staging, discard, commit, amend, and duplicate mutations while the area owns a rewrite, operation worker, network, or branch operation, but keeps list selection, scrolling, Back, and Refresh available for browsing. Network work cannot start during an in-progress merge/rebase; cancellation lives only in the area.
+- Pending Local Changes mutations retain their view and block History, repository Open, and worktree Open until completion. Worktree switching is also rejected while a branch or network operation is active, so late results cannot cross repository contexts.
 - Geometry/interaction tests cover the area at 720×480 and 1120×740, the merge-without-Skip rule, one-area ownership, rewrite lifecycle, network cancel, and outcome/recovery behavior.
 
 ## Coherence I6 conflict preview and Stage resolution
@@ -235,13 +236,13 @@ Native review: the refs sidebar and status line show the current branch upstream
 
 ## M5 conflict resolution
 
-- Git oracle tests cover unmerged path listing, base/ours/theirs content, side selection with staging, manual staging, add/add conflicts without a base, and unknown-path or base-side rejection.
+- Git oracle tests cover unmerged path listing, base/ours/theirs content, side selection with staging, manual staging, add/add conflicts without a base, and unknown-path or base-side rejection. A nested `--repo` fixture stages only the repository-relative conflict and preserves an identically named untracked nested file.
 - CLI tests cover `conflicts` listing, `conflict --file` content, `--use ours|theirs`, `--stage`, and missing-path errors.
 - egui tests render the **Resolve conflicts** window with path selection, operation-aware Base/Ours/Theirs labels, and side tabs at 720 and 1120 widths. Worker tests deliver conflict content to the open window without blocking, route side resolution through the operation worker, and prefer the next unresolved path after a resolution.
 
 ## M5 recovery and operation state
 
-- Git and CLI tests cover continue, skip, and abort for cherry-pick, revert, and merge, including merge's unsupported skip and restored HEAD/worktree on abort.
+- Git and CLI tests cover continue, skip, and abort for cherry-pick, revert, and merge, including merge's unsupported skip and restored HEAD/worktree on abort. Abort without an operation and continue with a failing message hook return Git's error instead of a success receipt.
 - The native operation area exposes Continue, Skip, and Abort, hides Skip for merges, and shows the conflict count.
 - Recovery refreshes history, refs, and an open Local Changes view at a safe boundary; the conflict window closes once no operation remains.
 - Merge, rebase, and recovery use one background operation worker. The UI test blocks the worker behind a channel gate, proves the start call returns and a frame still renders and names the pending operation, rejects a duplicate submission, then releases the gate and accepts one result. Mutation actions are disabled while the worker is pending, and a failure or disconnection reports an actionable error.
@@ -355,7 +356,7 @@ Native review: the refs sidebar and status line show the current branch upstream
 ## M7 worktrees
 
 - Git fixtures list main and linked worktrees, branch/detached/bare labels, current/main markers, and dirty status. Add supports new and existing branches; checked-out branches and nonempty destinations are rejected with the exact path/reason.
-- Remove blocks main, current, dirty, locked, missing/prunable, and status-unavailable worktrees. A clean linked worktree is removed without force and disappears from the next listing.
+- Remove blocks main, current, dirty, locked, missing/prunable, and status-unavailable worktrees. A clean linked worktree is removed without force and disappears from the next listing. A nested `--repo` fixture still identifies the containing linked worktree as current and refuses its removal.
 - CLI `git good worktree list|add|remove` returns the same inventory and receipts; tests cover list counts, add, checked-out-branch rejection, dirty removal rejection, clean removal, and the resulting inventory.
 - The egui window renders at 720×480 inside the viewport with branch/path, Current/Modified, Open, and Remove controls. A state test round-trips commit selection, filter, pixel place, narrow details, and details visibility per worktree; the existing draft test keeps Local Changes drafts isolated by canonical worktree.
 - Create/Remove run on one worker; a failed add keeps the create dialog and a failed remove keeps the confirmation and visible error. Native captures cover the wide/narrow inventory and the create form.
@@ -370,7 +371,7 @@ Native review: the refs sidebar and status line show the current branch upstream
 
 ## M7 blame attribution
 
-- Git fixtures attribute the full file and a bounded line range, keep origin line numbers, and preserve author, email, author time, and subject through a content change.
+- Git fixtures attribute the full file and a bounded line range, keep origin line numbers, and preserve author, email, author time, and subject through a content change. A nested `--repo` fixture keeps the requested repository-relative path instead of attributing an identically named nested file.
 - Missing paths and revisions, out-of-range starts, cancellation, binary content, gitlinks, and symlinks return explicit errors rather than empty attribution.
 - CLI `git good blame PATH [--revision REF] [--lines START,END] [--repo PATH]` returns JSON with the exact path, range, and line metadata; a missing path exits non-zero.
 - The shared reader test renders the author/short-commit column and the selected line's author, email, relative time, commit, and subject. Attribution is available on either committed side, selects the After or Before revision accordingly, and disables working-tree content with a reason.
