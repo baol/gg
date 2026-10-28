@@ -79,6 +79,7 @@ pub struct DiffView {
     line_history: Option<(usize, usize)>,
     open_commit: Option<(String, String)>,
     submodule_request: Option<SubmoduleRequest>,
+    lfs_request: Option<FileChange>,
     offset: f32,
     reset: bool,
     mode: Mode,
@@ -143,6 +144,7 @@ impl Default for DiffView {
             line_history: None,
             open_commit: None,
             submodule_request: None,
+            lfs_request: None,
             offset: 0.0,
             reset: false,
             mode: Mode::Diff,
@@ -224,6 +226,7 @@ impl DiffView {
         self.blame_generation += 1;
         self.open_commit = None;
         self.submodule_request = None;
+        self.lfs_request = None;
         self.sent = None;
         self.full = None;
         self.cursor = None;
@@ -282,6 +285,24 @@ impl DiffView {
     /// Take a submodule-details request raised by File actions.
     pub fn take_submodule_request(&mut self) -> Option<SubmoduleRequest> {
         self.submodule_request.take()
+    }
+
+    /// Take an LFS-details request raised by File actions.
+    pub fn take_lfs_request(&mut self) -> Option<FileChange> {
+        self.lfs_request.take()
+    }
+
+    #[cfg(test)]
+    fn is_lfs(&self) -> bool {
+        let pointer = |text: &str| text.starts_with("version https://git-lfs.github.com/spec/v1");
+        self.info
+            .as_ref()
+            .is_some_and(|info| info.rows.iter().any(|row| pointer(&row.text)))
+            || self.rows.values().any(|row| pointer(&row.text))
+            || self
+                .full
+                .as_ref()
+                .is_some_and(|full| full.lines.iter().any(|line| pointer(&line.text)))
     }
 
     fn request_submodule(&self, change: &FileChange) -> Option<SubmoduleRequest> {
@@ -578,6 +599,7 @@ impl DiffView {
         self.blame_generation += 1;
         self.open_commit = None;
         self.submodule_request = None;
+        self.lfs_request = None;
         self.sent = None;
         self.full = None;
         self.cursor = None;
@@ -1452,6 +1474,21 @@ impl DiffView {
                 {
                     ctx.copy_text(native.unwrap_or(&change.path).to_owned());
                     ui.close();
+                }
+                let gitlink = change
+                    .old
+                    .as_ref()
+                    .is_some_and(|side| side.mode == 0o160000)
+                    || change
+                        .new
+                        .as_ref()
+                        .is_some_and(|side| side.mode == 0o160000);
+                if !gitlink {
+                    ui.separator();
+                    if ui.button("LFS details…").clicked() {
+                        self.lfs_request = Some(change.clone());
+                        ui.close();
+                    }
                 }
                 if let Some(request) = self.request_submodule(change) {
                     ui.separator();
@@ -2574,6 +2611,36 @@ mod tests {
         frame(&mut view, vec![]);
         assert_eq!(view.displayed_generation, 2);
         assert!(!view.reveal);
+    }
+
+    #[test]
+    fn lfs_pointer_text_exposes_details_request() {
+        let change = FileChange {
+            path: "asset.bin".into(),
+            path_bytes: b"asset.bin".to_vec(),
+            kind: gg_engine::review::ChangeKind::Modified,
+            old: None,
+            new: Some(FileSide {
+                id: "a".repeat(40),
+                mode: 0o100644,
+            }),
+        };
+        let mut doc = FileDiff::summary(DiffKind::Text, 1, 1, "");
+        doc.rows.push(DiffRow {
+            kind: RowKind::Context,
+            old_line: Some(1),
+            new_line: Some(1),
+            text: "version https://git-lfs.github.com/spec/v1".into(),
+            bytes: Vec::new(),
+        });
+        let mut view = DiffView {
+            change: Some(change.clone()),
+            info: Some(doc),
+            ..Default::default()
+        };
+        assert!(view.is_lfs());
+        view.lfs_request = Some(change);
+        assert!(view.take_lfs_request().is_some());
     }
 
     #[test]

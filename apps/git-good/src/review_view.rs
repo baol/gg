@@ -107,6 +107,11 @@ impl Review {
         self.diff.take_submodule_request()
     }
 
+    /// Take an LFS-details request raised by the reader.
+    pub fn take_lfs_request(&mut self) -> Option<FileChange> {
+        self.diff.take_lfs_request()
+    }
+
     /// Exact endpoint labels shared by the identity strip and the reader.
     fn reader_endpoints(&self) -> (String, String) {
         let after_id = self

@@ -2330,6 +2330,37 @@ fn submodule_cli_reports_and_updates_a_gitlink() -> Result {
 }
 
 #[test]
+fn lfs_cli_reports_pointer_identity_and_availability() -> Result {
+    let repo = tempfile::tempdir()?;
+    init(repo.path(), &["-b", "main"])?;
+    git(repo.path(), &["config", "user.name", "Test"])?;
+    git(repo.path(), &["config", "user.email", "test@example.org"])?;
+    let oid = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    std::fs::write(
+        repo.path().join("asset.bin"),
+        format!("version https://git-lfs.github.com/spec/v1\noid sha256:{oid}\nsize 12345\n"),
+    )?;
+    git(repo.path(), &["add", "asset.bin"])?;
+    git(repo.path(), &["commit", "-qm", "pointer"])?;
+    let binary = env!("CARGO_BIN_EXE_git-good");
+    let out = Command::new(binary)
+        .args(["lfs", "status", "asset.bin", "--repo"])
+        .arg(repo.path())
+        .output()?;
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let status: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(status["operation"], "lfs status");
+    assert_eq!(status["lfs"]["after"]["oid"], oid);
+    assert_eq!(status["lfs"]["after"]["size"], 12345);
+    assert_eq!(status["lfs"]["after"]["available"], false);
+    Ok(())
+}
+
+#[test]
 fn branch_create_at_cli_does_not_switch() -> Result {
     let repo = tempfile::tempdir()?;
     init(repo.path(), &["-b", "main"])?;

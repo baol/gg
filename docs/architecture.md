@@ -401,6 +401,12 @@ A gitlink's **Submodule details…** action is available from the shared reader'
 
 Update targets the parent index gitlink and is blocked when the selected recorded commit differs from the index, when the nested tree is dirty, or when the recorded object is missing locally. The confirmation names the path, target commit, and URL, states that Git may fetch, and states that the parent index is not staged. Update runs on a worker, initializes with `git submodule update --init -- <path>`, and rescans the nested and parent status. **Open nested repository** switches to the initialized nested repository as its own context; the parent selection and draft remain in the per-worktree state map. CLI `git good submodule status|update PATH [--repo PATH]` returns the same details and receipt. Network use is explicit in the confirmation; no automatic recursive update, force, or parent staging is added.
 
+### Git LFS
+
+LFS-managed content stays a pointer until an explicit fetch. Pointer detection parses only the canonical v1 header, `oid sha256:` (64 hexadecimal digits), and `size` line, with bounded input and explicit malformed states. **File actions → LFS details…** names the exact path, Before/After pointer OID and declared size, whether each object exists under the repository's LFS object store, whether `git-lfs` is available, and the selected remote. A non-pointer file reports that explicitly; pointer text is never presented as the fetched content.
+
+**Fetch object…** is enabled only when a target object is missing and `git-lfs` is available. The confirmation names the OID, size, and remote and states that fetching may download data and does not change or smudge working files. Fetch runs on a worker with `git lfs fetch [REMOTE] --include=<path>`, then rescans object availability; no automatic network, smudge, materialization, staging, or working-tree write is added. CLI `git good lfs status|fetch PATH [--revision REF] [--before REF] [--repo PATH]` returns the same details and receipt. Working-tree/Local Changes pointer handling and a bounded fetched-content preview remain planned.
+
 ### Deferred large-repository features
 
-Git LFS keeps pointer identity and fetch actions explicit. Signature verification reports the signer and status without changing repository configuration.
+Signature verification reports the signer and status without changing repository configuration.

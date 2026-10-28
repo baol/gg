@@ -19,6 +19,8 @@ mod graph;
 mod history_view;
 #[cfg(test)]
 mod interaction_tests;
+mod lfs_cli;
+mod lfs_worker;
 mod line_map_worker;
 mod merge_cli;
 mod mutation_cli;
@@ -67,7 +69,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("--help")) {
         println!(
-            "gg · good git\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good refs [PATH]      Print branches, remotes, tags, and HEAD as JSON\ngit-good status [PATH] [--file PATH --area AREA]   Print working status or diff as JSON\ngit-good stage --file PATH [--hunk HEADER]... [--repo PATH]   Stage one file or selected hunks\ngit-good unstage --file PATH [--repo PATH]   Unstage one file\ngit-good commit [--amend] -m MESSAGE [--repo PATH]   Commit the index or amend HEAD after Git hooks\ngit-good reflog [REF] [--repo PATH]   Print reflog entries as JSON\ngit-good blame PATH [--revision REF] [--lines START,END] [--repo PATH]   Print line attribution as JSON\ngit-good worktree <list|add|remove> [OPTIONS] [--repo PATH]   List, add, or remove worktrees\ngit-good submodule <status|update> PATH [OPTIONS] [--repo PATH]   Inspect or update a gitlink submodule\ngit-good switch [--create] BRANCH [--repo PATH]   Switch to or create a local branch\ngit-good fetch [REMOTE] [--prune] [--repo PATH]   Fetch and update remote-tracking refs\ngit-good push [REMOTE] [BRANCH] [--set-upstream] [--repo PATH]   Push a local branch without force\ngit-good clone URL [PATH]   Clone a repository and open it\ngit-good stash <list|push|apply|pop|drop> [OPTIONS] [--repo PATH]   List or mutate stashes\ngit-good cherry-pick COMMIT [--repo PATH]   Apply a commit\ngit-good revert COMMIT [--repo PATH]   Invert a commit\ngit-good merge REF [--no-ff] [--repo PATH]   Merge a branch, remote, or tag\ngit-good rebase REF [--autostash] [--repo PATH]   Rebase the current branch onto a branch, remote, or tag\ngit-good rebase --continue|--skip|--abort [--repo PATH]   Recover an in-progress rebase\ngit-good rewrite --from COMMIT --pick COMMIT... --squash COMMIT... [--autostash] [--repo PATH]   Reorder or squash a linear range\ngit-good rewrite --continue|--skip|--abort [--repo PATH]   Recover an in-progress rewrite\ngit-good conflicts [--repo PATH]   List unmerged paths\ngit-good conflict --file PATH [--use ours|theirs|--stage] [--repo PATH]   Read or resolve a conflict\ngit-good reset --soft|--mixed|--hard COMMIT [--repo PATH]   Reset the current branch\ngit-good branch --delete BRANCH [--force] [--repo PATH]   Delete a local branch\ngit-good branch --create NAME [--at REF] [--repo PATH]   Create a local branch without switching\ngit-good tag --delete TAG [--repo PATH]   Delete a local tag\ngit-good show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]   Review or export\n\nBrowse commits reachable from HEAD and all local, remote, and tag refs."
+            "gg · good git\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good refs [PATH]      Print branches, remotes, tags, and HEAD as JSON\ngit-good status [PATH] [--file PATH --area AREA]   Print working status or diff as JSON\ngit-good stage --file PATH [--hunk HEADER]... [--repo PATH]   Stage one file or selected hunks\ngit-good unstage --file PATH [--repo PATH]   Unstage one file\ngit-good commit [--amend] -m MESSAGE [--repo PATH]   Commit the index or amend HEAD after Git hooks\ngit-good reflog [REF] [--repo PATH]   Print reflog entries as JSON\ngit-good blame PATH [--revision REF] [--lines START,END] [--repo PATH]   Print line attribution as JSON\ngit-good worktree <list|add|remove> [OPTIONS] [--repo PATH]   List, add, or remove worktrees\ngit-good submodule <status|update> PATH [OPTIONS] [--repo PATH]   Inspect or update a gitlink submodule\ngit-good lfs <status|fetch> PATH [--revision REF] [--before REF] [--repo PATH]   Inspect or fetch an LFS pointer\ngit-good switch [--create] BRANCH [--repo PATH]   Switch to or create a local branch\ngit-good fetch [REMOTE] [--prune] [--repo PATH]   Fetch and update remote-tracking refs\ngit-good push [REMOTE] [BRANCH] [--set-upstream] [--repo PATH]   Push a local branch without force\ngit-good clone URL [PATH]   Clone a repository and open it\ngit-good stash <list|push|apply|pop|drop> [OPTIONS] [--repo PATH]   List or mutate stashes\ngit-good cherry-pick COMMIT [--repo PATH]   Apply a commit\ngit-good revert COMMIT [--repo PATH]   Invert a commit\ngit-good merge REF [--no-ff] [--repo PATH]   Merge a branch, remote, or tag\ngit-good rebase REF [--autostash] [--repo PATH]   Rebase the current branch onto a branch, remote, or tag\ngit-good rebase --continue|--skip|--abort [--repo PATH]   Recover an in-progress rebase\ngit-good rewrite --from COMMIT --pick COMMIT... --squash COMMIT... [--autostash] [--repo PATH]   Reorder or squash a linear range\ngit-good rewrite --continue|--skip|--abort [--repo PATH]   Recover an in-progress rewrite\ngit-good conflicts [--repo PATH]   List unmerged paths\ngit-good conflict --file PATH [--use ours|theirs|--stage] [--repo PATH]   Read or resolve a conflict\ngit-good reset --soft|--mixed|--hard COMMIT [--repo PATH]   Reset the current branch\ngit-good branch --delete BRANCH [--force] [--repo PATH]   Delete a local branch\ngit-good branch --create NAME [--at REF] [--repo PATH]   Create a local branch without switching\ngit-good tag --delete TAG [--repo PATH]   Delete a local tag\ngit-good show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]   Review or export\n\nBrowse commits reachable from HEAD and all local, remote, and tag refs."
         );
         return Ok(());
     }
@@ -91,6 +93,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("blame")) {
         return blame_cli::run(args);
+    }
+    if first.as_deref() == Some(std::ffi::OsStr::new("lfs")) {
+        let sub = args
+            .next()
+            .ok_or("Use git-good lfs <status|fetch> --help for usage")?;
+        return match sub.to_str() {
+            Some("status") => lfs_cli::status(args),
+            Some("fetch") => lfs_cli::fetch(args),
+            _ => Err("Use git-good lfs <status|fetch>".into()),
+        };
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("submodule")) {
         let sub = args
@@ -738,6 +750,16 @@ fn commit_action_menu(
     command
 }
 
+fn lfs_bytes(value: u64) -> String {
+    if value < 1024 {
+        format!("{value} B")
+    } else if value < 1024 * 1024 {
+        format!("{:.1} KiB", value as f64 / 1024.0)
+    } else {
+        format!("{:.1} MiB", value as f64 / (1024.0 * 1024.0))
+    }
+}
+
 fn worktree_path(bytes: &[u8]) -> PathBuf {
     #[cfg(unix)]
     {
@@ -786,6 +808,15 @@ struct SubmoduleWindow {
     busy: Option<String>,
     confirm_update: bool,
     refresh_parent: bool,
+}
+
+struct LfsWindow {
+    change: gg_engine::review::FileChange,
+    details: Option<gg_engine::lfs::Details>,
+    error: Option<String>,
+    notice: Option<String>,
+    busy: Option<String>,
+    confirm_fetch: bool,
 }
 
 struct Browser {
@@ -846,6 +877,9 @@ struct Browser {
     submodule_window: Option<SubmoduleWindow>,
     submodule_worker: Option<submodule_worker::Worker>,
     submodule_generation: u64,
+    lfs_window: Option<LfsWindow>,
+    lfs_worker: Option<lfs_worker::Worker>,
+    lfs_generation: u64,
     refs_visible: bool,
     refs_query: String,
     state: state::State,
@@ -930,6 +964,9 @@ impl Browser {
             submodule_window: None,
             submodule_worker: None,
             submodule_generation: 0,
+            lfs_window: None,
+            lfs_worker: None,
+            lfs_generation: 0,
             refs_visible: true,
             refs_query: String::new(),
             state: state::State::default(),
@@ -3092,6 +3129,215 @@ impl Browser {
         }
         if !open {
             self.submodule_window = None;
+        }
+    }
+
+    fn open_lfs(&mut self, ctx: &egui::Context, change: gg_engine::review::FileChange) {
+        self.lfs_window = Some(LfsWindow {
+            change: change.clone(),
+            details: None,
+            error: None,
+            notice: None,
+            busy: None,
+            confirm_fetch: false,
+        });
+        self.request_lfs(ctx, lfs_worker::Action::Read(change));
+    }
+
+    fn request_lfs(&mut self, ctx: &egui::Context, action: lfs_worker::Action) {
+        let Some(repo) = self.stash_path() else {
+            return;
+        };
+        if self.lfs_worker.is_none() {
+            match lfs_worker::Worker::start(ctx.clone()) {
+                Ok(worker) => self.lfs_worker = Some(worker),
+                Err(error) => {
+                    if let Some(window) = &mut self.lfs_window {
+                        window.error = Some(error);
+                        window.busy = None;
+                    }
+                    return;
+                }
+            }
+        }
+        self.lfs_generation += 1;
+        let generation = self.lfs_generation;
+        let label = match action {
+            lfs_worker::Action::Read(_) => "Reading LFS pointer…",
+            lfs_worker::Action::Fetch(_) => "Fetching LFS object…",
+        };
+        if let Some(window) = &mut self.lfs_window {
+            window.busy = Some(label.into());
+            window.error = None;
+            window.notice = None;
+        }
+        if let Some(worker) = &self.lfs_worker {
+            worker.request(generation, repo, action);
+        }
+    }
+
+    fn poll_lfs(&mut self) {
+        let Some(update) = self.lfs_worker.as_ref().and_then(lfs_worker::Worker::poll) else {
+            return;
+        };
+        if update.generation != self.lfs_generation {
+            return;
+        }
+        let Some(window) = &mut self.lfs_window else {
+            return;
+        };
+        window.busy = None;
+        match update.result {
+            Ok((details, receipt)) => {
+                window.details = Some(details);
+                window.error = None;
+                if let Some(receipt) = receipt {
+                    window.notice = Some(if receipt.available {
+                        format!("Fetched {} ({}).", receipt.oid, lfs_bytes(receipt.size))
+                    } else {
+                        format!("Fetch completed but {} is still unavailable.", receipt.oid)
+                    });
+                }
+            }
+            Err(error) => window.error = Some(error),
+        }
+    }
+
+    fn draw_lfs(&mut self, ctx: &egui::Context) {
+        self.poll_lfs();
+        let Some(change) = self.lfs_window.as_ref().map(|window| window.change.clone()) else {
+            return;
+        };
+        let mut open = true;
+        let mut ask_fetch = false;
+        let mut submit_fetch = false;
+        let mut cancel_fetch = false;
+        {
+            let Some(window) = &mut self.lfs_window else {
+                return;
+            };
+            let max_width = (ctx.content_rect().width() - 24.0).max(360.0);
+            egui::Window::new("LFS pointer")
+                .id(egui::Id::unique("lfs-details"))
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(true)
+                .default_width(max_width.min(680.0))
+                .max_width(max_width)
+                .default_pos(ctx.content_rect().center())
+                .pivot(egui::Align2::CENTER_CENTER)
+                .show(ctx, |ui| {
+                    ui.label(egui::RichText::new(&change.path).monospace().strong());
+                    if let Some(details) = &window.details {
+                        ui.weak(details.status_label());
+                        for (label, pointer) in [
+                            ("Before", details.before.as_ref()),
+                            ("After", details.after.as_ref()),
+                        ] {
+                            if let Some(pointer) = pointer {
+                                ui.label(format!(
+                                    "{label} {} · {} · {}",
+                                    pointer.oid,
+                                    lfs_bytes(pointer.size),
+                                    if pointer.available {
+                                        "available"
+                                    } else {
+                                        "missing"
+                                    }
+                                ));
+                            }
+                        }
+                        ui.weak(if details.lfs_installed {
+                            "git-lfs available"
+                        } else {
+                            "git-lfs is not installed"
+                        });
+                        if let Some(remote) = &details.remote {
+                            ui.weak(format!("Remote {remote}"));
+                        }
+                        if let Some(note) = &details.note {
+                            ui.weak(note);
+                        }
+                        let fetch = details.can_fetch();
+                        if ui
+                            .add_enabled(
+                                fetch.is_ok() && window.busy.is_none(),
+                                egui::Button::new("Fetch object…"),
+                            )
+                            .on_disabled_hover_text(
+                                fetch
+                                    .err()
+                                    .unwrap_or_else(|| "Fetch the missing object".into()),
+                            )
+                            .clicked()
+                        {
+                            ask_fetch = true;
+                        }
+                        ui.weak("Fetching does not change or smudge working files.");
+                    } else if window.busy.is_some() {
+                        ui.horizontal(|ui| {
+                            ui.spinner();
+                            ui.weak("Reading LFS pointer…");
+                        });
+                    }
+                    if let Some(error) = &window.error {
+                        ui.colored_label(ui.visuals().error_fg_color, error);
+                    }
+                    if let Some(notice) = &window.notice {
+                        ui.colored_label(ui.visuals().hyperlink_color, notice);
+                    }
+                });
+            if window.confirm_fetch
+                && let Some(details) = &window.details
+                && let Some(target) = details.target()
+            {
+                let mut confirm = true;
+                egui::Window::new("Fetch LFS object")
+                    .id(egui::Id::unique("fetch-lfs"))
+                    .open(&mut confirm)
+                    .collapsible(false)
+                    .resizable(false)
+                    .default_pos(ctx.content_rect().center())
+                    .pivot(egui::Align2::CENTER_CENTER)
+                    .show(ctx, |ui| {
+                        ui.label(format!(
+                            "Fetch {} ({})?",
+                            target.oid,
+                            lfs_bytes(target.size)
+                        ));
+                        if let Some(remote) = &details.remote {
+                            ui.weak(format!("Remote {remote}."));
+                        }
+                        ui.weak("This may download data. Working files are not changed.");
+                        if ui
+                            .add_enabled(window.busy.is_none(), egui::Button::new("Fetch"))
+                            .clicked()
+                        {
+                            submit_fetch = true;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            cancel_fetch = true;
+                        }
+                    });
+                if !confirm {
+                    cancel_fetch = true;
+                }
+            }
+        }
+        if ask_fetch && let Some(window) = &mut self.lfs_window {
+            window.confirm_fetch = true;
+        }
+        if cancel_fetch && let Some(window) = &mut self.lfs_window {
+            window.confirm_fetch = false;
+        }
+        if submit_fetch {
+            if let Some(window) = &mut self.lfs_window {
+                window.confirm_fetch = false;
+            }
+            self.request_lfs(ctx, lfs_worker::Action::Fetch(change));
+        }
+        if !open {
+            self.lfs_window = None;
         }
     }
 
@@ -5283,6 +5529,7 @@ impl Browser {
         }
 
         self.draw_submodule(ctx);
+        self.draw_lfs(ctx);
         if self.working.is_some() {
             let external = self.external_operation_reason();
             let close = self.working.as_mut().is_some_and(|working| {
@@ -5319,6 +5566,13 @@ impl Browser {
                 .and_then(|review| review.take_submodule_request())
             {
                 self.open_submodule(ctx, request);
+            }
+            if let Some(change) = self
+                .review
+                .as_mut()
+                .and_then(|review| review.take_lfs_request())
+            {
+                self.open_lfs(ctx, change);
             }
             if close {
                 let location = self
@@ -7933,6 +8187,79 @@ mod tests {
             );
         }
         Ok(())
+    }
+
+    #[test]
+    fn lfs_window_renders_pointer_identity_and_missing_object_state() {
+        let oid = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let details = gg_engine::lfs::Details {
+            path: "asset.bin".into(),
+            path_bytes: b"asset.bin".to_vec(),
+            before: None,
+            after: Some(gg_engine::lfs::SidePointer {
+                oid: oid.into(),
+                size: 12345,
+                available: false,
+            }),
+            lfs_installed: false,
+            remote: Some("origin".into()),
+            note: Some("git-lfs is not installed; fetch is unavailable.".into()),
+        };
+        for width in [720.0, 1120.0] {
+            let ctx = egui::Context::default();
+            let mut app = layout_fixture();
+            app.lfs_window = Some(LfsWindow {
+                change: gg_engine::review::FileChange {
+                    path: "asset.bin".into(),
+                    path_bytes: b"asset.bin".to_vec(),
+                    kind: gg_engine::review::ChangeKind::Modified,
+                    old: None,
+                    new: None,
+                },
+                details: Some(details.clone()),
+                error: None,
+                notice: None,
+                busy: None,
+                confirm_fetch: false,
+            });
+            let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let output = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let text = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            for expected in [
+                "LFS pointer",
+                "asset.bin",
+                oid,
+                "12.1 KiB",
+                "git-lfs is not installed",
+                "Fetch object…",
+            ] {
+                assert!(
+                    text.iter().any(|line| line.contains(expected)),
+                    "missing {expected} at {width}: {text:?}"
+                );
+            }
+            if width <= 720.0 {
+                let rect = ctx.memory(|memory| memory.area_rect(egui::Id::unique("lfs-details")));
+                assert!(rect.is_some(), "the LFS window is laid out");
+                if let Some(rect) = rect {
+                    assert!(
+                        rect.min.x >= 0.0 && rect.max.x <= 720.0,
+                        "LFS window leaves the viewport: {rect:?}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

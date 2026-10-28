@@ -265,6 +265,7 @@ pub mod diff;
 pub mod drop;
 pub mod file;
 pub mod file_history;
+pub mod lfs;
 pub mod merge;
 pub mod mutation;
 pub mod patch;

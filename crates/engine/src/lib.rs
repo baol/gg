@@ -82,6 +82,7 @@ pub mod conflict;
 pub mod diff;
 pub mod file;
 pub mod file_history;
+pub mod lfs;
 pub mod merge;
 pub mod mutation;
 pub mod rebase;

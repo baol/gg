@@ -296,6 +296,14 @@ Native review: the refs sidebar and status line show the current branch upstream
 - Backup tests assert `gg_git::backup::list` returns the private reference, kind, commit, subject, and commit time while the refs snapshot continues to exclude `refs/gg/`.
 - egui tests render the **Reorder and squash** modal with ordered rows, up/down icon controls, Squash choices, autostash, and the backup warning at 720 and 1120 widths. A submitted rewrite closes the configuration; the operation area shows **Rewriting commits…**, then **Refreshing history…** until the replacement history generation is accepted, and Escape is no longer needed to dismiss a blocking modal. The Backups window renders the entry list, Open commit, Reset branch here, Create branch here…, Copy hash, and Copy ref at 1120 width. The operation area names an in-progress rebase; Backups stays in Repository and outcome recovery.
 
+## M7 Git LFS
+
+- Pointer parsing accepts the canonical v1 header, 64-digit SHA-256 OID, and size line; malformed OIDs/sizes and ordinary text are distinguished. Git fixtures cover before/after pointers and non-pointer content.
+- Details separate OID, declared size, local LFS object-store availability, `git-lfs` availability, and remote; missing and available states render distinctly.
+- Fetch is disabled with a reason when `git-lfs` is unavailable, when the object is already present, or when no pointer is selected. The confirmation names OID, size, and remote and states that fetch does not change working files.
+- CLI `git good lfs status|fetch` returns the same details/receipt; the status test asserts pointer identity, size, and missing availability. A successful network fetch remains unverified because `git-lfs` is not installed.
+- The LFS details window renders at 720×480 inside the viewport with path, Before/After identity, availability, installation state, remote, and Fetch object.
+
 ## M7 submodules
 
 - Git fixtures report parent index commit, nested HEAD, initialized/dirty state, URL, and recorded-object availability. Dirty nested content, a recorded commit that differs from the index, and a missing recorded object block Update.

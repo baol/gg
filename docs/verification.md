@@ -653,6 +653,19 @@ Linux x86_64 · Rust 1.99.1 · release build · `/home/mirko/dev/vscode` (194,92
 
 The production worker test `real_repository_history_first_frame_and_deep_navigation` now records this shape for any `GG_TEST_REPOSITORY`. The initial measurement was 6.70 s to first rows and 27.0 s to complete. **Optimization:** when the union has more than 512 divergent tips, history now delegates topological ordering to `git rev-list --topo-order --stdin` and reads commit metadata through gitoxide; the refs snapshot is reused instead of scanned twice. The two measured runs after the change reached first rows in 2.3–2.8 s and completion in 17.1–18.6 s, with the same 194,924 commits and the same first 20 commit IDs as `git rev-list --topo-order --all`. CLI history dropped from 13.91 s to 3.92 s. **Remaining gap:** first rows still miss the 500 ms M0 target because full topological order over 194,924 commits and 6,205 refs takes about 1.7 s in Git itself before its first line. Meeting 500 ms would require a provisional HEAD-only page or a persisted ordering cache, which would change the current all-refs topo contract. Input-to-frame p95 stays below the 50 ms interaction target but above the 16 ms cached-frame target; one back jump reached 111 ms. Deep jumps and retained-row bounds otherwise pass, and the result is recorded for the next decision.
 
+## M7 Git LFS · 2026-10-28
+
+Linux x86_64 · Rust 1.99.1 · Xvfb/llvmpipe · disposable Git fixture (`/tmp/opencode/gg-lfs`: a canonical pointer for a 12,345-byte SHA-256 object, tested with the local object missing and present).
+
+- `cargo fmt --all -- --check` passed.
+- `cargo test --workspace --locked` passed: 469 tests, 0 failures, 4 ignored opt-in performance checks. This includes 241 `git-good` unit tests and 37 CLI tests.
+- `cargo clippy --workspace --all-targets --locked -- -D warnings` passed.
+- The reader detects canonical LFS v1 pointers from the selected file text and exposes **File actions → LFS details…**. The window names the exact path, Before/After OID and declared size, whether each object exists in the repository LFS object store, whether `git-lfs` is installed, and the remote. Missing, available, malformed, and non-pointer states stay explicit.
+- **Fetch object…** is enabled only for a missing target with `git-lfs` available. The confirmation names OID, size, and remote and states that fetching may download data and does not change or smudge working files. Fetch runs on a worker via `git lfs fetch [REMOTE] --include=<path>` and rescans availability. No automatic network, smudge/materialization, staging, or working-tree write is added.
+- `git good lfs status|fetch PATH [--revision REF] [--before REF] [--repo PATH]` returns the same bounded pointer details and receipt. Git fixtures cover canonical/malformed parsing, before/after pointers, plain text, missing objects, and locally available objects.
+- Native X11: [missing LFS object with fetch unavailable because git-lfs is not installed](screenshots/m7-lfs-missing.png), [object available in the local LFS store](screenshots/m7-lfs-available.png), and [the narrow LFS window](screenshots/m7-lfs-narrow.png).
+- Limitations: `git-lfs` is not installed in this environment, so a successful fetch was not exercised natively or in CI; the disabled state is reproducible. Local Changes/working-tree pointer handling and a bounded fetched-content preview remain planned. Only Linux/X11, the dark theme, and llvmpipe were inspected natively.
+
 ## M7 submodules · 2026-10-27
 
 Linux x86_64 · Rust 1.99.1 · Xvfb/llvmpipe · disposable Git fixtures (`/tmp/opencode/gg-submodule` with `/tmp/opencode/gg-submodule-nested`: a parent gitlink plus a nested repository, exercised clean, dirty, and at an older nested commit).
