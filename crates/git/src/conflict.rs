@@ -392,8 +392,11 @@ fn validate(file: &str) -> Result<(), String> {
 }
 
 fn run(path: &Path, args: &[String]) -> Result<Output, String> {
+    let repo = gix::discover(path)
+        .map_err(|error| format!("Could not read repository {}: {error}", path.display()))?;
+    let root = repo.workdir().unwrap_or_else(|| repo.path());
     Command::new("git")
-        .current_dir(path)
+        .current_dir(root)
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

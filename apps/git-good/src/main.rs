@@ -1546,6 +1546,9 @@ impl Browser {
     }
 
     fn close_to_history(&mut self, ctx: &egui::Context) {
+        if self.working_mutation_pending() {
+            return;
+        }
         if let Some(working) = &mut self.working
             && let Some(id) = working.take_commit()
         {
@@ -1753,10 +1756,19 @@ impl Browser {
         Ok(())
     }
 
+    fn working_mutation_pending(&self) -> bool {
+        self.working.as_ref().is_some_and(|working| working.busy())
+    }
+
+    fn repository_switch_pending(&self) -> bool {
+        self.network.is_some() || self.branch.is_some() || self.operation_busy()
+    }
+
     fn operation_busy(&self) -> bool {
         self.operation_worker.is_some()
             || self.rewrite_job.is_some()
             || self.rewrite_refresh.is_some()
+            || self.working_mutation_pending()
     }
 
     /// Operations that make Local Changes mutations incompatible.
@@ -3021,6 +3033,9 @@ impl Browser {
     }
 
     fn switch_worktree(&mut self, ctx: &egui::Context, path: PathBuf) {
+        if self.repository_switch_pending() {
+            return;
+        }
         self.save_worktree_state();
         if let Some(working) = &self.working {
             self.working_drafts
@@ -3048,6 +3063,7 @@ impl Browser {
             .filter(|item| item.kind == gg_engine::refs::RefKind::Branch)
             .map(|item| item.name.clone())
             .collect::<Vec<_>>();
+        let repository_switch_pending = self.repository_switch_pending();
         let Some(window) = &mut self.worktree_window else {
             return;
         };
@@ -3124,9 +3140,14 @@ impl Browser {
                         let path = worktree_path(&worktree.path_bytes);
                         let can_open = worktree.prunable.is_none() && path.exists();
                         if ui
-                            .add_enabled(!worktree.current && can_open, egui::Button::new("Open"))
+                            .add_enabled(
+                                !worktree.current && can_open && !repository_switch_pending,
+                                egui::Button::new("Open"),
+                            )
                             .on_disabled_hover_text(if worktree.current {
                                 "This is the current worktree"
+                            } else if repository_switch_pending {
+                                "Wait for the current operation to finish"
                             } else {
                                 "The worktree path is missing"
                             })
@@ -4439,6 +4460,7 @@ impl Browser {
         }
         let mut go_local = false;
         let mut go_history = false;
+        let working_mutation_pending = self.working_mutation_pending();
         egui::Panel::top("toolbar").exact_size(42.0).show(ui, |ui| {
             ui.add_space(5.0);
             ui.horizontal(|ui| {
@@ -4446,9 +4468,7 @@ impl Browser {
                 ui.menu_button("Repository", |ui| {
                     if ui
                         .add_enabled(
-                            self.network.is_none()
-                                && self.branch.is_none()
-                                && !self.operation_busy(),
+                            !self.repository_switch_pending(),
                             egui::Button::new("Open…"),
                         )
                         .clicked()
@@ -4842,11 +4862,15 @@ impl Browser {
                     }
                     if ui
                         .add_enabled(
-                            has_repo,
+                            has_repo && !working_mutation_pending,
                             egui::Button::selectable(!local_selected, "History")
                                 .min_size(egui::vec2(84.0, 24.0)),
                         )
-                        .on_hover_text("Browse commit history")
+                        .on_hover_text(if working_mutation_pending {
+                            "Wait for the current Local Changes operation to finish"
+                        } else {
+                            "Browse commit history"
+                        })
                         .clicked()
                     {
                         go_history = true;
@@ -5005,10 +5029,7 @@ impl Browser {
                             .desired_width((ui.available_width() - 80.0).max(100.0))
                             .hint_text("Repository path"),
                     );
-                    let open_ready = self.pending.is_none()
-                        && self.network.is_none()
-                        && self.branch.is_none()
-                        && !self.operation_busy();
+                    let open_ready = self.pending.is_none() && !self.repository_switch_pending();
                     let enter =
                         response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                     if ui
@@ -9195,6 +9216,20 @@ mod tests {
         assert_eq!(app.state.selected.as_deref(), Some("b".repeat(40).as_str()));
         assert_eq!(app.scroll_offset, 88.0);
         assert!(!app.details_visible);
+    }
+
+    #[test]
+    fn worktree_switch_waits_for_an_active_operation() {
+        let mut app = layout_fixture();
+        let original = app.path.clone();
+        let (_tx, rx) = std::sync::mpsc::channel();
+        app.branch = Some(rx);
+        let ctx = egui::Context::default();
+
+        app.switch_worktree(&ctx, PathBuf::from("/projects/feature"));
+
+        assert_eq!(app.path, original);
+        assert!(app.branch.is_some());
     }
 
     #[test]

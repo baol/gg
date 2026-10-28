@@ -808,3 +808,14 @@ Linux x86_64 · Rust 1.99.1 · local Git fixtures.
 - Native X11 at 1120×740: [newest version with Diff](screenshots/m7-history-wide-diff.png), [Full file with Old/New](screenshots/m7-history-wide-full.png), [oldest boundary](screenshots/m7-history-oldest.png), [predecessor chooser](screenshots/m7-history-chooser.png), and [the chosen predecessor edge](screenshots/m7-history-chosen.png).
 - Native X11 at 720×480: [narrow history](screenshots/m7-history-narrow.png).
 - History navigation reads objects and never writes objects, refs, the index, or working files.
+
+## Nested paths and operation ownership · 2026-10-28
+
+Linux x86_64 · Rust 1.99.1 · Xvfb/llvmpipe · disposable Git fixtures · `origin/main` at `7c26d68`.
+
+- Six regression tests covering seven failure scenarios failed before the fixes and pass afterward: nested current-worktree removal, nested conflict staging, nested blame, abort without an operation, continue with a failing message hook, pending Local Changes navigation, and worktree switching during an active operation.
+- `cargo fmt --all --check` passed.
+- `cargo test --workspace --locked` passed: 499 tests, 0 failures, 4 ignored opt-in performance checks.
+- `cargo clippy --workspace --all-targets --locked -- -D warnings` passed.
+- Nested `--repo` fixtures preserve unrelated nested files, identify the containing worktree as current, and keep blame on the requested repository-relative path. Recovery failures return Git's error instead of a success receipt.
+- Native X11 at 1120×740 with a five-second `pre-commit` hook showed **Committing…** and disabled History. Clicking History left Local Changes open with the pending worker until completion.

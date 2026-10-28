@@ -596,7 +596,7 @@ impl StatusView {
         }
         self.prune_rows(pinned);
     }
-    fn busy(&self) -> bool {
+    pub(crate) fn busy(&self) -> bool {
         self.stage.mutating() || self.commit.is_some()
     }
 
@@ -1717,6 +1717,22 @@ mod tests {
             },
         );
     }
+    #[test]
+    fn history_navigation_keeps_a_pending_commit_owned() {
+        let ctx = egui::Context::default();
+        let mut app = crate::Browser::new("/repository".into());
+        let mut working = fixture(0, 1);
+        let (_tx, rx) = std::sync::mpsc::sync_channel(1);
+        working.commit = Some(rx);
+        app.working = Some(working);
+
+        app.close_to_history(&ctx);
+
+        assert!(app.working.is_some());
+        assert!(app.working.as_ref().is_some_and(|view| view.busy()));
+        assert!(app.operation_busy());
+    }
+
     #[test]
     fn hovered_rows_and_refresh_results_wait_for_safe_adoption() {
         let ctx = egui::Context::default();

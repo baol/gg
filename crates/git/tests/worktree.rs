@@ -151,6 +151,36 @@ fn remove_blocks_main_current_and_dirty_worktrees_then_removes_a_clean_one() -> 
 }
 
 #[test]
+fn nested_current_worktree_cannot_be_removed() -> Result {
+    let dir = repo()?;
+    let linked = tempfile::tempdir()?;
+    let destination = linked.path().join("linked");
+    gg_git::worktree::add(
+        dir.path(),
+        &AddRequest {
+            destination: destination.clone(),
+            branch: None,
+            create: Some("feature".into()),
+            at: None,
+        },
+    )?;
+    let nested = destination.join("nested");
+    std::fs::create_dir(&nested)?;
+
+    let result = gg_git::worktree::remove(&nested, &destination);
+    assert!(result.is_err(), "nested current worktree was removed");
+    assert!(destination.exists());
+    let snapshot = gg_git::worktree::list(&nested)?;
+    let current = snapshot
+        .worktrees
+        .iter()
+        .find(|worktree| worktree.current)
+        .ok_or("nested repository did not identify its current worktree")?;
+    assert_eq!(current.branch.as_deref(), Some("feature"));
+    Ok(())
+}
+
+#[test]
 fn add_existing_branch_and_list_current_worktree() -> Result {
     let dir = repo()?;
     git(dir.path(), &["branch", "existing"])?;

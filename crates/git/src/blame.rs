@@ -42,6 +42,7 @@ pub fn read(
     let display = display_path(path_bytes);
     let repo = gix::discover(path)
         .map_err(|error| format!("Could not read {}: {error}", path.display()))?;
+    let worktree = repo.workdir().unwrap_or_else(|| repo.path()).to_path_buf();
     check(cancelled)?;
     let commit = repo
         .rev_parse_single(revision)
@@ -120,7 +121,7 @@ pub fn read(
         .map_err(|error| format!("Could not use path {display}: {error}"))?;
     check(cancelled)?;
     let output = Command::new("git")
-        .current_dir(path)
+        .current_dir(&worktree)
         .args(["blame", "--line-porcelain", "-L"])
         .arg(format!("{start},{end}"))
         .arg(commit.to_string())
@@ -284,6 +285,24 @@ mod tests {
         );
         assert_eq!(one.lines[0].summary, "change");
         assert_eq!(one.lines[1].summary, "base");
+        Ok(())
+    }
+
+    #[test]
+    fn nested_repository_paths_stay_repository_relative() -> Result {
+        let dir = repo()?;
+        let nested = dir.path().join("nested");
+        fs::create_dir(&nested)?;
+        fs::write(nested.join("a"), b"unrelated\n")?;
+        git(dir.path(), &["add", "nested/a"])?;
+        git(dir.path(), &["commit", "-qm", "nested"])?;
+
+        let blame = read(&nested, "HEAD", b"a", None, &|| false)?;
+
+        assert_eq!(blame.path, "a");
+        assert_eq!(blame.lines.len(), 4);
+        assert_eq!(blame.lines[0].summary, "base");
+        assert_eq!(blame.lines[1].summary, "change");
         Ok(())
     }
 
