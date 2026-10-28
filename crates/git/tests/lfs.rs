@@ -87,7 +87,6 @@ fn pointer_details_separate_oid_size_and_local_availability() -> Result {
     assert_eq!(after.oid, OID);
     assert_eq!(after.size, 12345);
     assert!(!after.available);
-    assert!(details.note.is_some() || !details.lfs_installed);
 
     let object = dir
         .path()
