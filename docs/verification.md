@@ -653,6 +653,20 @@ Linux x86_64 · Rust 1.99.1 · release build · `/home/mirko/dev/vscode` (194,92
 
 The production worker test `real_repository_history_first_frame_and_deep_navigation` now records this shape for any `GG_TEST_REPOSITORY`. The initial measurement was 6.70 s to first rows and 27.0 s to complete. **Optimization:** when the union has more than 512 divergent tips, history now delegates topological ordering to `git rev-list --topo-order --stdin` and reads commit metadata through gitoxide; the refs snapshot is reused instead of scanned twice. The two measured runs after the change reached first rows in 2.3–2.8 s and completion in 17.1–18.6 s, with the same 194,924 commits and the same first 20 commit IDs as `git rev-list --topo-order --all`. CLI history dropped from 13.91 s to 3.92 s. **Remaining gap:** first rows still miss the 500 ms M0 target because full topological order over 194,924 commits and 6,205 refs takes about 1.7 s in Git itself before its first line. Meeting 500 ms would require a provisional HEAD-only page or a persisted ordering cache, which would change the current all-refs topo contract. Input-to-frame p95 stays below the 50 ms interaction target but above the 16 ms cached-frame target; one back jump reached 111 ms. Deep jumps and retained-row bounds otherwise pass, and the result is recorded for the next decision.
 
+## Local Changes staging gestures · 2026-10-28
+
+Linux x86_64 · Rust 1.99.1 · Xvfb/llvmpipe · disposable Git fixture (`/tmp/opencode/gg-commit-exp`: three modified tracked files, with one staged to show both groups).
+
+- `cargo fmt --all -- --check` passed.
+- `cargo test --workspace --locked` passed: 490 tests, 0 failures, 4 ignored opt-in performance checks. This includes 248 `git-good` unit tests and 42 CLI tests.
+- `cargo clippy --workspace --all-targets --locked -- -D warnings` passed.
+- A single click selects the file and its comparison; a double-click on an Unstaged/Untracked row stages the whole file, and a double-click on a Staged row unstages it. Conflict and intent-to-add rows are inert rather than broadening to a partial action.
+- The selected file header now carries its own **Stage** or **Unstage** button beside File actions. It is disabled with a reason while the comparison is loading, a mutation is pending, or the row cannot be staged as a whole file; hunk and selected-line staging remain in the reader.
+- After staging a whole file, the next Unstaged row in display order is selected (the previous row when the staged row was last). If no Unstaged rows remain, the newly staged row stays selected in Staged. After unstaging, the same path is selected in Unstaged. A failed mutation keeps the current selection.
+- The egui interaction test uses real double-click timing over three files and covers staging a/b/c in turn, the last-file fallback into Staged, double-click unstaging, and both header buttons. Repository assertions confirm only the intended index entries changed.
+- Native X11 at 1120×740: [the selected unstaged file with its own Stage button](screenshots/m7-commit-stage-button.png) and [a staged file with its own Unstage button](screenshots/m7-commit-unstage-button.png). At 720×480: [the Stage button in the narrow Local Changes layout](screenshots/m7-commit-stage-narrow.png).
+- Limitations: only Linux/X11, the dark theme, and llvmpipe were inspected natively. Touch double-tap and platform-specific double-click timing remain platform checks.
+
 ## Force push with lease · 2026-10-28
 
 Linux x86_64 · Rust 1.99.1 · Xvfb/llvmpipe · disposable bare remote (`/tmp/opencode/force-remote.git`) with a local branch tracking `origin/main`.

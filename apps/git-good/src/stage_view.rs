@@ -87,6 +87,7 @@ impl StageActions {
         if self.mutation.is_some() {
             return;
         }
+        self.error = None;
         let Some(request) = self.request.clone() else {
             return;
         };

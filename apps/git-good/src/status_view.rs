@@ -1,6 +1,7 @@
 //! Local Changes workspace: independent Unstaged/Staged lists beside one reader.
 use crate::{
     bounded_text,
+    diff_view::{StageEdit, StageScope},
     status_worker::{Ranges, Update, Worker},
 };
 use eframe::egui;
@@ -10,6 +11,17 @@ const HEIGHT: f32 = 24.0;
 const GROUP_HEADER: f32 = 24.0;
 const WIDE_LAYOUT: f32 = 900.0;
 type Comparison = (Vec<u8>, Area);
+
+#[derive(Clone)]
+enum StageFollow {
+    /// After staging a whole file, select the next/previous unstaged entry.
+    Advance {
+        from: Vec<u8>,
+        target: Option<Vec<u8>>,
+    },
+    /// After unstaging a whole file, follow that path into Unstaged.
+    Move { path: Vec<u8> },
+}
 fn commit_reason<'a>(
     busy: bool,
     scanning: bool,
@@ -111,6 +123,8 @@ pub struct StatusView {
     worker: Option<Worker>,
     pending: Option<Worker>,
     staged: Option<Update>,
+    stage_follow: Option<StageFollow>,
+    stage_follow_ready: bool,
     lists: [List; 2],
     focus: usize,
     total: usize,
@@ -153,6 +167,8 @@ impl StatusView {
             worker: None,
             pending: None,
             staged: None,
+            stage_follow: None,
+            stage_follow_ready: false,
             lists: [List::new(), List::new()],
             focus: 0,
             total: 0,
@@ -231,6 +247,8 @@ impl StatusView {
         };
         if self.replacing && update.error.is_some() {
             self.error = update.error;
+            self.stage_follow = None;
+            self.stage_follow_ready = false;
             return;
         }
         let replaced = self.replacing;
@@ -297,6 +315,12 @@ impl StatusView {
             };
             if self.lists[list].rows.contains_key(&row) {
                 self.select_row(list, row, ctx);
+            }
+        }
+        if self.stage_follow_ready && self.complete {
+            self.stage_follow_ready = false;
+            if let Some(follow) = self.stage_follow.take() {
+                self.apply_stage_follow(follow, ctx);
             }
         }
         let missing = self.complete
@@ -399,6 +423,135 @@ impl StatusView {
             self.reader.select_working(repository, entry, ctx);
         }
     }
+    fn toggle_file(&mut self, index: usize, row: usize, ctx: &egui::Context) {
+        if self.mutations_blocked() {
+            return;
+        }
+        let Some(entry) = self.lists[index].rows.get(&row).cloned() else {
+            return;
+        };
+        let eligible = match entry.area {
+            Area::Staged => true,
+            Area::Unstaged | Area::Untracked => {
+                !matches!(entry.kind, Kind::IntentToAdd | Kind::Conflicted)
+            }
+            Area::Conflict => false,
+        };
+        if !eligible {
+            return;
+        }
+        self.select_row(index, row, ctx);
+        self.apply_stage_edit(
+            StageEdit {
+                scope: StageScope::File,
+                discard: false,
+                header: None,
+                changes: Vec::new(),
+            },
+            ctx,
+        );
+    }
+
+    fn next_unstaged_after(&self, path_bytes: &[u8]) -> Option<Vec<u8>> {
+        let rows = self.lists[0]
+            .rows
+            .values()
+            .filter(|entry| matches!(entry.area, Area::Unstaged | Area::Untracked))
+            .collect::<Vec<_>>();
+        let index = rows
+            .iter()
+            .position(|entry| entry.path_bytes == path_bytes)?;
+        rows.get(index + 1)
+            .or_else(|| index.checked_sub(1).and_then(|index| rows.get(index)))
+            .map(|entry| entry.path_bytes.clone())
+    }
+
+    fn apply_stage_edit(&mut self, edit: StageEdit, ctx: &egui::Context) {
+        self.stage_follow = None;
+        self.stage_follow_ready = false;
+        if edit.scope == StageScope::File
+            && !edit.discard
+            && let Some(entry) = self.active_entry.clone()
+        {
+            if entry.area == Area::Staged {
+                self.stage_follow = Some(StageFollow::Move {
+                    path: entry.path_bytes.clone(),
+                });
+            } else {
+                let target = self.next_unstaged_after(&entry.path_bytes);
+                self.stage_follow = Some(StageFollow::Advance {
+                    from: entry.path_bytes.clone(),
+                    target,
+                });
+            }
+        }
+        self.stage.apply(edit, ctx);
+        if !self.stage.mutating() {
+            self.stage_follow = None;
+        }
+    }
+
+    fn apply_stage_follow(&mut self, follow: StageFollow, ctx: &egui::Context) {
+        let path = match &follow {
+            StageFollow::Advance { from, .. } => from.clone(),
+            StageFollow::Move { path } => path.clone(),
+        };
+        if !self
+            .active
+            .as_ref()
+            .is_some_and(|(active, _)| active == &path)
+        {
+            return;
+        }
+        match follow {
+            StageFollow::Move { path } => {
+                if let Some(row) = self.lists[0]
+                    .rows
+                    .iter()
+                    .find(|(_, entry)| entry.path_bytes == path)
+                    .map(|(row, _)| *row)
+                {
+                    self.select_row(0, row, ctx);
+                    self.lists[0].reveal = true;
+                    return;
+                }
+            }
+            StageFollow::Advance { target, .. } => {
+                if let Some(target) = target
+                    && let Some(row) = self.lists[0]
+                        .rows
+                        .iter()
+                        .find(|(_, entry)| entry.path_bytes == target)
+                        .map(|(row, _)| *row)
+                {
+                    self.select_row(0, row, ctx);
+                    self.lists[0].reveal = true;
+                    return;
+                }
+                if let Some(row) = self.lists[0].rows.keys().next().copied() {
+                    self.select_row(0, row, ctx);
+                    self.lists[0].reveal = true;
+                    return;
+                }
+                if let Some(row) = self.lists[1]
+                    .rows
+                    .iter()
+                    .find(|(_, entry)| entry.path_bytes == path)
+                    .map(|(row, _)| *row)
+                {
+                    self.select_row(1, row, ctx);
+                    self.lists[1].reveal = true;
+                    return;
+                }
+            }
+        }
+        if let Some(row) = self.lists[0].rows.keys().next().copied() {
+            self.select_row(0, row, ctx);
+        } else if let Some(row) = self.lists[1].rows.keys().next().copied() {
+            self.select_row(1, row, ctx);
+        }
+    }
+
     fn sync_active(&mut self, ctx: &egui::Context, reload: bool) {
         let Some(selected) = self.active.clone() else {
             return;
@@ -712,7 +865,7 @@ impl StatusView {
         content_height: f32,
         collapsible: bool,
         shrink: bool,
-    ) -> Option<usize> {
+    ) -> (Option<usize>, Option<usize>) {
         let busy = self.busy() || self.replacing;
         let complete = self.complete;
         let active = self.focus == index;
@@ -737,9 +890,10 @@ impl StatusView {
         });
         if collapsible && list.collapsed {
             list.rect = egui::Rect::NOTHING;
-            return None;
+            return (None, None);
         }
         let mut clicked = None;
+        let mut toggled = None;
         if count == 0 {
             let empty_height = HEIGHT;
             list.rect = egui::Rect::from_min_size(
@@ -759,7 +913,7 @@ impl StatusView {
                     });
                 },
             );
-            return None;
+            return (None, None);
         }
         let mut scroll = egui::ScrollArea::vertical()
             .id_salt(("working-group", index))
@@ -807,6 +961,9 @@ impl StatusView {
                     if response.clicked() && !busy {
                         response.surrender_focus();
                         clicked = Some(row);
+                    }
+                    if response.double_clicked() && !busy {
+                        toggled = Some(row);
                     }
                     let color = match entry.kind {
                         Kind::Added => {
@@ -879,7 +1036,7 @@ impl StatusView {
         });
         list.rect = out.inner_rect;
         list.offset = out.state.clamped_offset().y;
-        clicked
+        (clicked, toggled)
     }
 
     fn draw_lists_wide(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, height: f32) {
@@ -889,13 +1046,18 @@ impl StatusView {
             egui::Layout::top_down(egui::Align::Min),
             |ui| {
                 let each = ((height - 6.0) / 2.0 - GROUP_HEADER - 2.0).max(40.0);
-                let first = self.draw_group(ui, 0, each, false, true);
+                let (first_click, first_toggle) = self.draw_group(ui, 0, each, false, true);
                 ui.add_space(2.0);
-                let second = self.draw_group(ui, 1, each, false, true);
-                if let Some(row) = first {
+                let (second_click, second_toggle) = self.draw_group(ui, 1, each, false, true);
+                if let Some(row) = first_click {
                     self.select_row(0, row, ctx);
-                } else if let Some(row) = second {
+                } else if let Some(row) = second_click {
                     self.select_row(1, row, ctx);
+                }
+                if let Some(row) = first_toggle {
+                    self.toggle_file(0, row, ctx);
+                } else if let Some(row) = second_toggle {
+                    self.toggle_file(1, row, ctx);
                 }
             },
         );
@@ -909,12 +1071,17 @@ impl StatusView {
             .count()
             .max(1);
         let each = ((budget / visible as f32) - GROUP_HEADER - 2.0).max(16.0);
-        let first = self.draw_group(ui, 0, each, true, false);
-        let second = self.draw_group(ui, 1, each, true, false);
-        if let Some(row) = first {
+        let (first_click, first_toggle) = self.draw_group(ui, 0, each, true, false);
+        let (second_click, second_toggle) = self.draw_group(ui, 1, each, true, false);
+        if let Some(row) = first_click {
             self.select_row(0, row, ctx);
-        } else if let Some(row) = second {
+        } else if let Some(row) = second_click {
             self.select_row(1, row, ctx);
+        }
+        if let Some(row) = first_toggle {
+            self.toggle_file(0, row, ctx);
+        } else if let Some(row) = second_toggle {
+            self.toggle_file(1, row, ctx);
         }
     }
 
@@ -1003,7 +1170,7 @@ impl StatusView {
             } else if edit.discard {
                 self.drop_confirm = Some(edit);
             } else {
-                self.stage.apply(edit, ctx);
+                self.apply_stage_edit(edit, ctx);
             }
         }
     }
@@ -1243,6 +1410,10 @@ impl StatusView {
         let ctx = &ctx;
         self.poll_commit(ctx);
         self.stage.poll();
+        if self.stage.error().is_some() {
+            self.stage_follow = None;
+            self.stage_follow_ready = false;
+        }
         let (now, scrolling, pointer_down, hovered) = ctx.input(|i| {
             (
                 i.time,
@@ -1396,6 +1567,9 @@ impl StatusView {
             }
         });
         if let Some(identity) = self.stage.take_changed() {
+            if self.stage_follow.is_some() {
+                self.stage_follow_ready = true;
+            }
             self.reader.refresh_working(identity, ctx);
             self.start(ctx, true);
         }
@@ -1476,6 +1650,8 @@ mod tests {
             worker: None,
             pending: None,
             staged: None,
+            stage_follow: None,
+            stage_follow_ready: false,
             lists: [
                 List {
                     rows: rows(0, unstaged),
@@ -1925,6 +2101,75 @@ mod tests {
             },
         )
     }
+    fn run_at(
+        ctx: &egui::Context,
+        view: &mut StatusView,
+        width: f32,
+        events: Vec<egui::Event>,
+        time: f64,
+    ) -> egui::FullOutput {
+        crate::tests::run_ui(
+            ctx,
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(width, 480.0),
+                )),
+                time: Some(time),
+                events,
+                ..Default::default()
+            },
+            |ctx| {
+                view.draw_ui(ctx);
+            },
+        )
+    }
+    fn row_pos(
+        output: &egui::FullOutput,
+        view: &StatusView,
+        list: usize,
+        path: &str,
+    ) -> Option<egui::Pos2> {
+        output.shapes.iter().find_map(|shape| match &shape.shape {
+            egui::epaint::Shape::Text(text)
+                if text.galley.job.text == path && view.lists[list].rect.contains(text.pos) =>
+            {
+                Some(text.pos + egui::vec2(6.0, 6.0))
+            }
+            _ => None,
+        })
+    }
+    fn double_click(ctx: &egui::Context, view: &mut StatusView, width: f32, pos: egui::Pos2) {
+        let press = egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let release = egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let now = ctx.input(|input| input.time).max(100.0) + 1.0;
+        run_at(
+            ctx,
+            view,
+            width,
+            vec![egui::Event::PointerMoved(pos), press.clone()],
+            now,
+        );
+        run_at(ctx, view, width, vec![release.clone()], now + 0.05);
+        run_at(ctx, view, width, vec![press], now + 0.10);
+        run_at(
+            ctx,
+            view,
+            width,
+            vec![release, egui::Event::PointerGone],
+            now + 0.15,
+        );
+    }
     fn text_pos(output: &egui::FullOutput, needle: &str) -> Option<egui::Pos2> {
         output.shapes.iter().find_map(|shape| match &shape.shape {
             egui::epaint::Shape::Text(text)
@@ -2030,10 +2275,13 @@ mod tests {
             }
             assert!(
                 std::time::Instant::now() < until,
-                "working view timed out: busy={} complete={} replacing={} commit={} done={:?} error={:?}",
+                "working view timed out: busy={} complete={} replacing={} lists={}/{} active={:?} commit={} done={:?} error={:?}",
                 view.busy(),
                 view.complete,
                 view.replacing,
+                view.lists[0].count,
+                view.lists[1].count,
+                view.active,
                 view.commit.is_some(),
                 view.commit_done,
                 view.error
@@ -2301,6 +2549,113 @@ mod tests {
         assert_eq!(file(p, &["show", ":a"])?, b"a-base\n");
         assert_eq!(file(p, &["show", ":b"])?, staged_b);
         assert_eq!(std::fs::read(p.join("a"))?, b"a-working\n");
+        Ok(())
+    }
+
+    #[test]
+    fn double_click_stages_and_unstages_with_the_stage_button_and_advances()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let p = dir.path();
+        git(p, &["init", "-q"])?;
+        for name in ["a", "b", "c"] {
+            std::fs::write(p.join(name), b"base\n")?;
+        }
+        git(p, &["add", "."])?;
+        git(p, &["commit", "-qm", "base"])?;
+        for name in ["a", "b", "c"] {
+            std::fs::write(p.join(name), format!("{name} working\n"))?;
+        }
+        let ctx = egui::Context::default();
+        let mut view = StatusView::new(p.into(), &ctx);
+        settle(&ctx, &mut view, 1120.0);
+
+        let output = run(&ctx, &mut view, 1120.0, vec![]);
+        assert!(text_pos(&output, "Stage").is_some(), "own Stage button");
+        let a = row_pos(&output, &view, 0, "a").ok_or("missing a row")?;
+        double_click(&ctx, &mut view, 1120.0, a);
+        pump(&ctx, &mut view, 1120.0, |view| {
+            !view.stage.mutating() && view.complete && !view.replacing && view.lists[0].count == 2
+        });
+        assert_eq!(file(p, &["show", ":a"])?, b"a working\n");
+        assert_eq!(
+            view.active
+                .as_ref()
+                .map(|(bytes, area)| (String::from_utf8_lossy(bytes).into_owned(), *area)),
+            Some(("b".into(), Area::Unstaged)),
+            "the next unstaged file is selected"
+        );
+
+        let output = run(&ctx, &mut view, 1120.0, vec![]);
+        let b = row_pos(&output, &view, 0, "b").ok_or("missing b row")?;
+        double_click(&ctx, &mut view, 1120.0, b);
+        pump(&ctx, &mut view, 1120.0, |view| {
+            !view.stage.mutating() && view.complete && !view.replacing && view.lists[0].count == 1
+        });
+        assert_eq!(
+            view.active
+                .as_ref()
+                .map(|(bytes, area)| (String::from_utf8_lossy(bytes).into_owned(), *area)),
+            Some(("c".into(), Area::Unstaged))
+        );
+
+        let output = run(&ctx, &mut view, 1120.0, vec![]);
+        let c = row_pos(&output, &view, 0, "c").ok_or("missing c row")?;
+        double_click(&ctx, &mut view, 1120.0, c);
+        pump(&ctx, &mut view, 1120.0, |view| {
+            !view.stage.mutating() && view.complete && !view.replacing && view.lists[0].count == 0
+        });
+        assert_eq!(
+            view.active
+                .as_ref()
+                .map(|(bytes, area)| (String::from_utf8_lossy(bytes).into_owned(), *area)),
+            Some(("c".into(), Area::Staged)),
+            "the last staged file stays selected in Staged"
+        );
+
+        let output = run(&ctx, &mut view, 1120.0, vec![]);
+        assert!(text_pos(&output, "Unstage").is_some(), "own Unstage button");
+        let c = row_pos(&output, &view, 1, "c").ok_or("missing staged c row")?;
+        double_click(&ctx, &mut view, 1120.0, c);
+        pump(&ctx, &mut view, 1120.0, |view| {
+            !view.stage.mutating() && view.complete && !view.replacing && view.lists[0].count == 1
+        });
+        assert_eq!(
+            file(p, &["diff", "--cached", "--name-only"])?,
+            b"a\nb\n",
+            "only c was unstaged"
+        );
+        assert_eq!(
+            view.active
+                .as_ref()
+                .map(|(bytes, area)| (String::from_utf8_lossy(bytes).into_owned(), *area)),
+            Some(("c".into(), Area::Unstaged)),
+            "unstaging follows the same path into Unstaged"
+        );
+
+        ready(&ctx, &mut view, 1120.0);
+        let output = run(&ctx, &mut view, 1120.0, vec![]);
+        let stage = text_pos(&output, "Stage").ok_or("missing Stage button")?;
+        click(&ctx, &mut view, 1120.0, stage + egui::vec2(5.0, 0.0));
+        pump(&ctx, &mut view, 1120.0, |view| {
+            !view.stage.mutating()
+                && view.complete
+                && !view.replacing
+                && view.lists[1].rows.values().any(|entry| entry.path == "c")
+        });
+        assert_eq!(file(p, &["show", ":c"])?, b"c working\n");
+
+        ready(&ctx, &mut view, 1120.0);
+        let output = run(&ctx, &mut view, 1120.0, vec![]);
+        let unstage = text_pos(&output, "Unstage").ok_or("missing Unstage button")?;
+        click(&ctx, &mut view, 1120.0, unstage + egui::vec2(5.0, 0.0));
+        pump(&ctx, &mut view, 1120.0, |view| {
+            !view.stage.mutating()
+                && view.complete
+                && !view.replacing
+                && view.lists[0].rows.values().any(|entry| entry.path == "c")
+        });
+        assert_eq!(file(p, &["diff", "--cached", "--name-only"])?, b"a\nb\n");
         Ok(())
     }
 
@@ -2939,8 +3294,7 @@ mod tests {
     }
 
     #[test]
-    fn selected_entry_disappearing_retains_path_with_empty_comparison()
-    -> Result<(), Box<dyn std::error::Error>> {
+    fn staging_the_only_file_follows_it_into_staged() -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempfile::tempdir()?;
         generated(dir.path())?;
         let ctx = egui::Context::default();
@@ -2957,9 +3311,15 @@ mod tests {
             view.active
                 .as_ref()
                 .map(|(bytes, area)| (String::from_utf8_lossy(bytes).into_owned(), *area)),
-            Some(("a".into(), Area::Unstaged))
+            Some(("a".into(), Area::Staged))
         );
-        assert_eq!(view.reader.rows_len(), 0, "stale working diff");
+        assert_eq!(
+            view.lists[1]
+                .selected_row
+                .and_then(|row| view.lists[1].rows.get(&row)),
+            view.lists[1].rows.values().find(|entry| entry.path == "a"),
+            "the staged counterpart is selected"
+        );
         let output = run(&ctx, &mut view, 1120.0, vec![]);
         let text = output
             .shapes
@@ -2971,16 +3331,10 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(text.iter().any(|line| line.contains("No unstaged changes")));
         assert!(
-            text.iter().any(|line| line.contains("no longer present")),
-            "the reviewed path stays visible with an explicit empty comparison"
+            !text.iter().any(|line| line.contains("no longer present")),
+            "following the staged file must not leave a missing comparison"
         );
-        assert!(text.contains(&"a"), "the reviewed path is retained");
-        select_path(&mut view, &ctx, "a", Area::Staged);
-        ready(&ctx, &mut view, 1120.0);
-        assert_eq!(
-            view.active.as_ref().map(|(_, area)| *area),
-            Some(Area::Staged)
-        );
+        assert!(text.contains(&"a"), "the staged path is retained");
         Ok(())
     }
 

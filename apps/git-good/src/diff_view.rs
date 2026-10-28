@@ -747,6 +747,26 @@ impl DiffView {
             })
     }
 
+    fn whole_edit_reason(&self) -> &'static str {
+        if self.stage.is_some_and(|stage| stage.pending) {
+            "Wait for the current operation"
+        } else if !self.content_settled() || self.info.is_none() {
+            "Wait for the file comparison"
+        } else if self
+            .working
+            .as_ref()
+            .is_some_and(|working| working.entry.area == Area::Conflict)
+        {
+            "Resolve the conflict before staging"
+        } else if self.working.as_ref().is_some_and(|working| {
+            matches!(working.entry.kind, Kind::IntentToAdd | Kind::Conflicted)
+        }) {
+            "This entry cannot be staged as a whole file"
+        } else {
+            "This file cannot be staged as a whole file"
+        }
+    }
+
     fn can_drop_whole(&self) -> bool {
         self.content_settled()
             && self
@@ -1431,7 +1451,8 @@ impl DiffView {
     /// endpoints. Low-frequency identity and commands are not permanent rows.
     fn draw_header(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, change: &FileChange) {
         ui.horizontal(|ui| {
-            let width = (ui.available_width() - 104.0).max(80.0);
+            let stage_width = if self.stage.is_some() { 78.0 } else { 0.0 };
+            let width = (ui.available_width() - 104.0 - stage_width).max(80.0);
             let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 24.0), egui::Sense::hover());
             bounded_text::paint(
                 ui,
@@ -1440,6 +1461,23 @@ impl DiffView {
                 egui::FontId::proportional(14.0),
                 ui.visuals().text_color(),
             );
+            if let Some(stage) = self.stage {
+                let label = if stage.verb == "Unstage" {
+                    "Unstage"
+                } else {
+                    "Stage"
+                };
+                let enabled = self.can_whole_edit();
+                let response = ui.add_enabled(enabled, egui::Button::new(label));
+                let response = if enabled {
+                    response.on_hover_text(format!("{} the whole file", stage.verb))
+                } else {
+                    response.on_disabled_hover_text(self.whole_edit_reason())
+                };
+                if response.clicked() {
+                    self.stage_edit = Some(self.file_edit(false));
+                }
+            }
             ui.menu_button("File actions", |ui| {
                 let capabilities = self.capabilities();
                 for (label, side, enabled) in [
@@ -2410,14 +2448,6 @@ impl DiffView {
                 .full
                 .as_ref()
                 .is_some_and(|full| full.lines.iter().any(|line| line.text.contains(needle)))
-    }
-
-    pub fn rows_len(&self) -> usize {
-        if self.mode == Mode::Full {
-            self.full.as_ref().map_or(0, |full| full.lines.len())
-        } else {
-            self.count
-        }
     }
 }
 
