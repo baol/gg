@@ -183,6 +183,10 @@ fn bytes(value: u64) -> String {
     }
 }
 
+fn opacity_alpha(opacity: f32) -> u8 {
+    (opacity.clamp(0.0, 1.0) * 255.0).round() as u8
+}
+
 fn fit_size(natural: egui::Vec2, bounds: egui::Vec2) -> egui::Vec2 {
     let scale = (bounds.x / natural.x).min(bounds.y / natural.y).min(1.0);
     natural * scale
@@ -228,6 +232,7 @@ fn checkerboard(painter: &egui::Painter, rect: egui::Rect, visuals: &egui::Visua
 enum Layout {
     SideBySide,
     Swipe,
+    Onion,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -242,6 +247,7 @@ pub struct View {
     layout: Layout,
     size: Size,
     split: f32,
+    opacity: f32,
 }
 
 impl Default for View {
@@ -252,6 +258,7 @@ impl Default for View {
             layout: Layout::SideBySide,
             size: Size::Fit,
             split: 0.5,
+            opacity: 0.5,
         }
     }
 }
@@ -287,6 +294,12 @@ impl View {
                 {
                     self.layout = Layout::Swipe;
                 }
+                if ui
+                    .selectable_label(self.layout == Layout::Onion, "Onion skin")
+                    .clicked()
+                {
+                    self.layout = Layout::Onion;
+                }
                 if self.layout == Layout::Swipe {
                     ui.separator();
                     ui.add(
@@ -295,6 +308,17 @@ impl View {
                             .text("Boundary"),
                     );
                     ui.weak(format!("{:.0}%", self.split * 100.0));
+                } else if self.layout == Layout::Onion {
+                    ui.separator();
+                    ui.add(
+                        egui::Slider::new(&mut self.opacity, 0.0..=1.0)
+                            .show_value(false)
+                            .text("Opacity"),
+                    )
+                    .on_hover_text(
+                        "Focus the slider and use Left/Right to adjust the After opacity",
+                    );
+                    ui.weak(format!("{:.0}%", self.opacity * 100.0));
                 }
             }
             ui.separator();
@@ -322,12 +346,15 @@ impl View {
                 if keyboard {
                     crate::navigation::scroll(ui, page_height);
                 }
-                let swipe = !narrow
-                    && self.layout == Layout::Swipe
-                    && !self.hex
-                    && pair.before.image.is_some()
-                    && pair.after.image.is_some();
-                if swipe {
+                let both_images = pair.before.image.is_some() && pair.after.image.is_some();
+                let onion = !narrow && self.layout == Layout::Onion && !self.hex && both_images;
+                let swipe = !narrow && self.layout == Layout::Swipe && !self.hex && both_images;
+                if !narrow && self.layout == Layout::Onion && !self.hex && !both_images {
+                    ui.weak("Onion skin needs both Before and After images.");
+                }
+                if onion {
+                    self.onion(ui, pair);
+                } else if swipe {
                     self.swipe(ui, pair);
                 } else if ui.available_width() >= NARROW
                     && !self.hex
@@ -387,6 +414,70 @@ impl View {
                     .wrap_mode(egui::TextWrapMode::Extend),
             );
         }
+    }
+
+    fn onion(&mut self, ui: &mut egui::Ui, pair: &Pair) {
+        let Some(before) = &self.textures[0] else {
+            return;
+        };
+        let Some(after) = &self.textures[1] else {
+            return;
+        };
+        let bounds = egui::vec2(
+            ui.available_width().max(40.0),
+            (ui.available_height() - 40.0).max(160.0),
+        );
+        let before_size = match self.size {
+            Size::Fit => fit_size(before.size_vec2(), bounds),
+            Size::Actual => before.size_vec2(),
+        };
+        let after_size = match self.size {
+            Size::Fit => fit_size(after.size_vec2(), bounds),
+            Size::Actual => after.size_vec2(),
+        };
+        let canvas = egui::vec2(
+            before_size.x.max(after_size.x),
+            before_size.y.max(after_size.y),
+        );
+        let (rect, _) = ui.allocate_exact_size(canvas, egui::Sense::hover());
+        checkerboard(ui.painter(), rect, ui.visuals());
+        let place = |size: egui::Vec2| egui::Rect::from_center_size(rect.center(), size);
+        let before_rect = place(before_size);
+        ui.painter().image(
+            before.id(),
+            before_rect,
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            egui::Color32::WHITE,
+        );
+        let after_rect = place(after_size);
+        ui.painter().image(
+            after.id(),
+            after_rect,
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            egui::Color32::from_white_alpha(opacity_alpha(self.opacity)),
+        );
+        let percent = format!("{:.0}%", self.opacity * 100.0);
+        ui.painter().text(
+            before_rect.left_top() + egui::vec2(8.0, 8.0),
+            egui::Align2::LEFT_TOP,
+            "Before",
+            egui::FontId::proportional(12.0),
+            egui::Color32::WHITE,
+        );
+        ui.painter().text(
+            after_rect.right_top() + egui::vec2(-8.0, 8.0),
+            egui::Align2::RIGHT_TOP,
+            format!("After · {percent}"),
+            egui::FontId::proportional(12.0),
+            egui::Color32::WHITE,
+        );
+        let before_meta = pair.before.metadata("Before");
+        let after_meta = pair.after.metadata("After");
+        ui.horizontal_wrapped(|ui| {
+            ui.weak(before_meta);
+            ui.separator();
+            ui.weak(format!("{after_meta} · overlay {percent}"));
+        });
     }
 
     fn swipe(&mut self, ui: &mut egui::Ui, pair: &Pair) {
@@ -543,6 +634,93 @@ mod tests {
         Ok(())
     }
     #[test]
+    fn onion_skin_overlays_after_and_requires_both_images() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let pixels = image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+            12,
+            8,
+            image::Rgba([40, 80, 120, 128]),
+        ));
+        let mut encoded = Cursor::new(Vec::new());
+        pixels.write_to(&mut encoded, image::ImageFormat::Png)?;
+        let mut before = decode(encoded.get_ref());
+        before.id = Some("a".repeat(40));
+        before.bytes = encoded.get_ref().len() as u64;
+        let mut after = decode(encoded.get_ref());
+        after.id = Some("b".repeat(40));
+        after.bytes = encoded.get_ref().len() as u64;
+        let pair = Pair { before, after };
+        let ctx = egui::Context::default();
+        let mut view = View {
+            layout: Layout::Onion,
+            opacity: 0.25,
+            ..Default::default()
+        };
+        let output = crate::tests::run_ui(
+            &ctx,
+            crate::tests::frame_input(1120.0, 740.0, vec![]),
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| view.draw(ui, &pair, false));
+            },
+        );
+        let text = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        for expected in ["Onion skin", "Opacity", "25%", "Before", "After · 25%"] {
+            assert!(
+                text.iter().any(|line| line.contains(expected)),
+                "missing {expected}: {text:?}"
+            );
+        }
+        assert!(
+            text.iter()
+                .any(|line| line.contains("overlay 25%") && line.contains("12 × 8")),
+            "{text:?}"
+        );
+        assert_eq!(opacity_alpha(0.5), 128);
+        assert_eq!(opacity_alpha(-1.0), 0);
+        assert_eq!(opacity_alpha(2.0), 255);
+
+        let mut before = decode(encoded.get_ref());
+        before.id = Some("a".repeat(40));
+        before.bytes = encoded.get_ref().len() as u64;
+        let one_sided = Pair {
+            before,
+            after: Preview::note("After absent"),
+        };
+        let output = crate::tests::run_ui(
+            &ctx,
+            crate::tests::frame_input(1120.0, 740.0, vec![]),
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| view.draw(ui, &one_sided, false));
+            },
+        );
+        let text = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            text.iter()
+                .any(|line| line.contains("Onion skin needs both Before and After images")),
+            "{text:?}"
+        );
+        assert!(
+            text.iter().any(|line| line.contains("After absent")),
+            "{text:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn fit_preserves_aspect_and_never_upscales() {
         assert_eq!(
             fit_size(egui::vec2(800.0, 400.0), egui::vec2(600.0, 600.0)),
@@ -609,6 +787,11 @@ mod tests {
             assert!(
                 text.iter().any(|line| line.contains("Actual size")),
                 "{text:?}"
+            );
+            assert_eq!(
+                text.iter().any(|line| line.contains("Onion skin")),
+                width > 720.0,
+                "onion skin is a wide-only presentation: {text:?}"
             );
         }
         let ctx = egui::Context::default();

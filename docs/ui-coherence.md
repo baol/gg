@@ -125,7 +125,6 @@ Before changing production UI, update the owning architecture and plan contracts
 
 These controls appear in the design exploration but are intentionally not part of this delivery. They stay planned in [plan](plan.md) with honest extension points; no disabled or placeholder control pretends they work.
 
-- **Onion skin**: a planned image presentation that overlays Before and After with an explicit opacity control; side-by-side and swipe are implemented, onion skin is not.
 - **Force push**: push stays non-force; no force-with-lease or force toggle is offered.
 - **Restart-persistent drafts**: normal/amend drafts survive view and repository changes in one session, not application restarts.
 - **A conflict panel inside Local Changes**: the shared preview/publication grammar lives in the dedicated resizable conflict workspace; folding it into the two-list panel remains a documented limitation rather than a hidden second route.

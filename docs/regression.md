@@ -296,6 +296,14 @@ Native review: the refs sidebar and status line show the current branch upstream
 - Backup tests assert `gg_git::backup::list` returns the private reference, kind, commit, subject, and commit time while the refs snapshot continues to exclude `refs/gg/`.
 - egui tests render the **Reorder and squash** modal with ordered rows, up/down icon controls, Squash choices, autostash, and the backup warning at 720 and 1120 widths. A submitted rewrite closes the configuration; the operation area shows **Rewriting commits…**, then **Refreshing history…** until the replacement history generation is accepted, and Escape is no longer needed to dismiss a blocking modal. The Backups window renders the entry list, Open commit, Reset branch here, Create branch here…, Copy hash, and Copy ref at 1120 width. The operation area names an in-progress rebase; Backups stays in Repository and outcome recovery.
 
+## M7 image onion skin
+
+- **Onion skin** appears only in wide layouts alongside Side by side and Swipe; narrow layouts keep stacked before/after and do not expose the control.
+- Before renders fully and After overlays with normal alpha at the default 50%; the labeled slider responds to keyboard arrows when focused, and the current percentage is shown beside the control and in the canvas metadata.
+- Fan-out keeps each image at its own fitted or actual size without stretching; the checkerboard remains behind the canvas and per-side metadata/export are unchanged.
+- Onion skin requires both images. A one-sided pair shows that both are required and keeps the absent-side state instead of blending.
+- Alpha conversion clamps to 0–255 and native captures cover 50%, keyboard-adjusted 70%, and the narrow stacked layout.
+
 ## M7 commit and tag signing
 
 - Raw verification parsing separates good, bad, unknown key, unsigned, and error; Git fixtures cover unsigned commits and annotated tags, non-commit/tag objects, and invalid references. Unsigned tags do not become errors just because Git prints “no signature found”.
