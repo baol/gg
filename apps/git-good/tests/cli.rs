@@ -856,6 +856,64 @@ fn commit_cli_commits_the_index_and_preserves_working_changes() -> Result {
     Ok(())
 }
 
+#[test]
+fn commit_cli_sign_failure_preserves_head_and_index() -> Result {
+    let repo = tempfile::tempdir()?;
+    init(repo.path(), &["-b", "main"])?;
+    git(repo.path(), &["config", "user.name", "Test"])?;
+    git(repo.path(), &["config", "user.email", "test@example.org"])?;
+    std::fs::write(repo.path().join("a"), b"base\n")?;
+    git(repo.path(), &["add", "a"])?;
+    git(repo.path(), &["commit", "-qm", "base"])?;
+    std::fs::write(repo.path().join("a"), b"next\n")?;
+    git(repo.path(), &["add", "a"])?;
+    git(repo.path(), &["config", "gpg.format", "openpgp"])?;
+    git(
+        repo.path(),
+        &[
+            "config",
+            "user.signingkey",
+            "DEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEF",
+        ],
+    )?;
+    git(
+        repo.path(),
+        &[
+            "config",
+            "gpg.program",
+            if cfg!(windows) {
+                "gg-no-such-gpg.exe"
+            } else {
+                "gg-no-such-gpg"
+            },
+        ],
+    )?;
+    let head = git_output(repo.path(), &["rev-parse", "HEAD"])?;
+    let index = std::fs::read(repo.path().join(".git/index"))?;
+    let output = Command::new(env!("CARGO_BIN_EXE_git-good"))
+        .args(["commit", "--sign", "-m", "signed but unavailable"])
+        .current_dir(repo.path())
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env(
+            "GIT_CONFIG_GLOBAL",
+            if cfg!(windows) { "NUL" } else { "/dev/null" },
+        )
+        .output()?;
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("Signing failed"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(git_output(repo.path(), &["rev-parse", "HEAD"])?, head);
+    assert_eq!(std::fs::read(repo.path().join(".git/index"))?, index);
+    assert_eq!(
+        git_output(repo.path(), &["status", "--porcelain=v1"])?,
+        b"M  a\n"
+    );
+    Ok(())
+}
+
 #[cfg(unix)]
 #[test]
 fn commit_cli_runs_hooks_and_reports_failures_with_recovery() -> Result {
@@ -2044,6 +2102,93 @@ fn branch_and_tag_delete_cli() -> Result {
 }
 
 #[test]
+fn tag_create_cli_creates_annotated_tags_and_blocks_broken_signing() -> Result {
+    let repo = tempfile::tempdir()?;
+    init(repo.path(), &["-b", "main"])?;
+    git(repo.path(), &["config", "user.name", "Test"])?;
+    git(repo.path(), &["config", "user.email", "test@example.org"])?;
+    std::fs::write(repo.path().join("a"), b"base\n")?;
+    git(repo.path(), &["add", "a"])?;
+    git(repo.path(), &["commit", "-qm", "base"])?;
+    let binary = env!("CARGO_BIN_EXE_git-good");
+    let create = |name: &str, extra: &[&str]| -> Result<std::process::Output> {
+        Ok(Command::new(binary)
+            .args(["tag", "--create", name, "--at", "HEAD", "-m", "release"])
+            .args(extra)
+            .current_dir(repo.path())
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env(
+                "GIT_CONFIG_GLOBAL",
+                if cfg!(windows) { "NUL" } else { "/dev/null" },
+            )
+            .output()?)
+    };
+    let output = create("v1", &["--no-sign"])?;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let receipt: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(receipt["operation"], "tag-create");
+    assert_eq!(receipt["tag"], "v1");
+    assert_eq!(receipt["signed"], false);
+    assert_eq!(
+        git_output(repo.path(), &["cat-file", "-t", "v1"])?,
+        b"tag\n"
+    );
+    assert_eq!(
+        git_output(
+            repo.path(),
+            &[
+                "for-each-ref",
+                "--format=%(contents:subject)",
+                "refs/tags/v1"
+            ]
+        )?,
+        b"release\n"
+    );
+
+    git(
+        repo.path(),
+        &[
+            "config",
+            "user.signingkey",
+            "DEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEF",
+        ],
+    )?;
+    git(
+        repo.path(),
+        &[
+            "config",
+            "gpg.program",
+            if cfg!(windows) {
+                "gg-no-such-gpg.exe"
+            } else {
+                "gg-no-such-gpg"
+            },
+        ],
+    )?;
+    let output = create("v2", &["--sign"])?;
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("Create tag v2 failed"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !Command::new("git")
+            .args(["-C"])
+            .arg(repo.path())
+            .args(["rev-parse", "--verify", "refs/tags/v2"])
+            .output()?
+            .status
+            .success()
+    );
+    Ok(())
+}
+
+#[test]
 fn commit_amend_and_reflog_cli() -> Result {
     let repo = tempfile::tempdir()?;
     init(repo.path(), &["-b", "main"])?;
@@ -2357,6 +2502,58 @@ fn lfs_cli_reports_pointer_identity_and_availability() -> Result {
     assert_eq!(status["lfs"]["after"]["oid"], oid);
     assert_eq!(status["lfs"]["after"]["size"], 12345);
     assert_eq!(status["lfs"]["after"]["available"], false);
+    Ok(())
+}
+
+#[test]
+fn signature_cli_reports_config_and_unsigned_commit() -> Result {
+    let repo = tempfile::tempdir()?;
+    init(repo.path(), &["-b", "main"])?;
+    git(repo.path(), &["config", "user.name", "Test"])?;
+    git(repo.path(), &["config", "user.email", "test@example.org"])?;
+    std::fs::write(repo.path().join("a"), b"base\n")?;
+    git(repo.path(), &["add", "a"])?;
+    git(repo.path(), &["commit", "-qm", "base"])?;
+    let binary = env!("CARGO_BIN_EXE_git-good");
+
+    let out = Command::new(binary)
+        .args(["signature", "config", "--repo"])
+        .arg(repo.path())
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env(
+            "GIT_CONFIG_GLOBAL",
+            if cfg!(windows) { "NUL" } else { "/dev/null" },
+        )
+        .output()?;
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let config: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(config["operation"], "signature config");
+    assert_eq!(config["config"]["format"], "openpgp");
+    assert_eq!(config["config"]["commit_signing"], false);
+    assert_eq!(config["config"]["tag_signing"], false);
+
+    let out = Command::new(binary)
+        .args(["signature", "verify", "HEAD", "--repo"])
+        .arg(repo.path())
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env(
+            "GIT_CONFIG_GLOBAL",
+            if cfg!(windows) { "NUL" } else { "/dev/null" },
+        )
+        .output()?;
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let verification: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(verification["operation"], "signature verify");
+    assert_eq!(verification["verification"]["state"], "unsigned");
+    assert_eq!(verification["verification"]["kind"], "commit");
     Ok(())
 }
 

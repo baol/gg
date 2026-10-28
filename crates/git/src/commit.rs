@@ -22,6 +22,7 @@ pub struct Receipt {
     pub parents: Vec<String>,
     pub warnings: Vec<String>,
     pub amended: bool,
+    pub signed: bool,
     pub previous: Option<String>,
     pub backup: Option<String>,
 }
@@ -30,10 +31,18 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 /// Create one commit from the current index after validating the observed HEAD.
 pub fn create(repository: &StatusIdentity, message: &str) -> std::result::Result<Receipt, String> {
-    create_inner(repository, message).map_err(|e| format!("Commit: {e}"))
+    create_inner(repository, message, false).map_err(|e| format!("Commit: {e}"))
 }
 
-fn create_inner(repository: &StatusIdentity, message: &str) -> Result<Receipt> {
+/// Create one signed commit. A missing key or agent fails instead of falling back to unsigned.
+pub fn create_signed(
+    repository: &StatusIdentity,
+    message: &str,
+) -> std::result::Result<Receipt, String> {
+    create_inner(repository, message, true).map_err(|e| format!("Commit: {e}"))
+}
+
+fn create_inner(repository: &StatusIdentity, message: &str, sign: bool) -> Result<Receipt> {
     let message = normalize_message(message)?;
     crate::status::validate(repository)?;
     let repo = gix::discover(&repository.path)?;
@@ -84,9 +93,16 @@ fn create_inner(repository: &StatusIdentity, message: &str) -> Result<Receipt> {
         .ok_or("Committer identity is not configured. Set user.name/user.email or GIT_COMMITTER_NAME/EMAIL.")?
         .map_err(|e| format!("Read committer identity: {e}"))?;
     let parents = head.into_iter().collect::<Vec<_>>();
-    let id = repo
-        .commit_as(committer, author, "HEAD", &message, tree, parents)?
-        .detach();
+    let id = if sign {
+        let author = author.trim().to_owned()?;
+        let committer = committer.trim().to_owned()?;
+        let id = signed_commit_id(&repo, tree, &parents, &message_path, &author, &committer)?;
+        update_created_head(&repo, id, &parents, &message, &committer)?;
+        id
+    } else {
+        repo.commit_as(committer, author, "HEAD", &message, tree, parents)?
+            .detach()
+    };
     drop(lock);
 
     let warnings = match run_hook(&worktree, "post-commit", &[]) {
@@ -101,6 +117,7 @@ fn create_inner(repository: &StatusIdentity, message: &str) -> Result<Receipt> {
         parents: head.iter().map(ToString::to_string).collect(),
         warnings,
         amended: false,
+        signed: sign,
         previous: None,
         backup: None,
     })
@@ -108,10 +125,18 @@ fn create_inner(repository: &StatusIdentity, message: &str) -> Result<Receipt> {
 
 /// Rewrite HEAD with the current index and a new message.
 pub fn amend(repository: &StatusIdentity, message: &str) -> std::result::Result<Receipt, String> {
-    amend_inner(repository, message).map_err(|e| format!("Amend: {e}"))
+    amend_inner(repository, message, false).map_err(|e| format!("Amend: {e}"))
 }
 
-fn amend_inner(repository: &StatusIdentity, message: &str) -> Result<Receipt> {
+/// Rewrite HEAD as a signed commit. A signing failure leaves HEAD and the index untouched.
+pub fn amend_signed(
+    repository: &StatusIdentity,
+    message: &str,
+) -> std::result::Result<Receipt, String> {
+    amend_inner(repository, message, true).map_err(|e| format!("Amend: {e}"))
+}
+
+fn amend_inner(repository: &StatusIdentity, message: &str, sign: bool) -> Result<Receipt> {
     let message = normalize_message(message)?;
     crate::status::validate(repository)?;
     let repo = gix::discover(&repository.path)?;
@@ -156,16 +181,24 @@ fn amend_inner(repository: &StatusIdentity, message: &str) -> Result<Receipt> {
         .ok_or("Committer identity is not configured. Set user.name/user.email or GIT_COMMITTER_NAME/EMAIL.")?
         .map_err(|e| format!("Read committer identity: {e}"))?
         .to_owned()?;
-    let backup = crate::backup::create(&repository.path, "amend", &previous)?;
-    let id = write_amended_commit(
-        &repo,
-        committer,
-        author,
-        &message,
-        tree,
-        &parents,
-        previous_id,
-    )?;
+    let (backup, id) = if sign {
+        let id = signed_commit_id(&repo, tree, &parents, &message_path, &author, &committer)?;
+        let backup = crate::backup::create(&repository.path, "amend", &previous)?;
+        update_amended_head(&repo, id, previous_id, &message, &committer)?;
+        (backup, id)
+    } else {
+        let backup = crate::backup::create(&repository.path, "amend", &previous)?;
+        let id = write_amended_commit(
+            &repo,
+            committer.clone(),
+            author,
+            &message,
+            tree,
+            &parents,
+            previous_id,
+        )?;
+        (backup, id)
+    };
     drop(lock);
 
     let mut warnings = vec![];
@@ -191,6 +224,7 @@ fn amend_inner(repository: &StatusIdentity, message: &str) -> Result<Receipt> {
         parents: parents.iter().map(ToString::to_string).collect(),
         warnings,
         amended: true,
+        signed: sign,
         previous: Some(previous),
         backup: Some(backup),
     })
@@ -215,6 +249,17 @@ fn write_amended_commit(
         extra_headers: Default::default(),
     };
     let id = repo.write_object(&commit)?.detach();
+    update_amended_head(repo, id, previous, message, &committer)?;
+    Ok(id)
+}
+
+fn update_amended_head(
+    repo: &gix::Repository,
+    id: gix::ObjectId,
+    previous: gix::ObjectId,
+    message: &str,
+    committer: &gix::actor::Signature,
+) -> Result<()> {
     let subject = message.lines().next().unwrap_or_default();
     let name: gix::refs::FullName = "HEAD"
         .try_into()
@@ -230,7 +275,106 @@ fn write_amended_commit(
     .with_deref(true);
     let mut time = gix::date::parse::TimeBuf::default();
     repo.edit_references_as(std::iter::once(edit), Some(committer.to_ref(&mut time)))?;
-    Ok(id)
+    Ok(())
+}
+
+fn update_created_head(
+    repo: &gix::Repository,
+    id: gix::ObjectId,
+    parents: &[gix::ObjectId],
+    message: &str,
+    committer: &gix::actor::Signature,
+) -> Result<()> {
+    let expected = match parents.first() {
+        Some(previous) => gix::refs::transaction::PreviousValue::MustExistAndMatch(
+            gix::refs::Target::Object(*previous),
+        ),
+        None => gix::refs::transaction::PreviousValue::MustNotExist,
+    };
+    let name: gix::refs::FullName = "HEAD"
+        .try_into()
+        .map_err(|error| format!("Resolve HEAD: {error}"))?;
+    let edit = gix::refs::transaction::RefEdit::update(
+        name,
+        id,
+        expected,
+        gix::reference::log::message("commit", message.into(), parents.len()),
+    )
+    .with_deref(true);
+    let mut time = gix::date::parse::TimeBuf::default();
+    repo.edit_references_as(std::iter::once(edit), Some(committer.to_ref(&mut time)))?;
+    Ok(())
+}
+
+/// Ask Git to create a commit object and sign it, without updating any reference.
+fn signed_commit_id(
+    repo: &gix::Repository,
+    tree: gix::ObjectId,
+    parents: &[gix::ObjectId],
+    message_path: &Path,
+    author: &gix::actor::Signature,
+    committer: &gix::actor::Signature,
+) -> Result<gix::ObjectId> {
+    let worktree = repo
+        .workdir()
+        .ok_or("Signing requires a working tree")?
+        .to_path_buf();
+    let mut command = Command::new("git");
+    command
+        .current_dir(&worktree)
+        .arg("commit-tree")
+        .arg("-S")
+        .arg(tree.to_string());
+    for parent in parents {
+        command.arg("-p").arg(parent.to_string());
+    }
+    command
+        .arg("-F")
+        .arg(message_path)
+        .stdin(Stdio::null())
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE");
+    identity_env(&mut command, "AUTHOR", author);
+    identity_env(&mut command, "COMMITTER", committer);
+    let output = command.output().map_err(|error| {
+        format!("Could not run Git to sign the commit: {error}. The commit was not created.")
+    })?;
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stderr);
+        let detail = detail.trim();
+        return Err(format!(
+            "Signing failed ({}). The commit was not created; your message, index, and working tree are unchanged.{}",
+            output.status,
+            if detail.is_empty() {
+                String::new()
+            } else {
+                format!("\n{detail}")
+            }
+        )
+        .into());
+    }
+    let id = String::from_utf8_lossy(&output.stdout);
+    let id = id.trim();
+    if id.is_empty() {
+        return Err("Signing returned no commit ID. The commit was not created.".into());
+    }
+    Ok(gix::ObjectId::from_hex(id.as_bytes())?)
+}
+
+fn identity_env(command: &mut Command, role: &str, signature: &gix::actor::Signature) {
+    let offset = signature.time.offset;
+    let sign = if offset < 0 { '-' } else { '+' };
+    let offset = offset.abs();
+    let date = format!(
+        "{} {sign}{:02}{:02}",
+        signature.time.seconds,
+        offset / 3600,
+        (offset % 3600) / 60
+    );
+    command
+        .env(format!("GIT_{role}_NAME"), signature.name.to_string())
+        .env(format!("GIT_{role}_EMAIL"), signature.email.to_string())
+        .env(format!("GIT_{role}_DATE"), date);
 }
 
 /// Read the current HEAD message without changing repository state.

@@ -21,7 +21,7 @@ Follow-up design direction: [coherent interaction proposal](ui-coherence.md) and
 | M7: image comparison | Complete | Compare dimensions and pixels across revisions | F13; Images mockup |
 | M7: worktrees | Complete | Work on another branch with isolated drafts and selection | F14; Worktrees mockup |
 | M7: submodules and LFS | Complete for review-time pointers | Understand nested revisions and pointer/object availability | F15–F16; Submodule and LFS mockups |
-| M7: signing | Planned | Distinguish signature validity, trust, and signing setup | F17; Signing mockup |
+| M7: signing | Complete | Distinguish signature validity, trust, and signing setup | F17; Signing mockup |
 
 The roadmap now distinguishes the already-completed reading surface and file history from the remaining M7 work. Read M7 as partially delivered, not wholly future work. The plan provides the finer delivery sequence. M0–M6 completion is a documented claim, not a fresh implementation audit; platform acceptance and preview gates remain separate in [verification](verification.md#preview-acceptance-pending).
 
@@ -236,20 +236,20 @@ flowchart TD
 
 **States:** LFS executable/configuration missing, offline/auth failure, malformed pointer, oversized preview, and cancellation keep the pointer and next action. Never label pointer text as the fetched image. **Completion:** availability is accurate without hidden network or worktree writes. **Mockup:** LFS → Fetch object → locally available. Review-time pointer inspection and explicit object fetch are implemented; Local Changes/working-tree pointers and fetched-content preview remain planned. Fetch does not smudge or stage.
 
-### F17 · Verify signatures and sign deliberately · proposed M7
+### F17 · Verify signatures and sign deliberately · M7
 
-**Entry proposal:** commit details/tag details → Signature details; Local Changes → signing choice only after configuration is explicit.
+**Entry:** commit details → **Signature details…**; a tag's ref menu → **Signature details…**; Local Changes → **Sign** next to Amend; Refs → **New tag…**.
 
-1. Show signed object identity, signature format, signer/key identifier, verification result, and trust result separately. Unsigned, invalid, unknown key, untrusted valid signature, and tool unavailable are distinct states.
-2. Opening verification never modifies trust stores or repository signing configuration. Errors include readable Details and Retry where meaningful.
-3. Signing setup names repository scope, format, and identity. A proposed commit-signing action summarizes that choice before hooks/signing; missing key/agent failure retains the draft and index without silently falling back to unsigned.
-4. Signed tag creation needs its own explicit name, target, message, and signing identity; merely verifying a tag does not create one.
+1. Show signed object identity, signature format, signer/key identifier, verification result, and trust result separately. Unsigned, invalid, unknown key, valid-but-untrusted, and tool unavailable are distinct states.
+2. Opening verification never modifies trust stores or repository signing configuration. Failures name the reason and keep the window open.
+3. The commit **Sign** choice is initialized from `commit.gpgsign` and enabled only when configuration is ready. A signing failure retains the draft and index without silently falling back to unsigned.
+4. Signed tag creation has its own explicit name, target, message, and signing choice; merely verifying a tag does not create one.
 
-**Completion:** verification means what it says, or a deliberate signing attempt reports its outcome. **Mockup:** Signing distinguishes validity from trust; signing setup/tag creation are specified proposals only. **Decision:** supported formats, trust interpretation, configuration ownership, and CLI signing flags need architecture and acceptance contracts before implementation.
+**Completion:** verification means what it says, and a deliberate signing attempt reports its outcome. **Mockup:** Signing distinguishes validity from trust; commit and tag signing are implemented.
 
 ## Review and delivery sequence
 
-The plan sequence is now: blame/line history → image diffs → worktrees → submodules → LFS → signing, with onion skin planned as an image-diff extension. Blame/line history, image diffs, worktrees, submodules, and review-time LFS are complete; reuse the shipped history cursor rather than creating a second timeline. For the remaining signing increment, settle the decisions called out above, define shared engine/CLI behavior, then implement native UI and verification together. No date or new milestone commitment is inferred.
+The plan sequence is now: blame/line history → image diffs → worktrees → submodules → LFS → signing, with onion skin planned as an image-diff extension. Blame/line history, image diffs, worktrees, submodules, review-time LFS, and signing are complete; reuse the shipped history cursor rather than creating a second timeline. Onion skin and the LFS working-tree/materialization extensions remain planned. No date or new milestone commitment is inferred.
 
 | Review scenario | Expected observation |
 | --- | --- |

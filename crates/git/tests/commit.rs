@@ -473,3 +473,55 @@ fn amend_rejects_unborn_head_and_empty_messages() -> Result {
     assert_eq!(git(p, &["rev-list", "--count", "HEAD"])?, b"1\n");
     Ok(())
 }
+
+#[test]
+fn signed_commit_without_a_working_signer_never_falls_back_to_unsigned() -> Result {
+    let dir = repo()?;
+    let p = dir.path();
+    std::fs::write(p.join("a"), b"base\n")?;
+    git(p, &["add", "a"])?;
+    commit(p, "base")?;
+    git(p, &["config", "gpg.format", "openpgp"])?;
+    git(
+        p,
+        &[
+            "config",
+            "user.signingkey",
+            "DEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEF",
+        ],
+    )?;
+    git(
+        p,
+        &[
+            "config",
+            "gpg.program",
+            if cfg!(windows) {
+                "gg-no-such-gpg.exe"
+            } else {
+                "gg-no-such-gpg"
+            },
+        ],
+    )?;
+    let head = git(p, &["rev-parse", "HEAD"])?;
+    std::fs::write(p.join("a"), b"next\n")?;
+    git(p, &["add", "a"])?;
+    let staged = git(p, &["ls-files", "-s", "a"])?;
+
+    let error = match gg_git::commit::create_signed(&identity(p)?, "signed but unavailable") {
+        Err(error) => error,
+        Ok(_) => return Err("signed commit unexpectedly succeeded".into()),
+    };
+    assert!(error.contains("Signing failed"), "{error}");
+    assert_eq!(git(p, &["rev-parse", "HEAD"])?, head);
+    assert_eq!(git(p, &["ls-files", "-s", "a"])?, staged);
+    assert_eq!(git(p, &["status", "--porcelain=v1"])?, b"M  a\n");
+
+    let error = match gg_git::commit::amend_signed(&identity(p)?, "amend signed but unavailable") {
+        Err(error) => error,
+        Ok(_) => return Err("signed amend unexpectedly succeeded".into()),
+    };
+    assert!(error.contains("Signing failed"), "{error}");
+    assert_eq!(git(p, &["rev-parse", "HEAD"])?, head);
+    assert_eq!(git(p, &["status", "--porcelain=v1"])?, b"M  a\n");
+    Ok(())
+}

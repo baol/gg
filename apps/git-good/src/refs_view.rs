@@ -11,11 +11,13 @@ pub enum Action {
     Switch(String),
     Jump(String),
     NewBranch,
+    NewTag,
     Track(String),
     Merge(String),
     Rebase(String),
     DeleteBranch(String),
     DeleteTag(String),
+    VerifyTag(String),
 }
 
 #[derive(Default)]
@@ -43,16 +45,30 @@ pub fn show(ui: &mut egui::Ui, refs: &Snapshot, filter: &mut String, busy: bool)
             .hint_text("Filter refs")
             .desired_width(f32::INFINITY),
     );
-    if ui
-        .add_enabled(
-            !busy && refs.head.as_ref().is_some_and(|head| head.commit.is_some()),
-            egui::Button::new("+  New branch").min_size(egui::vec2(ui.available_width(), 24.0)),
-        )
-        .on_hover_text("Create a branch from HEAD")
-        .clicked()
-    {
-        action = Some(Action::NewBranch);
-    }
+    let has_head = refs.head.as_ref().is_some_and(|head| head.commit.is_some());
+    ui.horizontal(|ui| {
+        let width = ((ui.available_width() - 6.0) / 2.0).max(60.0);
+        if ui
+            .add_enabled(
+                !busy && has_head,
+                egui::Button::new("+  Branch").min_size(egui::vec2(width, 24.0)),
+            )
+            .on_hover_text("Create a branch from HEAD")
+            .clicked()
+        {
+            action = Some(Action::NewBranch);
+        }
+        if ui
+            .add_enabled(
+                !busy && has_head,
+                egui::Button::new("+  Tag").min_size(egui::vec2(width, 24.0)),
+            )
+            .on_hover_text("Create an annotated or signed tag at an explicit target")
+            .clicked()
+        {
+            action = Some(Action::NewTag);
+        }
+    });
     if let Some(tracking) = refs.current_tracking() {
         ui.add_space(2.0);
         tracking_row(ui, tracking);
@@ -317,6 +333,13 @@ fn render_leaf(
                     .clicked()
                 {
                     *action = Some(Action::Rebase(item.name.clone()));
+                    ui.close();
+                }
+                if ui
+                    .add_enabled(!busy, egui::Button::new("Signature details…"))
+                    .clicked()
+                {
+                    *action = Some(Action::VerifyTag(item.full_name.clone()));
                     ui.close();
                 }
                 if ui

@@ -296,6 +296,17 @@ Native review: the refs sidebar and status line show the current branch upstream
 - Backup tests assert `gg_git::backup::list` returns the private reference, kind, commit, subject, and commit time while the refs snapshot continues to exclude `refs/gg/`.
 - egui tests render the **Reorder and squash** modal with ordered rows, up/down icon controls, Squash choices, autostash, and the backup warning at 720 and 1120 widths. A submitted rewrite closes the configuration; the operation area shows **Rewriting commits…**, then **Refreshing history…** until the replacement history generation is accepted, and Escape is no longer needed to dismiss a blocking modal. The Backups window renders the entry list, Open commit, Reset branch here, Create branch here…, Copy hash, and Copy ref at 1120 width. The operation area names an in-progress rebase; Backups stays in Repository and outcome recovery.
 
+## M7 commit and tag signing
+
+- Raw verification parsing separates good, bad, unknown key, unsigned, and error; Git fixtures cover unsigned commits and annotated tags, non-commit/tag objects, and invalid references. Unsigned tags do not become errors just because Git prints “no signature found”.
+- Signing configuration reads format, key, program, commit/tag signing, allowed signers, and tool availability without writing configuration; note and readiness follow the missing key/tool.
+- A signed commit without a working signer fails with “Signing failed” and leaves HEAD, the index, and staged content unchanged; signed amend follows the same rule. A signed commit with the isolated OpenPGP fixture verifies as good.
+- The Local Changes **Sign** choice starts from `commit.gpgsign`, is retained with the draft, blocks the commit when setup is unavailable, and does not silently produce an unsigned commit. Explicitly clearing it still permits an unsigned commit.
+- CLI `git good commit --sign` signs; `--no-sign` opts out; without a flag the CLI follows `commit.gpgsign`. The receipt reports the signed state.
+- Tag creation requires an explicit name, target, and message; unsigned creation is annotated, signed creation uses the configured signer, and a signing failure leaves no tag. CLI `tag --create` covers both outcomes.
+- Signature windows render at 720×480 inside the viewport with state, signer, key, trust, format, configuration, and the read-only notice; tag verification uses the same window via the refs menu.
+- Native captures cover good and unknown-key states, the Sign choice, and the tag dialog. SSH/X.509 formats and real agent prompts remain platform checks.
+
 ## M7 Git LFS
 
 - Pointer parsing accepts the canonical v1 header, 64-digit SHA-256 OID, and size line; malformed OIDs/sizes and ordinary text are distinguished. Git fixtures cover before/after pointers and non-pointer content.

@@ -40,6 +40,8 @@ mod review_cli;
 mod review_view;
 mod review_worker;
 mod rewrite_cli;
+mod signature_cli;
+mod signature_worker;
 mod stage_view;
 mod stash_cli;
 mod state;
@@ -69,7 +71,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("--help")) {
         println!(
-            "gg · good git\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good refs [PATH]      Print branches, remotes, tags, and HEAD as JSON\ngit-good status [PATH] [--file PATH --area AREA]   Print working status or diff as JSON\ngit-good stage --file PATH [--hunk HEADER]... [--repo PATH]   Stage one file or selected hunks\ngit-good unstage --file PATH [--repo PATH]   Unstage one file\ngit-good commit [--amend] -m MESSAGE [--repo PATH]   Commit the index or amend HEAD after Git hooks\ngit-good reflog [REF] [--repo PATH]   Print reflog entries as JSON\ngit-good blame PATH [--revision REF] [--lines START,END] [--repo PATH]   Print line attribution as JSON\ngit-good worktree <list|add|remove> [OPTIONS] [--repo PATH]   List, add, or remove worktrees\ngit-good submodule <status|update> PATH [OPTIONS] [--repo PATH]   Inspect or update a gitlink submodule\ngit-good lfs <status|fetch> PATH [--revision REF] [--before REF] [--repo PATH]   Inspect or fetch an LFS pointer\ngit-good switch [--create] BRANCH [--repo PATH]   Switch to or create a local branch\ngit-good fetch [REMOTE] [--prune] [--repo PATH]   Fetch and update remote-tracking refs\ngit-good push [REMOTE] [BRANCH] [--set-upstream] [--repo PATH]   Push a local branch without force\ngit-good clone URL [PATH]   Clone a repository and open it\ngit-good stash <list|push|apply|pop|drop> [OPTIONS] [--repo PATH]   List or mutate stashes\ngit-good cherry-pick COMMIT [--repo PATH]   Apply a commit\ngit-good revert COMMIT [--repo PATH]   Invert a commit\ngit-good merge REF [--no-ff] [--repo PATH]   Merge a branch, remote, or tag\ngit-good rebase REF [--autostash] [--repo PATH]   Rebase the current branch onto a branch, remote, or tag\ngit-good rebase --continue|--skip|--abort [--repo PATH]   Recover an in-progress rebase\ngit-good rewrite --from COMMIT --pick COMMIT... --squash COMMIT... [--autostash] [--repo PATH]   Reorder or squash a linear range\ngit-good rewrite --continue|--skip|--abort [--repo PATH]   Recover an in-progress rewrite\ngit-good conflicts [--repo PATH]   List unmerged paths\ngit-good conflict --file PATH [--use ours|theirs|--stage] [--repo PATH]   Read or resolve a conflict\ngit-good reset --soft|--mixed|--hard COMMIT [--repo PATH]   Reset the current branch\ngit-good branch --delete BRANCH [--force] [--repo PATH]   Delete a local branch\ngit-good branch --create NAME [--at REF] [--repo PATH]   Create a local branch without switching\ngit-good tag --delete TAG [--repo PATH]   Delete a local tag\ngit-good show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]   Review or export\n\nBrowse commits reachable from HEAD and all local, remote, and tag refs."
+            "gg · good git\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good refs [PATH]      Print branches, remotes, tags, and HEAD as JSON\ngit-good status [PATH] [--file PATH --area AREA]   Print working status or diff as JSON\ngit-good stage --file PATH [--hunk HEADER]... [--repo PATH]   Stage one file or selected hunks\ngit-good unstage --file PATH [--repo PATH]   Unstage one file\ngit-good commit [--amend] [--sign|--no-sign] -m MESSAGE [--repo PATH]   Commit the index or amend HEAD after Git hooks\ngit-good reflog [REF] [--repo PATH]   Print reflog entries as JSON\ngit-good blame PATH [--revision REF] [--lines START,END] [--repo PATH]   Print line attribution as JSON\ngit-good worktree <list|add|remove> [OPTIONS] [--repo PATH]   List, add, or remove worktrees\ngit-good submodule <status|update> PATH [OPTIONS] [--repo PATH]   Inspect or update a gitlink submodule\ngit-good lfs <status|fetch> PATH [--revision REF] [--before REF] [--repo PATH]   Inspect or fetch an LFS pointer\ngit-good signature <config|verify> [REF] [--repo PATH]   Read signing config or verify a commit/tag\ngit-good switch [--create] BRANCH [--repo PATH]   Switch to or create a local branch\ngit-good fetch [REMOTE] [--prune] [--repo PATH]   Fetch and update remote-tracking refs\ngit-good push [REMOTE] [BRANCH] [--set-upstream] [--repo PATH]   Push a local branch without force\ngit-good clone URL [PATH]   Clone a repository and open it\ngit-good stash <list|push|apply|pop|drop> [OPTIONS] [--repo PATH]   List or mutate stashes\ngit-good cherry-pick COMMIT [--repo PATH]   Apply a commit\ngit-good revert COMMIT [--repo PATH]   Invert a commit\ngit-good merge REF [--no-ff] [--repo PATH]   Merge a branch, remote, or tag\ngit-good rebase REF [--autostash] [--repo PATH]   Rebase the current branch onto a branch, remote, or tag\ngit-good rebase --continue|--skip|--abort [--repo PATH]   Recover an in-progress rebase\ngit-good rewrite --from COMMIT --pick COMMIT... --squash COMMIT... [--autostash] [--repo PATH]   Reorder or squash a linear range\ngit-good rewrite --continue|--skip|--abort [--repo PATH]   Recover an in-progress rewrite\ngit-good conflicts [--repo PATH]   List unmerged paths\ngit-good conflict --file PATH [--use ours|theirs|--stage] [--repo PATH]   Read or resolve a conflict\ngit-good reset --soft|--mixed|--hard COMMIT [--repo PATH]   Reset the current branch\ngit-good branch --delete BRANCH [--force] [--repo PATH]   Delete a local branch\ngit-good branch --create NAME [--at REF] [--repo PATH]   Create a local branch without switching\ngit-good tag --delete TAG [--repo PATH]   Delete a local tag
+git-good tag --create TAG --at REF -m MESSAGE [--sign] [--repo PATH]   Create an annotated or signed tag\ngit-good show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]   Review or export\n\nBrowse commits reachable from HEAD and all local, remote, and tag refs."
         );
         return Ok(());
     }
@@ -93,6 +96,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("blame")) {
         return blame_cli::run(args);
+    }
+    if first.as_deref() == Some(std::ffi::OsStr::new("signature")) {
+        let sub = args
+            .next()
+            .ok_or("Use git-good signature <config|verify> --help for usage")?;
+        return match sub.to_str() {
+            Some("config") => signature_cli::config(args),
+            Some("verify") => signature_cli::verify(args),
+            _ => Err("Use git-good signature <config|verify>".into()),
+        };
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("lfs")) {
         let sub = args
@@ -413,6 +426,17 @@ struct TagDeleteDialog {
     error: Option<String>,
 }
 
+struct TagCreateDialog {
+    name: String,
+    target: String,
+    message: String,
+    sign: bool,
+    signing_ready: bool,
+    signing_note: Option<String>,
+    error: Option<String>,
+    pending: Option<std::sync::mpsc::Receiver<Result<gg_git::tag::CreateReceipt, String>>>,
+}
+
 #[derive(Clone)]
 struct CreateBranchDialog {
     name: String,
@@ -638,6 +662,7 @@ enum CommitCommand {
     CopyHash,
     CopySubject,
     OpenRecovery,
+    OpenSignature,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -699,6 +724,9 @@ fn commit_action_menu(
     if ui.button("Copy subject").clicked() {
         command = Some(CommitCommand::CopySubject);
     }
+    if ui.button("Signature details…").clicked() {
+        command = Some(CommitCommand::OpenSignature);
+    }
     ui.separator();
     ui.label(egui::RichText::new("Integrate").weak());
     if ui
@@ -748,6 +776,10 @@ fn commit_action_menu(
         command = Some(CommitCommand::OpenRecovery);
     }
     command
+}
+
+fn short_id(reference: &str) -> String {
+    reference.chars().take(12).collect()
 }
 
 fn lfs_bytes(value: u64) -> String {
@@ -819,6 +851,14 @@ struct LfsWindow {
     confirm_fetch: bool,
 }
 
+struct SignatureWindow {
+    reference: String,
+    verification: Option<gg_engine::signature::Verification>,
+    config: Option<gg_engine::signature::Config>,
+    error: Option<String>,
+    busy: Option<String>,
+}
+
 struct Browser {
     logo: Option<egui::TextureHandle>,
     path: String,
@@ -868,6 +908,7 @@ struct Browser {
     reset_confirm: Option<(String, gg_engine::reset::Mode)>,
     branch_delete: Option<BranchDeleteDialog>,
     tag_delete: Option<TagDeleteDialog>,
+    tag_create: Option<TagCreateDialog>,
     create_branch: Option<CreateBranchDialog>,
     recovery: Option<RecoveryView>,
     worktree_window: Option<WorktreeWindow>,
@@ -880,6 +921,9 @@ struct Browser {
     lfs_window: Option<LfsWindow>,
     lfs_worker: Option<lfs_worker::Worker>,
     lfs_generation: u64,
+    signature_window: Option<SignatureWindow>,
+    signature_worker: Option<signature_worker::Worker>,
+    signature_generation: u64,
     refs_visible: bool,
     refs_query: String,
     state: state::State,
@@ -955,6 +999,7 @@ impl Browser {
             reset_confirm: None,
             branch_delete: None,
             tag_delete: None,
+            tag_create: None,
             create_branch: None,
             recovery: None,
             worktree_window: None,
@@ -967,6 +1012,9 @@ impl Browser {
             lfs_window: None,
             lfs_worker: None,
             lfs_generation: 0,
+            signature_window: None,
+            signature_worker: None,
+            signature_generation: 0,
             refs_visible: true,
             refs_query: String::new(),
             state: state::State::default(),
@@ -1739,6 +1787,7 @@ impl Browser {
                     self.recovery = Some(RecoveryView::new(history.path.clone()));
                 }
             }
+            CommitCommand::OpenSignature => self.open_signature(ctx, id.to_string()),
         }
     }
 
@@ -2121,6 +2170,255 @@ impl Browser {
         self.refresh_backups();
         self.refresh_working(ctx);
         self.state.generation
+    }
+
+    fn open_new_tag(&mut self) {
+        let Some(path) = self.stash_path() else {
+            return;
+        };
+        let target = self
+            .state
+            .selected
+            .clone()
+            .or_else(|| {
+                self.state
+                    .refs
+                    .head
+                    .as_ref()
+                    .and_then(|head| head.commit.clone())
+            })
+            .unwrap_or_default();
+        if target.is_empty() {
+            self.mutation_error = Some("Create the first commit before creating a tag.".into());
+            return;
+        }
+        let config = gg_git::signature::config(&path);
+        let ready = config.ready();
+        self.tag_create = Some(TagCreateDialog {
+            name: String::new(),
+            target,
+            message: String::new(),
+            sign: config.tag_signing,
+            signing_ready: ready,
+            signing_note: if ready {
+                None
+            } else {
+                Some(
+                    config
+                        .note
+                        .unwrap_or_else(|| "Signing key or tool is unavailable.".into()),
+                )
+            },
+            error: None,
+            pending: None,
+        });
+    }
+
+    fn start_tag_create(&mut self, ctx: &egui::Context) {
+        let Some(path) = self.stash_path() else {
+            return;
+        };
+        let Some(dialog) = &mut self.tag_create else {
+            return;
+        };
+        if dialog.pending.is_some() {
+            return;
+        }
+        let name = dialog.name.trim().to_string();
+        let target = dialog.target.trim().to_string();
+        let message = dialog.message.clone();
+        if name.is_empty() {
+            dialog.error = Some("Enter a tag name.".into());
+            return;
+        }
+        if target.is_empty() {
+            dialog.error = Some("Enter a target reference.".into());
+            return;
+        }
+        if message.trim().is_empty() {
+            dialog.error = Some("Enter an annotated tag message.".into());
+            return;
+        }
+        let signed = dialog.sign;
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        let repaint = ctx.clone();
+        match std::thread::Builder::new()
+            .name("gg-tag-create".into())
+            .spawn(move || {
+                let result = gg_git::tag::create(&path, &name, &target, &message, signed);
+                let _ = tx.send(result);
+                repaint.request_repaint();
+            }) {
+            Ok(_) => {
+                dialog.pending = Some(rx);
+                dialog.error = None;
+            }
+            Err(error) => dialog.error = Some(format!("Start tag creation: {error}")),
+        }
+    }
+
+    fn poll_tag_create(&mut self) -> Option<Result<gg_git::tag::CreateReceipt, String>> {
+        let dialog = self.tag_create.as_mut()?;
+        let receiver = dialog.pending.as_ref()?;
+        match receiver.try_recv() {
+            Ok(result) => {
+                dialog.pending = None;
+                Some(result)
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => None,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                dialog.pending = None;
+                Some(Err("Tag worker stopped. Review refs and try again.".into()))
+            }
+        }
+    }
+
+    fn draw_tag_create(&mut self, ctx: &egui::Context) {
+        if let Some(result) = self.poll_tag_create() {
+            match result {
+                Ok(receipt) => {
+                    self.mutation_notice = Some(format!(
+                        "Created {} tag {}{}",
+                        if receipt.signed {
+                            "signed"
+                        } else {
+                            "annotated"
+                        },
+                        receipt.tag,
+                        if receipt.target == "HEAD" {
+                            String::new()
+                        } else {
+                            format!(" at {}", short_id(&receipt.target))
+                        }
+                    ));
+                    self.tag_create = None;
+                    self.load(ctx);
+                }
+                Err(error) => {
+                    if let Some(dialog) = &mut self.tag_create {
+                        dialog.error = Some(error);
+                    }
+                }
+            }
+        }
+        if self.tag_create.is_none() {
+            return;
+        }
+        let mut open = true;
+        let mut submit = false;
+        let mut cancel = false;
+        {
+            let Some(dialog) = &mut self.tag_create else {
+                return;
+            };
+            egui::Window::new("Create tag")
+                .id(egui::Id::unique("create-tag"))
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(false)
+                .default_width(420.0)
+                .default_pos(ctx.content_rect().center())
+                .pivot(egui::Align2::CENTER_CENTER)
+                .show(ctx, |ui| {
+                    egui::Grid::new("create-tag-fields")
+                        .num_columns(2)
+                        .spacing([10.0, 6.0])
+                        .show(ui, |ui| {
+                            ui.weak("Name");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut dialog.name)
+                                    .hint_text("v1.0.0")
+                                    .desired_width(f32::INFINITY),
+                            );
+                            ui.end_row();
+                            ui.weak("Target");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut dialog.target)
+                                    .hint_text("HEAD or a commit/branch")
+                                    .desired_width(f32::INFINITY),
+                            );
+                            ui.end_row();
+                            ui.weak("Message");
+                            ui.add(
+                                egui::TextEdit::multiline(&mut dialog.message)
+                                    .hint_text("Annotated tag message")
+                                    .desired_rows(3)
+                                    .desired_width(f32::INFINITY),
+                            );
+                            ui.end_row();
+                        });
+                    let mut sign = dialog.sign;
+                    let ready = dialog.signing_ready;
+                    let busy = dialog.pending.is_some();
+                    let response = ui.add_enabled(
+                        ready && !busy,
+                        egui::Checkbox::new(&mut sign, "Sign tag"),
+                    );
+                    let response = if ready {
+                        response
+                            .on_hover_text("Create a signed tag with the configured key and format")
+                    } else {
+                        response.on_disabled_hover_text(
+                            dialog
+                                .signing_note
+                                .as_deref()
+                                .unwrap_or("Signing is unavailable."),
+                        )
+                    };
+                    if response.changed() {
+                        dialog.sign = sign;
+                    }
+                    if let Some(note) = &dialog.signing_note {
+                        ui.weak(note);
+                    }
+                    ui.weak("Tags are created at the target shown above; HEAD and the index are not changed.");
+                    if let Some(error) = &dialog.error {
+                        ui.colored_label(ui.visuals().error_fg_color, error);
+                    }
+                    ui.horizontal(|ui| {
+                        let can_create =
+                            !busy && (!dialog.sign || dialog.signing_ready);
+                        let response = ui.add_enabled(
+                            can_create,
+                            egui::Button::new(if dialog.sign {
+                                "Create signed tag"
+                            } else {
+                                "Create tag"
+                            }),
+                        );
+                        let response = if can_create {
+                            response
+                        } else if busy {
+                            response.on_disabled_hover_text("Tag creation is running")
+                        } else {
+                            response.on_disabled_hover_text(
+                                dialog
+                                    .signing_note
+                                    .as_deref()
+                                    .unwrap_or("Signing is unavailable."),
+                            )
+                        };
+                        if response.clicked() {
+                            submit = true;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            cancel = true;
+                        }
+                    });
+                    if busy {
+                        ui.horizontal(|ui| {
+                            ui.spinner();
+                            ui.weak("Creating tag…");
+                        });
+                    }
+                });
+        }
+        if submit {
+            self.start_tag_create(ctx);
+        }
+        if cancel || !open {
+            self.tag_create = None;
+        }
     }
 
     fn open_new_branch(&mut self) {
@@ -3132,6 +3430,195 @@ impl Browser {
         }
     }
 
+    fn open_signature(&mut self, ctx: &egui::Context, reference: String) {
+        self.signature_window = Some(SignatureWindow {
+            reference: reference.clone(),
+            verification: None,
+            config: None,
+            error: None,
+            busy: None,
+        });
+        self.request_signature(ctx, signature_worker::Action::Load { reference });
+    }
+
+    fn request_signature(&mut self, ctx: &egui::Context, action: signature_worker::Action) {
+        let Some(repo) = self.stash_path() else {
+            return;
+        };
+        if self.signature_worker.is_none() {
+            match signature_worker::Worker::start(ctx.clone()) {
+                Ok(worker) => self.signature_worker = Some(worker),
+                Err(error) => {
+                    if let Some(window) = &mut self.signature_window {
+                        window.error = Some(error);
+                        window.busy = None;
+                    }
+                    return;
+                }
+            }
+        }
+        self.signature_generation += 1;
+        let generation = self.signature_generation;
+        if let Some(window) = &mut self.signature_window {
+            window.busy = Some("Verifying signature…".into());
+            window.error = None;
+        }
+        if let Some(worker) = &self.signature_worker {
+            worker.request(generation, repo, action);
+        }
+    }
+
+    fn poll_signature(&mut self) {
+        let Some(update) = self
+            .signature_worker
+            .as_ref()
+            .and_then(signature_worker::Worker::poll)
+        else {
+            return;
+        };
+        if update.generation != self.signature_generation {
+            return;
+        }
+        let Some(window) = &mut self.signature_window else {
+            return;
+        };
+        window.busy = None;
+        match update.result {
+            Ok((config, verification)) => {
+                window.config = Some(config);
+                window.verification = Some(verification);
+                window.error = None;
+            }
+            Err(error) => window.error = Some(error),
+        }
+    }
+
+    fn draw_signature(&mut self, ctx: &egui::Context) {
+        self.poll_signature();
+        let Some(reference) = self.signature_window.as_ref().map(|w| w.reference.clone()) else {
+            return;
+        };
+        let mut open = true;
+        {
+            let Some(window) = &mut self.signature_window else {
+                return;
+            };
+            let max_width = (ctx.content_rect().width() - 24.0).max(360.0);
+            egui::Window::new("Signature details")
+                .id(egui::Id::unique("signature-details"))
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(true)
+                .default_width(max_width.min(680.0))
+                .max_width(max_width)
+                .default_pos(ctx.content_rect().center())
+                .pivot(egui::Align2::CENTER_CENTER)
+                .show(ctx, |ui| {
+                    ui.label(egui::RichText::new(short_id(&reference)).monospace().strong());
+                    if window.busy.is_some() {
+                        ui.horizontal(|ui| {
+                            ui.spinner();
+                            ui.weak("Verifying signature…");
+                        });
+                    }
+                    if let Some(verification) = &window.verification {
+                        ui.add_space(4.0);
+                        ui.label(egui::RichText::new(verification.state.label()).strong());
+                        egui::Grid::new("signature-verification")
+                            .num_columns(2)
+                            .spacing([12.0, 4.0])
+                            .show(ui, |ui| {
+                                if let Some(kind) = &verification.kind {
+                                    ui.weak("Object");
+                                    ui.label(kind);
+                                    ui.end_row();
+                                }
+                                if let Some(signer) = &verification.signer {
+                                    ui.weak("Signer");
+                                    ui.label(signer);
+                                    ui.end_row();
+                                }
+                                if let Some(key) = &verification.key {
+                                    ui.weak("Key");
+                                    ui.label(egui::RichText::new(key).monospace());
+                                    ui.end_row();
+                                }
+                                if let Some(trust) = &verification.trust {
+                                    ui.weak("Trust");
+                                    ui.label(trust);
+                                    ui.end_row();
+                                }
+                                if let Some(format) = &verification.format {
+                                    ui.weak("Signature format");
+                                    ui.label(format);
+                                    ui.end_row();
+                                }
+                            });
+                        if let Some(detail) = &verification.detail {
+                            ui.add_space(4.0);
+                            ui.weak(detail);
+                        }
+                    }
+                    if let Some(config) = &window.config {
+                        ui.add_space(8.0);
+                        ui.separator();
+                        ui.label(egui::RichText::new("Signing configuration").strong());
+                        egui::Grid::new("signature-config")
+                            .num_columns(2)
+                            .spacing([12.0, 4.0])
+                            .show(ui, |ui| {
+                                ui.weak("Format");
+                                ui.label(&config.format);
+                                ui.end_row();
+                                ui.weak("Signing key");
+                                ui.label(
+                                    config
+                                        .signing_key
+                                        .as_deref()
+                                        .unwrap_or("Not configured"),
+                                );
+                                ui.end_row();
+                                ui.weak("Sign commits");
+                                ui.label(if config.commit_signing {
+                                    "Enabled"
+                                } else {
+                                    "Disabled"
+                                });
+                                ui.end_row();
+                                ui.weak("Sign tags");
+                                ui.label(if config.tag_signing {
+                                    "Enabled"
+                                } else {
+                                    "Disabled"
+                                });
+                                ui.end_row();
+                                if let Some(program) = &config.gpg_program {
+                                    ui.weak("Program");
+                                    ui.label(program);
+                                    ui.end_row();
+                                }
+                                if let Some(allowed) = &config.allowed_signers {
+                                    ui.weak("Allowed signers");
+                                    ui.label(allowed);
+                                    ui.end_row();
+                                }
+                            });
+                        if let Some(note) = &config.note {
+                            ui.weak(note);
+                        }
+                    }
+                    if let Some(error) = &window.error {
+                        ui.colored_label(ui.visuals().error_fg_color, error);
+                    }
+                    ui.add_space(4.0);
+                    ui.weak("Verification is read-only: trust stores and configuration are not changed.");
+                });
+        }
+        if !open {
+            self.signature_window = None;
+        }
+    }
+
     fn open_lfs(&mut self, ctx: &egui::Context, change: gg_engine::review::FileChange) {
         self.lfs_window = Some(LfsWindow {
             change: change.clone(),
@@ -3911,6 +4398,7 @@ impl Browser {
                 let mut jump = None;
                 let mut switch = None;
                 let mut new_branch = false;
+                let mut new_tag = false;
                 let mut track_branch = false;
                 let mut merge = false;
                 let mut rebase = false;
@@ -3924,6 +4412,17 @@ impl Browser {
                         .clicked()
                     {
                         new_branch = true;
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(
+                            !branch_pending && refs.head.is_some() && self.network.is_none(),
+                            egui::Button::new("New tag…"),
+                        )
+                        .on_hover_text("Create an annotated or signed tag at an explicit target")
+                        .clicked()
+                    {
+                        new_tag = true;
                         ui.close();
                     }
                     if ui
@@ -4040,6 +4539,9 @@ impl Browser {
                 }
                 if new_branch {
                     self.open_new_branch();
+                }
+                if new_tag {
+                    self.open_new_tag();
                 }
                 if track_branch {
                     self.track_dialog = Some(self.default_track_branch());
@@ -4359,6 +4861,7 @@ impl Browser {
                 Some(refs_view::Action::Switch(name)) => self.start_branch(ctx, name, false),
                 Some(refs_view::Action::Jump(id)) => self.jump_to_ref(id),
                 Some(refs_view::Action::NewBranch) => self.open_new_branch(),
+                Some(refs_view::Action::NewTag) => self.open_new_tag(),
                 Some(refs_view::Action::Track(name)) => {
                     self.track_dialog = Some(name);
                 }
@@ -4382,6 +4885,7 @@ impl Browser {
                 Some(refs_view::Action::DeleteTag(name)) => {
                     self.tag_delete = Some(TagDeleteDialog { name, error: None });
                 }
+                Some(refs_view::Action::VerifyTag(name)) => self.open_signature(ctx, name),
                 None => {}
             }
         }
@@ -5530,6 +6034,8 @@ impl Browser {
 
         self.draw_submodule(ctx);
         self.draw_lfs(ctx);
+        self.draw_signature(ctx);
+        self.draw_tag_create(ctx);
         if self.working.is_some() {
             let external = self.external_operation_reason();
             let close = self.working.as_mut().is_some_and(|working| {
@@ -8187,6 +8693,84 @@ mod tests {
             );
         }
         Ok(())
+    }
+
+    #[test]
+    fn signature_window_separates_validity_trust_and_configuration() {
+        let verification = gg_engine::signature::Verification {
+            reference: "a".repeat(40),
+            kind: Some("commit".into()),
+            state: gg_engine::signature::State::Good,
+            format: Some("openpgp".into()),
+            signer: Some("Test User <test@example.org>".into()),
+            key: Some("F4545BDB96888825AA7CC8C7DFC666CDAB5C0CC8".into()),
+            trust: Some("ultimate".into()),
+            detail: None,
+        };
+        let config = gg_engine::signature::Config {
+            format: "openpgp".into(),
+            signing_key: Some("F4545BDB96888825AA7CC8C7DFC666CDAB5C0CC8".into()),
+            gpg_program: None,
+            commit_signing: true,
+            tag_signing: false,
+            allowed_signers: None,
+            tool_available: true,
+            note: None,
+        };
+        for width in [720.0, 1120.0] {
+            let ctx = egui::Context::default();
+            let mut app = layout_fixture();
+            app.signature_window = Some(SignatureWindow {
+                reference: verification.reference.clone(),
+                verification: Some(verification.clone()),
+                config: Some(config.clone()),
+                error: None,
+                busy: None,
+            });
+            let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let output = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let text = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            for expected in [
+                "Signature details",
+                "Good signature",
+                "Test User <test@example.org>",
+                "F4545BDB96888825AA7CC8C7DFC666CDAB5C0CC8",
+                "ultimate",
+                "Signing configuration",
+                "Sign commits",
+                "Enabled",
+                "Sign tags",
+                "Disabled",
+                "Verification is read-only",
+            ] {
+                assert!(
+                    text.iter().any(|line| line.contains(expected)),
+                    "missing {expected} at {width}: {text:?}"
+                );
+            }
+            if width <= 720.0 {
+                let rect =
+                    ctx.memory(|memory| memory.area_rect(egui::Id::unique("signature-details")));
+                assert!(rect.is_some(), "the signature window is laid out");
+                if let Some(rect) = rect {
+                    assert!(
+                        rect.min.x >= 0.0 && rect.max.x <= 720.0,
+                        "signature window leaves the viewport: {rect:?}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

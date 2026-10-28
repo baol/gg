@@ -5,10 +5,13 @@ pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::
     let mut path = std::env::current_dir()?;
     let mut message = None;
     let mut amend = false;
+    let mut sign = None;
     while let Some(arg) = args.next() {
         match arg.to_str() {
             Some("--repo") => path = PathBuf::from(args.next().ok_or("--repo needs a path")?),
             Some("--amend") if !amend => amend = true,
+            Some("--sign" | "-s") if sign.is_none() => sign = Some(true),
+            Some("--no-sign") if sign.is_none() => sign = Some(false),
             Some("-m" | "--message") if message.is_none() => {
                 message = Some(
                     args.next()
@@ -18,16 +21,21 @@ pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::
                 );
             }
             _ => {
-                return Err("Usage: git good commit [--amend] -m MESSAGE [--repo PATH]".into());
+                return Err(
+                    "Usage: git good commit [--amend] [--sign|--no-sign] -m MESSAGE [--repo PATH]"
+                        .into(),
+                );
             }
         }
     }
     let message = message.ok_or("Commit requires -m MESSAGE")?;
+    let sign = sign.unwrap_or_else(|| gg_git::signature::config(&path).commit_signing);
     let session = gg_git::status::Session::open(&path)?;
-    let receipt = if amend {
-        gg_git::commit::amend(&session.identity, &message)?
-    } else {
-        gg_git::commit::create(&session.identity, &message)?
+    let receipt = match (amend, sign) {
+        (true, true) => gg_git::commit::amend_signed(&session.identity, &message)?,
+        (true, false) => gg_git::commit::amend(&session.identity, &message)?,
+        (false, true) => gg_git::commit::create_signed(&session.identity, &message)?,
+        (false, false) => gg_git::commit::create(&session.identity, &message)?,
     };
     serde_json::to_writer(
         std::io::stdout().lock(),
@@ -36,6 +44,7 @@ pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::
             "id": receipt.id,
             "tree": receipt.tree,
             "parents": receipt.parents,
+            "signed": receipt.signed,
             "previous": receipt.previous,
             "backup": receipt.backup,
             "warnings": receipt.warnings,

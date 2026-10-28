@@ -275,6 +275,7 @@ pub mod refs;
 pub mod reset;
 pub mod review;
 pub mod rewrite;
+pub mod signature;
 pub mod stash;
 pub mod status;
 pub mod submodule;

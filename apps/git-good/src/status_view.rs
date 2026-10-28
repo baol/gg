@@ -10,13 +10,14 @@ const HEIGHT: f32 = 24.0;
 const GROUP_HEADER: f32 = 24.0;
 const WIDE_LAYOUT: f32 = 900.0;
 type Comparison = (Vec<u8>, Area);
-fn commit_reason(
+fn commit_reason<'a>(
     busy: bool,
     scanning: bool,
     message: &str,
     amend: bool,
     staged: usize,
-) -> Option<&'static str> {
+    signing_error: Option<&'a str>,
+) -> Option<&'a str> {
     if busy {
         Some("Wait for the current operation")
     } else if scanning {
@@ -25,6 +26,8 @@ fn commit_reason(
         Some("Enter a commit message")
     } else if !amend && staged == 0 {
         Some("Stage at least one file")
+    } else if let Some(error) = signing_error {
+        Some(error)
     } else {
         None
     }
@@ -47,6 +50,7 @@ pub(crate) struct Draft {
     pub amend: String,
     pub amend_mode: bool,
     pub amend_base: Option<String>,
+    pub sign: bool,
     pub selected: Option<Comparison>,
 }
 
@@ -91,6 +95,9 @@ pub struct StatusView {
     commit_done: Option<String>,
     last_commit: Option<String>,
     commit_warning: Option<String>,
+    last_signed: bool,
+    signing: Option<gg_engine::signature::Config>,
+    sign_commit: bool,
     message: String,
     normal_draft: String,
     amend_draft: String,
@@ -130,6 +137,9 @@ impl StatusView {
             commit_done: None,
             last_commit: None,
             commit_warning: None,
+            last_signed: false,
+            signing: None,
+            sign_commit: false,
             message: String::new(),
             normal_draft: String::new(),
             amend_draft: String::new(),
@@ -157,6 +167,11 @@ impl StatusView {
             form_rect: egui::Rect::NOTHING,
             last_scroll: f64::NEG_INFINITY,
         };
+        view.signing = Some(gg_git::signature::config(&view.path));
+        view.sign_commit = view
+            .signing
+            .as_ref()
+            .is_some_and(|config| config.commit_signing);
         view.start(ctx, false);
         view
     }
@@ -467,6 +482,7 @@ impl StatusView {
             amend,
             amend_mode: self.amend,
             amend_base: self.amend_base.clone(),
+            sign: self.sign_commit,
             selected: self.active.clone(),
         }
     }
@@ -475,6 +491,7 @@ impl StatusView {
     pub(crate) fn restore_draft(&mut self, draft: Draft, ctx: &egui::Context) {
         self.normal_draft = draft.normal;
         self.amend_draft = draft.amend;
+        self.sign_commit = draft.sign;
         self.pending_selection = draft.selected;
         self.message = self.normal_draft.clone();
         let Some(base) = draft.amend_base else {
@@ -566,13 +583,32 @@ impl StatusView {
         Ok(())
     }
 
+    fn signing_error(&self) -> Option<String> {
+        if !self.sign_commit {
+            return None;
+        }
+        let config = self.signing.as_ref()?;
+        if config.ready() {
+            return None;
+        }
+        Some(
+            config
+                .note
+                .clone()
+                .unwrap_or_else(|| "Signing key or tool is unavailable.".into()),
+        )
+    }
+
     fn start_commit(&mut self, ctx: &egui::Context) {
+        self.signing = Some(gg_git::signature::config(&self.path));
+        let signing_error = self.signing_error();
         if commit_reason(
             self.mutations_blocked(),
             self.replacing || !self.complete || self.identity.is_none(),
             &self.message,
             self.amend,
             self.lists[1].count,
+            signing_error.as_deref(),
         )
         .is_some()
         {
@@ -584,15 +620,17 @@ impl StatusView {
         };
         let message = self.message.clone();
         let amend = self.amend;
+        let sign = self.sign_commit;
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         let repaint = ctx.clone();
         match std::thread::Builder::new()
             .name("gg-commit".into())
             .spawn(move || {
-                let result = if amend {
-                    gg_git::commit::amend(&repository, &message)
-                } else {
-                    gg_git::commit::create(&repository, &message)
+                let result = match (amend, sign) {
+                    (true, true) => gg_git::commit::amend_signed(&repository, &message),
+                    (true, false) => gg_git::commit::amend(&repository, &message),
+                    (false, true) => gg_git::commit::create_signed(&repository, &message),
+                    (false, false) => gg_git::commit::create(&repository, &message),
                 };
                 let _ = tx.send(result);
                 repaint.request_repaint();
@@ -619,6 +657,7 @@ impl StatusView {
                 Ok(receipt) => {
                     self.last_commit = Some(receipt.id.get(..7).unwrap_or(&receipt.id).to_string());
                     self.last_amended = receipt.amended;
+                    self.last_signed = receipt.signed;
                     if receipt.amended {
                         self.amend_draft.clear();
                     } else {
@@ -643,6 +682,7 @@ impl StatusView {
                     self.start(ctx, true);
                 }
                 Err(e) => {
+                    self.signing = Some(gg_git::signature::config(&self.path));
                     self.start(ctx, true);
                     self.action_error = Some(e.clone());
                     self.error = Some(e);
@@ -993,19 +1033,27 @@ impl StatusView {
         let right = ui.max_rect().right();
         let busy = self.mutations_blocked() || self.replacing;
         let scanning = self.replacing || !self.complete || self.identity.is_none();
+        let signing_error = self.signing_error();
         let reason = commit_reason(
             busy,
             scanning,
             &self.message,
             self.amend,
             self.lists[1].count,
+            signing_error.as_deref(),
         );
+        let signing_ready = self.signing.as_ref().is_some_and(|config| config.ready());
+        let signing_hint = self
+            .signing
+            .as_ref()
+            .and_then(|config| config.note.clone())
+            .unwrap_or_else(|| "Signing key or tool is unavailable.".into());
         let can_commit = reason.is_none();
         let message_height = if self.message_expanded { 118.0 } else { 54.0 };
         let mut commit_now = false;
         ui.horizontal(|ui| {
             let button_width = if self.amend { 112.0 } else { 88.0 };
-            let width = (ui.available_width() - button_width - 80.0).max(160.0);
+            let width = (ui.available_width() - button_width - 150.0).max(160.0);
             ui.add_sized(
                 [width, message_height],
                 egui::TextEdit::multiline(&mut self.message)
@@ -1037,6 +1085,21 @@ impl StatusView {
                             self.message = self.normal_draft.clone();
                             self.restart(ctx);
                         }
+                    }
+                    let mut sign = self.sign_commit;
+                    let sign_response = ui.add_enabled(
+                        !busy && signing_ready,
+                        egui::Checkbox::new(&mut sign, "Sign"),
+                    );
+                    let sign_response = if signing_ready {
+                        sign_response.on_hover_text(
+                            "Create a signed commit using the configured format and key. A signing failure keeps the draft and index.",
+                        )
+                    } else {
+                        sign_response.on_disabled_hover_text(&signing_hint)
+                    };
+                    if sign_response.changed() {
+                        self.sign_commit = sign;
                     }
                     if ui
                         .small_button(if self.message_expanded {
@@ -1123,13 +1186,14 @@ impl StatusView {
         }
         if let Some(warning) = &self.commit_warning {
             return format!(
-                "{} {} · {warning}",
+                "{} {}{} · {warning}",
                 if self.last_amended {
                     "Amended"
                 } else {
                     "Committed"
                 },
-                self.last_commit.as_deref().unwrap_or("")
+                self.last_commit.as_deref().unwrap_or(""),
+                if self.last_signed { " (signed)" } else { "" }
             );
         }
         if let Some(id) = &self.last_commit {
@@ -1142,12 +1206,13 @@ impl StatusView {
                 )
             };
             return format!(
-                "{} {id} · {remaining}",
+                "{} {id}{} · {remaining}",
                 if self.last_amended {
                     "Amended"
                 } else {
                     "Committed"
-                }
+                },
+                if self.last_signed { " (signed)" } else { "" }
             );
         }
         if self.replacing {
@@ -1390,6 +1455,9 @@ mod tests {
             commit_done: None,
             last_commit: None,
             commit_warning: None,
+            last_signed: false,
+            signing: None,
+            sign_commit: false,
             message: String::new(),
             normal_draft: String::new(),
             amend_draft: String::new(),
@@ -2260,7 +2328,7 @@ mod tests {
                 .contains("Wait for the history rewrite to finish")
         );
         assert_eq!(
-            commit_reason(true, false, "message", false, 1),
+            commit_reason(true, false, "message", false, 1, None),
             Some("Wait for the current operation")
         );
     }
@@ -2297,23 +2365,23 @@ mod tests {
     #[test]
     fn commit_readiness_explains_disabled_states() {
         assert_eq!(
-            commit_reason(false, false, "subject", false, 0),
+            commit_reason(false, false, "subject", false, 0, None),
             Some("Stage at least one file")
         );
         assert_eq!(
-            commit_reason(false, false, "   ", false, 1),
+            commit_reason(false, false, "   ", false, 1, None),
             Some("Enter a commit message")
         );
         assert_eq!(
-            commit_reason(false, true, "subject", true, 1),
+            commit_reason(false, true, "subject", true, 1, None),
             Some("Waiting for the status scan")
         );
         assert_eq!(
-            commit_reason(true, false, "subject", false, 1),
+            commit_reason(true, false, "subject", false, 1, None),
             Some("Wait for the current operation")
         );
-        assert_eq!(commit_reason(false, false, "subject", true, 0), None);
-        assert_eq!(commit_reason(false, false, "subject", false, 1), None);
+        assert_eq!(commit_reason(false, false, "subject", true, 0, None), None);
+        assert_eq!(commit_reason(false, false, "subject", false, 1, None), None);
     }
 
     #[test]
@@ -2565,6 +2633,64 @@ mod tests {
         assert!(view.amend_base.is_none());
         assert_eq!(file(p, &["show", "HEAD:a"])?, b"working\n");
         assert_eq!(file(p, &["rev-list", "--count", "HEAD"])?, b"2\n");
+        Ok(())
+    }
+
+    #[test]
+    fn signing_readiness_blocks_the_commit_without_unsigned_fallback()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        generated(dir.path())?;
+        git(dir.path(), &["add", "a"])?;
+        git(dir.path(), &["config", "gpg.format", "openpgp"])?;
+        git(
+            dir.path(),
+            &[
+                "config",
+                "user.signingkey",
+                "DEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEF",
+            ],
+        )?;
+        git(
+            dir.path(),
+            &[
+                "config",
+                "gpg.program",
+                if cfg!(windows) {
+                    "gg-no-such-gpg.exe"
+                } else {
+                    "gg-no-such-gpg"
+                },
+            ],
+        )?;
+        git(dir.path(), &["config", "commit.gpgsign", "true"])?;
+        let ctx = egui::Context::default();
+        let mut view = StatusView::new(dir.path().into(), &ctx);
+        settle(&ctx, &mut view, 1120.0);
+        assert!(view.sign_commit, "commit.gpgsign starts the sign choice on");
+        assert!(view.signing_error().is_some());
+        view.message = "signed UI".into();
+        let head = file(dir.path(), &["rev-parse", "HEAD"])?;
+        let index = std::fs::read(dir.path().join(".git/index"))?;
+        let output = run(&ctx, &mut view, 1120.0, vec![]);
+        assert!(text_pos(&output, "Sign").is_some(), "Sign is visible");
+
+        view.start_commit(&ctx);
+        assert!(
+            view.commit.is_none(),
+            "a blocked signing setup must not start an unsigned commit"
+        );
+        assert_eq!(view.message, "signed UI");
+        assert_eq!(file(dir.path(), &["rev-parse", "HEAD"])?, head);
+        assert_eq!(std::fs::read(dir.path().join(".git/index"))?, index);
+
+        view.sign_commit = false;
+        view.start_commit(&ctx);
+        pump(&ctx, &mut view, 1120.0, |view| {
+            !view.busy() && view.complete && !view.replacing && view.commit_done.is_some()
+        });
+        assert!(!view.last_signed);
+        assert_ne!(file(dir.path(), &["rev-parse", "HEAD"])?, head);
         Ok(())
     }
 
