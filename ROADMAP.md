@@ -12,10 +12,10 @@ Interaction review: [detailed user flows and proposed UI](docs/user-flows.md).
 | M1 · Complete | Review files and diffs against a chosen parent; [acceptance](docs/verification.md#m1-acceptance--2026-10-20) |
 | M2 · Complete | Status, file/hunk/line staging, drop, hooks-aware commits, mutation preconditions |
 | M3 · Complete | Graph, refs, tags, branch navigation and creation |
-| M4 · Complete | Clone, fetch, push, tracking, credentials, progress; [evidence](docs/verification.md#m4-clone-fetch-push-tracking-and-credentials--2026-10-22) |
+| M4 · Complete | Clone, fetch, push, force-with-lease, tracking, credentials, progress; [evidence](docs/verification.md#m4-clone-fetch-push-tracking-and-credentials--2026-10-22) |
 | M5 · Complete | Merge, conflicts, cherry-pick, revert, stash, recovery; [plan](docs/plan.md) |
 | M6 · Complete | Rebase, reorder, squash, amend, reflog, and backup recovery; [evidence](docs/verification.md#m6-reorder-squash-and-rewrite-recovery--2026-10-23) |
-| M7 · In progress | File reading and file history complete; blame and line/range history, image diffs, worktrees, submodules, LFS, and signing planned; [sequence](docs/plan.md#m7--file-reading-history-attribution-and-large-repositories) |
+| M7 · Complete | File reading, file history, blame and line/range history, image diffs and onion skin, worktrees, submodules, Git LFS pointers/fetch/preview, and commit/tag signing; [sequence](docs/plan.md#m7--file-reading-history-attribution-and-large-repositories) |
 
 Target Linux (Wayland/X11), macOS, and Windows on x86_64 and arm64, supported by native builds and hardware checks.
 

@@ -1505,13 +1505,6 @@ impl DiffView {
                         ui.close();
                     }
                 }
-                if self.can_whole_edit() {
-                    let verb = self.stage.map_or("Stage", |stage| stage.verb);
-                    if ui.button(format!("{verb} file")).clicked() {
-                        self.stage_edit = Some(self.file_edit(false));
-                        ui.close();
-                    }
-                }
                 if self.can_drop_whole() && ui.button("Discard file…").clicked() {
                     self.stage_edit = Some(self.file_edit(true));
                     ui.close();

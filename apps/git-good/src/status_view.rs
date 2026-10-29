@@ -2341,12 +2341,28 @@ mod tests {
             view.select_row(index, row, ctx);
         }
     }
+    fn click_whole_file(
+        ctx: &egui::Context,
+        view: &mut StatusView,
+        width: f32,
+        label: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        pump(ctx, view, width, |view| {
+            view.reader.ready() && view.complete && !view.replacing && !view.stage.mutating()
+        });
+        let button = wait_text(ctx, view, width, label)?;
+        click(ctx, view, width, button + egui::vec2(5.0, 0.0));
+        Ok(())
+    }
     fn click_file_action(
         ctx: &egui::Context,
         view: &mut StatusView,
         width: f32,
         label: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        pump(ctx, view, width, |view| {
+            view.reader.ready() && view.complete && !view.replacing && !view.stage.mutating()
+        });
         let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
         let menu = loop {
             let output = run(ctx, view, width, vec![]);
@@ -2510,7 +2526,7 @@ mod tests {
             file(dir.path(), &["show", ":a"])?,
             b"one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\nTWELVE\n"
         );
-        click_file_action(&ctx, &mut view, 1120.0, "Unstage file")?;
+        click_whole_file(&ctx, &mut view, 1120.0, "Unstage")?;
         pump(&ctx, &mut view, 1120.0, |view| {
             !view.reader.pending()
                 && view.reader.ready()
@@ -2545,7 +2561,7 @@ mod tests {
         settle(&ctx, &mut view, 1120.0);
         select_path(&mut view, &ctx, "a", Area::Unstaged);
         ready(&ctx, &mut view, 1120.0);
-        click_file_action(&ctx, &mut view, 1120.0, "Stage file")?;
+        click_whole_file(&ctx, &mut view, 1120.0, "Stage")?;
         pump(&ctx, &mut view, 1120.0, |view| {
             !view.reader.pending()
                 && view.complete
@@ -2558,7 +2574,7 @@ mod tests {
 
         select_path(&mut view, &ctx, "a", Area::Staged);
         ready(&ctx, &mut view, 1120.0);
-        click_file_action(&ctx, &mut view, 1120.0, "Unstage file")?;
+        click_whole_file(&ctx, &mut view, 1120.0, "Unstage")?;
         pump(&ctx, &mut view, 1120.0, |view| {
             !view.reader.pending() && !view.stage.mutating() && view.complete && !view.replacing
         });
@@ -2982,7 +2998,7 @@ mod tests {
 
         select_path(&mut view, &ctx, "a", Area::Staged);
         ready(&ctx, &mut view, 1120.0);
-        click_file_action(&ctx, &mut view, 1120.0, "Unstage file")?;
+        click_whole_file(&ctx, &mut view, 1120.0, "Unstage")?;
         pump(&ctx, &mut view, 1120.0, |view| {
             !view.busy() && view.complete && !view.replacing
         });
@@ -2992,7 +3008,7 @@ mod tests {
 
         select_path(&mut view, &ctx, "a", Area::Unstaged);
         ready(&ctx, &mut view, 1120.0);
-        click_file_action(&ctx, &mut view, 1120.0, "Stage file")?;
+        click_whole_file(&ctx, &mut view, 1120.0, "Stage")?;
         pump(&ctx, &mut view, 1120.0, |view| {
             !view.busy() && view.complete && !view.replacing
         });
@@ -3318,7 +3334,7 @@ mod tests {
         settle(&ctx, &mut view, 1120.0);
         select_path(&mut view, &ctx, "a", Area::Unstaged);
         ready(&ctx, &mut view, 1120.0);
-        click_file_action(&ctx, &mut view, 1120.0, "Stage file")?;
+        click_whole_file(&ctx, &mut view, 1120.0, "Stage")?;
         pump(&ctx, &mut view, 1120.0, |view| {
             !view.reader.pending() && view.complete && !view.replacing && view.lists[0].count == 0
         });
@@ -3438,7 +3454,12 @@ mod tests {
             let discard = wait_text(&ctx, &mut view, width, "Discard")?;
             click(&ctx, &mut view, width, discard + egui::vec2(5.0, 0.0));
             pump(&ctx, &mut view, width, |view| {
-                !view.reader.pending() && !view.stage.mutating() && view.reader.has_text("TWELVE")
+                !view.reader.pending()
+                    && view.reader.ready()
+                    && !view.stage.mutating()
+                    && view.complete
+                    && !view.replacing
+                    && view.reader.has_text("TWELVE")
             });
             assert_eq!(
                 std::fs::read(dir.path().join("a"))?,
