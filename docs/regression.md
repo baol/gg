@@ -161,7 +161,7 @@ Before connecting M1 controls, test Review/Back anchor restoration, active-view 
 ## Local Changes staging gestures
 
 - Double-click an Unstaged or Untracked file row to stage the whole file; double-click a Staged row to unstage it. Conflict and intent-to-add rows do not toggle.
-- The selected file header has its own Stage/Unstage button with a disabled reason until content settles or while a mutation is pending. File actions and reader hunk/selected actions remain available.
+- The selected file header has its own Stage/Unstage button with a disabled reason until content settles or while a mutation is pending; File actions no longer duplicates Stage/Unstage file, while Discard file… and reader hunk/selected actions remain available.
 - After a whole-file stage, select the next Unstaged row in display order, or the previous row when the staged row was last; with no Unstaged rows, keep the newly staged row selected. After a whole-file unstage, follow the path into Unstaged. Failures retain the current selection.
 - An egui timing test covers three-file staging, double-click stage and unstage, auto-advance, last-file fallback, and both header buttons against a real Git index. Native captures cover wide Stage/Unstage and narrow Stage.
 

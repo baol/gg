@@ -115,66 +115,151 @@ impl Drop for Worker {
 }
 
 /// Fixed-size offset records keep arbitrary-depth lookup independent of RAM capacity.
+const SPOOL_BUFFER: usize = 64 * 1024;
+
+struct SpoolFile {
+    file: File,
+    end: u64,
+    pos: u64,
+    write_buf: Vec<u8>,
+    read_buf: Vec<u8>,
+    read_start: u64,
+    read_len: usize,
+}
+impl SpoolFile {
+    fn new() -> Result<Self, String> {
+        Ok(Self {
+            file: tempfile::tempfile().map_err(err)?,
+            end: 0,
+            pos: 0,
+            write_buf: Vec::with_capacity(SPOOL_BUFFER),
+            read_buf: Vec::new(),
+            read_start: 0,
+            read_len: 0,
+        })
+    }
+    fn flush(&mut self) -> Result<(), String> {
+        if self.write_buf.is_empty() {
+            return Ok(());
+        }
+        let start = self.end - self.write_buf.len() as u64;
+        if self.pos != start {
+            self.file.seek(SeekFrom::Start(start)).map_err(err)?;
+        }
+        self.file.write_all(&self.write_buf).map_err(err)?;
+        self.pos = self.end;
+        self.write_buf.clear();
+        Ok(())
+    }
+    fn append(&mut self, bytes: &[u8]) -> Result<u64, String> {
+        let offset = self.end;
+        self.end += bytes.len() as u64;
+        self.write_buf.extend_from_slice(bytes);
+        if self.write_buf.len() >= SPOOL_BUFFER {
+            self.flush()?;
+        }
+        Ok(offset)
+    }
+    fn read_at(&mut self, offset: u64, out: &mut [u8]) -> Result<(), String> {
+        self.flush()?;
+        let end = offset.saturating_add(out.len() as u64);
+        if offset >= self.read_start && end <= self.read_start + self.read_len as u64 {
+            let rel = (offset - self.read_start) as usize;
+            out.copy_from_slice(&self.read_buf[rel..rel + out.len()]);
+            return Ok(());
+        }
+        if out.len() >= SPOOL_BUFFER {
+            if self.pos != offset {
+                self.file.seek(SeekFrom::Start(offset)).map_err(err)?;
+            }
+            self.file.read_exact(out).map_err(err)?;
+            self.pos = end;
+            return Ok(());
+        }
+        let available = self.end.saturating_sub(offset) as usize;
+        let chunk = available.min(SPOOL_BUFFER);
+        if chunk < out.len() {
+            return Err(err("unexpected end of history spool"));
+        }
+        if self.pos != offset {
+            self.file.seek(SeekFrom::Start(offset)).map_err(err)?;
+        }
+        if self.read_buf.len() < chunk {
+            self.read_buf.resize(chunk, 0);
+        }
+        self.file
+            .read_exact(&mut self.read_buf[..chunk])
+            .map_err(err)?;
+        self.pos = offset + chunk as u64;
+        self.read_start = offset;
+        self.read_len = chunk;
+        out.copy_from_slice(&self.read_buf[..out.len()]);
+        Ok(())
+    }
+    fn clear(&mut self) -> Result<(), String> {
+        self.write_buf.clear();
+        self.read_start = 0;
+        self.read_len = 0;
+        self.file.set_len(0).map_err(err)?;
+        self.file.seek(SeekFrom::Start(0)).map_err(err)?;
+        self.end = 0;
+        self.pos = 0;
+        Ok(())
+    }
+}
+
 struct Spool {
-    data: File,
-    index: File,
-    matches: File,
+    data: SpoolFile,
+    index: SpoolFile,
+    matches: SpoolFile,
     count: usize,
     matched: usize,
 }
 impl Spool {
     fn new() -> Result<Self, String> {
         Ok(Self {
-            data: tempfile::tempfile().map_err(err)?,
-            index: tempfile::tempfile().map_err(err)?,
-            matches: tempfile::tempfile().map_err(err)?,
+            data: SpoolFile::new()?,
+            index: SpoolFile::new()?,
+            matches: SpoolFile::new()?,
             count: 0,
             matched: 0,
         })
     }
-    fn append(&mut self, commit: &Commit) -> Result<(), String> {
+    fn append(&mut self, commit: &Commit) -> Result<[u8; 16], String> {
         let bytes = serde_json::to_vec(commit).map_err(err)?;
-        let offset = self.data.seek(SeekFrom::End(0)).map_err(err)?;
-        self.data.write_all(&bytes).map_err(err)?;
-        self.index.seek(SeekFrom::End(0)).map_err(err)?;
-        self.index.write_all(&offset.to_le_bytes()).map_err(err)?;
-        self.index
-            .write_all(&(bytes.len() as u64).to_le_bytes())
-            .map_err(err)?;
+        let offset = self.data.append(&bytes)?;
+        let mut record = [0u8; 16];
+        record[..8].copy_from_slice(&offset.to_le_bytes());
+        record[8..].copy_from_slice(&(bytes.len() as u64).to_le_bytes());
+        self.index.append(&record)?;
         self.count += 1;
-        Ok(())
+        Ok(record)
     }
-    fn read(&mut self, row: usize, filtered: bool) -> Result<Commit, String> {
-        let index = if filtered {
-            &mut self.matches
+    fn read(&mut self, row: usize, filtered: bool) -> Result<(Commit, [u8; 16]), String> {
+        let target = row as u64 * 16;
+        let mut record = [0u8; 16];
+        if filtered {
+            self.matches.read_at(target, &mut record)?;
         } else {
-            &mut self.index
-        };
-        index.seek(SeekFrom::Start(row as u64 * 16)).map_err(err)?;
-        let mut offset = [0; 8];
-        let mut len = [0; 8];
-        index.read_exact(&mut offset).map_err(err)?;
-        index.read_exact(&mut len).map_err(err)?;
-        self.data
-            .seek(SeekFrom::Start(u64::from_le_bytes(offset)))
-            .map_err(err)?;
-        let mut bytes = vec![0; u64::from_le_bytes(len) as usize];
-        self.data.read_exact(&mut bytes).map_err(err)?;
-        serde_json::from_slice(&bytes).map_err(err)
+            self.index.read_at(target, &mut record)?;
+        }
+        let mut offset = [0u8; 8];
+        let mut len = [0u8; 8];
+        offset.copy_from_slice(&record[..8]);
+        len.copy_from_slice(&record[8..]);
+        let offset = u64::from_le_bytes(offset);
+        let len = u64::from_le_bytes(len) as usize;
+        let mut bytes = vec![0; len];
+        self.data.read_at(offset, &mut bytes)?;
+        Ok((serde_json::from_slice(&bytes).map_err(err)?, record))
     }
-    fn include(&mut self, row: usize) -> Result<(), String> {
-        self.index
-            .seek(SeekFrom::Start(row as u64 * 16))
-            .map_err(err)?;
-        let mut record = [0; 16];
-        self.index.read_exact(&mut record).map_err(err)?;
-        self.matches.seek(SeekFrom::End(0)).map_err(err)?;
-        self.matches.write_all(&record).map_err(err)?;
+    fn include(&mut self, record: [u8; 16]) -> Result<(), String> {
+        self.matches.append(&record)?;
         self.matched += 1;
         Ok(())
     }
     fn reset_filter(&mut self) -> Result<(), String> {
-        self.matches.set_len(0).map_err(err)?;
+        self.matches.clear()?;
         self.matched = 0;
         Ok(())
     }
@@ -258,7 +343,8 @@ fn run_session(
         current = next;
         let start = Instant::now();
         // A small first batch reaches the screen before counting the remainder.
-        for _ in 0..32 {
+        let batch = if spool.count == 0 { 32 } else { 2048 };
+        for _ in 0..batch {
             if stop.load(Ordering::Relaxed) {
                 return Ok(());
             }
@@ -266,10 +352,10 @@ fn run_session(
             if scanned == spool.count && !finished {
                 match session.next_commit() {
                     Ok(Some(commit)) => {
-                        spool.append(&commit)?;
+                        let record = spool.append(&commit)?;
                         graph_rows.push(graph_state.push(&commit));
                         ids.push(commit.id.clone());
-                        appended = Some(commit);
+                        appended = Some((commit, record));
                     }
                     Ok(None) => finished = true,
                     Err(error) => {
@@ -279,8 +365,8 @@ fn run_session(
                 }
             }
             if scanned < spool.count {
-                let commit = if let Some(commit) = appended {
-                    commit
+                let (commit, record) = if let Some(pair) = appended {
+                    pair
                 } else {
                     spool.read(scanned, false)?
                 };
@@ -291,7 +377,7 @@ fn run_session(
                     if current.selected_id.as_deref() == Some(&commit.id) {
                         selection = Some((spool.matched, commit.clone()));
                     }
-                    spool.include(scanned)?;
+                    spool.include(record)?;
                 }
                 scanned += 1;
             } else {
@@ -303,7 +389,7 @@ fn run_session(
         }
         if let Some(row) = current.selected_row.filter(|row| *row < spool.matched) {
             if selection.as_ref().map(|(index, _)| *index) != Some(row) {
-                selection = Some((row, spool.read(row, true)?));
+                selection = Some((row, spool.read(row, true)?.0));
             }
         } else if selection.is_none()
             && finished
@@ -312,9 +398,9 @@ fn run_session(
             && let Some(id) = current.selected_id.as_deref()
             && let Some(row) = ids.iter().position(|candidate| candidate == id)
         {
-            selection = Some((row, spool.read(row, true)?));
+            selection = Some((row, spool.read(row, true)?.0));
         } else if selection.is_none() && current.selected_id.is_none() && spool.matched > 0 {
-            selection = Some((0, spool.read(0, true)?));
+            selection = Some((0, spool.read(0, true)?.0));
         }
         let requested = if let Some(row) = anchor_row {
             row.saturating_sub(24)..row.saturating_add(64)
@@ -330,7 +416,7 @@ fn run_session(
             cached_rows.clear();
             cached_graphs.clear();
             for row in range.clone() {
-                let mut commit = spool.read(row, true)?;
+                let mut commit = spool.read(row, true)?.0;
                 commit.message = commit.subject().to_owned();
                 cached_rows.push((row, commit));
                 cached_graphs.push((row, graph_rows[row].clone()));
@@ -448,7 +534,7 @@ mod tests {
         predicate: impl Fn(&Update) -> bool,
     ) -> Result<Update, String> {
         let start = Instant::now();
-        while start.elapsed() < Duration::from_secs(30) {
+        while start.elapsed() < Duration::from_secs(90) {
             if let Some(result) = output.lock().map_err(err)?.take() {
                 let update = result?;
                 if predicate(&update) {

@@ -13,17 +13,17 @@ Follow-up design direction: [coherent interaction proposal](ui-coherence.md) and
 | M0–M1: history and review | Complete/baseline | Find a commit, select a parent, inspect text or binary changes | F01–F02; History and Review mockups |
 | M2: Local Changes | Complete | Stage file/hunk/lines, discard deliberately, commit with hooks | F03–F04; Stage, Discard, and Hook failure mockups |
 | M3: graph and refs | Complete | Navigate references, switch/create branches, compare with HEAD | F01, F05; History and Branch mockups |
-| M4: network | Complete | Clone, fetch, push, set upstream, cancel and retry | F06; Network mockup |
+| M4: network | Complete | Clone, fetch, push, force-with-lease, set upstream, cancel and retry | F06; Network mockup |
 | M5: integration and recovery | Complete | Stash, merge, cherry-pick, revert, resolve and recover | F07–F09; Integrate, Conflicts, and Stash mockups |
 | M6: rewriting and recovery | Complete | Amend, rebase, reorder/squash, inspect reflog and backups | F04, F08, F10; Rewrite and Recovery mockups |
-| M7: file reading and file history | Complete increments inside an unfinished milestone | Read a complete file and follow content versions and renames | F02, F11; Reading and File history mockups |
+| M7: file reading and file history | Complete | Read a complete file and follow content versions and renames | F02, F11; Reading and File history mockups |
 | M7: blame and line/range history | Complete | Explain a line's origin without losing the selected range | F12; Blame mockup |
-| M7: image comparison | Complete | Compare dimensions and pixels across revisions | F13; Images mockup |
+| M7: image comparison | Complete | Compare dimensions and pixels across revisions with side-by-side, swipe, and onion skin | F13; Images mockup |
 | M7: worktrees | Complete | Work on another branch with isolated drafts and selection | F14; Worktrees mockup |
-| M7: submodules and LFS | Complete for review-time pointers | Understand nested revisions and pointer/object availability | F15–F16; Submodule and LFS mockups |
+| M7: submodules and LFS | Complete (smudge/materialization planned) | Understand nested revisions, pointer/object availability, and bounded previews | F15–F16; Submodule and LFS mockups |
 | M7: signing | Complete | Distinguish signature validity, trust, and signing setup | F17; Signing mockup |
 
-The roadmap now distinguishes the already-completed reading surface and file history from the remaining M7 work. Read M7 as partially delivered, not wholly future work. The plan provides the finer delivery sequence. M0–M6 completion is a documented claim, not a fresh implementation audit; platform acceptance and preview gates remain separate in [verification](verification.md#preview-acceptance-pending).
+The roadmap and plan record M0–M7 as delivered, with LFS working-file smudging/materialization kept as an explicit planned follow-up. Platform acceptance and preview gates remain tracked in [verification](verification.md#preview-acceptance-pending).
 
 The existing product has a coherent center: history → review → reading, and Local Changes → stage → commit. Recovery is equally central: failed operations lead to explicit Git state and a next action. M7 should extend those surfaces rather than add a separate dashboard. The highest design risk is confusing three independent axes: **file**, **comparison side**, and **content version**. Keep each named in a stable header. The second risk is presenting proposed worktree/submodule/LFS/signing actions as ordinary refreshes; each needs an explicit target and mutation boundary.
 
