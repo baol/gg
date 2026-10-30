@@ -168,24 +168,32 @@ pub fn show(
             }
         });
     });
+    // Second line, fixed: what to do (or the commits made at a reopened
+    // commit) in a fixed-width slot on the left, the step chips on the right.
     ui.horizontal(|ui| {
-        ui.add(egui::Label::new(egui::RichText::new(explanation(progress)).weak()).truncate());
-    });
-    ui.horizontal(|ui| {
+        let note = match &progress.stop {
+            RebaseStop::Reopened { made, .. } if !made.is_empty() => format!(
+                "Commits made at this stop: {}",
+                made.iter()
+                    .map(|step| format!("{} {}", short(&step.commit), step.subject))
+                    .collect::<Vec<_>>()
+                    .join(" · ")
+            ),
+            _ => explanation(progress).to_string(),
+        };
+        let width = (ui.available_width() * 0.5).floor();
+        ui.allocate_ui_with_layout(
+            egui::vec2(width, ui.spacing().interact_size.y),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                ui.set_min_width(width);
+                ui.add(egui::Label::new(egui::RichText::new(&note).weak()).truncate())
+                    .on_hover_text(&note);
+            },
+        );
         ui.spacing_mut().item_spacing.x = 10.0;
         chips(ui, progress);
     });
-    if let RebaseStop::Reopened { made, .. } = &progress.stop
-        && !made.is_empty()
-    {
-        ui.horizontal(|ui| {
-            ui.weak("Commits made at this stop:");
-            for step in made {
-                ui.label(egui::RichText::new(short(&step.commit)).monospace().weak());
-                ui.add(egui::Label::new(&step.subject).truncate());
-            }
-        });
-    }
     command
 }
 

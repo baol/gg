@@ -643,6 +643,9 @@ struct SearchPalette {
     focused: bool,
 }
 
+/// Fixed height of the operation area: two lines.
+const OPERATION_AREA_HEIGHT: f32 = 44.0;
+
 /// Height of the menu bar row (final design: 26 px).
 const MENU_BAR_HEIGHT: f32 = 26.0;
 
@@ -2834,6 +2837,38 @@ impl Browser {
                 self.mutation_error = Some(error);
             }
         }
+    }
+
+    /// What the operation area shows when nothing runs: the branch, its
+    /// tracking state, local changes, and stashes.
+    fn idle_summary(&self) -> String {
+        if self.state.history.is_none() {
+            return String::new();
+        }
+        let mut parts = Vec::new();
+        let head = self.state.refs.head.as_ref();
+        parts.push(match head.and_then(|head| head.name.as_deref()) {
+            Some(full) => format!("On {}", full.strip_prefix("refs/heads/").unwrap_or(full)),
+            None => "Detached HEAD".into(),
+        });
+        if let Some(tracking) = self.state.refs.current_tracking() {
+            parts.push(format!("tracking {}", refs_view::tracking_label(tracking)));
+        }
+        if let Some(summary) = &self.local_summary {
+            if let Some(changes) = summary.changes {
+                parts.push(match changes {
+                    0 => "no local changes".into(),
+                    1 => "1 changed file".into(),
+                    n => format!("{n} changed files"),
+                });
+            }
+            match summary.stashes.len() {
+                0 => {}
+                1 => parts.push("1 stash".into()),
+                n => parts.push(format!("{n} stashes")),
+            }
+        }
+        parts.join(" · ")
     }
 
     /// `feature · rebase 3/6` while an interactive rebase is stopped.
@@ -7050,8 +7085,22 @@ impl Browser {
         let mut resolve_conflicts = false;
         let mut cancel_network = false;
         let rebase_progress = self.rebase_progress().cloned();
-        if let Some(area) = self.operation_area() {
-            egui::Panel::top("operation-area").show(ui, |ui| {
+        // The operation area is always present at a fixed height, so starting
+        // or finishing an operation never moves the panes below it.
+        let idle_summary = self.idle_summary();
+        {
+            let area = self.operation_area();
+            egui::Panel::top("operation-area").exact_size(OPERATION_AREA_HEIGHT).show(ui, |ui| {
+                let Some(area) = area else {
+                    ui.horizontal(|ui| {
+                        ui.add(
+                            egui::Label::new(egui::RichText::new(&idle_summary).weak())
+                                .truncate(),
+                        );
+                    });
+                    return;
+                };
+                ui.set_clip_rect(ui.max_rect());
                 if let (
                     OperationArea::Mutation {
                         operation: gg_engine::mutation::Operation::Rebase,
@@ -7085,7 +7134,7 @@ impl Browser {
                     }
                     return;
                 }
-                ui.horizontal_wrapped(|ui| {
+                ui.horizontal(|ui| {
                     match &area {
                         OperationArea::Mutation {
                             operation,
@@ -10388,6 +10437,36 @@ mod tests {
     }
 
     #[test]
+    fn panes_hold_still_when_an_operation_starts_grows_and_ends() {
+        let ctx = egui::Context::default();
+        crate::phosphor::install(&ctx);
+        let top = |app: &mut Browser| {
+            for _ in 0..2 {
+                let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+                    app.draw_ui(ctx)
+                });
+            }
+            app.history_rect.top()
+        };
+        let mut idle = layout_fixture();
+        let mut stopped = stopped_app(reopened_stop(0, 2));
+        stopped.reopen_seen = Some("b".repeat(40));
+        let mut committed = stopped_app(reopened_stop(3, 0));
+        committed.reopen_seen = Some("b".repeat(40));
+        let idle = top(&mut idle);
+        assert_eq!(
+            top(&mut stopped),
+            idle,
+            "a rebase stop does not push History down"
+        );
+        assert_eq!(
+            top(&mut committed),
+            idle,
+            "commits made at the stop do not add a line"
+        );
+    }
+
+    #[test]
     fn commits_made_at_a_stop_are_listed_and_continue_is_ready() {
         let ctx = egui::Context::default();
         crate::phosphor::install(&ctx);
@@ -10404,9 +10483,13 @@ mod tests {
             "a stop already seen does not reopen Local Changes"
         );
         let text = shown_text(&output);
-        assert!(text.iter().any(|line| line == "Commits made at this stop:"));
-        assert!(text.iter().any(|line| line == "part 0"));
-        assert!(text.iter().any(|line| line == "part 1"));
+        assert!(
+            text.iter()
+                .any(|line| line.starts_with("Commits made at this stop:")
+                    && line.contains("part 0")
+                    && line.contains("part 1")),
+            "{text:?}"
+        );
         assert!(!text.iter().any(|line| line.contains("remaining changed")));
     }
 
@@ -12652,7 +12735,10 @@ mod tests {
                     app.history_rect,
                     app.details_rect
                 );
-                assert!(app.history_rect.top() <= 130.0);
+                // Menu bar, toolbar, the fixed operation area, and the filter row.
+                assert!(
+                    app.history_rect.top() <= MENU_BAR_HEIGHT + 34.0 + OPERATION_AREA_HEIGHT + 50.0
+                );
                 assert!(app.history_rect.bottom() <= height - 20.0);
                 if width >= 1040.0 {
                     assert!(!app.history_rect.intersects(app.details_rect));
@@ -12744,7 +12830,7 @@ mod tests {
         let ctx = egui::Context::default();
         crate::phosphor::install(&ctx);
         let mut app = layout_fixture();
-        let mut frame = |app: &mut Browser, events| {
+        let frame = |app: &mut Browser, events| {
             crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, events), |ctx| {
                 app.draw_ui(ctx)
             })
