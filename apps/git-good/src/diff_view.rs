@@ -14,7 +14,8 @@ use gg_engine::{
 };
 use std::{collections::BTreeMap, ops::Range, path::PathBuf};
 
-const HEIGHT: f32 = 20.0;
+/// Diff and full-file row height (final design, compact density: 19 px).
+const HEIGHT: f32 = 19.0;
 
 /// Scope of one staging command emitted by the reader.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

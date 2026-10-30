@@ -643,6 +643,9 @@ struct SearchPalette {
     focused: bool,
 }
 
+/// Height of the menu bar row (final design: 26 px).
+const MENU_BAR_HEIGHT: f32 = 26.0;
+
 /// Paints a count badge on the top-right corner of `rect`; nothing for zero.
 fn paint_badge(ui: &egui::Ui, rect: egui::Rect, count: u64) {
     if count == 0 {
@@ -6287,12 +6290,43 @@ impl Browser {
         let mut go_history = false;
         let working_mutation_pending = self.working_mutation_pending();
         let ready = self.frame_readiness();
-        let mut open_preferences = crate::navigation::available(ctx)
+        let shortcuts = crate::navigation::available(ctx);
+        let mut open_preferences = shortcuts
             && ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::Comma));
-        egui::Panel::top("toolbar").exact_size(42.0).show(ui, |ui| {
-            ui.add_space(5.0);
-            ui.horizontal(|ui| {
-                branding::toolbar(ui, &mut self.logo);
+        if shortcuts && ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::Num1))
+        {
+            go_local = self.state.history.is_some();
+        }
+        if shortcuts && ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::Num2))
+        {
+            go_history = true;
+        }
+        if shortcuts
+            && ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::Backslash))
+            && ctx.content_rect().width() >= 1120.0
+        {
+            self.refs_visible = !self.refs_visible;
+        }
+        let mut quit = false;
+        // A real menu bar: frameless titles, hover moves between open menus.
+        egui::Panel::top("menu-bar").exact_size(MENU_BAR_HEIGHT).show(ui, |ui| {
+            egui::MenuBar::new().ui(ui, |ui| {
+                if cfg!(target_os = "macos") {
+                    ui.menu_button("gg", |ui| {
+                        if ui
+                            .add(egui::Button::new("Settings…").shortcut_text("Cmd+,"))
+                            .clicked()
+                        {
+                            open_preferences = true;
+                            ui.close();
+                        }
+                        ui.separator();
+                        if ui.add(egui::Button::new("Quit gg").shortcut_text("Cmd+Q")).clicked() {
+                            quit = true;
+                            ui.close();
+                        }
+                    });
+                }
                 ui.menu_button("Repository", |ui| {
                     if ui
                         .add_enabled(
@@ -6420,13 +6454,22 @@ impl Browser {
                         self.open_preferences(PrefSection::General);
                         ui.close();
                     }
-                    if ui
-                        .add(egui::Button::new("Preferences…").shortcut_text("Ctrl+,"))
-                        .on_hover_text("Theme, density, clone folders, avatars, and rebase defaults")
-                        .clicked()
-                    {
-                        open_preferences = true;
-                        ui.close();
+                    if !cfg!(target_os = "macos") {
+                        if ui
+                            .add(egui::Button::new("Preferences…").shortcut_text("Ctrl+,"))
+                            .on_hover_text(
+                                "Theme, density, clone folders, avatars, and rebase defaults",
+                            )
+                            .clicked()
+                        {
+                            open_preferences = true;
+                            ui.close();
+                        }
+                        ui.separator();
+                        if ui.button("Quit").clicked() {
+                            quit = true;
+                            ui.close();
+                        }
                     }
                 });
                 let refs = self.state.refs.clone();
@@ -6666,21 +6709,55 @@ impl Browser {
                     }
                 });
                 ui.menu_button("View", |ui| {
+                    if ui
+                        .add_enabled(
+                            self.state.history.is_some(),
+                            egui::Button::selectable(self.working.is_some(), "Local Changes")
+                                .shortcut_text("Ctrl+1"),
+                        )
+                        .clicked()
+                    {
+                        go_local = true;
+                        ui.close();
+                    }
+                    if ui
+                        .add(
+                            egui::Button::selectable(
+                                self.working.is_none() && self.review.is_none(),
+                                "History",
+                            )
+                            .shortcut_text("Ctrl+2"),
+                        )
+                        .clicked()
+                    {
+                        go_history = true;
+                        ui.close();
+                    }
+                    ui.separator();
                     let shown = if narrow {
                         &mut self.narrow_details
                     } else {
                         &mut self.details_visible
                     };
-                    if ui.checkbox(shown, "Commit details · Space").clicked() {
+                    if ui
+                        .add(egui::Button::selectable(*shown, "Commit details").shortcut_text("Space"))
+                        .clicked()
+                    {
+                        *shown = !*shown;
                         ui.close();
                     }
                     ui.separator();
                     let sidebar_available = ctx.content_rect().width() >= 1120.0;
-                    ui.add_enabled(
+                    let sidebar = ui.add_enabled(
                         sidebar_available,
-                        egui::Checkbox::new(&mut self.refs_visible, "Refs sidebar"),
-                    )
-                    .on_hover_text(if sidebar_available {
+                        egui::Button::selectable(self.refs_visible, "Refs sidebar")
+                            .shortcut_text("Ctrl+\\"),
+                    );
+                    if sidebar.clicked() {
+                        self.refs_visible = !self.refs_visible;
+                        ui.close();
+                    }
+                    sidebar.on_hover_text(if sidebar_available {
                         "Show branches, remotes, and tags on the left"
                     } else {
                         "Resize the window to at least 1120 px to show the sidebar"
@@ -6741,6 +6818,9 @@ impl Browser {
                 );
             });
         });
+        if quit {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
         let mut tool = None;
         let mut stash_pick = None;
         let mut open_search = false;
@@ -6750,6 +6830,8 @@ impl Browser {
             .show(ui, |ui| {
                 ui.horizontal_centered(|ui| {
                     ui.spacing_mut().item_spacing.x = 2.0;
+                    branding::toolbar(ui, &mut self.logo);
+                    ui.add_space(4.0);
                     let has_repo = self.state.history.is_some();
                     let local_selected = self.working.is_some();
                     let sidebar_available = ctx.content_rect().width() >= 1120.0;
@@ -12658,6 +12740,53 @@ mod tests {
     }
 
     #[test]
+    fn menu_bar_is_one_row_and_view_shortcuts_switch_views() -> Result<(), String> {
+        let ctx = egui::Context::default();
+        crate::phosphor::install(&ctx);
+        let mut app = layout_fixture();
+        let mut frame = |app: &mut Browser, events| {
+            crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, events), |ctx| {
+                app.draw_ui(ctx)
+            })
+        };
+        let _ = frame(&mut app, vec![]);
+        let output = frame(&mut app, vec![]);
+        for title in ["Repository", "Branch", "Commit", "Changes", "View", "Help"] {
+            let y = output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) if text.galley.job.text == title => {
+                        Some(text.visual_bounding_rect().center().y)
+                    }
+                    _ => None,
+                })
+                .ok_or(format!("menu {title} missing"))?;
+            assert!(
+                y < MENU_BAR_HEIGHT,
+                "{title} sits in the 26 px menu bar: {y}"
+            );
+        }
+        let _ = frame(
+            &mut app,
+            vec![key(egui::Key::Num1, egui::Modifiers::COMMAND)],
+        );
+        assert!(app.working.is_some(), "Ctrl+1 opens Local Changes");
+        let _ = frame(
+            &mut app,
+            vec![key(egui::Key::Num2, egui::Modifiers::COMMAND)],
+        );
+        assert!(app.working.is_none(), "Ctrl+2 returns to History");
+        let shown = app.refs_visible;
+        let _ = frame(
+            &mut app,
+            vec![key(egui::Key::Backslash, egui::Modifiers::COMMAND)],
+        );
+        assert_eq!(app.refs_visible, !shown, "Ctrl+\\ toggles the refs sidebar");
+        Ok(())
+    }
+
+    #[test]
     fn local_changes_and_history_share_one_navigation_strip_at_every_width()
     -> Result<(), Box<dyn std::error::Error>> {
         for width in [720.0, 1120.0] {
@@ -12681,7 +12810,8 @@ mod tests {
             let nav = |label: &str| {
                 output.shapes.iter().find_map(|shape| match &shape.shape {
                     egui::epaint::Shape::Text(text)
-                        if text.galley.job.text == label && (42.0..80.0).contains(&text.pos.y) =>
+                        if text.galley.job.text == label
+                            && (MENU_BAR_HEIGHT..MENU_BAR_HEIGHT + 34.0).contains(&text.pos.y) =>
                     {
                         Some(text.pos)
                     }
@@ -12747,7 +12877,8 @@ mod tests {
                     .iter()
                     .filter_map(|shape| match &shape.shape {
                         egui::epaint::Shape::Text(text)
-                            if text.galley.job.text == "Changes" && text.pos.y > 42.0 =>
+                            if text.galley.job.text == "Changes"
+                                && text.pos.y > MENU_BAR_HEIGHT =>
                         {
                             Some(text.pos.x)
                         }
