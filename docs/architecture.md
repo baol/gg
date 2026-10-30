@@ -177,6 +177,8 @@ Double-clicking a local branch requests the same validated switch as the explici
 
 Refs and Details widths change through divider dragging or window-size constraints, never from content growth during idle frames, selection, filtering, or scrolling. Bound child content to the panel rectangle. Preserve strict two-axis geometry assertions and verify both dividers remain draggable.
 
+Windows place themselves once and never re-center as content grows; anchoring a pivot to a changing size moves the window on every change. Give a list that gains and loses rows a fixed viewport, and size rows so they never exceed the available width. Adding or removing a clone folder must leave the dialog rect unchanged.
+
 ## Working status · M2
 
 `git good status [PATH]` discovers the whole worktree from cwd or an explicit path and streams JSON. Bare repositories return an identified working-tree requirement. Unborn repositories compare the index with an empty tree.

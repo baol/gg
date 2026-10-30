@@ -1452,41 +1452,48 @@ impl Browser {
             .id(egui::Id::unique("clone-folders"))
             .open(&mut open)
             .collapsible(false)
-            .resizable(true)
+            .resizable([false, true])
             .default_width(460.0)
-            .default_pos(ctx.content_rect().center())
-            .pivot(egui::Align2::CENTER_CENTER)
+            .min_width(460.0)
+            .max_width(460.0)
+            .default_pos(ctx.content_rect().center() - egui::vec2(230.0, 160.0))
             .show(ctx, |ui| {
                 ui.label(
                     "Parent folders offered as clone destinations. The launch folder is always available.",
                 );
                 ui.add_space(4.0);
-                if self.folders.entries().is_empty() {
-                    ui.weak("No saved folders. Add the current folder or type one below.");
-                }
                 egui::ScrollArea::vertical()
                     .id_salt("clone-folders-list")
                     .max_height(180.0)
-                    .auto_shrink([false, true])
+                    .min_scrolled_height(180.0)
+                    .auto_shrink([false, false])
                     .show(ui, |ui| {
+                        if self.folders.entries().is_empty() {
+                            ui.weak("No saved folders. Add the current folder or type one below.");
+                        }
                         for (index, root) in self.folders.entries().iter().enumerate() {
                             ui.horizontal(|ui| {
                                 let label = root.to_string_lossy().into_owned();
-                                let width = (ui.available_width() - 70.0).max(80.0);
-                                let (rect, _) = ui.allocate_exact_size(
-                                    egui::vec2(width, 18.0),
-                                    egui::Sense::hover(),
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        if ui.small_button("Remove").clicked() {
+                                            remove = Some(index);
+                                        }
+                                        let width = ui.available_width().max(0.0);
+                                        let (rect, _) = ui.allocate_exact_size(
+                                            egui::vec2(width, 18.0),
+                                            egui::Sense::hover(),
+                                        );
+                                        bounded_text::paint(
+                                            ui,
+                                            rect,
+                                            &label,
+                                            egui::FontId::proportional(12.0),
+                                            ui.visuals().text_color(),
+                                        );
+                                    },
                                 );
-                                bounded_text::paint(
-                                    ui,
-                                    rect,
-                                    &label,
-                                    egui::FontId::proportional(12.0),
-                                    ui.visuals().text_color(),
-                                );
-                                if ui.small_button("Remove").clicked() {
-                                    remove = Some(index);
-                                }
                             });
                         }
                     });
@@ -7596,6 +7603,43 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn adding_a_clone_folder_does_not_move_the_dialog() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        app.folders_dialog = Some(FoldersDialog {
+            new_root: String::new(),
+            error: None,
+        });
+        app.folders = folders::Roots::default();
+        let id = egui::Id::unique("clone-folders");
+        let rect = |app: &mut Browser| {
+            for _ in 0..3 {
+                crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+                    app.draw_ui(ctx)
+                });
+            }
+            ctx.memory(|memory| memory.area_rect(id))
+        };
+        rect(&mut app);
+        let empty = rect(&mut app);
+        assert!(empty.is_some(), "the clone folders window did not render");
+        let root = folders::starting_folder();
+        assert!(app.folders.add(&root.to_string_lossy()).unwrap_or(false));
+        let one = rect(&mut app);
+        assert_eq!(one, empty, "the window moved after the first folder");
+        assert!(
+            app.folders
+                .add("/tmp/another-clone-folder")
+                .unwrap_or(false)
+        );
+        let two = rect(&mut app);
+        assert_eq!(two, empty, "the window moved after the second folder");
+        assert!(app.folders.add("/tmp/third-clone-folder").unwrap_or(false));
+        let three = rect(&mut app);
+        assert_eq!(three, empty, "the window moved after the third folder");
     }
 
     #[test]
