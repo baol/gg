@@ -284,6 +284,10 @@ pub struct Prefs {
     pub sign_tags: bool,
     /// Commit subject length guide in characters; 0 is off.
     pub subject_guide: u16,
+    /// History rows: author avatars, tag pills, and relative dates.
+    pub history_avatars: bool,
+    pub history_tags: bool,
+    pub relative_dates: bool,
     path: Option<PathBuf>,
 }
 
@@ -309,6 +313,9 @@ impl Default for Prefs {
             code_font: 125,
             sign_tags: false,
             subject_guide: 72,
+            history_avatars: true,
+            history_tags: true,
+            relative_dates: false,
             path: None,
         }
     }
@@ -347,6 +354,9 @@ impl Prefs {
                 .filter(|size| CODE_FONTS.contains(size))
                 .unwrap_or(defaults.code_font),
             sign_tags: read(path, "sign_tags").unwrap_or(defaults.sign_tags),
+            history_avatars: read(path, "history_avatars").unwrap_or(defaults.history_avatars),
+            history_tags: read(path, "history_tags").unwrap_or(defaults.history_tags),
+            relative_dates: read(path, "relative_dates").unwrap_or(defaults.relative_dates),
             subject_guide: read(path, "subject_guide")
                 .filter(|guide| SUBJECT_GUIDES.contains(guide))
                 .unwrap_or(defaults.subject_guide),
@@ -381,7 +391,10 @@ impl Prefs {
         write(path, "zoom", &self.zoom)?;
         write(path, "code_font", &self.code_font)?;
         write(path, "sign_tags", &self.sign_tags)?;
-        write(path, "subject_guide", &self.subject_guide)
+        write(path, "subject_guide", &self.subject_guide)?;
+        write(path, "history_avatars", &self.history_avatars)?;
+        write(path, "history_tags", &self.history_tags)?;
+        write(path, "relative_dates", &self.relative_dates)
     }
 
     /// The theme to show: `GG_THEME` (debug builds) wins over the saved one
@@ -450,6 +463,9 @@ mod tests {
         prefs.code_font = 140;
         prefs.sign_tags = true;
         prefs.subject_guide = 50;
+        prefs.history_avatars = false;
+        prefs.history_tags = false;
+        prefs.relative_dates = true;
         prefs.save()?;
         assert_eq!(Prefs::load_from(&path), prefs);
         assert_eq!(read::<u32>(&path, "future_option"), Some(7));

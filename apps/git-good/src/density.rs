@@ -14,6 +14,29 @@ pub fn set_code_font(tenths: u16) {
     CODE_FONT.store(tenths, Ordering::Relaxed);
 }
 
+static SHOW_AVATARS: AtomicBool = AtomicBool::new(true);
+static SHOW_TAGS: AtomicBool = AtomicBool::new(true);
+static RELATIVE_DATES: AtomicBool = AtomicBool::new(false);
+
+/// History display options from Preferences › Appearance.
+pub fn set_history(avatars: bool, tags: bool, relative_dates: bool) {
+    SHOW_AVATARS.store(avatars, Ordering::Relaxed);
+    SHOW_TAGS.store(tags, Ordering::Relaxed);
+    RELATIVE_DATES.store(relative_dates, Ordering::Relaxed);
+}
+
+pub fn show_avatars() -> bool {
+    SHOW_AVATARS.load(Ordering::Relaxed)
+}
+
+pub fn show_tags() -> bool {
+    SHOW_TAGS.load(Ordering::Relaxed)
+}
+
+pub fn relative_dates() -> bool {
+    RELATIVE_DATES.load(Ordering::Relaxed)
+}
+
 /// The reader's code font size, from Preferences › Appearance.
 pub fn code_font() -> f32 {
     f32::from(CODE_FONT.load(Ordering::Relaxed)) / 10.0

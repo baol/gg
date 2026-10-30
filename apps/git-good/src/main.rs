@@ -1942,6 +1942,11 @@ impl Browser {
         settings::set_subject_guide(ctx, self.prefs.subject_guide);
         ctx.set_zoom_factor(f32::from(self.prefs.zoom) / 100.0);
         density::set_code_font(self.prefs.code_font);
+        density::set_history(
+            self.prefs.history_avatars,
+            self.prefs.history_tags,
+            self.prefs.relative_dates,
+        );
     }
 
     /// Save a remembered starting value when it changes. A save failure only
@@ -2296,6 +2301,13 @@ impl Browser {
                                                 ui.selectable_value(&mut prefs.zoom, zoom, format!("{zoom}%"));
                                             }
                                         });
+                                    ui.end_row();
+                                    ui.label("History");
+                                    ui.vertical(|ui| {
+                                        ui.checkbox(&mut prefs.history_avatars, "Show avatars");
+                                        ui.checkbox(&mut prefs.history_tags, "Show tags in rows");
+                                        ui.checkbox(&mut prefs.relative_dates, "Relative dates");
+                                    });
                                     ui.end_row();
                                     ui.label("Code font size");
                                     let px = |tenths: u16| format!("{} px", f32::from(tenths) / 10.0);
