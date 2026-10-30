@@ -1930,25 +1930,30 @@ impl StatusView {
                         egui::vec2((ui.available_width() - 82.0).max(120.0), 22.0),
                         egui::Layout::left_to_right(egui::Align::Center),
                         |ui| {
+                            // The summary, then the mockup's key hints.
+                            let mut text = self.status_text();
+                            if self.error.is_none() && self.external_busy.is_none() {
+                                text.push_str(
+                                    "   ·   S / U: stage / unstage · [ ]: hunks · Ctrl+Enter: commit",
+                                );
+                            }
                             bounded_text::field(
                                 ui,
-                                &self.status_text(),
+                                &text,
                                 egui::FontId::proportional(12.0),
                                 22.0,
                             );
                         },
                     );
+                    // Refresh is automatic; Retry appears after an error and
+                    // otherwise keeps its slot empty.
                     refresh |= ui
-                        .add_enabled(
-                            !self.busy(),
-                            egui::Button::new(if self.error.is_some() {
-                                "Retry"
-                            } else {
-                                "Refresh"
-                            })
-                            .min_size(egui::vec2(74.0, 22.0)),
+                        .add_visible(
+                            self.error.is_some(),
+                            egui::Button::new("Retry").min_size(egui::vec2(74.0, 22.0)),
                         )
-                        .clicked();
+                        .clicked()
+                        && !self.busy();
                 });
             });
         let wide = ui.available_width() >= WIDE_LAYOUT;

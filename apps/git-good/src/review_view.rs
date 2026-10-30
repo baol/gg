@@ -1141,7 +1141,7 @@ impl Review {
                         } else if self.show_diff {
                             crate::navigation::READING_HINT
                         } else if self.complete {
-                            "Up/Down / j k: select · PgUp/PgDn: page · Esc: history"
+                            "Esc: history · Up/Down: files · [ ]: changes · Alt+Left/Right: versions · H: file history · B: blame"
                         } else {
                             "Reading changed files…"
                         })
@@ -1553,7 +1553,8 @@ mod tests {
                 .ok_or("files header")?;
             assert!(header.bottom() <= first_rect.top() + 1.0);
             assert!(
-                !before.iter().any(|(text, _)| text.contains(" files")),
+                !before.iter().any(|(text, _)| text.ends_with(" files")
+                    && text.starts_with(|c: char| c.is_ascii_digit())),
                 "the list header replaces the separate file count"
             );
             // Counts arrive in the background: the listing does not move.
