@@ -1608,6 +1608,15 @@ impl StatusView {
                     || i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft)
             });
             refresh |= ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::R));
+            // S stages the selected Unstaged file; U unstages the selected Staged file.
+            for (key, list) in [(egui::Key::S, 0), (egui::Key::U, 1)] {
+                if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, key))
+                    && self.focus == list
+                    && let Some(row) = self.lists[list].selected_row
+                {
+                    self.toggle_file(list, row, ctx);
+                }
+            }
             if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Tab)) {
                 self.focus = 1 - self.focus;
                 if self.lists[self.focus].count > 0 {
@@ -2793,6 +2802,31 @@ mod tests {
         let output = run(&ctx, &mut view, 1120.0, vec![]);
         let minus = text_pos(&output, "−").ok_or("missing row − button")?;
         click(&ctx, &mut view, 1120.0, minus + egui::vec2(2.0, 4.0));
+        pump(&ctx, &mut view, 1120.0, |view| {
+            !view.stage.mutating() && view.complete && !view.replacing && view.lists[0].count == 2
+        });
+        assert_eq!(file(p, &["diff", "--cached", "--name-only"])?, b"");
+
+        // S stages the selected Unstaged file; U unstages it again.
+        let key = |key| egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let output = run(&ctx, &mut view, 1120.0, vec![]);
+        let b = row_pos(&output, &view, 0, "b").ok_or("missing b row")?;
+        click(&ctx, &mut view, 1120.0, b);
+        run(&ctx, &mut view, 1120.0, vec![key(egui::Key::S)]);
+        pump(&ctx, &mut view, 1120.0, |view| {
+            !view.stage.mutating() && view.complete && !view.replacing && view.lists[0].count == 1
+        });
+        assert_eq!(file(p, &["diff", "--cached", "--name-only"])?, b"b\n");
+        let output = run(&ctx, &mut view, 1120.0, vec![]);
+        let staged = row_pos(&output, &view, 1, "b").ok_or("missing staged b row")?;
+        click(&ctx, &mut view, 1120.0, staged);
+        run(&ctx, &mut view, 1120.0, vec![key(egui::Key::U)]);
         pump(&ctx, &mut view, 1120.0, |view| {
             !view.stage.mutating() && view.complete && !view.replacing && view.lists[0].count == 2
         });

@@ -135,7 +135,7 @@ Second pass comparing every Final-page board with the app. Done: menus from one 
 Still to build (medium):
 
 1. Review header: a **Compare with** select (subject, hash pill, and author · date are done) (parents and HEAD); `FILES n +x −y` with per-file stats; left-elided paths; a fixed 300 px file list.
-2. Changes: line selection bar with Clear; S/U keys (per-row stage/unstage buttons are done).
+2. Changes: line selection bar with Clear (per-row buttons and S/U keys are done).
 3. Conflict workspace: files panel with resolved list and blocks left; result line numbers. **Open in editor** needs a way to launch the user's editor (a new dependency or a setting): decide in review.
 4. Rebase stop: **Commits made at this stop** section in Local Changes.
 5. Stash picker: two-line rows (Up/Down/Enter/Del keys are done).
