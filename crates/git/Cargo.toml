@@ -3,6 +3,7 @@ name = "gg-git"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+authors.workspace = true
 rust-version.workspace = true
 [dependencies]
 gg-engine.workspace = true

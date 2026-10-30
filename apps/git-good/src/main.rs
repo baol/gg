@@ -1292,6 +1292,8 @@ struct Browser {
     /// Repositories opened before, newest first.
     recent: Vec<PathBuf>,
     about_open: bool,
+    /// The larger logo drawn in About gg.
+    about_logo: Option<egui::TextureHandle>,
     discard_confirm: bool,
     rename_dialog: Option<RenameDialog>,
     upstream_dialog: Option<UpstreamDialog>,
@@ -1414,7 +1416,9 @@ impl Browser {
             } else {
                 settings::recent()
             },
-            about_open: false,
+            // Debug builds open About gg with `GG_ABOUT=1` for native review.
+            about_open: cfg!(debug_assertions) && std::env::var_os("GG_ABOUT").is_some(),
+            about_logo: None,
             discard_confirm: false,
             rename_dialog: None,
             upstream_dialog: None,
@@ -3027,9 +3031,33 @@ impl Browser {
                 .default_pos(ctx.content_rect().center())
                 .pivot(egui::Align2::CENTER_CENTER)
                 .show(ctx, |ui| {
-                    ui.heading("gg · good git");
-                    ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
-                    ui.hyperlink_to("github.com/baol/gg", "https://github.com/baol/gg");
+                    let about = branding::about();
+                    ui.set_max_width(320.0);
+                    ui.vertical_centered(|ui| {
+                        branding::logo(ui, &mut self.about_logo, 96.0);
+                        ui.heading("gg · good git");
+                        ui.weak(format!("Version {}", about.version));
+                    });
+                    ui.add_space(8.0);
+                    egui::Grid::new("about-gg-facts")
+                        .num_columns(2)
+                        .spacing([12.0, 4.0])
+                        .show(ui, |ui| {
+                            ui.weak("Author");
+                            ui.label(about.authors.join(", "));
+                            ui.end_row();
+                            ui.weak("License");
+                            ui.hyperlink_to(
+                                about.license,
+                                "https://www.apache.org/licenses/LICENSE-2.0",
+                            );
+                            ui.end_row();
+                            ui.weak("Source");
+                            ui.hyperlink_to("github.com/baol/gg", "https://github.com/baol/gg");
+                            ui.end_row();
+                        });
+                    ui.add_space(8.0);
+                    ui.add(egui::Label::new(egui::RichText::new(about.note).weak()).wrap());
                 });
             self.about_open = open;
         }

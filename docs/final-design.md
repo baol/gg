@@ -42,6 +42,8 @@ Every command has exactly one menu home. The toolbar, shortcuts, context menus, 
 
 The menus come from one command table that search also lists, so a command has one label, shortcut, and disabled reason everywhere. Reword, Reopen, Fixup, and Drop open the interactive rebase with the selected commit preset. Still to decide (see the canvas page **Review · as built**): Refresh and Track remote branch are kept from before the mockups; Reword has no `Ctrl+R` because that is Refresh; Delete has no `Del` key; Submodules…, LFS…, and Side-by-side diff are listed but not built; F10 menu focus is not available in egui.
 
+About gg shows the logo, version, author (people only, from the workspace `authors`), license with a link, source link, and a note that parts of gg were written with AI coding assistants and come with no warranty.
+
 Rules:
 
 - The toolbar holds only frequent commands that need no selection. Commands on a selected commit, file, or hunk stay beside that selection.
