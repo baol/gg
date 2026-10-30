@@ -29,9 +29,38 @@ pub struct Receipt {
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
+/// How to create a commit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Options {
+    /// Sign the commit; a missing key fails instead of falling back.
+    pub sign: bool,
+    /// Run the pre-commit and commit-msg hooks; off is `git commit --no-verify`.
+    pub verify: bool,
+}
+
+/// Create a commit from the index with these options.
+pub fn create_with(
+    repository: &StatusIdentity,
+    message: &str,
+    options: Options,
+) -> std::result::Result<Receipt, String> {
+    create_inner(repository, message, options.sign, options.verify)
+        .map_err(|e| format!("Commit: {e}"))
+}
+
+/// Rewrite HEAD from the index with these options.
+pub fn amend_with(
+    repository: &StatusIdentity,
+    message: &str,
+    options: Options,
+) -> std::result::Result<Receipt, String> {
+    amend_inner(repository, message, options.sign, options.verify)
+        .map_err(|e| format!("Amend: {e}"))
+}
+
 /// Create one commit from the current index after validating the observed HEAD.
 pub fn create(repository: &StatusIdentity, message: &str) -> std::result::Result<Receipt, String> {
-    create_inner(repository, message, false).map_err(|e| format!("Commit: {e}"))
+    create_inner(repository, message, false, true).map_err(|e| format!("Commit: {e}"))
 }
 
 /// Create one signed commit. A missing key or agent fails instead of falling back to unsigned.
@@ -39,10 +68,15 @@ pub fn create_signed(
     repository: &StatusIdentity,
     message: &str,
 ) -> std::result::Result<Receipt, String> {
-    create_inner(repository, message, true).map_err(|e| format!("Commit: {e}"))
+    create_inner(repository, message, true, true).map_err(|e| format!("Commit: {e}"))
 }
 
-fn create_inner(repository: &StatusIdentity, message: &str, sign: bool) -> Result<Receipt> {
+fn create_inner(
+    repository: &StatusIdentity,
+    message: &str,
+    sign: bool,
+    verify: bool,
+) -> Result<Receipt> {
     let message = normalize_message(message)?;
     crate::status::validate(repository)?;
     let repo = gix::discover(&repository.path)?;
@@ -60,7 +94,9 @@ fn create_inner(repository: &StatusIdentity, message: &str, sign: bool) -> Resul
     let message_path = repo.git_dir().join("COMMIT_EDITMSG");
     write_message(&message_path, &message)?;
 
-    run_hook(&worktree, "pre-commit", &[])?;
+    if verify {
+        run_hook(&worktree, "pre-commit", &[])?;
+    }
     ensure_head(&repo, initial_head.as_deref())?;
     run_hook(
         &worktree,
@@ -68,7 +104,9 @@ fn create_inner(repository: &StatusIdentity, message: &str, sign: bool) -> Resul
         &[message_path.as_os_str(), OsStr::new("message")],
     )?;
     ensure_head(&repo, initial_head.as_deref())?;
-    run_hook(&worktree, "commit-msg", &[message_path.as_os_str()])?;
+    if verify {
+        run_hook(&worktree, "commit-msg", &[message_path.as_os_str()])?;
+    }
     let message = read_message(&message_path)?;
 
     let lock = patch::acquire(&repo)?;
@@ -125,7 +163,7 @@ fn create_inner(repository: &StatusIdentity, message: &str, sign: bool) -> Resul
 
 /// Rewrite HEAD with the current index and a new message.
 pub fn amend(repository: &StatusIdentity, message: &str) -> std::result::Result<Receipt, String> {
-    amend_inner(repository, message, false).map_err(|e| format!("Amend: {e}"))
+    amend_inner(repository, message, false, true).map_err(|e| format!("Amend: {e}"))
 }
 
 /// Rewrite HEAD as a signed commit. A signing failure leaves HEAD and the index untouched.
@@ -133,10 +171,15 @@ pub fn amend_signed(
     repository: &StatusIdentity,
     message: &str,
 ) -> std::result::Result<Receipt, String> {
-    amend_inner(repository, message, true).map_err(|e| format!("Amend: {e}"))
+    amend_inner(repository, message, true, true).map_err(|e| format!("Amend: {e}"))
 }
 
-fn amend_inner(repository: &StatusIdentity, message: &str, sign: bool) -> Result<Receipt> {
+fn amend_inner(
+    repository: &StatusIdentity,
+    message: &str,
+    sign: bool,
+    verify: bool,
+) -> Result<Receipt> {
     let message = normalize_message(message)?;
     crate::status::validate(repository)?;
     let repo = gix::discover(&repository.path)?;
@@ -156,7 +199,9 @@ fn amend_inner(repository: &StatusIdentity, message: &str, sign: bool) -> Result
     let message_path = repo.git_dir().join("COMMIT_EDITMSG");
     write_message(&message_path, &message)?;
 
-    run_hook(&worktree, "pre-commit", &[])?;
+    if verify {
+        run_hook(&worktree, "pre-commit", &[])?;
+    }
     ensure_head(&repo, Some(&previous))?;
     run_hook(
         &worktree,
@@ -168,7 +213,9 @@ fn amend_inner(repository: &StatusIdentity, message: &str, sign: bool) -> Result
         ],
     )?;
     ensure_head(&repo, Some(&previous))?;
-    run_hook(&worktree, "commit-msg", &[message_path.as_os_str()])?;
+    if verify {
+        run_hook(&worktree, "commit-msg", &[message_path.as_os_str()])?;
+    }
     let message = read_message(&message_path)?;
 
     let lock = patch::acquire(&repo)?;

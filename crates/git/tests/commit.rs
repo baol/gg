@@ -525,3 +525,37 @@ fn signed_commit_without_a_working_signer_never_falls_back_to_unsigned() -> Resu
     assert_eq!(git(p, &["status", "--porcelain=v1"])?, b"M  a\n");
     Ok(())
 }
+
+#[cfg(unix)]
+#[test]
+fn without_verify_the_pre_commit_and_commit_msg_hooks_are_skipped() -> Result {
+    let dir = repo()?;
+    let p = dir.path();
+    std::fs::write(p.join("a"), b"base\n")?;
+    git(p, &["add", "a"])?;
+    hook(p, "pre-commit", "exit 7")?;
+    hook(p, "commit-msg", "exit 8")?;
+    assert!(
+        rejected(p, "blocked").is_ok(),
+        "the hooks still block by default"
+    );
+    let options = gg_git::commit::Options {
+        sign: false,
+        verify: false,
+    };
+    let repository = identity(p)?;
+    let receipt = gg_git::commit::create_with(&repository, "skips hooks", options)?;
+    assert_eq!(
+        git(p, &["log", "-1", "--format=%s", &receipt.id])?,
+        b"skips hooks\n"
+    );
+    std::fs::write(p.join("a"), b"changed\n")?;
+    git(p, &["add", "a"])?;
+    let repository = identity(p)?;
+    gg_git::commit::amend_with(&repository, "amended without hooks", options)?;
+    assert_eq!(
+        git(p, &["log", "-1", "--format=%s"])?,
+        b"amended without hooks\n"
+    );
+    Ok(())
+}

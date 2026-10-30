@@ -249,6 +249,21 @@ fn subject_guide_id() -> eframe::egui::Id {
     eframe::egui::Id::unique("gg-subject-guide")
 }
 
+/// Whether commits run the pre-commit and commit-msg hooks; on until
+/// Preferences sets it.
+pub fn run_hooks(ctx: &eframe::egui::Context) -> bool {
+    ctx.data(|data| data.get_temp(run_hooks_id()))
+        .unwrap_or(true)
+}
+
+pub fn set_run_hooks(ctx: &eframe::egui::Context, run: bool) {
+    ctx.data_mut(|data| data.insert_temp(run_hooks_id(), run));
+}
+
+fn run_hooks_id() -> eframe::egui::Id {
+    eframe::egui::Id::unique("gg-run-hooks")
+}
+
 /// The diff layout every reader in the window follows.
 pub fn diff_layout(ctx: &eframe::egui::Context) -> DiffLayout {
     ctx.data(|data| data.get_temp(diff_layout_id()))
@@ -311,6 +326,8 @@ pub struct Prefs {
     pub zoom: u16,
     /// Code font size in the reader, in tenths of a pixel: 125, 130, or 140.
     pub code_font: u16,
+    /// Commits run the pre-commit and commit-msg hooks.
+    pub run_hooks: bool,
     /// Create tag starts with Sign checked.
     pub sign_tags: bool,
     /// Commit subject length guide in characters; 0 is off.
@@ -351,6 +368,7 @@ impl Default for Prefs {
             zoom: 100,
             code_font: 125,
             sign_tags: false,
+            run_hooks: true,
             subject_guide: 72,
             pull_strategy: PullStrategy::default(),
             clone_named_after_repo: true,
@@ -397,6 +415,7 @@ impl Prefs {
                 .filter(|size| CODE_FONTS.contains(size))
                 .unwrap_or(defaults.code_font),
             sign_tags: read(path, "sign_tags").unwrap_or(defaults.sign_tags),
+            run_hooks: read(path, "run_hooks").unwrap_or(defaults.run_hooks),
             pull_strategy: read(path, "pull_strategy").unwrap_or(defaults.pull_strategy),
             clone_named_after_repo: read(path, "clone_named_after_repo")
                 .unwrap_or(defaults.clone_named_after_repo),
@@ -440,6 +459,7 @@ impl Prefs {
         write(path, "zoom", &self.zoom)?;
         write(path, "code_font", &self.code_font)?;
         write(path, "sign_tags", &self.sign_tags)?;
+        write(path, "run_hooks", &self.run_hooks)?;
         write(path, "subject_guide", &self.subject_guide)?;
         write(path, "pull_strategy", &self.pull_strategy)?;
         write(path, "clone_named_after_repo", &self.clone_named_after_repo)?;
@@ -515,6 +535,7 @@ mod tests {
         prefs.zoom = 125;
         prefs.code_font = 140;
         prefs.sign_tags = true;
+        prefs.run_hooks = false;
         prefs.subject_guide = 50;
         prefs.history_avatars = false;
         prefs.pull_strategy = PullStrategy::FastForward;

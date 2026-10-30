@@ -357,7 +357,9 @@ impl PrefSection {
                 "appearance theme dark light system density compact comfortable zoom font size code"
             }
             Self::Diff => "diff open files full file layout inline side by side images compare",
-            Self::Commit => "commit identity name email signing sign tags subject length guide",
+            Self::Commit => {
+                "commit identity name email signing sign tags subject length guide hooks verify"
+            }
             Self::Rebase => {
                 "rebase recovery stash autostash backup pull strategy merge fast-forward push force lease"
             }
@@ -1983,6 +1985,7 @@ impl Browser {
         settings::set_image_layout(ctx, self.prefs.image_layout);
         settings::set_diff_layout(ctx, self.prefs.diff_layout);
         settings::set_subject_guide(ctx, self.prefs.subject_guide);
+        settings::set_run_hooks(ctx, self.prefs.run_hooks);
         ctx.set_zoom_factor(f32::from(self.prefs.zoom) / 100.0);
         density::set_code_font(self.prefs.code_font);
         density::set_history(
@@ -2438,6 +2441,13 @@ impl Browser {
                                 }
                             });
                             ui.weak("The commit box counts the subject and warns past the guide.");
+                            ui.separator();
+                            ui.strong("Hooks");
+                            ui.checkbox(
+                                &mut prefs.run_hooks,
+                                "Run commit hooks; keep the draft if a hook fails",
+                            );
+                            ui.weak("Off skips the pre-commit and commit-msg hooks, like git commit --no-verify.");
                             ui.separator();
                             ui.strong("Sign tags");
                             ui.checkbox(&mut prefs.sign_tags, "Create tag starts with Sign checked");

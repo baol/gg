@@ -969,17 +969,19 @@ impl StatusView {
         };
         let message = self.message.clone();
         let amend = self.amend;
-        let sign = self.sign_commit;
+        let options = gg_git::commit::Options {
+            sign: self.sign_commit,
+            verify: crate::settings::run_hooks(ctx),
+        };
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         let repaint = ctx.clone();
         match std::thread::Builder::new()
             .name("gg-commit".into())
             .spawn(move || {
-                let result = match (amend, sign) {
-                    (true, true) => gg_git::commit::amend_signed(&repository, &message),
-                    (true, false) => gg_git::commit::amend(&repository, &message),
-                    (false, true) => gg_git::commit::create_signed(&repository, &message),
-                    (false, false) => gg_git::commit::create(&repository, &message),
+                let result = if amend {
+                    gg_git::commit::amend_with(&repository, &message, options)
+                } else {
+                    gg_git::commit::create_with(&repository, &message, options)
                 };
                 let _ = tx.send(result);
                 repaint.request_repaint();
