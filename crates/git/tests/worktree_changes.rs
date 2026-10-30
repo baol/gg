@@ -27,6 +27,9 @@ fn init(path: &Path) -> Result {
     git(path, &["init", "-q", "-b", "main"])?;
     git(path, &["config", "user.name", "Test"])?;
     git(path, &["config", "user.email", "test@example.org"])?;
+    // gg's own Git calls read the repository config, not the `-c` above, so
+    // Windows runners' system `core.autocrlf=true` must be overridden here.
+    git(path, &["config", "core.autocrlf", "false"])?;
     Ok(())
 }
 
