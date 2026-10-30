@@ -9,8 +9,6 @@ const ICON_SIZE: f32 = 12.0;
 pub enum Action {
     Switch(String),
     Jump(String),
-    NewBranch,
-    NewTag,
     Track(String),
     Merge(String),
     Rebase(String),
@@ -48,36 +46,11 @@ pub fn show(
 ) -> Option<Action> {
     let mut action = None;
     ui.add_space(4.0);
-    ui.strong("Refs");
     ui.add(
         egui::TextEdit::singleline(filter)
             .hint_text("Filter refs")
             .desired_width(f32::INFINITY),
     );
-    let has_head = refs.head.as_ref().is_some_and(|head| head.commit.is_some());
-    ui.horizontal(|ui| {
-        let width = ((ui.available_width() - 6.0) / 2.0).max(60.0);
-        if ui
-            .add_enabled(
-                !busy && has_head,
-                egui::Button::new("+  Branch").min_size(egui::vec2(width, 24.0)),
-            )
-            .on_hover_text("Create a branch from HEAD")
-            .clicked()
-        {
-            action = Some(Action::NewBranch);
-        }
-        if ui
-            .add_enabled(
-                !busy && has_head,
-                egui::Button::new("+  Tag").min_size(egui::vec2(width, 24.0)),
-            )
-            .on_hover_text("Create an annotated or signed tag at an explicit target")
-            .clicked()
-        {
-            action = Some(Action::NewTag);
-        }
-    });
     if let Some(tracking) = refs.current_tracking() {
         ui.add_space(2.0);
         tracking_row(ui, tracking, busy, &mut action);
@@ -119,7 +92,7 @@ pub fn show(
         .id_salt("refs-scroll")
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            section(ui, "Branches", branches.len(), |ui| {
+            section(ui, "Branches", branches.len(), !query.is_empty(), |ui| {
                 if let Some(head) = &refs.head
                     && head.detached
                 {
@@ -150,7 +123,7 @@ pub fn show(
                 }
             });
 
-            section(ui, "Remotes", remotes.len(), |ui| {
+            section(ui, "Remotes", remotes.len(), !query.is_empty(), |ui| {
                 if remotes.is_empty() {
                     ui.weak(if query.is_empty() {
                         "No remotes"
@@ -170,7 +143,7 @@ pub fn show(
                 }
             });
 
-            section(ui, "Tags", tags.len(), |ui| {
+            section(ui, "Tags", tags.len(), !query.is_empty(), |ui| {
                 if tags.is_empty() {
                     ui.weak(if query.is_empty() {
                         "No tags"
@@ -190,7 +163,7 @@ pub fn show(
                 }
             });
 
-            section(ui, "Stashes", stash_rows.len(), |ui| {
+            section(ui, "Stashes", stash_rows.len(), !query.is_empty(), |ui| {
                 if stash_rows.is_empty() {
                     ui.weak(if query.is_empty() {
                         "No stashes"
@@ -231,15 +204,25 @@ pub fn show(
     action
 }
 
-fn section(ui: &mut egui::Ui, title: &str, count: usize, contents: impl FnOnce(&mut egui::Ui)) {
+/// A collapsible group headed like the mockup: `BRANCHES 2`. Branches and
+/// Stashes start open; Remotes and Tags start collapsed. Every group opens
+/// while the filter has text, so matches are never hidden.
+fn section(
+    ui: &mut egui::Ui,
+    title: &str,
+    count: usize,
+    filtering: bool,
+    contents: impl FnOnce(&mut egui::Ui),
+) {
     ui.add_space(3.0);
     egui::CollapsingHeader::new(
-        egui::RichText::new(format!("{title}  {count}"))
-            .strong()
-            .size(12.0),
+        egui::RichText::new(format!("{}  {count}", title.to_uppercase()))
+            .size(11.0)
+            .color(ui.visuals().weak_text_color()),
     )
     .id_salt(("refs-section", title))
-    .default_open(true)
+    .default_open(!matches!(title, "Remotes" | "Tags"))
+    .open(filtering.then_some(true))
     .show_background(false)
     .show(ui, |ui| {
         ui.spacing_mut().item_spacing.y = 1.0;
@@ -713,17 +696,7 @@ mod tests {
                 _ => None,
             })
             .collect::<Vec<_>>();
-        for expected in [
-            "Refs",
-            "Branches",
-            "main",
-            "Remotes",
-            "origin",
-            "Tags",
-            "v1.0",
-            "origin/main",
-            "2",
-        ] {
+        for expected in ["BRANCHES", "main", "REMOTES", "TAGS", "origin/main", "2"] {
             assert!(
                 text.iter().any(|line| line.contains(expected)),
                 "{expected}: {text:?}"

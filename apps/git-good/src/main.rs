@@ -8399,8 +8399,6 @@ impl Browser {
             match action {
                 Some(refs_view::Action::Switch(name)) => self.start_branch(ctx, name, false),
                 Some(refs_view::Action::Jump(id)) => self.jump_to_ref(id),
-                Some(refs_view::Action::NewBranch) => self.open_new_branch(),
-                Some(refs_view::Action::NewTag) => self.open_new_tag(),
                 Some(refs_view::Action::Track(name)) => {
                     self.track_dialog = Some(name);
                 }
@@ -10288,7 +10286,7 @@ mod tests {
                 })
                 .collect::<Vec<_>>();
             assert_eq!(
-                text.iter().any(|line| line.contains("Branches  0")),
+                text.iter().any(|line| line.contains("BRANCHES  0")),
                 visible,
                 "width={width}: {text:?}"
             );
