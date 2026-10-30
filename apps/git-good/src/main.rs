@@ -764,6 +764,34 @@ fn paint_badge(ui: &egui::Ui, rect: egui::Rect, count: u64) {
         .galley(badge.center() - galley.size() / 2.0, galley, ink);
 }
 
+/// The `Ctrl+K` chip at the right end of the empty toolbar search field.
+fn search_key_chip(ui: &egui::Ui, field: egui::Rect) {
+    let visuals = ui.visuals();
+    let galley = ui.painter().layout_no_wrap(
+        "Ctrl+K".into(),
+        egui::FontId::proportional(11.0),
+        visuals.weak_text_color(),
+    );
+    let chip = egui::Rect::from_min_size(
+        egui::pos2(
+            field.right() - galley.size().x - 14.0,
+            field.center().y - galley.size().y / 2.0 - 2.0,
+        ),
+        galley.size() + egui::vec2(8.0, 4.0),
+    );
+    ui.painter().rect_stroke(
+        chip,
+        3.0,
+        visuals.widgets.noninteractive.bg_stroke,
+        egui::StrokeKind::Inside,
+    );
+    ui.painter().galley(
+        chip.min + egui::vec2(4.0, 2.0),
+        galley,
+        visuals.weak_text_color(),
+    );
+}
+
 /// One icon button in the window toolbar; returns whether it was clicked.
 fn toolbar_button(
     ui: &mut egui::Ui,
@@ -7909,13 +7937,13 @@ impl Browser {
                         ui.add_space(4.0);
                     };
                     use crate::phosphor as icon;
-                    if toolbar_button(ui, icon::DOWNLOAD_SIMPLE, None, "Fetch", idle(ready.network_idle)) {
+                    if toolbar_button(ui, icon::DOWNLOAD_SIMPLE, None, "Fetch  Ctrl+Shift+F", idle(ready.network_idle)) {
                         tool = Some(FrameCommand::Fetch);
                     }
                     let pull_tip = if ready.behind > 0 {
-                        format!("Pull {} (rebase)", ready.behind)
+                        format!("Pull {} (rebase)  Ctrl+Shift+L", ready.behind)
                     } else {
-                        "Pull (rebase)".into()
+                        "Pull (rebase)  Ctrl+Shift+L".into()
                     };
                     if toolbar_button(
                         ui,
@@ -7926,11 +7954,11 @@ impl Browser {
                     ) {
                         tool = Some(FrameCommand::Pull);
                     }
-                    if toolbar_button(ui, icon::ARROW_LINE_UP, None, "Push", idle(ready.network_idle)) {
+                    if toolbar_button(ui, icon::ARROW_LINE_UP, None, "Push  Ctrl+Shift+P", idle(ready.network_idle)) {
                         tool = Some(FrameCommand::Push);
                     }
                     separator(ui);
-                    if toolbar_button(ui, icon::GIT_BRANCH, None, "New branch…", idle(ready.branch_idle)) {
+                    if toolbar_button(ui, icon::GIT_BRANCH, None, "New branch…  Ctrl+B", idle(ready.branch_idle)) {
                         tool = Some(FrameCommand::NewBranch);
                     }
                     if toolbar_button(ui, icon::TAG, None, "New tag…", idle(ready.branch_idle)) {
@@ -7946,7 +7974,7 @@ impl Browser {
                         tool = Some(FrameCommand::Merge);
                     }
                     separator(ui);
-                    if toolbar_button(ui, icon::ARCHIVE, None, "Stash changes…", ready.stash_reason) {
+                    if toolbar_button(ui, icon::ARCHIVE, None, "Stash changes…  Ctrl+Shift+Z", ready.stash_reason) {
                         tool = Some(FrameCommand::Stash);
                     }
                     if let Some(pick) = self.stash_picker_button(ui, &ready) {
@@ -7986,13 +8014,25 @@ impl Browser {
                         // an icon that opens the same search with its own field.
                         let wide = ui.available_width() >= 150.0;
                         if wide {
-                            let width = if ui.available_width() >= 420.0 { 220.0 } else { 140.0 };
+                            let roomy = ui.available_width() >= 560.0;
+                            let width = if roomy {
+                                330.0
+                            } else if ui.available_width() >= 420.0 {
+                                220.0
+                            } else {
+                                140.0
+                            };
+                            let hint = if roomy {
+                                "Search commits, branches, files, actions"
+                            } else {
+                                "Search"
+                            };
                             let field = ui
                                 .add(
                                     egui::TextEdit::singleline(&mut self.search_text)
                                         .id(search_field_id())
                                         .hint_text(format!(
-                                            "{}  Search  Ctrl+K",
+                                            "{}  {hint}",
                                             crate::phosphor::MAGNIFYING_GLASS
                                         ))
                                         .desired_width(width),
@@ -8000,6 +8040,9 @@ impl Browser {
                                 .on_hover_text(
                                     "Search commands, branches, remotes, tags, and files (Ctrl+K)",
                                 );
+                            if self.search_text.is_empty() && !field.has_focus() {
+                                search_key_chip(ui, field.rect);
+                            }
                             search_field = Some((
                                 field.rect,
                                 field.has_focus() || field.changed(),
