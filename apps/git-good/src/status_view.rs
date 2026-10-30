@@ -176,6 +176,8 @@ pub struct StatusView {
     /// A discard waiting for confirmation: one file or hunk edit, or the
     /// picked lines across hunks.
     drop_confirm: Option<Vec<crate::diff_view::StageEdit>>,
+    /// Commits made at a stopped rebase's reopened commit: ID and subject.
+    stop_commits: Vec<(String, String)>,
     /// A group header asked to stage everything (`Some(true)`) or unstage
     /// everything (`Some(false)`); the window runs it like the menu item.
     group_request: Option<bool>,
@@ -228,6 +230,7 @@ impl StatusView {
             reader: crate::diff_view::DiffView::default(),
             drop_confirm: None,
             group_request: None,
+            stop_commits: Vec::new(),
             commit: None,
             commit_done: None,
             last_commit: None,
@@ -750,6 +753,11 @@ impl StatusView {
     /// Disable incompatible mutations while another view owns an operation.
     pub fn set_external_busy(&mut self, reason: Option<String>) {
         self.external_busy = reason;
+    }
+
+    /// The commits made at the current rebase stop, shown under the lists.
+    pub fn set_stop_commits(&mut self, commits: Vec<(String, String)>) {
+        self.stop_commits = commits;
     }
 
     /// Whether the commit box is amending HEAD.
@@ -1293,10 +1301,44 @@ impl StatusView {
             egui::vec2(left, height),
             egui::Layout::top_down(egui::Align::Min),
             |ui| {
-                let each = ((height - 6.0) / 2.0 - GROUP_HEADER - 2.0).max(40.0);
+                // During a rebase stop, the commits made here sit under the
+                // lists (as in the mockup), in a slot sized to them.
+                let made = (!self.stop_commits.is_empty()).then(|| {
+                    GROUP_HEADER
+                        + self.stop_commits.len().min(4) as f32 * crate::density::row()
+                        + 4.0
+                });
+                let lists = height - made.unwrap_or(0.0);
+                let each = ((lists - 6.0) / 2.0 - GROUP_HEADER - 2.0).max(40.0);
                 let (first_click, first_toggle) = self.draw_group(ui, 0, each, false);
                 ui.add_space(2.0);
                 let (second_click, second_toggle) = self.draw_group(ui, 1, each, false);
+                if made.is_some() {
+                    ui.add_space(4.0);
+                    ui.label(
+                        egui::RichText::new("COMMITS MADE AT THIS STOP")
+                            .small()
+                            .weak(),
+                    );
+                    egui::ScrollArea::vertical()
+                        .id_salt("stop-commits")
+                        .max_height(4.0 * crate::density::row())
+                        .show(ui, |ui| {
+                            for (id, subject) in &self.stop_commits {
+                                ui.add(
+                                    egui::Label::new(
+                                        egui::RichText::new(format!(
+                                            "{}  {subject}",
+                                            &id[..id.len().min(8)]
+                                        ))
+                                        .weak(),
+                                    )
+                                    .truncate(),
+                                )
+                                .on_hover_text(format!("{id}\n{subject}"));
+                            }
+                        });
+                }
                 if let Some(row) = first_click {
                     self.select_row(0, row, ctx);
                 } else if let Some(row) = second_click {
@@ -2024,6 +2066,7 @@ mod tests {
             reader: crate::diff_view::DiffView::default(),
             drop_confirm: None,
             group_request: None,
+            stop_commits: Vec::new(),
             commit: None,
             commit_done: None,
             last_commit: None,
@@ -2417,6 +2460,18 @@ mod tests {
         assert!(view.reader.has_text("working"));
         Ok(())
     }
+    #[test]
+    fn commits_made_at_a_rebase_stop_sit_under_the_lists() {
+        let ctx = egui::Context::default();
+        let mut view = fixture(1, 1);
+        let output = run(&ctx, &mut view, 1120.0, vec![]);
+        assert!(text_pos(&output, "COMMITS MADE AT THIS STOP").is_none());
+        view.set_stop_commits(vec![("a".repeat(40), "part one".into())]);
+        let output = run(&ctx, &mut view, 1120.0, vec![]);
+        assert!(text_pos(&output, "COMMITS MADE AT THIS STOP").is_some());
+        assert!(text_pos(&output, "aaaaaaaa  part one").is_some());
+    }
+
     #[test]
     fn group_headers_offer_stage_all_and_unstage_all() -> Result<(), Box<dyn std::error::Error>> {
         let ctx = egui::Context::default();

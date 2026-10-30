@@ -136,7 +136,7 @@ Still to build (medium):
 
 1. Review file list · done (decided: follow the mockup): background per-file +/− line counts, the `FILES n +x −y` header, start-elided paths, and a fixed 300 px file list.
 2. Conflict workspace: done (files panel with resolved list and blocks left, line numbers, Open in editor with an editor setting).
-3. Rebase stop: **Commits made at this stop** section in Local Changes.
+3. Rebase stop: done (**Commits made at this stop** in Local Changes).
 4. Stash picker: done (two-line rows and keys).
 5. Preferences: still to build from the Final page: Diff context lines, whitespace, wrap, and invisibles, (modal, footer, search, keyboard list, zoom, code font, History display options, pull strategy, force-with-lease offer, clone naming, reopen last repository, commit hooks, backup retention, confirm before Drop and Reset, identity, subject guide, and sign tags are done).
 6. Refs sidebar: done (Worktrees group and branch tracking counts).

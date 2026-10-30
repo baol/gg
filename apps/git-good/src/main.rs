@@ -10118,6 +10118,16 @@ impl Browser {
         }
         if self.working.is_some() {
             let external = self.external_operation_reason();
+            let made = match self.rebase_progress().map(|progress| &progress.stop) {
+                Some(gg_engine::mutation::RebaseStop::Reopened { made, .. }) => made
+                    .iter()
+                    .map(|step| (step.commit.clone(), step.subject.clone()))
+                    .collect(),
+                _ => Vec::new(),
+            };
+            if let Some(working) = &mut self.working {
+                working.set_stop_commits(made);
+            }
             let close = self.working.as_mut().is_some_and(|working| {
                 working.set_external_busy(external);
                 working.draw_ui(ui)
