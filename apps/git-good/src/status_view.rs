@@ -10,6 +10,21 @@ use std::{collections::BTreeMap, ops::Range, path::PathBuf};
 const GROUP_HEADER: f32 = 24.0;
 const WIDE_LAYOUT: f32 = 900.0;
 type Comparison = (Vec<u8>, Area);
+/// A list row: `(list, row, entry)`.
+type Located = (usize, usize, StatusEntry);
+
+/// Why a side of the Unstaged | Staged toggle is unavailable.
+const NOTHING_STAGED: &str = "Nothing from this file is staged.";
+const ALL_STAGED: &str = "All changes in this file are staged.";
+const CONFLICT_SIDE: &str = "Resolve the conflict before staging.";
+const SIDE_SCANNING: &str = "Waiting for the status scan";
+
+/// The selected path's comparison on the other side of the index.
+enum OtherSide {
+    Found(Located),
+    Absent,
+    Unknown,
+}
 
 #[derive(Clone)]
 enum StageFollow {
@@ -156,6 +171,8 @@ pub struct StatusView {
     replacing: bool,
     active: Option<Comparison>,
     active_entry: Option<StatusEntry>,
+    /// The worker's answer for the other side of a comparison, keyed by it.
+    counterpart: Option<(Comparison, Option<Located>)>,
     reader_rect: egui::Rect,
     form_rect: egui::Rect,
     last_scroll: f64,
@@ -201,6 +218,7 @@ impl StatusView {
             replacing: false,
             active: None,
             active_entry: None,
+            counterpart: None,
             reader_rect: egui::Rect::NOTHING,
             form_rect: egui::Rect::NOTHING,
             last_scroll: f64::NEG_INFINITY,
@@ -283,6 +301,10 @@ impl StatusView {
             self.replacing = false;
         }
         let selection = update.selection.clone();
+        self.counterpart = update
+            .selected
+            .clone()
+            .map(|key| (key, update.counterpart.clone()));
         self.path = update.identity.path.clone();
         self.total = update.count;
         self.lists[0].count = update.unstaged_count();
@@ -445,6 +467,61 @@ impl StatusView {
             self.reader.select_working(repository, entry, ctx);
         }
     }
+    /// The selected path on the other side: Staged for a working entry,
+    /// Unstaged or Untracked for a staged one.
+    fn other_side(&self) -> OtherSide {
+        let Some(active) = &self.active else {
+            return OtherSide::Absent;
+        };
+        let list = match active.1 {
+            Area::Staged => 0,
+            Area::Unstaged | Area::Untracked => 1,
+            Area::Conflict => return OtherSide::Absent,
+        };
+        if let Some((row, entry)) = self.lists[list]
+            .rows
+            .iter()
+            .find(|(_, entry)| entry.path_bytes == active.0 && entry.area != Area::Conflict)
+        {
+            return OtherSide::Found((list, *row, entry.clone()));
+        }
+        match &self.counterpart {
+            Some((key, Some(found))) if key == active => OtherSide::Found(found.clone()),
+            Some((key, None)) if key == active && self.complete => OtherSide::Absent,
+            _ if self.complete && self.lists[list].rows.len() >= self.lists[list].count => {
+                OtherSide::Absent
+            }
+            _ => OtherSide::Unknown,
+        }
+    }
+
+    /// The reader's Unstaged | Staged toggle for the selected path.
+    fn working_sides(&self) -> Option<crate::diff_view::WorkingSides> {
+        let area = self.active.as_ref()?.1;
+        let reason = match (area, self.other_side()) {
+            (Area::Conflict, _) => Some(CONFLICT_SIDE),
+            (_, OtherSide::Found(_)) => None,
+            (_, OtherSide::Unknown) => Some(SIDE_SCANNING),
+            (Area::Staged, OtherSide::Absent) => Some(ALL_STAGED),
+            (_, OtherSide::Absent) => Some(NOTHING_STAGED),
+        };
+        let staged = area == Area::Staged;
+        Some(crate::diff_view::WorkingSides {
+            staged,
+            unstaged_reason: if staged { reason } else { None },
+            staged_reason: if staged { None } else { reason },
+        })
+    }
+
+    /// Show the selected path's comparison on the other side.
+    fn switch_side(&mut self, ctx: &egui::Context) {
+        if let OtherSide::Found((list, row, entry)) = self.other_side() {
+            self.lists[list].rows.entry(row).or_insert(entry);
+            self.select_row(list, row, ctx);
+            self.lists[list].reveal = true;
+        }
+    }
+
     fn toggle_file(&mut self, index: usize, row: usize, ctx: &egui::Context) {
         if self.mutations_blocked() {
             return;
@@ -1211,7 +1288,7 @@ impl StatusView {
         if let Some(error) = self.stage.error().map(str::to_owned) {
             bounded_text::field(ui, &error, egui::FontId::proportional(12.0), 22.0);
         }
-        if let Some(selected) = &self.active
+        if let Some(selected) = self.active.clone()
             && self.active_entry.is_none()
         {
             bounded_text::field(
@@ -1220,6 +1297,28 @@ impl StatusView {
                 egui::FontId::proportional(13.0),
                 24.0,
             );
+            // A side emptied by a hunk or line action names what is left and
+            // keeps the other side one click away.
+            if let OtherSide::Found(_) = self.other_side() {
+                let staged = selected.1 == Area::Staged;
+                let mut switch = false;
+                ui.horizontal(|ui| {
+                    switch = crate::diff_view::side_toggle(
+                        ui,
+                        crate::diff_view::WorkingSides {
+                            staged,
+                            unstaged_reason: None,
+                            staged_reason: None,
+                        },
+                    )
+                    .is_some();
+                    ui.weak(if staged { NOTHING_STAGED } else { ALL_STAGED });
+                });
+                if switch {
+                    self.switch_side(ctx);
+                }
+                return;
+            }
             ui.weak("This entry is no longer present. Select another entry.");
             return;
         }
@@ -1277,8 +1376,14 @@ impl StatusView {
         };
         self.reader
             .set_staging(verb, discard, self.mutations_blocked());
+        if let Some(sides) = self.working_sides() {
+            self.reader.set_sides(sides);
+        }
         self.reader.draw(ui);
         self.reader.clear_staging();
+        if self.reader.take_side_request().is_some() {
+            self.switch_side(ctx);
+        }
         if let Some(edit) = self.reader.take_stage_edit() {
             if self.mutations_blocked() {
                 // Another view owns the repository; drop the stale edit.
@@ -1831,6 +1936,7 @@ mod tests {
             replacing: false,
             active: None,
             active_entry: None,
+            counterpart: None,
             reader_rect: egui::Rect::NOTHING,
             form_rect: egui::Rect::NOTHING,
             last_scroll: f64::NEG_INFINITY,
@@ -1857,6 +1963,8 @@ mod tests {
             complete,
             error: None,
             selection: None,
+            selected: None,
+            counterpart: None,
         }
     }
     fn frame(ctx: &egui::Context, view: &mut StatusView, width: f32, events: Vec<egui::Event>) {
@@ -3525,7 +3633,11 @@ mod tests {
                 _ => None,
             })
             .collect::<Vec<_>>();
-        assert!(text.iter().any(|line| line.contains("no longer present")));
+        assert!(
+            text.contains(&ALL_STAGED),
+            "the emptied side names the staged one instead: {text:?}"
+        );
+        assert!(text.contains(&"Staged"));
         assert!(!text.iter().any(|line| line.contains("Stage file")));
         Ok(())
     }
@@ -3796,6 +3908,132 @@ mod tests {
         );
         assert_eq!(std::fs::read(dir.path().join(".git/index"))?, index);
         std::fs::remove_file(dir.path().join(".git/index.lock"))?;
+        Ok(())
+    }
+
+    /// One path staged and changed again, and one path only changed.
+    fn partially_staged(path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+        git(path, &["init", "-q"])?;
+        std::fs::write(path.join("a"), b"base\n")?;
+        std::fs::write(path.join("b"), b"base\n")?;
+        git(path, &["add", "a", "b"])?;
+        git(path, &["commit", "-qm", "base"])?;
+        std::fs::write(path.join("a"), b"staged\n")?;
+        git(path, &["add", "a"])?;
+        std::fs::write(path.join("a"), b"working\n")?;
+        std::fs::write(path.join("b"), b"only working\n")?;
+        Ok(())
+    }
+
+    #[test]
+    fn reader_toggle_switches_the_same_path_between_unstaged_and_staged()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for width in [720.0, 1120.0] {
+            let dir = tempfile::tempdir()?;
+            partially_staged(dir.path())?;
+            let ctx = egui::Context::default();
+            let mut view = StatusView::new(dir.path().into(), &ctx);
+            settle(&ctx, &mut view, width);
+            select_path(&mut view, &ctx, "a", Area::Unstaged);
+            ready(&ctx, &mut view, width);
+            assert!(view.reader.has_text("working"));
+
+            let staged = wait_text(&ctx, &mut view, width, "Staged")?;
+            click(&ctx, &mut view, width, staged + egui::vec2(5.0, 4.0));
+            assert_eq!(view.active, Some((b"a".to_vec(), Area::Staged)));
+            assert_eq!(view.focus, 1, "the Staged row is selected");
+            pump(&ctx, &mut view, width, |view| {
+                view.reader.ready() && view.reader.has_text("staged")
+            });
+
+            let unstaged = wait_text(&ctx, &mut view, width, "Unstaged")?;
+            click(&ctx, &mut view, width, unstaged + egui::vec2(5.0, 4.0));
+            assert_eq!(view.active, Some((b"a".to_vec(), Area::Unstaged)));
+            assert_eq!(view.focus, 0);
+            pump(&ctx, &mut view, width, |view| {
+                view.reader.ready() && view.reader.has_text("working")
+            });
+
+            // A path with nothing staged keeps Staged visible but disabled.
+            select_path(&mut view, &ctx, "b", Area::Unstaged);
+            ready(&ctx, &mut view, width);
+            assert_eq!(
+                view.working_sides().ok_or("missing toggle")?.staged_reason,
+                Some(NOTHING_STAGED)
+            );
+            let staged = wait_text(&ctx, &mut view, width, "Staged")?;
+            click(&ctx, &mut view, width, staged + egui::vec2(5.0, 4.0));
+            assert_eq!(view.active, Some((b"b".to_vec(), Area::Unstaged)));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn toggle_reasons_name_the_missing_side() {
+        let ctx = egui::Context::default();
+        let mut view = fixture(1, 1);
+        view.select_row(1, 0, &ctx);
+        let sides = view.working_sides();
+        assert_eq!(
+            sides.map(|sides| (sides.staged, sides.unstaged_reason, sides.staged_reason)),
+            Some((true, Some(ALL_STAGED), None)),
+            "a staged-only path has no unstaged side"
+        );
+        view.complete = false;
+        view.lists[0].count = 300;
+        assert_eq!(
+            view.working_sides().and_then(|sides| sides.unstaged_reason),
+            Some(SIDE_SCANNING),
+            "an unread side waits for the scan instead of claiming it is empty"
+        );
+        let path = entry(1, 0).path_bytes;
+        view.counterpart = Some((
+            (path.clone(), Area::Staged),
+            Some((
+                0,
+                299,
+                StatusEntry::new(Area::Unstaged, Kind::Modified, &path),
+            )),
+        ));
+        assert_eq!(
+            view.working_sides().and_then(|sides| sides.unstaged_reason),
+            None,
+            "the worker finds an unloaded counterpart"
+        );
+        view.switch_side(&ctx);
+        assert_eq!(view.focus, 0);
+        assert_eq!(view.lists[0].selected_row, Some(299));
+        assert_eq!(view.active, Some((path, Area::Unstaged)));
+    }
+
+    #[test]
+    fn staging_the_last_hunk_leaves_the_staged_side_one_click_away()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for width in [720.0, 1120.0] {
+            let dir = tempfile::tempdir()?;
+            partially_staged(dir.path())?;
+            let ctx = egui::Context::default();
+            let mut view = StatusView::new(dir.path().into(), &ctx);
+            settle(&ctx, &mut view, width);
+            select_path(&mut view, &ctx, "b", Area::Unstaged);
+            ready(&ctx, &mut view, width);
+            let button = wait_text(&ctx, &mut view, width, "Stage hunk")?;
+            click(&ctx, &mut view, width, button + egui::vec2(5.0, 0.0));
+            pump(&ctx, &mut view, width, |view| {
+                !view.stage.mutating()
+                    && view.complete
+                    && !view.replacing
+                    && view.active_entry.is_none()
+            });
+            assert_eq!(file(dir.path(), &["show", ":b"])?, b"only working\n");
+            wait_text(&ctx, &mut view, width, ALL_STAGED)?;
+            let staged = wait_text(&ctx, &mut view, width, "Staged")?;
+            click(&ctx, &mut view, width, staged + egui::vec2(5.0, 4.0));
+            assert_eq!(view.active, Some((b"b".to_vec(), Area::Staged)));
+            pump(&ctx, &mut view, width, |view| {
+                view.reader.ready() && view.reader.has_text("only working")
+            });
+        }
         Ok(())
     }
 }

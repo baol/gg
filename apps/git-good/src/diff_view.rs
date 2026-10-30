@@ -53,6 +53,41 @@ pub struct StageEdit {
     pub changes: Vec<(RowKind, usize)>,
 }
 
+/// The Unstaged | Staged toggle in a Local Changes reader header. Each side
+/// carries the reason it is unavailable for the selected path, if any.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WorkingSides {
+    pub staged: bool,
+    pub unstaged_reason: Option<&'static str>,
+    pub staged_reason: Option<&'static str>,
+}
+
+/// Draw Unstaged | Staged; returns the other side when it is chosen
+/// (`true` for Staged). An unavailable side stays visible with its reason.
+pub fn side_toggle(ui: &mut egui::Ui, sides: WorkingSides) -> Option<bool> {
+    let spacing = ui.spacing().item_spacing.x;
+    ui.spacing_mut().item_spacing.x = 0.0;
+    let mut chosen = None;
+    for (staged, label, reason) in [
+        (false, "Unstaged", sides.unstaged_reason),
+        (true, "Staged", sides.staged_reason),
+    ] {
+        let current = sides.staged == staged;
+        let response = ui
+            .add_enabled(
+                current || reason.is_none(),
+                egui::Button::new(label).selected(current),
+            )
+            .on_disabled_hover_text(reason.unwrap_or_default());
+        if response.clicked() && !current {
+            chosen = Some(staged);
+        }
+    }
+    ui.spacing_mut().item_spacing.x = spacing;
+    ui.add_space(spacing);
+    chosen
+}
+
 #[derive(Clone, Copy)]
 struct StageConfig {
     verb: &'static str,
@@ -131,6 +166,8 @@ pub struct DiffView {
     stage: Option<StageConfig>,
     stage_selected: BTreeMap<usize, (RowKind, usize)>,
     stage_edit: Option<StageEdit>,
+    sides: Option<WorkingSides>,
+    side_request: Option<bool>,
     details_open: bool,
 }
 
@@ -201,6 +238,8 @@ impl Default for DiffView {
             stage: None,
             stage_selected: BTreeMap::new(),
             stage_edit: None,
+            sides: None,
+            side_request: None,
             details_open: false,
         }
     }
@@ -674,9 +713,20 @@ impl DiffView {
         });
     }
 
+    /// Show the Unstaged | Staged toggle in the header for this frame.
+    pub fn set_sides(&mut self, sides: WorkingSides) {
+        self.sides = Some(sides);
+    }
+
+    /// The side chosen in the header toggle: `true` for Staged.
+    pub fn take_side_request(&mut self) -> Option<bool> {
+        self.side_request.take()
+    }
+
     /// Disable row actions when no staging entry is selected.
     pub fn clear_staging(&mut self) {
         self.stage = None;
+        self.sides = None;
     }
 
     /// Take one action emitted by the staging overlay.
@@ -1546,7 +1596,8 @@ impl DiffView {
         };
         ui.horizontal(|ui| {
             let stage_width = if self.stage.is_some() { 78.0 } else { 0.0 };
-            let width = (ui.available_width() - 104.0 - stage_width).max(80.0);
+            let sides_width = if self.sides.is_some() { 136.0 } else { 0.0 };
+            let width = (ui.available_width() - 104.0 - stage_width - sides_width).max(80.0);
             let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 24.0), egui::Sense::hover());
             // Path and exact comparison endpoints share one line.
             let path_font = egui::FontId::proportional(14.0);
@@ -1579,6 +1630,11 @@ impl DiffView {
                         ui.visuals().weak_text_color(),
                     );
                 }
+            }
+            if let Some(sides) = self.sides
+                && let Some(staged) = side_toggle(ui, sides)
+            {
+                self.side_request = Some(staged);
             }
             if let Some(stage) = self.stage {
                 let label = if stage.verb == "Unstage" {

@@ -130,7 +130,7 @@ Placeholder text in panes:
 
 ### Mockup alignment · reviewed 2026-10-30 · in progress
 
-Second pass comparing every Final-page board with the app. Done: menus from one command table, About gg, rebase plan and stop wording, Changes group headers with Stage all/Unstage all, commit box wording, toolbar tooltips with shortcuts, the search placeholder, Blame and the ‹ › ⋯ reader buttons, refs sidebar groups, history pill order and colors, the History footer, the window title, and `[`/`]` between conflict blocks.
+Second pass comparing every Final-page board with the app. Done: the Changes reader's Unstaged | Staged toggle (decided: follow the mockup), menus from one command table, About gg, rebase plan and stop wording, Changes group headers with Stage all/Unstage all, commit box wording, toolbar tooltips with shortcuts, the search placeholder, Blame and the ‹ › ⋯ reader buttons, refs sidebar groups, history pill order and colors, the History footer, the window title, and `[`/`]` between conflict blocks.
 
 Still to build (medium):
 
@@ -144,8 +144,7 @@ Still to build (medium):
 
 Decisions for the review (see the canvas page **Review · as built**):
 
-- Side-by-side diff and the bottom commit inspector (both done).
-- The mockup's Unstaged/Staged reader toggle against the shipped rule of one comparison per selected row.
+- Side-by-side diff, the bottom commit inspector, and the Unstaged/Staged reader toggle (all done).
 - History: the filter row is gone; `Commit · N` and the active filter sit in the column header (done).
 - Decided: follow the mockups. Refresh is automatic (file watcher and before commands), `Ctrl+R` is Reword, `Del` deletes, Preferences is modal, Open in editor uses an editor-command setting. F10 menu focus is not available in egui.
 

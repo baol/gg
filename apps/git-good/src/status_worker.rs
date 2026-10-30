@@ -32,6 +32,11 @@ pub struct Update {
     pub error: Option<String>,
     /// Selected comparison as `(list, row, entry)` once the scan reaches it.
     pub selection: Option<(usize, usize, StatusEntry)>,
+    /// The comparison these lookups answer (`Ranges::selected`).
+    pub selected: Option<(Vec<u8>, Area)>,
+    /// The same path's entry on the other side (Staged for a working entry,
+    /// Unstaged or Untracked for a staged one) once the scan reaches it.
+    pub counterpart: Option<(usize, usize, StatusEntry)>,
 }
 impl Update {
     pub fn unstaged_count(&self) -> usize {
@@ -196,26 +201,38 @@ fn run(
                 .saturating_add(ranges.unstaged.end)
                 .min(store.count)
                 .max(working_start);
+            let mut locate = |global: usize| {
+                store
+                    .page(global..global + 1)
+                    .ok()?
+                    .into_iter()
+                    .next()
+                    .map(|(_, entry)| {
+                        let list = if entry.area == Area::Staged { 1 } else { 0 };
+                        let row = if list == 1 {
+                            global
+                        } else {
+                            global.saturating_sub(staged)
+                        };
+                        (list, row, entry)
+                    })
+            };
             let selection = ranges
                 .selected
                 .as_ref()
                 .and_then(|key| positions.get(key).copied())
-                .and_then(|global| {
-                    store
-                        .page(global..global + 1)
-                        .ok()?
-                        .into_iter()
-                        .next()
-                        .map(|(_, entry)| {
-                            let list = if entry.area == Area::Staged { 1 } else { 0 };
-                            let row = if list == 1 {
-                                global
-                            } else {
-                                global.saturating_sub(staged)
-                            };
-                            (list, row, entry)
-                        })
-                });
+                .and_then(&mut locate);
+            let counterpart = ranges.selected.as_ref().and_then(|(path, area)| {
+                let others: &[Area] = match area {
+                    Area::Staged => &[Area::Unstaged, Area::Untracked],
+                    Area::Unstaged | Area::Untracked => &[Area::Staged],
+                    Area::Conflict => &[],
+                };
+                others
+                    .iter()
+                    .find_map(|other| positions.get(&(path.clone(), *other)).copied())
+                    .and_then(&mut locate)
+            });
             *output.lock().map_err(|e| e.to_string())? = Some(Ok(Update {
                 identity: identity.clone(),
                 rows: [
@@ -231,6 +248,8 @@ fn run(
                 complete: done && error.is_none(),
                 error: error.clone(),
                 selection,
+                selected: ranges.selected.clone(),
+                counterpart,
             }));
             ctx.request_repaint();
         } else if let Some(error) = &error {
@@ -391,11 +410,37 @@ mod tests {
                             assert_eq!(list, 0);
                             assert_eq!(row, 1);
                             assert_eq!(entry.path, "new");
-                            break 'outer;
+                            assert!(update.counterpart.is_none(), "nothing staged for new");
+                            break;
                         }
                     }
                     if std::time::Instant::now() > deadline {
                         return Err("selected row was not found".into());
+                    }
+                    thread::sleep(Duration::from_millis(2));
+                }
+                worker.request(Ranges {
+                    unstaged: 0..0,
+                    staged: 0..0,
+                    selected: Some((b"a".to_vec(), Area::Staged)),
+                });
+                let deadline = std::time::Instant::now() + Duration::from_secs(5);
+                loop {
+                    if let Some(result) = worker.poll() {
+                        let update = result?;
+                        if let Some((list, row, entry)) = update.counterpart {
+                            assert_eq!((list, row), (0, 0));
+                            assert_eq!(entry.area, Area::Unstaged);
+                            assert_eq!(
+                                update.selected,
+                                Some((b"a".to_vec(), Area::Staged)),
+                                "the lookup names the comparison it answers"
+                            );
+                            break 'outer;
+                        }
+                    }
+                    if std::time::Instant::now() > deadline {
+                        return Err("counterpart was not found".into());
                     }
                     thread::sleep(Duration::from_millis(2));
                 }
