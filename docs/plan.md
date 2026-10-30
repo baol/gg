@@ -79,6 +79,30 @@ Goal: consolidate navigation, reading, scoped commands, operations, and recovery
 
 Implementation handoff: [phased implementation and verification prompts](implementation-prompts.md). These increments change no deferred M7 scope: LFS smudging/materialization remains planned.
 
+## Final interface · staged
+
+Goal: deliver the agreed [final interface design](final-design.md): one window frame with a menu bar and icon toolbar, compact density, search, a richer interactive rebase, and Preferences. Each increment ships on its own, updates its owning architecture section, and keeps every existing command reachable.
+
+### Increments
+
+1. **Window frame · complete.** Regroup the menus into Repository, Branch, Commit, Changes, View, and Help. Merge the navigation strip into one icon toolbar: refs sidebar toggle, Local Changes/History, Fetch, Pull (rebase) only when behind with its count, Push, New branch, New tag, Merge, Stash changes, Stashes, Reorder and squash, and Recovery. Icons come from the bundled Phosphor font; every button has a tooltip and the same readiness reason as its menu item.
+2. **Compact density and one-line headers.** Shorten the tab to **Changes** with a change-count badge fed by a background status count; 22 px history and file rows, one-line commit identity and reader headers, one-character change markers; a comfortable density preference.
+3. **Search.** `Ctrl+K`/`Ctrl+F` field with Filter, Actions, Branches, Commits, and Files results sharing the menu command definitions.
+4. **Stash picker and branch switcher.** Toolbar stash picker with Apply, Pop, Show changes, and confirmed Drop; sidebar stash entries; current-branch button opening a filterable switcher.
+5. **Rebase engine.** Extend the rewrite plan beyond pick and squash with reword, fixup, drop, and edit (reopen), with CLI support and Git-oracle tests before any UI.
+6. **Interactive rebase dialog.** Replace Reorder and squash with the planned modal: newest-first plan, action chips and keys, consequence badges, the selected commit in the shared reader with inline reword, and Open in Review with return.
+7. **Rebase stops.** Reopened-commit stop in Local Changes with split commits, and the three-column conflict blocks with per-block choices, both in the operation area with Continue, Skip commit, and Abort and restore.
+8. **Preferences.** Repository › Preferences… window per the [Settings panel](#settings-panel--planned) plan, starting with clone folders and a preferred folder.
+
+### Acceptance
+
+| Scenario | Expected result | Method |
+| --- | --- | --- |
+| Window frame | Menu titles and toolbar buttons keep their order and position in both views and at 720 and 1120 widths; each toolbar button matches its menu item's enablement and reason | egui geometry and interaction, native review |
+| Pull when behind | Pull is enabled only when the current branch is behind its upstream and names the count; otherwise it is disabled with the reason | egui interaction, Git oracle |
+| Rebase actions | Reword, fixup, drop, and edit produce the same history as `git rebase -i` with the same todo; backups are created first | Git oracle, CLI |
+| Rebase stops | Continue, Skip, and Abort appear only in the operation area and only when Git supports them | Git oracle, egui interaction |
+
 ## Repository setup and branch integration · in review
 
 Goal: make clone destinations quick to compose and branch integration discoverable without weakening Git safety.

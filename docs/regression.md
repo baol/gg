@@ -40,6 +40,7 @@ Before connecting M1 controls, test Review/Back anchor restoration, active-view 
 
 ## Coherence I1 navigation and scoped commands
 
+- Geometry tests find every window toolbar icon, in a fixed left-to-right order and at identical positions in History and Local Changes, inside 720 and 1120 widths. Pull is ready only when the current branch has an upstream and is behind it; otherwise it names the reason.
 - Geometry and interaction tests find **Local Changes** and **History** in one navigation strip in that order at 720 and 1120 widths, switch both destinations, and preserve history selection, filter, pixel offset, and the Local Changes draft. The wide sidebar no longer repeats navigation; the Refs toolbar menu keeps ref browsing reachable at narrow widths.
 - Egui pointer tests click sidebar branch, remote, and current-branch rows and graph pills. They assert inspection only, no double-click mutation, and a real Git fixture confirms HEAD, index bytes, worktree status, and branch refs are unchanged.
 - The sidebar context menu and Refs menu expose **Switch to \<branch\>**; current-branch and busy states disable it with a visible reason. Existing Git fixtures continue to cover dirty-worktree rejection, checkout, and post-checkout warnings.

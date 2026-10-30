@@ -2,7 +2,7 @@
 
 Purpose: reduce competing interaction patterns and give gg's views a shared navigation, reading, action, and recovery model.
 
-Status: design proposal, 2026-10-25. This revises the direction of the [flow review](user-flows.md), not the shipped behavior in [architecture](architecture.md). Explore the [coherence prototype](ui-coherence.html). The earlier 20-screen mockup pack remains the baseline; the new prototype demonstrates a smaller shared workspace with fictional data and local interactions.
+Status: design proposal, 2026-10-25. Its window frame, menus, and rewrite dialog are superseded by the [final design](final-design.md) (2026-10-30). This revises the direction of the [flow review](user-flows.md), not the shipped behavior in [architecture](architecture.md). Explore the [coherence prototype](ui-coherence.html). The earlier 20-screen mockup pack remains the baseline; the new prototype demonstrates a smaller shared workspace with fictional data and local interactions.
 
 ## Main finding
 

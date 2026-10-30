@@ -10,6 +10,33 @@ use std::sync::Arc;
 pub const ARROW_UP: &str = "\u{E08E}";
 pub const ARROW_DOWN: &str = "\u{E03E}";
 pub const CHECK: &str = "\u{E182}";
+pub const ARCHIVE: &str = "\u{E00C}";
+pub const ARROW_LINE_DOWN: &str = "\u{E05C}";
+pub const ARROW_LINE_UP: &str = "\u{E066}";
+pub const CLOCK_COUNTER_CLOCKWISE: &str = "\u{E1A0}";
+pub const DOWNLOAD_SIMPLE: &str = "\u{E20C}";
+pub const GIT_BRANCH: &str = "\u{E278}";
+pub const GIT_MERGE: &str = "\u{E280}";
+pub const LIST_NUMBERS: &str = "\u{E2F6}";
+pub const SIDEBAR_SIMPLE: &str = "\u{EC24}";
+pub const STACK: &str = "\u{E466}";
+pub const TAG: &str = "\u{E478}";
+
+/// Glyphs used by the window toolbar, checked against the vendored font.
+#[cfg(test)]
+pub const TOOLBAR: [&str; 11] = [
+    ARCHIVE,
+    ARROW_LINE_DOWN,
+    ARROW_LINE_UP,
+    CLOCK_COUNTER_CLOCKWISE,
+    DOWNLOAD_SIMPLE,
+    GIT_BRANCH,
+    GIT_MERGE,
+    LIST_NUMBERS,
+    SIDEBAR_SIMPLE,
+    STACK,
+    TAG,
+];
 
 const FAMILY: &str = "phosphor-regular";
 
@@ -49,7 +76,7 @@ mod tests {
         install(&ctx);
         let font = egui::FontId::new(10.0, FontFamily::Name(FAMILY.into()));
         let _ = crate::tests::run_ui(&ctx, egui::RawInput::default(), |_ui| {});
-        for glyph in [ARROW_UP, ARROW_DOWN, CHECK] {
+        for glyph in [ARROW_UP, ARROW_DOWN, CHECK].into_iter().chain(TOOLBAR) {
             assert!(
                 ctx.fonts_mut(|fonts| fonts.has_glyphs(&font, glyph)),
                 "missing glyph {glyph:?}"

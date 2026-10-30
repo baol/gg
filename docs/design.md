@@ -17,6 +17,8 @@ Purpose: define shared layout and interaction rules.
 
 Screen layouts and streaming contracts: [architecture](architecture.md).
 
+Agreed final interface (window frame, menus and toolbar, search, interactive rebase, Preferences): [final design](final-design.md).
+
 Journey review and proposed M7 interfaces: [user flows](user-flows.md) and [interactive mockups](ui-mockups.html). Proposals do not change shipped behavior or milestone status.
 
 Proposed consolidation across views: [coherent interaction model](ui-coherence.md), including the shared reader and the requested Local Changes layout. Increments 1–8 are complete; later increments remain proposals. Update the owning architecture contracts as each later increment is scheduled.
