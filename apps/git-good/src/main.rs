@@ -7535,6 +7535,47 @@ mod tests {
     }
 
     #[test]
+    fn tracking_pull_button_stays_inside_the_refs_pane() {
+        let ctx = egui::Context::default();
+        crate::phosphor::install(&ctx);
+        let mut app = layout_fixture();
+        app.state.refs.head = Some(gg_engine::refs::Head {
+            name: Some("refs/heads/repo-and-branch-ux".into()),
+            detached: false,
+            commit: Some(format!("{:040x}", 99)),
+        });
+        app.state.refs.tracking = vec![gg_engine::refs::Tracking {
+            branch: "repo-and-branch-ux".into(),
+            full_name: "refs/heads/repo-and-branch-ux".into(),
+            upstream: "origin/repo-and-branch-ux".into(),
+            upstream_full_name: "refs/remotes/origin/repo-and-branch-ux".into(),
+            remote: "origin".into(),
+            remote_branch: "repo-and-branch-ux".into(),
+            ahead: Some(0),
+            behind: Some(0),
+        }];
+        let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        assert!(app.refs_width > 0.0, "the refs pane did not render");
+        let button = output.shapes.iter().find_map(|shape| match &shape.shape {
+            egui::epaint::Shape::Text(text) if text.galley.job.text == "Pull --rebase" => {
+                Some(egui::Rect::from_min_size(text.pos, text.galley.size()))
+            }
+            _ => None,
+        });
+        assert!(button.is_some(), "the Pull --rebase button is missing");
+        assert!(
+            button.is_some_and(|rect| rect.max.x <= app.refs_width + 0.5),
+            "the Pull --rebase button is clipped by the {} point pane: {button:?}",
+            app.refs_width
+        );
+    }
+
+    #[test]
     fn status_hints_shorten_at_narrow_widths() {
         for width in [720.0, 1120.0] {
             let ctx = egui::Context::default();

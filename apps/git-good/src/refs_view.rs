@@ -520,47 +520,50 @@ fn tracking_row(
 ) {
     use crate::phosphor;
     let weak = ui.visuals().weak_text_color();
-    let response = ui
-        .horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 2.0;
-            ui.label(
-                egui::RichText::new(&tracking.upstream)
-                    .size(11.0)
-                    .color(weak),
-            );
-            if let (Some(ahead), Some(behind)) = (tracking.ahead, tracking.behind) {
-                ui.label(phosphor::icon(phosphor::ARROW_UP).size(10.0).color(weak));
+    ui.vertical(|ui| {
+        ui.spacing_mut().item_spacing.y = 2.0;
+        let info = ui
+            .horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 2.0;
                 ui.label(
-                    egui::RichText::new(ahead.to_string())
+                    egui::RichText::new(&tracking.upstream)
                         .size(11.0)
                         .color(weak),
                 );
-                ui.label(phosphor::icon(phosphor::ARROW_DOWN).size(10.0).color(weak));
-                ui.label(
-                    egui::RichText::new(behind.to_string())
-                        .size(11.0)
-                        .color(weak),
-                );
-            } else {
-                ui.label(egui::RichText::new("· unavailable").size(11.0).color(weak));
-            }
-            if ui
-                .add_enabled(!busy, egui::Button::new("Pull --rebase").small())
-                .on_hover_text(format!(
-                    "Fetch {} and rebase this branch onto {}",
-                    tracking.remote, tracking.upstream
-                ))
-                .on_disabled_hover_text("Wait for the current operation to finish.")
-                .clicked()
-            {
-                *action = Some(Action::PullRebase);
-            }
-        })
-        .response;
-    response.on_hover_text(format!(
-        "{} · {}\nAhead and behind the configured upstream.",
-        tracking.upstream_full_name, tracking.remote
-    ));
+                if let (Some(ahead), Some(behind)) = (tracking.ahead, tracking.behind) {
+                    ui.label(phosphor::icon(phosphor::ARROW_UP).size(10.0).color(weak));
+                    ui.label(
+                        egui::RichText::new(ahead.to_string())
+                            .size(11.0)
+                            .color(weak),
+                    );
+                    ui.label(phosphor::icon(phosphor::ARROW_DOWN).size(10.0).color(weak));
+                    ui.label(
+                        egui::RichText::new(behind.to_string())
+                            .size(11.0)
+                            .color(weak),
+                    );
+                } else {
+                    ui.label(egui::RichText::new("· unavailable").size(11.0).color(weak));
+                }
+            })
+            .response;
+        info.on_hover_text(format!(
+            "{} · {}\nAhead and behind the configured upstream.",
+            tracking.upstream_full_name, tracking.remote
+        ));
+        if ui
+            .add_enabled(!busy, egui::Button::new("Pull --rebase").small())
+            .on_hover_text(format!(
+                "Fetch {} and rebase this branch onto {}",
+                tracking.remote, tracking.upstream
+            ))
+            .on_disabled_hover_text("Wait for the current operation to finish.")
+            .clicked()
+        {
+            *action = Some(Action::PullRebase);
+        }
+    });
 }
 
 pub(crate) fn tracking_label(tracking: &gg_engine::refs::Tracking) -> String {
