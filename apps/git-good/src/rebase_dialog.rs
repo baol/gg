@@ -302,10 +302,10 @@ impl Dialog {
 
     fn draw_plan(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            ui.weak("PLAN · NEWEST FIRST");
+            ui.weak("PLAN · NEWEST FIRST, LIKE HISTORY");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.weak(format!(
-                    "P R E S F D · Alt+{}{} move",
+                    "j k select · Alt+{}{} move · P R E S F D",
                     phosphor::ARROW_UP,
                     phosphor::ARROW_DOWN
                 ));
@@ -563,10 +563,11 @@ impl Dialog {
         ui.scope_builder(egui::UiBuilder::new().max_rect(slot), |ui| {
             ui.set_clip_rect(slot.intersect(ui.clip_rect()));
             if action == Action::Reword {
+                ui.weak("New message (reword)");
                 let field = ui.add(
                     egui::TextEdit::multiline(&mut row.message)
                         .id(egui::Id::unique("rebase-reword"))
-                        .desired_rows(3)
+                        .desired_rows(2)
                         .desired_width(f32::INFINITY)
                         .hint_text("New commit message"),
                 );
@@ -575,7 +576,7 @@ impl Dialog {
                 }
                 ui.add(
                     egui::Label::new(
-                        egui::RichText::new(format!("Original: {}", row.commit.subject))
+                        egui::RichText::new(format!("Was: {}", row.commit.subject))
                             .small()
                             .weak(),
                     )

@@ -7,7 +7,7 @@
 
 use crate::phosphor;
 use eframe::egui;
-use gg_engine::mutation::{RebaseProgress, RebaseStep, RebaseStop};
+use gg_engine::mutation::{RebaseProgress, RebaseStop};
 
 /// Chips shown on each side of the current step before collapsing to a count.
 const NEIGHBOURS: usize = 3;
@@ -51,18 +51,31 @@ pub fn continue_highlighted(progress: &RebaseProgress) -> bool {
         && progress.tracked_changes == 0
 }
 
+/// The stop's title, as in the mockups: what stopped, the step, and the
+/// commit with an 8-character ID.
 fn title(progress: &RebaseProgress) -> String {
+    let (step, total) = progress.position();
+    let id = |commit: &str| commit[..commit.len().min(8)].to_string();
     let current = progress.done.last();
-    let named = |step: Option<&RebaseStep>| {
-        step.map(|step| format!("{} · {}", short(&step.commit), step.subject))
-            .unwrap_or_default()
-    };
     match &progress.stop {
-        RebaseStop::Conflict => format!("Conflict replaying {}", named(current)),
-        RebaseStop::Reopened {
-            commit, subject, ..
-        } => format!("Reopened {} · {subject}", short(commit)),
-        RebaseStop::Other => format!("Rebase stopped after {}", named(current)),
+        RebaseStop::Conflict => format!(
+            "Conflict · step {step} of {total} · applying {}",
+            current
+                .map(|step| format!("{} {}", id(&step.commit), step.subject))
+                .unwrap_or_default()
+        ),
+        RebaseStop::Reopened { commit, .. } => {
+            format!(
+                "Rebase stopped · step {step} of {total} · reopened {}",
+                id(commit)
+            )
+        }
+        RebaseStop::Other => format!(
+            "Rebase stopped · step {step} of {total}{}",
+            current
+                .map(|step| format!(" · after {}", id(&step.commit)))
+                .unwrap_or_default()
+        ),
     }
 }
 
@@ -118,8 +131,6 @@ pub fn show(
 ) -> Option<Command> {
     let mut command = None;
     ui.horizontal(|ui| {
-        let (step, total) = progress.position();
-        ui.strong(format!("Rebase {step}/{total}"));
         ui.add(egui::Label::new(egui::RichText::new(title(progress)).strong()).truncate());
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui
@@ -200,6 +211,7 @@ pub fn show(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gg_engine::mutation::RebaseStep;
 
     fn step(action: &str, id: char, subject: &str) -> RebaseStep {
         RebaseStep {
@@ -255,9 +267,15 @@ mod tests {
 
     #[test]
     fn titles_name_the_stop() {
-        assert_eq!(title(&reopened(0, 1)), "Reopened bbbbbbb · two");
+        assert_eq!(
+            title(&reopened(0, 1)),
+            "Rebase stopped · step 2 of 3 · reopened bbbbbbbb"
+        );
         let mut conflict = reopened(0, 0);
         conflict.stop = RebaseStop::Conflict;
-        assert_eq!(title(&conflict), "Conflict replaying bbbbbbb · two");
+        assert_eq!(
+            title(&conflict),
+            "Conflict · step 2 of 3 · applying bbbbbbbb two"
+        );
     }
 }

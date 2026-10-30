@@ -11263,8 +11263,8 @@ mod tests {
             );
             let text = shown_text(&output);
             for expected in [
-                "Rebase 2/3",
-                "Reopened bbbbbbb · second change",
+                "Rebase stopped · step 2 of 3 · reopened bbbbbbbb",
+                "second change",
                 "Continue",
                 "Skip commit",
                 "Abort and restore",

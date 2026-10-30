@@ -51,6 +51,8 @@ pub fn hint(action: Action) -> &'static str {
 }
 
 const NO_TARGET: &str = "No kept commit below to combine into.";
+/// Badge for a dropped row: the commit stays reachable from the backup.
+const DROPPED: &str = "dropped · recoverable from the backup";
 const LAST_KEPT: &str = "At least one commit must stay. Use Reset to remove them all.";
 
 pub fn short(id: &str) -> &str {
@@ -166,8 +168,11 @@ impl Plan {
                     None => NO_TARGET.into(),
                 });
             }
-            Action::Drop => return Some("dropped".into()),
-            Action::Edit => parts.push(format!("{} stops here", crate::phosphor::PAUSE)),
+            Action::Drop => return Some(DROPPED.into()),
+            Action::Edit => parts.push(format!(
+                "{} stops here · reopens staged in Changes",
+                crate::phosphor::PAUSE
+            )),
             Action::Pick | Action::Reword => {}
         }
         let absorbed = self.absorbed(index);
@@ -315,7 +320,7 @@ mod tests {
             Some(format!("{} fixup into bbbbbbb", crate::phosphor::ARROW_DOWN).as_str())
         );
         assert_eq!(plan.badge(2).as_deref(), Some("absorbs ddddddd, ccccccc"));
-        assert_eq!(plan.badge(3).as_deref(), Some("dropped"));
+        assert_eq!(plan.badge(3).as_deref(), Some(DROPPED));
         assert_eq!(
             plan.summary(),
             format!("4 commits {} 1 · 1 dropped", crate::phosphor::ARROW_RIGHT)
@@ -366,7 +371,13 @@ mod tests {
         plan.set_action(1, Action::Edit)?;
         assert_eq!(
             plan.badge(1).as_deref(),
-            Some(format!("{} stops here", crate::phosphor::PAUSE).as_str())
+            Some(
+                format!(
+                    "{} stops here · reopens staged in Changes",
+                    crate::phosphor::PAUSE
+                )
+                .as_str()
+            )
         );
         assert_eq!(
             plan.summary(),
