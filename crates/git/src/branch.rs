@@ -414,3 +414,107 @@ fn ensure_clean(session: &crate::status::Session) -> Result<(), String> {
     }
     Ok(())
 }
+
+/// Rename local branch `old` to `new` (`git branch -m`), refusing an existing
+/// target name.
+pub fn rename(path: &Path, old: &str, new: &str) -> Result<(), String> {
+    let old = old.trim();
+    let new = new.trim();
+    validate_name(old)?;
+    validate_name(new)?;
+    if old == new {
+        return Err("The new branch name is the same as the current one.".into());
+    }
+    if !ref_exists(path, &format!("refs/heads/{old}"))? {
+        return Err(format!("Branch {old} does not exist."));
+    }
+    if ref_exists(path, &format!("refs/heads/{new}"))? {
+        return Err(format!("Branch {new} already exists. Choose another name."));
+    }
+    git(
+        path,
+        &["branch", "-m", "--", old, new],
+        &format!("Rename branch {old}"),
+    )
+}
+
+/// Make `upstream` (a remote-tracking branch such as `origin/main`, or a local
+/// branch) the upstream of local `branch`.
+pub fn set_upstream(path: &Path, branch: &str, upstream: &str) -> Result<(), String> {
+    let branch = branch.trim();
+    let upstream = upstream.trim();
+    validate_name(branch)?;
+    if upstream.is_empty() || upstream.starts_with('-') || upstream.contains('\0') {
+        return Err("Upstream branch is empty or invalid.".into());
+    }
+    if !ref_exists(path, &format!("refs/heads/{branch}"))? {
+        return Err(format!("Branch {branch} does not exist."));
+    }
+    if !ref_exists(path, &format!("refs/remotes/{upstream}"))?
+        && !ref_exists(path, &format!("refs/heads/{upstream}"))?
+    {
+        return Err(format!(
+            "Upstream {upstream} is not a remote-tracking or local branch. Fetch it first."
+        ));
+    }
+    git(
+        path,
+        &[
+            "branch",
+            &format!("--set-upstream-to={upstream}"),
+            "--",
+            branch,
+        ],
+        &format!("Set the upstream of {branch}"),
+    )
+}
+
+/// Remove the upstream of local `branch`.
+pub fn unset_upstream(path: &Path, branch: &str) -> Result<(), String> {
+    let branch = branch.trim();
+    validate_name(branch)?;
+    if !ref_exists(path, &format!("refs/heads/{branch}"))? {
+        return Err(format!("Branch {branch} does not exist."));
+    }
+    git(
+        path,
+        &["branch", "--unset-upstream", "--", branch],
+        &format!("Remove the upstream of {branch}"),
+    )
+}
+
+fn ref_exists(path: &Path, full: &str) -> Result<bool, String> {
+    Command::new("git")
+        .current_dir(path)
+        .args(["show-ref", "--verify", "--quiet", full])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .status()
+        .map(|status| status.success())
+        .map_err(|e| format!("Could not run Git: {e}. Install Git and retry."))
+}
+
+fn git(path: &Path, args: &[&str], label: &str) -> Result<(), String> {
+    let output = Command::new("git")
+        .current_dir(path)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .output()
+        .map_err(|e| format!("Could not run Git: {e}. Install Git and retry."))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    Err(if detail.is_empty() {
+        format!("{label} failed ({}).", output.status)
+    } else {
+        format!("{label} failed ({}).\n{detail}", output.status)
+    })
+}
