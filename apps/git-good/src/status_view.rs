@@ -4191,7 +4191,18 @@ mod tests {
                 "the empty bar explains how to pick lines"
             );
             let line = text_pos(&output, "ONE").ok_or("missing changed line")?;
-            click(&ctx, &mut view, width, line + egui::vec2(5.0, 0.0));
+            let left = view.reader_rect.left();
+            assert!(
+                line.x >= left + 116.0 + 24.0,
+                "a 24 px checkbox column leads pickable lines"
+            );
+            // The checkbox column picks the line.
+            click(
+                &ctx,
+                &mut view,
+                width,
+                egui::pos2(left + 12.0, line.y + 6.0),
+            );
             let output = run(&ctx, &mut view, width, vec![]);
             let text = texts(&output);
             assert!(text.contains(&"Stage 1 line".to_string()), "{text:?}");

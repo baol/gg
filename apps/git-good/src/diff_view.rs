@@ -2172,6 +2172,8 @@ impl DiffView {
         let can_discard = can_edit && staging.is_some_and(|stage| stage.can_discard);
         let pending = staging.is_some_and(|stage| stage.pending);
         let verb = staging.map_or("Stage", |stage| stage.verb);
+        // A 24 px checkbox column leads changed lines that can be picked.
+        let pick = if can_edit { 24.0 } else { 0.0 };
         let mut cursor = self.cursor;
         let mut anchor = self.anchor;
         let mut hunk_toggle = None;
@@ -2179,7 +2181,7 @@ impl DiffView {
         let result = scroll.show_rows(ui, HEIGHT, self.count, |ui, rows| {
             self.range = rows.start.saturating_sub(24)..rows.end.saturating_add(24);
             // A conservative monospace width keeps every source column reachable.
-            let width = (120.0 + self.columns as f32 * 16.0).max(ui.available_width());
+            let width = (120.0 + pick + self.columns as f32 * 16.0).max(ui.available_width());
             let (lo, hi) = match (cursor, anchor) {
                 (Some(a), Some(b)) => (a.min(b), a.max(b)),
                 (Some(a), None) => (a, a),
@@ -2210,6 +2212,9 @@ impl DiffView {
                     ui.painter()
                         .rect_filled(rect, 0.0, crate::colors::selection(ui.visuals()));
                 }
+                if can_edit && matches!(row.kind, RowKind::Added | RowKind::Deleted) {
+                    pick_box(ui, rect, selected);
+                }
                 let (button_clicked, chosen) = if can_edit && row.kind == RowKind::Hunk {
                     self.hunk_buttons(ui, rect, index, verb, pending, can_discard)
                 } else {
@@ -2230,27 +2235,27 @@ impl DiffView {
                     ui.painter()
                         .with_clip_rect(
                             egui::Rect::from_min_size(
-                                rect.min + egui::vec2(x, 0.0),
+                                rect.min + egui::vec2(x + pick, 0.0),
                                 egui::vec2(if x == 96.0 { 16.0 } else { 46.0 }, HEIGHT),
                             )
                             .intersect(ui.clip_rect()),
                         )
                         .text(
-                            rect.min + egui::vec2(x + 4.0, HEIGHT / 2.0),
+                            rect.min + egui::vec2(x + pick + 4.0, HEIGHT / 2.0),
                             egui::Align2::LEFT_CENTER,
                             text,
                             font.clone(),
                             ui.visuals().weak_text_color(),
                         );
                 }
-                let origin = rect.min + egui::vec2(116.0, HEIGHT / 2.0);
+                let origin = rect.min + egui::vec2(116.0 + pick, HEIGHT / 2.0);
                 let text_right = if can_discard && row.kind == RowKind::Hunk {
                     rect.right() - 112.0
                 } else {
                     rect.right()
                 };
                 let clip = egui::Rect::from_min_max(
-                    rect.min + egui::vec2(116.0, 0.0),
+                    rect.min + egui::vec2(116.0 + pick, 0.0),
                     egui::pos2(text_right, rect.bottom()),
                 )
                 .intersect(ui.clip_rect());
@@ -2857,6 +2862,37 @@ impl DiffView {
         self.cursor = new_cursor;
         self.anchor = new_anchor;
         self.send(ctx);
+    }
+}
+
+/// One changed line's pick checkbox, centered in the leading 24 px column.
+fn pick_box(ui: &egui::Ui, row: egui::Rect, picked: bool) {
+    let visuals = ui.visuals();
+    let rect = egui::Rect::from_center_size(
+        egui::pos2(row.left() + 12.0, row.center().y),
+        egui::vec2(11.0, 11.0),
+    );
+    let (fill, stroke) = if picked {
+        (visuals.selection.bg_fill, visuals.selection.stroke.color)
+    } else {
+        (egui::Color32::TRANSPARENT, visuals.weak_text_color())
+    };
+    ui.painter().rect(
+        rect,
+        2.0,
+        fill,
+        egui::Stroke::new(1.0, stroke),
+        egui::StrokeKind::Inside,
+    );
+    if picked {
+        ui.painter().line(
+            vec![
+                rect.left_center() + egui::vec2(2.0, 0.5),
+                rect.center_bottom() + egui::vec2(-1.0, -2.5),
+                rect.right_top() + egui::vec2(-2.0, 2.5),
+            ],
+            egui::Stroke::new(1.5, visuals.strong_text_color()),
+        );
     }
 }
 
