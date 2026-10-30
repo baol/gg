@@ -32,6 +32,8 @@ mod network;
 mod phosphor;
 mod reader;
 mod rebase_cli;
+mod rebase_dialog;
+mod rebase_plan;
 mod records;
 mod reflog_cli;
 mod reflog_view;
@@ -570,9 +572,9 @@ enum FrameCommand {
     RebaseOnto,
     Stash,
     Stashes,
-    /// Reorder and squash the current branch's own commits.
+    /// Interactive rebase of the current branch's own commits.
     Rewrite,
-    /// Reorder and squash from the selected commit through HEAD.
+    /// Interactive rebase from the selected commit through HEAD.
     RewriteSelected,
     CommitActions,
     Recovery,
@@ -650,19 +652,6 @@ struct MergeDialog {
 
 struct RebaseDialog {
     reference: String,
-    autostash: bool,
-    error: Option<String>,
-}
-
-struct RewriteRow {
-    id: String,
-    subject: String,
-    action: gg_engine::rewrite::Action,
-}
-
-struct RewriteDialog {
-    from: String,
-    rows: Vec<RewriteRow>,
     autostash: bool,
     error: Option<String>,
 }
@@ -1024,7 +1013,10 @@ fn commit_action_menu(
         }
     });
     if ui
-        .add_enabled(can_mutate, egui::Button::new("Reorder and squash to HEAD…"))
+        .add_enabled(
+            can_mutate,
+            egui::Button::new("Interactive rebase from here…"),
+        )
         .on_hover_text(mutate_reason.unwrap_or("Rewrite commits from this commit through HEAD"))
         .clicked()
     {
@@ -1163,6 +1155,8 @@ struct Browser {
     screenshot_requested: bool,
     #[cfg(debug_assertions)]
     open_local: bool,
+    /// Debug: `GG_REBASE=<commit>` opens the interactive rebase from there.
+    open_rebase: Option<String>,
     operation_worker: Option<std::sync::mpsc::Receiver<Result<OperationOutcome, String>>>,
     operation_repo: Option<PathBuf>,
     operation_restore_row: Option<usize>,
@@ -1171,7 +1165,7 @@ struct Browser {
     rebase_target: Option<String>,
     stash_switch: Option<StashSwitchDialog>,
     pull_rebase: Option<PullRebase>,
-    rewrite_dialog: Option<RewriteDialog>,
+    rewrite_dialog: Option<rebase_dialog::Dialog>,
     rewrite_job: Option<RewriteJob>,
     rewrite_refresh: Option<u64>,
     commit_actions: bool,
@@ -1269,6 +1263,11 @@ impl Browser {
             screenshot_requested: false,
             #[cfg(debug_assertions)]
             open_local: std::env::var_os("GG_LOCAL_CHANGES").is_some(),
+            open_rebase: if cfg!(debug_assertions) {
+                std::env::var("GG_REBASE").ok()
+            } else {
+                None
+            },
             operation_worker: None,
             operation_repo: None,
             operation_restore_row: None,
@@ -2354,14 +2353,14 @@ impl Browser {
                 FrameCommand::CommitActions,
             ),
             (
-                "Reorder and squash to HEAD…",
+                "Interactive rebase from here…",
                 "Commit menu · from the selected commit",
-                "",
+                "R",
                 ready.rewrite_reason,
                 FrameCommand::RewriteSelected,
             ),
             (
-                "Reorder and squash this branch",
+                "Interactive rebase of this branch",
                 "toolbar · the branch's own commits",
                 "",
                 ready.branch_rewrite_reason,
@@ -3550,25 +3549,13 @@ impl Browser {
         if self.mutation.is_some() {
             return Err("Recover the operation in progress before rewriting history.".into());
         }
-        let commits = gg_git::rewrite::commits(&path, from)?;
-        let first = commits
-            .first()
-            .ok_or("The rewrite range is empty.")?
-            .id
-            .clone();
-        self.rewrite_dialog = Some(RewriteDialog {
-            from: first,
-            rows: commits
-                .into_iter()
-                .map(|commit| RewriteRow {
-                    id: commit.id,
-                    subject: commit.subject,
-                    action: gg_engine::rewrite::Action::Pick,
-                })
-                .collect(),
-            autostash: false,
-            error: None,
-        });
+        let (commits, base) = gg_git::rewrite::plan_range(&path, from)?;
+        self.rewrite_dialog = Some(rebase_dialog::Dialog::new(
+            path,
+            commits,
+            base,
+            &self.state.refs,
+        )?);
         Ok(())
     }
 
@@ -3743,7 +3730,7 @@ impl Browser {
             Some("Reading the current branch…")
         } else if branch_rewrite.is_none() {
             Some(
-                "The current branch has no commits beyond its upstream or the default branch; use Commit › Reorder and squash to HEAD… on a selected commit",
+                "The current branch has no commits beyond its upstream or the default branch; use Commit › Interactive rebase from here… on a selected commit",
             )
         } else {
             None
@@ -5583,6 +5570,13 @@ impl Browser {
             self.open_local = false;
             self.open_working(ctx);
         }
+        #[cfg(debug_assertions)]
+        if self.state.history.is_some()
+            && let Some(from) = self.open_rebase.take()
+            && let Err(error) = self.open_rewrite_dialog(&from)
+        {
+            self.mutation_error = Some(error);
+        }
         if let Some(result) = self.branch.as_ref().and_then(|rx| match rx.try_recv() {
             Ok(result) => Some(result),
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
@@ -5903,6 +5897,13 @@ impl Browser {
                 }
                 if ctx.input_mut(|i| i.consume_key(egui::Modifiers::ALT, egui::Key::A)) {
                     self.commit_actions = true;
+                }
+                if crate::navigation::activation_available(ctx)
+                    && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::R))
+                    && self.frame_readiness().rewrite_reason.is_none()
+                    && let Some(id) = self.state.selected.clone()
+                {
+                    self.run_commit_action(ctx, id, CommitAction::Rewrite);
                 }
                 let page = self.page_rows.saturating_sub(1).max(1) as i32;
                 for (modifiers, key, distance) in [
@@ -6278,7 +6279,7 @@ impl Browser {
                     let rewrite = ui
                         .add_enabled(
                             ready.rewrite_reason.is_none(),
-                            egui::Button::new("Reorder and squash to HEAD…"),
+                            egui::Button::new("Interactive rebase from here…").shortcut_text("R"),
                         )
                         .on_hover_text("Rewrite commits from the selected commit through HEAD");
                     let rewrite = match ready.rewrite_reason {
@@ -6520,12 +6521,12 @@ impl Browser {
                     separator(ui);
                     let rewrite_tip = if ready.branch_rewrite_count > 0 {
                         format!(
-                            "Reorder and squash this branch · {} commit{} not on the upstream or default branch",
+                            "Interactive rebase of this branch · {} commit{} not on the upstream or default branch",
                             ready.branch_rewrite_count,
                             if ready.branch_rewrite_count == 1 { "" } else { "s" }
                         )
                     } else {
-                        "Reorder and squash this branch".into()
+                        "Interactive rebase of this branch".into()
                     };
                     if toolbar_button(
                         ui,
@@ -7623,7 +7624,7 @@ impl Browser {
                         ),
                         (
                             "Commit actions",
-                            "Alt+A: actions for the selected commit · menus: Repository, Branch, Commit, Changes, View, Help",
+                            "Alt+A: actions for the selected commit · R: interactive rebase · menus: Repository, Branch, Commit, Changes, View, Help",
                         ),
                     ] {
                         ui.strong(group);
@@ -7760,129 +7761,42 @@ impl Browser {
         let rewrite_refreshing = self.rewrite_refresh.is_some();
         let mut rewrite_submit = None;
         let mut rewrite_cancel = false;
+        let mut rewrite_review = None;
+        if self.review.is_none()
+            && let Some(dialog) = &mut self.rewrite_dialog
+        {
+            // Review closed by any route returns to the held plan.
+            dialog.held = false;
+        }
         if let Some(dialog) = &mut self.rewrite_dialog {
-            let mut move_up = None;
-            let mut move_down = None;
-            let modal = egui::Modal::new(egui::Id::unique("reorder-squash")).show(ctx, |ui| {
-                let width = (ctx.content_rect().width() - 64.0).clamp(360.0, 620.0);
-                ui.set_width(width);
-                ui.heading("Reorder and squash");
-                ui.add_space(4.0);
-                ui.add_enabled_ui(!(rewrite_busy || rewrite_refreshing), |ui| {
-                    ui.label(
-                        "Reorder commits from the selected commit through HEAD. Squash combines a commit into the row above. Merge commits are not supported.",
-                    );
-                    ui.add_space(4.0);
-                    egui::ScrollArea::vertical()
-                        .max_height(300.0)
-                        .show(ui, |ui| {
-                            for index in 0..dialog.rows.len() {
-                                let id = dialog.rows[index].id.clone();
-                                let subject = dialog.rows[index].subject.clone();
-                                let mut action = dialog.rows[index].action;
-                                ui.horizontal(|ui| {
-                                    ui.add_sized(
-                                        [22.0, 24.0],
-                                        egui::Label::new(
-                                            egui::RichText::new(format!("{}", index + 1))
-                                                .monospace()
-                                                .weak(),
-                                        ),
-                                    );
-                                    let up = egui::Button::new(
-                                        phosphor::icon(phosphor::ARROW_UP).size(12.0),
-                                    )
-                                    .min_size(egui::vec2(24.0, 24.0));
-                                    if ui
-                                        .add_enabled(index > 0, up)
-                                        .on_hover_text("Move up")
-                                        .clicked()
-                                    {
-                                        move_up = Some(index);
-                                    }
-                                    let down = egui::Button::new(
-                                        phosphor::icon(phosphor::ARROW_DOWN).size(12.0),
-                                    )
-                                    .min_size(egui::vec2(24.0, 24.0));
-                                    if ui
-                                        .add_enabled(index + 1 < dialog.rows.len(), down)
-                                        .on_hover_text("Move down")
-                                        .clicked()
-                                    {
-                                        move_down = Some(index);
-                                    }
-                                    let mut squash =
-                                        action == gg_engine::rewrite::Action::Squash;
-                                    if ui
-                                        .add_enabled(
-                                            index > 0,
-                                            egui::Checkbox::new(&mut squash, "Squash"),
-                                        )
-                                        .on_hover_text("Combine this commit into the row above")
-                                        .changed()
-                                    {
-                                        action = if squash {
-                                            gg_engine::rewrite::Action::Squash
-                                        } else {
-                                            gg_engine::rewrite::Action::Pick
-                                        };
-                                    }
-                                    let short = id.chars().take(7).collect::<String>();
-                                    ui.label(egui::RichText::new(short).monospace().weak());
-                                    let remaining = ui.available_width().max(80.0);
-                                    ui.add_sized(
-                                        [remaining, 24.0],
-                                        egui::Label::new(subject.clone()).truncate(),
-                                    )
-                                    .on_hover_text(subject);
-                                });
-                                dialog.rows[index].action = action;
-                            }
-                        });
-                    if let Some(index) = move_up {
-                        dialog.rows.swap(index, index - 1);
-                    }
-                    if let Some(index) = move_down {
-                        dialog.rows.swap(index, index + 1);
-                    }
-                    if let Some(first) = dialog.rows.first_mut() {
-                        first.action = gg_engine::rewrite::Action::Pick;
-                    }
-                    ui.add_space(4.0);
-                    ui.checkbox(
-                        &mut dialog.autostash,
-                        "Automatically stash working changes",
-                    );
-                    ui.colored_label(
-                        ui.visuals().warn_fg_color,
-                        "Reordering rewrites commits. A private backup ref is created before Git starts.",
-                    );
-                    if let Some(error) = &dialog.error {
-                        ui.colored_label(ui.visuals().error_fg_color, error);
-                    }
-                    ui.horizontal(|ui| {
-                        if ui.button("Rewrite commits").clicked() {
-                            rewrite_submit = Some((
-                                dialog.from.clone(),
-                                dialog
-                                    .rows
-                                    .iter()
-                                    .map(|row| {
-                                        gg_engine::rewrite::Step::new(row.action, row.id.clone())
-                                    })
-                                    .collect::<Vec<_>>(),
-                                dialog.autostash,
-                            ));
-                        }
-                        if ui.button("Cancel").clicked() {
-                            rewrite_cancel = true;
-                        }
-                    });
-                });
-            });
-            if modal.should_close() {
-                rewrite_cancel = true;
+            let blocked = if rewrite_busy {
+                Some("A rewrite is already running.")
+            } else if rewrite_refreshing {
+                Some("Wait for history to refresh after the last rewrite.")
+            } else {
+                None
+            };
+            match dialog.show(ctx, blocked) {
+                Some(rebase_dialog::Outcome::Start {
+                    from,
+                    steps,
+                    autostash,
+                }) => rewrite_submit = Some((from, steps, autostash)),
+                Some(rebase_dialog::Outcome::Cancel) => rewrite_cancel = true,
+                Some(rebase_dialog::Outcome::OpenReview { commit, subject }) => {
+                    dialog.held = true;
+                    rewrite_review = Some((commit, subject));
+                }
+                None => {}
             }
+        }
+        if let Some((commit, subject)) = rewrite_review {
+            self.open_review_at(
+                ctx,
+                commit,
+                subject,
+                Some(return_location::ReturnLocation::Rebase),
+            );
         }
         if let Some((from, steps, autostash)) = rewrite_submit {
             match self.begin_rewrite(ctx, from, steps, autostash) {
@@ -9674,49 +9588,207 @@ mod tests {
         }
     }
 
+    fn rebase_fixture(app: &Browser) -> Result<rebase_dialog::Dialog, String> {
+        let commit = |id: &str, subject: &str| gg_engine::rewrite::RangeCommit {
+            id: id.repeat(40),
+            subject: subject.into(),
+            author: "Test".into(),
+            date: "2 days ago".into(),
+            message: subject.into(),
+        };
+        rebase_dialog::Dialog::new(
+            "/missing-rebase-fixture".into(),
+            vec![commit("a", "first change"), commit("b", "second change")],
+            Some("c".repeat(40)),
+            &app.state.refs,
+        )
+    }
+
     #[test]
-    fn rewrite_dialog_renders_at_supported_widths() {
+    fn rebase_dialog_names_the_branch_and_the_refs_left_behind() -> Result<(), String> {
+        let mut app = layout_fixture();
+        let item = |name: &str, kind, commit: &str| gg_engine::refs::RefItem {
+            name: name.into(),
+            full_name: name.into(),
+            kind,
+            commit: commit.repeat(40),
+        };
+        app.state.refs = gg_engine::refs::Snapshot {
+            head: Some(gg_engine::refs::Head {
+                name: Some("refs/heads/feature".into()),
+                detached: false,
+                commit: Some("b".repeat(40)),
+            }),
+            items: vec![
+                item("feature", gg_engine::refs::RefKind::Branch, "b"),
+                item("keep", gg_engine::refs::RefKind::Branch, "a"),
+                item("v1", gg_engine::refs::RefKind::Tag, "a"),
+                item("origin/feature", gg_engine::refs::RefKind::Remote, "a"),
+            ],
+            ..Default::default()
+        };
+        let dialog = rebase_fixture(&app)?;
+        assert_eq!(dialog.branch, "feature");
+        assert_eq!(dialog.stay, ["keep", "v1"]);
+        assert_eq!(dialog.plan.rows[0].refs, ["feature"]);
+        assert_eq!(dialog.plan.rows[1].refs, ["keep", "v1"]);
+        Ok(())
+    }
+
+    fn shown_text(output: &egui::FullOutput) -> Vec<String> {
+        output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) => Some(text.galley.job.text.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn rewrite_dialog_renders_at_supported_widths() -> Result<(), String> {
         for width in [720.0, 1120.0] {
             let ctx = egui::Context::default();
             let mut app = layout_fixture();
-            app.rewrite_dialog = Some(RewriteDialog {
-                from: "a".repeat(40),
-                rows: vec![
-                    RewriteRow {
-                        id: "a".repeat(40),
-                        subject: "first change".into(),
-                        action: gg_engine::rewrite::Action::Pick,
-                    },
-                    RewriteRow {
-                        id: "b".repeat(40),
-                        subject: "second change".into(),
-                        action: gg_engine::rewrite::Action::Squash,
-                    },
-                ],
-                autostash: true,
-                error: None,
-            });
+            app.rewrite_dialog = Some(rebase_fixture(&app)?);
             let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
                 app.draw_ui(ctx)
             });
             let output = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
                 app.draw_ui(ctx)
             });
-            let text = output
-                .shapes
+            let text = shown_text(&output);
+            for expected in [
+                "Interactive rebase",
+                "Start rebase",
+                "Cancel",
+                "aaaaaaa…HEAD onto ccccccc",
+                "2 commits",
+                "PLAN · NEWEST FIRST",
+                "first change",
+                "second change",
+                "Pick",
+                "Open in Review",
+                "Stash working changes first",
+                "private backup ref",
+            ] {
+                assert!(
+                    text.iter().any(|line| line.contains(expected)),
+                    "width {width}: missing {expected:?} in {text:?}"
+                );
+            }
+            let newest = text
                 .iter()
-                .filter_map(|shape| match &shape.shape {
-                    egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
-                    _ => None,
-                })
-                .collect::<Vec<_>>();
-            assert!(text.iter().any(|line| line.contains("Reorder and squash")));
-            assert!(text.iter().any(|line| line.contains("Squash")));
-            assert!(text.iter().any(|line| line.contains("Rewrite commits")));
-            assert!(text.iter().any(|line| line.contains("private backup ref")));
-            assert!(text.iter().any(|line| line.contains("first change")));
-            assert!(text.iter().any(|line| line.contains("second change")));
+                .position(|line| line == "second change")
+                .ok_or("newest row missing")?;
+            let oldest = text
+                .iter()
+                .position(|line| line == "first change")
+                .ok_or("oldest row missing")?;
+            assert!(newest < oldest, "the plan lists the newest commit first");
         }
+        Ok(())
+    }
+
+    #[test]
+    fn rebase_dialog_keys_choose_actions_and_start_only_when_valid() -> Result<(), String> {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        app.rewrite_dialog = Some(rebase_fixture(&app)?);
+        let frame = |app: &mut Browser, events| {
+            crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, events), |ctx| {
+                app.draw_ui(ctx)
+            })
+        };
+        let _ = frame(&mut app, vec![]);
+        // The oldest commit has nothing below to combine into.
+        let _ = frame(
+            &mut app,
+            vec![
+                key(egui::Key::ArrowDown, egui::Modifiers::NONE),
+                key(egui::Key::F, egui::Modifiers::NONE),
+            ],
+        );
+        let dialog = app.rewrite_dialog.as_ref().ok_or("dialog closed")?;
+        assert_eq!(dialog.selected, 1);
+        assert_eq!(dialog.plan.rows[1].action, gg_engine::rewrite::Action::Pick);
+        assert!(
+            dialog
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("No kept commit below")),
+            "{:?}",
+            dialog.error
+        );
+        // The newest squashes into the oldest; Alt+Up then moves the oldest up.
+        let _ = frame(
+            &mut app,
+            vec![
+                key(egui::Key::K, egui::Modifiers::NONE),
+                key(egui::Key::S, egui::Modifiers::NONE),
+            ],
+        );
+        let dialog = app.rewrite_dialog.as_ref().ok_or("dialog closed")?;
+        assert_eq!(
+            dialog.plan.rows[0].action,
+            gg_engine::rewrite::Action::Squash
+        );
+        assert_eq!(dialog.error, None);
+        let output = frame(&mut app, vec![]);
+        let text = shown_text(&output);
+        assert!(
+            text.iter().any(|line| line.contains("squash into aaaaaaa")),
+            "{text:?}"
+        );
+        assert!(text.iter().any(|line| line.contains("absorbs bbbbbbb")));
+        // Esc cancels without starting anything.
+        let _ = frame(
+            &mut app,
+            vec![key(egui::Key::Escape, egui::Modifiers::NONE)],
+        );
+        assert!(app.rewrite_dialog.is_none());
+        assert!(app.rewrite_job.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn rebase_dialog_opens_review_and_returns_to_the_same_plan() -> Result<(), String> {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        app.rewrite_dialog = Some(rebase_fixture(&app)?);
+        let frame = |app: &mut Browser, events| {
+            crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, events), |ctx| {
+                app.draw_ui(ctx)
+            })
+        };
+        let _ = frame(&mut app, vec![]);
+        let _ = frame(&mut app, vec![key(egui::Key::D, egui::Modifiers::NONE)]);
+        let _ = frame(&mut app, vec![key(egui::Key::Enter, egui::Modifiers::NONE)]);
+        assert!(
+            app.rewrite_dialog
+                .as_ref()
+                .is_some_and(|dialog| dialog.held)
+        );
+        assert!(
+            app.review.is_some(),
+            "Enter opens the selected commit in Review"
+        );
+        let output = frame(&mut app, vec![]);
+        let text = shown_text(&output);
+        assert!(text.iter().any(|line| line == "Back to rebase"), "{text:?}");
+        assert!(!text.iter().any(|line| line == "Start rebase"));
+        // Esc in Review returns to the plan with the choice kept.
+        let _ = frame(
+            &mut app,
+            vec![key(egui::Key::Escape, egui::Modifiers::NONE)],
+        );
+        let _ = frame(&mut app, vec![]);
+        assert!(app.review.is_none());
+        let dialog = app.rewrite_dialog.as_ref().ok_or("dialog closed")?;
+        assert!(!dialog.held);
+        assert_eq!(dialog.plan.rows[0].action, gg_engine::rewrite::Action::Drop);
+        Ok(())
     }
 
     #[test]
@@ -9754,7 +9826,7 @@ mod tests {
             text.iter()
                 .any(|line| line.contains("Browsing stays available"))
         );
-        assert!(!text.iter().any(|line| line.contains("Reorder and squash")));
+        assert!(!text.iter().any(|line| line.contains("Start rebase")));
     }
 
     #[test]
@@ -12223,7 +12295,7 @@ mod tests {
             "starts at the branch's first own commit"
         );
         assert_eq!(
-            dialog.rows.len(),
+            dialog.plan.rows.len(),
             2,
             "the branch's own commits through HEAD"
         );

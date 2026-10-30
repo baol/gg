@@ -30,6 +30,7 @@ The native UI uses egui/eframe 0.37 on wgpu 30. wgpu enables Vulkan, Metal, DX12
 | `GG_WINDOW_SIZE=720x480` | Debug window size |
 | `GG_LOCAL_CHANGES=1` | Debug: open Local Changes after history loads |
 | `GG_SEARCH=text` | Debug: open `Ctrl+K` search with the text |
+| `GG_REBASE=COMMIT` | Debug: open the interactive rebase dialog from the commit through HEAD |
 | `GG_DETAILS=1` | Debug narrow-screen details view |
 | `GG_THEME=light` | Debug light-theme layout and contrast inspection |
 

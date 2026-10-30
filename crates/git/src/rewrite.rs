@@ -18,6 +18,13 @@ pub fn commits(path: &Path, from: &str) -> Result<Vec<RangeCommit>, String> {
     Ok(range(path, from)?.commits)
 }
 
+/// The commits from `from` through HEAD, oldest first, and the commit they
+/// are replayed onto (`None` for a root range).
+pub fn plan_range(path: &Path, from: &str) -> Result<(Vec<RangeCommit>, Option<String>), String> {
+    let range = range(path, from)?;
+    Ok((range.commits, range.base))
+}
+
 /// The first commit of the current branch's own work, for an interactive rebase
 /// that does not depend on a history selection.
 ///
@@ -196,7 +203,7 @@ fn range(path: &Path, from: &str) -> Result<Range, String> {
             "log".into(),
             "--reverse".into(),
             "--topo-order".into(),
-            "--format=%H%x00%P%x00%s".into(),
+            "--format=%H%x1f%P%x1f%s%x1f%an%x1f%ar%x1f%B%x1e".into(),
             log_range,
         ],
         None,
@@ -205,12 +212,12 @@ fn range(path: &Path, from: &str) -> Result<Range, String> {
         return Err(failure("List rewrite commits", &output));
     }
     let mut commits = Vec::new();
-    for line in String::from_utf8_lossy(&output.stdout).lines() {
-        let line = line.trim_end_matches('\r');
-        if line.is_empty() {
+    for record in String::from_utf8_lossy(&output.stdout).split('\x1e') {
+        let record = record.trim_start_matches(['\r', '\n']);
+        if record.is_empty() {
             continue;
         }
-        let mut fields = line.split('\0');
+        let mut fields = record.splitn(6, '\x1f');
         let id = fields.next().unwrap_or_default().to_string();
         let parents = fields
             .next()
@@ -219,16 +226,34 @@ fn range(path: &Path, from: &str) -> Result<Range, String> {
             .map(str::to_string)
             .collect::<Vec<_>>();
         let subject = fields.next().unwrap_or_default().to_string();
+        let author = fields.next().unwrap_or_default().to_string();
+        let date = fields.next().unwrap_or_default().to_string();
+        let message = fields
+            .next()
+            .unwrap_or_default()
+            .replace("\r\n", "\n")
+            .trim_end()
+            .to_string();
         if id.is_empty() {
             return Err("Git returned an incomplete rewrite range.".into());
         }
         if parents.len() > 1 {
             return Err(
-                "Reorder and squash require a linear range without merge commits. Select a start commit after the last merge."
+                "Interactive rebase requires a linear range without merge commits. Select a start commit after the last merge."
                     .into(),
             );
         }
-        commits.push((id, parents, subject));
+        commits.push((
+            id,
+            parents,
+            RangeCommit {
+                id: String::new(),
+                subject,
+                author,
+                date,
+                message,
+            },
+        ));
     }
     if commits.is_empty() {
         return Err("The rewrite range is empty.".into());
@@ -254,7 +279,7 @@ fn range(path: &Path, from: &str) -> Result<Range, String> {
     Ok(Range {
         commits: commits
             .into_iter()
-            .map(|(id, _, subject)| RangeCommit { id, subject })
+            .map(|(id, _, commit)| RangeCommit { id, ..commit })
             .collect(),
         root,
         base,

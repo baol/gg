@@ -23,6 +23,14 @@ pub const LIST_NUMBERS: &str = "\u{E2F6}";
 pub const MAGNIFYING_GLASS: &str = "\u{E30C}";
 pub const SIDEBAR_SIMPLE: &str = "\u{EC24}";
 pub const TAG: &str = "\u{E478}";
+pub const DOTS_SIX_VERTICAL: &str = "\u{EAE2}";
+pub const PAUSE: &str = "\u{E39E}";
+pub const ARROW_RIGHT: &str = "\u{E06C}";
+pub const ARROW_SQUARE_OUT: &str = "\u{E5DE}";
+
+/// Glyphs used by the interactive rebase dialog.
+#[cfg(test)]
+pub const REBASE: [&str; 4] = [DOTS_SIX_VERTICAL, PAUSE, ARROW_SQUARE_OUT, ARROW_RIGHT];
 
 /// Glyphs used by the window toolbar, checked against the vendored font.
 #[cfg(test)]
@@ -80,7 +88,11 @@ mod tests {
         install(&ctx);
         let font = egui::FontId::new(10.0, FontFamily::Name(FAMILY.into()));
         let _ = crate::tests::run_ui(&ctx, egui::RawInput::default(), |_ui| {});
-        for glyph in [ARROW_UP, ARROW_DOWN, CHECK].into_iter().chain(TOOLBAR) {
+        for glyph in [ARROW_UP, ARROW_DOWN, CHECK]
+            .into_iter()
+            .chain(TOOLBAR)
+            .chain(REBASE)
+        {
             assert!(
                 ctx.fonts_mut(|fonts| fonts.has_glyphs(&font, glyph)),
                 "missing glyph {glyph:?}"

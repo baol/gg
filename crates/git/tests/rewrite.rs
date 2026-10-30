@@ -86,6 +86,27 @@ fn rewrite_lists_a_linear_range_oldest_first() -> Result {
             .collect::<Vec<_>>(),
         vec!["one", "two", "three"]
     );
+    assert!(commits.iter().all(|commit| commit.author == "Test"));
+    assert!(commits.iter().all(|commit| !commit.date.is_empty()));
+    assert_eq!(commits[1].message, "two");
+
+    git(
+        dir.path(),
+        &[
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "four",
+            "-m",
+            "body\nline",
+        ],
+    )?;
+    let (commits, base) = gg_git::rewrite::plan_range(dir.path(), &second)?;
+    assert_eq!(base.as_deref(), Some(first.as_str()));
+    assert_eq!(commits.len(), 3);
+    assert_eq!(commits[2].subject, "four");
+    assert_eq!(commits[2].message, "four\n\nbody\nline");
     Ok(())
 }
 

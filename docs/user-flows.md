@@ -56,7 +56,7 @@ flowchart TD
     Resolve --> Continue[Continue / supported Skip / Abort]
     Continue -->|More conflicts| Resolve
     Continue -->|Finished| History
-    History --> Rewrite[Reorder and squash]
+    History --> Rewrite[Interactive rebase]
     Rewrite --> Resolve
     Rewrite --> Backup[Backups / reflog]
     Backup --> Recover[Open / create branch / confirmed reset]
@@ -165,13 +165,14 @@ flowchart TD
 
 ### F10 · Rewrite and recover a previous tip
 
-**Entry:** selected history commit → Reorder and squash to HEAD.
+**Entry:** selected history commit → Interactive rebase from here (`R`), or the toolbar's Interactive rebase of this branch.
 
-1. Resolve the inclusive linear range oldest first; reject merge ranges. Show every commit exactly once, Up/Down, and Pick/Squash. The first row always remains Pick.
-2. Review the plan, clean-worktree/autostash choice, and private-backup notice; confirm the rewrite.
-3. Close the plan on submission. The operation area shows Rewriting commits, then Refreshing history until the replacement history is accepted; browsing stays available and the old history remains labeled. Conflicts use F09.
-4. From Repository → Recovery choose Backups or Reflog, then inspect the source, kind, subject, and commit time. **Open commit** verifies content in the ordinary reader; Back returns to that source, the Reflog reference filter, and the selected entry.
-5. **Create branch here…** opens the shared branch form with **Switch after creation** off. Reset branch here offers Soft (move tip), Mixed (also reset index), or Hard (also discard staged/working changes), with exact-target confirmation and Hard warning. Copy hash/ref is read-only. Keep backups after recovery.
+1. Resolve the inclusive linear range; reject merge ranges. Show every commit exactly once, newest first, with move controls, drag, and an action chip: Pick, Reword, Reopen, Squash, Fixup, Drop. Squash and Fixup combine into the nearest kept commit below; consequence badges say where.
+2. Inspect the selected commit's files and diff beside the plan, or Open in Review and come back to the same plan. Reword edits the message in place.
+3. Review the result count, clean-worktree/autostash choice, the refs that stay on the original commits, and the private-backup notice; Start rebase.
+4. Close the plan on submission. The operation area shows Rewriting commits, then Refreshing history until the replacement history is accepted; browsing stays available and the old history remains labeled. Conflicts use F09.
+5. From Repository → Recovery choose Backups or Reflog, then inspect the source, kind, subject, and commit time. **Open commit** verifies content in the ordinary reader; Back returns to that source, the Reflog reference filter, and the selected entry.
+6. **Create branch here…** opens the shared branch form with **Switch after creation** off. Reset branch here offers Soft (move tip), Mixed (also reset index), or Hard (also discard staged/working changes), with exact-target confirmation and Hard warning. Copy hash/ref is read-only. Keep backups after recovery.
 
 **Completion:** rewritten history or a recovered tip is reachable and selection restores. **Mockup:** Rewrite → Recovery; primary Create branch here demonstrates the nondestructive route.
 

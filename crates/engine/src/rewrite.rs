@@ -64,6 +64,14 @@ impl Step {
 pub struct RangeCommit {
     pub id: String,
     pub subject: String,
+    #[serde(default)]
+    pub author: String,
+    /// Relative author date, such as `2 days ago`.
+    #[serde(default)]
+    pub date: String,
+    /// Full message, without trailing whitespace.
+    #[serde(default)]
+    pub message: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
