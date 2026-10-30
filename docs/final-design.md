@@ -24,6 +24,8 @@ Dialogs that ask for a decision or start a change are modal; tool and informatio
 
 The old navigation strip is merged into the toolbar; no other row repeats the tabs.
 
+Menus are egui's in-window menu bar on every platform. gg does not create native OS menus (the macOS menu bar and KDE's global menu stay empty) and uses no Tauri or Tauri-ecosystem crates such as `muda`.
+
 ## Command placement
 
 Every command has exactly one menu home. The toolbar, shortcuts, context menus, and search point back to it and share its readiness reason and confirmation.
