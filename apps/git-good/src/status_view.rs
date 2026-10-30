@@ -43,6 +43,9 @@ fn commit_reason<'a>(
         None
     }
 }
+/// Width of the per-row stage/unstage button slot.
+const ROW_BUTTON: f32 = 24.0;
+
 /// Why Unstage all waits while amending: it resets the index to HEAD, but
 /// Staged then shows HEAD's parent.
 pub const UNSTAGE_ALL_AMENDING: &str =
@@ -1091,12 +1094,47 @@ impl StatusView {
                         egui::FontId::proportional(13.0),
                         symbol_color,
                     );
+                    // A fixed slot at the right holds the row's stage (+) or
+                    // unstage (−) button while the row is hovered or selected.
+                    let button_slot = egui::Rect::from_min_size(
+                        egui::pos2(rect.right() - ROW_BUTTON, rect.top()),
+                        egui::vec2(ROW_BUTTON, crate::density::row()),
+                    );
+                    let eligible = match entry.area {
+                        Area::Staged => true,
+                        Area::Unstaged | Area::Untracked => {
+                            !matches!(entry.kind, Kind::IntentToAdd | Kind::Conflicted)
+                        }
+                        Area::Conflict => false,
+                    };
+                    if eligible
+                        && !busy
+                        && (response.hovered()
+                            || list.selected_row == Some(row)
+                            || ui.rect_contains_pointer(button_slot))
+                    {
+                        let (glyph, tip) = if entry.area == Area::Staged {
+                            ("−", "Unstage this file")
+                        } else {
+                            ("+", "Stage this file")
+                        };
+                        if ui
+                            .put(button_slot.shrink(2.0), egui::Button::new(glyph).small())
+                            .on_hover_text(tip)
+                            .clicked()
+                        {
+                            toggled = Some(row);
+                        }
+                    }
                     let path_x = 22.0;
                     bounded_text::paint(
                         ui,
                         egui::Rect::from_min_size(
                             rect.min + egui::vec2(path_x, 0.0),
-                            egui::vec2((rect.width() - path_x).max(0.0), crate::density::row()),
+                            egui::vec2(
+                                (rect.width() - path_x - ROW_BUTTON).max(0.0),
+                                crate::density::row(),
+                            ),
                         ),
                         entry.path.as_str(),
                         egui::FontId::proportional(12.0),
@@ -2720,6 +2758,45 @@ mod tests {
         assert_eq!(file(p, &["show", ":a"])?, b"a-base\n");
         assert_eq!(file(p, &["show", ":b"])?, staged_b);
         assert_eq!(std::fs::read(p.join("a"))?, b"a-working\n");
+        Ok(())
+    }
+
+    #[test]
+    fn row_buttons_stage_and_unstage_one_file() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let p = dir.path();
+        git(p, &["init", "-q"])?;
+        for name in ["a", "b"] {
+            std::fs::write(p.join(name), b"base\n")?;
+        }
+        git(p, &["add", "."])?;
+        git(p, &["commit", "-qm", "base"])?;
+        for name in ["a", "b"] {
+            std::fs::write(p.join(name), format!("{name} working\n"))?;
+        }
+        let ctx = egui::Context::default();
+        let mut view = StatusView::new(p.into(), &ctx);
+        settle(&ctx, &mut view, 1120.0);
+        let output = run(&ctx, &mut view, 1120.0, vec![]);
+        let a = row_pos(&output, &view, 0, "a").ok_or("missing a row")?;
+        click(&ctx, &mut view, 1120.0, a);
+        let output = run(&ctx, &mut view, 1120.0, vec![]);
+        let plus = text_pos(&output, "+").ok_or("missing row + button")?;
+        click(&ctx, &mut view, 1120.0, plus + egui::vec2(2.0, 4.0));
+        pump(&ctx, &mut view, 1120.0, |view| {
+            !view.stage.mutating() && view.complete && !view.replacing && view.lists[0].count == 1
+        });
+        assert_eq!(file(p, &["diff", "--cached", "--name-only"])?, b"a\n");
+        let output = run(&ctx, &mut view, 1120.0, vec![]);
+        let staged = row_pos(&output, &view, 1, "a").ok_or("missing staged a row")?;
+        click(&ctx, &mut view, 1120.0, staged);
+        let output = run(&ctx, &mut view, 1120.0, vec![]);
+        let minus = text_pos(&output, "−").ok_or("missing row − button")?;
+        click(&ctx, &mut view, 1120.0, minus + egui::vec2(2.0, 4.0));
+        pump(&ctx, &mut view, 1120.0, |view| {
+            !view.stage.mutating() && view.complete && !view.replacing && view.lists[0].count == 2
+        });
+        assert_eq!(file(p, &["diff", "--cached", "--name-only"])?, b"");
         Ok(())
     }
 
