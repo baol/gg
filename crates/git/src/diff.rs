@@ -9,6 +9,15 @@ pub fn read(
     change: &FileChange,
     cancelled: impl Fn() -> bool,
 ) -> Result<FileDiff, String> {
+    read_with(path, change, diff::Options::default(), cancelled)
+}
+/// Compare one change with the reader's context and whitespace options.
+pub fn read_with(
+    path: &Path,
+    change: &FileChange,
+    options: diff::Options,
+    cancelled: impl Fn() -> bool,
+) -> Result<FileDiff, String> {
     let run = || -> Result<FileDiff, Box<dyn std::error::Error>> {
         let repo = gix::discover(path)?;
         if cancelled() {
@@ -85,7 +94,12 @@ pub fn read(
                 None => Ok(vec![]),
             }
         };
-        let mut result = diff::compare(&bytes(&change.old)?, &bytes(&change.new)?, &cancelled)?;
+        let mut result = diff::compare_with(
+            &bytes(&change.old)?,
+            &bytes(&change.new)?,
+            options,
+            &cancelled,
+        )?;
         if !mode_note.is_empty() {
             result.note = if result.note.is_empty() {
                 mode_note

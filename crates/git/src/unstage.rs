@@ -14,7 +14,16 @@ pub fn hunks(request: &WorkingRequest, selected: &[String]) -> Result<(), String
         .map_err(|e| format!("Unstage hunks for {}: {e}", request.entry.path))
 }
 pub fn changes(request: &WorkingRequest, edits: &[Edit]) -> Result<(), String> {
-    apply_changes(request, edits).map_err(|e| format!("Unstage {}: {e}", request.entry.path))
+    changes_with(request, edits, diff::Options::default())
+}
+/// Unstage hunks and lines picked in a diff shown with `options`.
+pub fn changes_with(
+    request: &WorkingRequest,
+    edits: &[Edit],
+    options: diff::Options,
+) -> Result<(), String> {
+    apply_changes(request, edits, options)
+        .map_err(|e| format!("Unstage {}: {e}", request.entry.path))
 }
 
 fn apply_file(request: &WorkingRequest) -> Result<(), Box<dyn std::error::Error>> {
@@ -51,10 +60,12 @@ fn apply_file(request: &WorkingRequest) -> Result<(), Box<dyn std::error::Error>
 fn apply_changes(
     request: &WorkingRequest,
     edits: &[Edit],
+    options: diff::Options,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if edits.is_empty() {
         return Err("Select at least one hunk or line".into());
     }
+    patch::check_exact(options)?;
     if request.entry.area != Area::Staged {
         return Err("Select a staged file".into());
     }
@@ -97,7 +108,7 @@ fn apply_changes(
         Some(entry) => repo.find_blob(entry.id)?.data.clone(),
         None => vec![],
     };
-    let comparison = diff::compare(&before_bytes, &after_bytes, || false)?;
+    let comparison = diff::compare_with(&before_bytes, &after_bytes, options, || false)?;
     if comparison.kind != DiffKind::Text {
         return Err("Partial unstaging requires a text comparison".into());
     }

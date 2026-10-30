@@ -169,6 +169,8 @@ pub struct DiffView {
     sides: Option<WorkingSides>,
     side_request: Option<bool>,
     details_open: bool,
+    /// Context and whitespace of the requested comparison.
+    options: gg_engine::diff::Options,
 }
 
 impl Default for DiffView {
@@ -241,6 +243,7 @@ impl Default for DiffView {
             sides: None,
             side_request: None,
             details_open: false,
+            options: gg_engine::diff::Options::default(),
         }
     }
 }
@@ -317,6 +320,7 @@ impl DiffView {
             self.side = self.existing_side();
         }
         self.full_side = self.side;
+        self.options = crate::settings::diff_options(ctx);
         self.send(ctx);
         ctx.request_repaint();
     }
@@ -695,6 +699,7 @@ impl DiffView {
         self.after_endpoint = None;
         self.side = self.existing_side();
         self.full_side = self.side;
+        self.options = crate::settings::diff_options(ctx);
         self.send(ctx);
         ctx.request_repaint();
     }
@@ -806,6 +811,7 @@ impl DiffView {
         self.content_settled()
             && self.stage.is_some()
             && self.mode == Mode::Diff
+            && !self.whitespace_hidden()
             && self.stage_text()
             && matches!(
                 (working.entry.area, working.entry.kind),
@@ -1106,6 +1112,7 @@ impl DiffView {
             }
         }
         if let Some(worker) = &self.worker {
+            worker.set_options(self.options);
             // A mode switch or file change centers the first diff page on its line.
             let line = if self.mode == Mode::Diff {
                 self.restore_line
@@ -1315,6 +1322,35 @@ impl DiffView {
         } else {
             display
         }
+    }
+
+    /// Follow the window's context and whitespace options: the comparison is
+    /// read again as a new generation, keeping the current line in view.
+    fn follow_options(&mut self, ctx: &egui::Context) {
+        let options = crate::settings::diff_options(ctx);
+        if self.options == options {
+            return;
+        }
+        self.options = options;
+        if self.change.is_none() {
+            return;
+        }
+        self.restore_line = self.current_line();
+        self.restoring = None;
+        self.generation += 1;
+        self.sent = None;
+        self.error = None;
+        self.full = None;
+        self.stage_selected.clear();
+        self.stage_edit = None;
+        self.send(ctx);
+        ctx.request_repaint();
+    }
+
+    /// Whether whitespace differences are hidden, which disables hunk and
+    /// line actions: hidden hunks would not describe the bytes written.
+    pub fn whitespace_hidden(&self) -> bool {
+        self.options.whitespace != gg_engine::diff::Whitespace::All
     }
 
     /// Follow the window's diff layout, keeping the top row in view.
@@ -1915,6 +1951,7 @@ impl DiffView {
             self.mode_seeded = true;
         }
         self.follow_layout(crate::settings::diff_layout(&ctx));
+        self.follow_options(&ctx);
         self.poll_blame();
         self.sync_blame(&ctx);
         self.export.draw(&ctx);
@@ -3706,6 +3743,70 @@ mod tests {
             |ui| view.draw(ui),
         );
         assert_eq!(view.mode, Mode::Diff);
+    }
+
+    #[test]
+    fn changed_diff_options_read_the_comparison_again() {
+        use gg_engine::diff::{Options, Whitespace};
+        let ctx = egui::Context::default();
+        let mut view = DiffView::default();
+        view.select("/repo".into(), Some(file("a", true, true)), &ctx);
+        let draw = |view: &mut DiffView| {
+            let _ = crate::tests::run_ui(
+                &ctx,
+                crate::tests::frame_input(1120.0, 740.0, vec![]),
+                |ui| view.draw(ui),
+            );
+        };
+        draw(&mut view);
+        let first = view.generation;
+        assert_eq!(view.options, Options::default());
+        draw(&mut view);
+        assert_eq!(
+            view.generation, first,
+            "unchanged options keep the document"
+        );
+        let wide = Options {
+            context: 10,
+            whitespace: Whitespace::IgnoreAtEol,
+        };
+        crate::settings::set_diff_options(&ctx, wide);
+        draw(&mut view);
+        assert_eq!(view.generation, first + 1);
+        assert_eq!(view.options, wide);
+        assert!(view.whitespace_hidden());
+        // A newly selected file starts with the window's options.
+        let mut other = DiffView::default();
+        other.select("/repo".into(), Some(file("b", true, true)), &ctx);
+        assert_eq!(other.options, wide);
+    }
+
+    #[test]
+    fn hidden_whitespace_disables_hunk_and_line_actions() {
+        use gg_engine::status::{Area, Kind, StatusEntry, StatusIdentity, WorkingRequest};
+        let mut view = DiffView {
+            change: Some(file("a", true, true)),
+            working: Some(WorkingRequest {
+                repository: StatusIdentity {
+                    path: "/repo".into(),
+                    head: None,
+                    index: "index".into(),
+                    base_tree: None,
+                },
+                entry: StatusEntry::new(Area::Unstaged, Kind::Modified, b"a"),
+            }),
+            info: Some(FileDiff::summary(DiffKind::Text, 1, 1, "")),
+            stage: Some(StageConfig {
+                verb: "Stage",
+                can_discard: true,
+                pending: false,
+            }),
+            ..Default::default()
+        };
+        assert!(view.lines_selectable());
+        view.options.whitespace = gg_engine::diff::Whitespace::IgnoreAll;
+        assert!(!view.lines_selectable());
+        assert!(view.can_whole_edit(), "whole files still stage");
     }
 
     #[test]

@@ -48,6 +48,16 @@ pub const ZOOMS: [u16; 3] = [100, 110, 125];
 pub const CODE_FONTS: [u16; 3] = [125, 130, 140];
 /// Subject length guides, in characters; 0 is off.
 pub const SUBJECT_GUIDES: [u16; 3] = [72, 50, 0];
+/// Unchanged lines around each change in Diff mode.
+pub const DIFF_CONTEXTS: [u16; 3] = [3, 5, 10];
+pub use gg_engine::diff::Whitespace;
+
+/// Whitespace choices in the mockup's order, with their labels.
+pub const WHITESPACE: [(Whitespace, &str); 3] = [
+    (Whitespace::All, "Show all changes"),
+    (Whitespace::IgnoreAtEol, "Ignore at line end"),
+    (Whitespace::IgnoreAll, "Ignore all"),
+];
 
 /// `gg/settings.json` under the OS configuration directory.
 pub fn path() -> Option<PathBuf> {
@@ -281,6 +291,20 @@ fn diff_layout_id() -> eframe::egui::Id {
     eframe::egui::Id::unique("gg-diff-layout")
 }
 
+/// Context lines and whitespace handling every Diff in the window uses.
+pub fn diff_options(ctx: &eframe::egui::Context) -> gg_engine::diff::Options {
+    ctx.data(|data| data.get_temp(diff_options_id()))
+        .unwrap_or_default()
+}
+
+pub fn set_diff_options(ctx: &eframe::egui::Context, options: gg_engine::diff::Options) {
+    ctx.data_mut(|data| data.insert_temp(diff_options_id(), options));
+}
+
+fn diff_options_id() -> eframe::egui::Id {
+    eframe::egui::Id::unique("gg-diff-options")
+}
+
 pub fn reader_mode(ctx: &eframe::egui::Context) -> ReaderMode {
     ctx.data(|data| data.get_temp(reader_mode_id()))
         .unwrap_or_default()
@@ -353,6 +377,10 @@ pub struct Prefs {
     pub history_avatars: bool,
     pub history_tags: bool,
     pub relative_dates: bool,
+    /// Unchanged lines around each change in Diff mode: 3, 5, or 10.
+    pub diff_context: u16,
+    /// Which whitespace differences Diff mode shows.
+    pub diff_whitespace: Whitespace,
     path: Option<PathBuf>,
 }
 
@@ -388,6 +416,8 @@ impl Default for Prefs {
             history_avatars: true,
             history_tags: true,
             relative_dates: false,
+            diff_context: 3,
+            diff_whitespace: Whitespace::All,
             path: None,
         }
     }
@@ -444,6 +474,10 @@ impl Prefs {
             subject_guide: read(path, "subject_guide")
                 .filter(|guide| SUBJECT_GUIDES.contains(guide))
                 .unwrap_or(defaults.subject_guide),
+            diff_context: read(path, "diff_context")
+                .filter(|lines| DIFF_CONTEXTS.contains(lines))
+                .unwrap_or(defaults.diff_context),
+            diff_whitespace: read(path, "diff_whitespace").unwrap_or(defaults.diff_whitespace),
             path: Some(path.to_path_buf()),
         }
     }
@@ -485,7 +519,17 @@ impl Prefs {
         write(path, "confirm_destructive", &self.confirm_destructive)?;
         write(path, "history_avatars", &self.history_avatars)?;
         write(path, "history_tags", &self.history_tags)?;
-        write(path, "relative_dates", &self.relative_dates)
+        write(path, "relative_dates", &self.relative_dates)?;
+        write(path, "diff_context", &self.diff_context)?;
+        write(path, "diff_whitespace", &self.diff_whitespace)
+    }
+
+    /// The comparison options Diff mode reads with.
+    pub fn diff_options(&self) -> gg_engine::diff::Options {
+        gg_engine::diff::Options {
+            context: usize::from(self.diff_context),
+            whitespace: self.diff_whitespace,
+        }
     }
 
     /// The theme to show: `GG_THEME` (debug builds) wins over the saved one
@@ -564,6 +608,8 @@ mod tests {
         prefs.confirm_destructive = false;
         prefs.history_tags = false;
         prefs.relative_dates = true;
+        prefs.diff_context = 10;
+        prefs.diff_whitespace = Whitespace::IgnoreAtEol;
         prefs.save()?;
         assert_eq!(Prefs::load_from(&path), prefs);
         assert_eq!(read::<u32>(&path, "future_option"), Some(7));

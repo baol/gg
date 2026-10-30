@@ -39,6 +39,8 @@ struct Request {
     side: ReadingSide,
     /// One-based line to center the first diff page on after a mode or file change.
     line: Option<usize>,
+    /// Context and whitespace; a change comes with a new generation.
+    options: gg_engine::diff::Options,
 }
 
 #[derive(Clone)]
@@ -64,6 +66,7 @@ pub struct Worker {
     generation: Arc<AtomicU64>,
     stop: Arc<AtomicBool>,
     thread: thread::Thread,
+    options: std::cell::Cell<gg_engine::diff::Options>,
 }
 
 impl Worker {
@@ -72,9 +75,14 @@ impl Worker {
             ctx,
             |request, cancelled| {
                 if let Some(working) = &request.working {
-                    gg_git::working_diff::read(working, cancelled)
+                    gg_git::working_diff::read_with(working, request.options, cancelled)
                 } else {
-                    gg_git::diff::read(&request.path, &request.change, cancelled)
+                    gg_git::diff::read_with(
+                        &request.path,
+                        &request.change,
+                        request.options,
+                        cancelled,
+                    )
                 }
             },
             |request, side, changed, cancelled| {
@@ -321,7 +329,14 @@ impl Worker {
             generation,
             stop,
             thread: handle.thread().clone(),
+            options: std::cell::Cell::default(),
         })
+    }
+
+    /// Context and whitespace for the following requests. The reader starts
+    /// a new generation whenever they change, so a document never mixes them.
+    pub fn set_options(&self, options: gg_engine::diff::Options) {
+        self.options.set(options);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -389,6 +404,7 @@ impl Worker {
                 mode,
                 side,
                 line,
+                options: self.options.get(),
             });
             self.thread.unpark();
         }

@@ -1,11 +1,55 @@
 //! Bounded byte-preserving unified text comparison, independent of Git and UI.
 use serde::{Deserialize, Serialize};
-use similar::{Algorithm, ChangeTag};
+use similar::{Algorithm, DiffTag};
 use std::time::{Duration, Instant};
 pub const MAX_BLOB_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_LINES: usize = 100_000;
 /// Time spent looking for the smallest diff; after it the diff is coarser but exact.
 pub const COMPUTE_BUDGET: Duration = Duration::from_millis(250);
+/// Unchanged lines shown around each change unless the reader asks for more.
+pub const CONTEXT: usize = 3;
+/// Which whitespace differences count as changes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Whitespace {
+    /// Every byte counts, like `git diff`.
+    #[default]
+    All,
+    /// Whitespace before the line end does not count, like `--ignore-space-at-eol`.
+    IgnoreAtEol,
+    /// No whitespace counts, like `-w`.
+    IgnoreAll,
+}
+/// How a comparison is grouped and which differences it reports.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Options {
+    /// Unchanged lines around each change, like `git diff -U<n>`.
+    pub context: usize,
+    pub whitespace: Whitespace,
+}
+impl Default for Options {
+    fn default() -> Self {
+        Self {
+            context: CONTEXT,
+            whitespace: Whitespace::All,
+        }
+    }
+}
+/// Git's whitespace bytes.
+fn space(byte: u8) -> bool {
+    matches!(byte, b' ' | b'\t' | b'\n' | b'\r' | 0x0b | 0x0c)
+}
+/// The bytes a line is compared by under `whitespace`.
+fn key(line: &[u8], whitespace: Whitespace) -> std::borrow::Cow<'_, [u8]> {
+    match whitespace {
+        Whitespace::All => line.into(),
+        Whitespace::IgnoreAtEol => {
+            let end = line.iter().rposition(|b| !space(*b)).map_or(0, |i| i + 1);
+            line[..end].into()
+        }
+        Whitespace::IgnoreAll => line.iter().copied().filter(|b| !space(*b)).collect(),
+    }
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RowKind {
@@ -77,7 +121,20 @@ pub(crate) fn display(bytes: &[u8]) -> String {
     }
     result.replace('\r', "\\r").replace('\t', "    ")
 }
+/// One emitted line: kind, zero-based old and new indices, and its bytes.
+type SourceLine<'a> = (RowKind, Option<usize>, Option<usize>, &'a [u8]);
+/// Compare with three context lines, counting every byte.
 pub fn compare(old: &[u8], new: &[u8], cancelled: impl Fn() -> bool) -> Result<FileDiff, String> {
+    compare_with(old, new, Options::default(), cancelled)
+}
+/// Compare with `options`. Rows keep exact bytes; with whitespace ignored,
+/// unchanged lines show the new side, like `git diff -w`.
+pub fn compare_with(
+    old: &[u8],
+    new: &[u8],
+    options: Options,
+    cancelled: impl Fn() -> bool,
+) -> Result<FileDiff, String> {
     let summary = |kind, note| FileDiff::summary(kind, old.len() as u64, new.len() as u64, note);
     if cancelled() {
         return Err("Comparison cancelled".into());
@@ -100,11 +157,19 @@ pub fn compare(old: &[u8], new: &[u8], cancelled: impl Fn() -> bool) -> Result<F
     }
     let old_lines: Vec<_> = old.split_inclusive(|b| *b == b'\n').collect();
     let new_lines: Vec<_> = new.split_inclusive(|b| *b == b'\n').collect();
+    let old_keys: Vec<_> = old_lines
+        .iter()
+        .map(|line| key(line, options.whitespace))
+        .collect();
+    let new_keys: Vec<_> = new_lines
+        .iter()
+        .map(|line| key(line, options.whitespace))
+        .collect();
     let deadline = Instant::now() + COMPUTE_BUDGET;
     let ops = similar::capture_diff_slices_deadline(
         Algorithm::Myers,
-        &old_lines,
-        &new_lines,
+        &old_keys,
+        &new_keys,
         Some(deadline),
     );
     if cancelled() {
@@ -116,7 +181,11 @@ pub fn compare(old: &[u8], new: &[u8], cancelled: impl Fn() -> bool) -> Result<F
         DiffKind::Text,
         if old == new { "Content unchanged" } else { "" },
     );
-    for group in similar::group_diff_ops(ops, 3) {
+    let groups = similar::group_diff_ops(ops, options.context);
+    if groups.is_empty() && old != new {
+        result.note = "Only whitespace changed; whitespace changes are hidden".into();
+    }
+    for group in groups {
         if cancelled() {
             return Err("Comparison cancelled".into());
         }
@@ -141,20 +210,26 @@ pub fn compare(old: &[u8], new: &[u8], cancelled: impl Fn() -> bool) -> Result<F
             bytes: vec![],
         });
         for op in group {
-            for change in op.iter_changes(&old_lines, &new_lines) {
+            let (tag, old_range, new_range) = op.as_tag_tuple();
+            let lines: Vec<SourceLine> = if tag == DiffTag::Equal {
+                old_range
+                    .zip(new_range)
+                    .map(|(o, n)| (RowKind::Context, Some(o), Some(n), new_lines[n]))
+                    .collect()
+            } else {
+                old_range
+                    .map(|o| (RowKind::Deleted, Some(o), None, old_lines[o]))
+                    .chain(new_range.map(|n| (RowKind::Added, None, Some(n), new_lines[n])))
+                    .collect()
+            };
+            for (kind, old_index, new_index, bytes) in lines {
                 if cancelled() {
                     return Err("Comparison cancelled".into());
                 }
-                let bytes = change.value();
-                let kind = match change.tag() {
-                    ChangeTag::Equal => RowKind::Context,
-                    ChangeTag::Delete => RowKind::Deleted,
-                    ChangeTag::Insert => RowKind::Added,
-                };
                 result.rows.push(DiffRow {
                     kind,
-                    old_line: change.old_index().map(|n| n + 1),
-                    new_line: change.new_index().map(|n| n + 1),
+                    old_line: old_index.map(|n| n + 1),
+                    new_line: new_index.map(|n| n + 1),
                     text: display(bytes),
                     bytes: bytes.to_vec(),
                 });

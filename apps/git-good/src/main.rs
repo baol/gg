@@ -356,12 +356,14 @@ impl PrefSection {
             Self::Appearance => {
                 "appearance theme dark light system density compact comfortable zoom font size code"
             }
-            Self::Diff => "diff open files full file layout inline side by side images compare",
+            Self::Diff => {
+                "diff open files full file layout inline side by side images compare context lines whitespace ignore line end"
+            }
             Self::Commit => {
                 "commit identity name email signing sign tags subject length guide hooks verify"
             }
             Self::Rebase => {
-                "rebase recovery stash autostash backup pull strategy merge fast-forward push force lease"
+                "rebase recovery stash autostash backup pull strategy merge fast-forward push force lease keep backups days retention confirm drop reset"
             }
             Self::Keyboard => "keyboard shortcuts keys",
         }
@@ -2000,6 +2002,7 @@ impl Browser {
         settings::set_reader_mode(ctx, self.prefs.reader_mode);
         settings::set_image_layout(ctx, self.prefs.image_layout);
         settings::set_diff_layout(ctx, self.prefs.diff_layout);
+        settings::set_diff_options(ctx, self.prefs.diff_options());
         settings::set_subject_guide(ctx, self.prefs.subject_guide);
         settings::set_run_hooks(ctx, self.prefs.run_hooks);
         ctx.set_zoom_factor(f32::from(self.prefs.zoom) / 100.0);
@@ -2397,16 +2400,48 @@ impl Browser {
                                 });
                         }
                         PrefSection::Diff => {
-                            ui.strong("Default layout");
-                            ui.horizontal(|ui| {
-                                ui.selectable_value(&mut prefs.diff_layout, settings::DiffLayout::Inline, "Inline");
-                                ui.selectable_value(
-                                    &mut prefs.diff_layout,
-                                    settings::DiffLayout::SideBySide,
-                                    "Side by side",
-                                );
-                            });
-                            ui.weak("Also View › Inline diff / Side-by-side diff and the reader's toggle.");
+                            egui::Grid::new("prefs-diff")
+                                .num_columns(2)
+                                .spacing([16.0, 10.0])
+                                .show(ui, |ui| {
+                                    ui.label("Default layout");
+                                    ui.horizontal(|ui| {
+                                        ui.selectable_value(&mut prefs.diff_layout, settings::DiffLayout::Inline, "Inline");
+                                        ui.selectable_value(
+                                            &mut prefs.diff_layout,
+                                            settings::DiffLayout::SideBySide,
+                                            "Side by side",
+                                        );
+                                    })
+                                    .response
+                                    .on_hover_text("Also View › Inline diff / Side-by-side diff and the reader's toggle.");
+                                    ui.end_row();
+                                    ui.label("Context lines");
+                                    ui.horizontal(|ui| {
+                                        for lines in settings::DIFF_CONTEXTS {
+                                            ui.selectable_value(&mut prefs.diff_context, lines, lines.to_string());
+                                        }
+                                    })
+                                    .response
+                                    .on_hover_text("Unchanged lines around each change in Review and Local Changes.");
+                                    ui.end_row();
+                                    ui.label("Whitespace");
+                                    egui::ComboBox::from_id_salt("prefs-diff-whitespace")
+                                        .selected_text(
+                                            settings::WHITESPACE
+                                                .iter()
+                                                .find(|(choice, _)| *choice == prefs.diff_whitespace)
+                                                .map_or("", |(_, label)| *label),
+                                        )
+                                        .show_ui(ui, |ui| {
+                                            for (choice, label) in settings::WHITESPACE {
+                                                ui.selectable_value(&mut prefs.diff_whitespace, choice, label);
+                                            }
+                                        })
+                                        .response
+                                        .on_hover_text("Hunk and line staging needs Show all changes; whole files still stage.");
+                                    ui.end_row();
+                                });
                             ui.separator();
                             ui.strong("Open files in");
                             ui.horizontal(|ui| {

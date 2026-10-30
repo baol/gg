@@ -32,6 +32,15 @@ pub(crate) enum Direction {
     Unstage,
 }
 
+/// Partial changes must come from the exact comparison: with whitespace
+/// ignored, hunks would not describe the bytes being written.
+pub(crate) fn check_exact(options: gg_engine::diff::Options) -> Result<()> {
+    if options.whitespace != gg_engine::diff::Whitespace::All {
+        return Err("Show all whitespace changes to apply hunks or lines".into());
+    }
+    Ok(())
+}
+
 pub fn edits_from_headers(headers: &[String]) -> Vec<Edit> {
     headers
         .iter()

@@ -1535,6 +1535,10 @@ impl StatusView {
                     ui.weak(
                         "Click changed lines to pick them · click a hunk header to pick the hunk",
                     );
+                } else if self.reader.whitespace_hidden() {
+                    ui.weak(
+                        "Whitespace changes are hidden · choose Show all changes in Preferences › Diff to stage hunks or lines",
+                    );
                 }
                 return;
             }

@@ -151,6 +151,8 @@ impl StageActions {
         });
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         let repaint = ctx.clone();
+        // Hunk headers come from the reader, which compares with these options.
+        let options = crate::settings::diff_options(ctx);
         let result = thread::Builder::new()
             .name("gg-stage-mutate".into())
             .spawn(move || {
@@ -160,17 +162,17 @@ impl StageActions {
                     }
                     (Area::Staged, false, None) => gg_git::unstage::file(&request),
                     (Area::Staged, false, Some(edits)) => {
-                        gg_git::unstage::changes(&request, &edits)
+                        gg_git::unstage::changes_with(&request, &edits, options)
                     }
                     (Area::Unstaged | Area::Untracked, true, None) => gg_git::drop::file(&request),
                     (Area::Unstaged | Area::Untracked, true, Some(edits)) => {
-                        gg_git::drop::changes(&request, &edits)
+                        gg_git::drop::changes_with(&request, &edits, options)
                     }
                     (Area::Unstaged | Area::Untracked, false, None) => {
                         gg_git::stage::file(&request)
                     }
                     (Area::Unstaged | Area::Untracked, false, Some(edits)) => {
-                        gg_git::stage::changes(&request, &edits)
+                        gg_git::stage::changes_with(&request, &edits, options)
                     }
                     (Area::Conflict, _, _) => Err("Resolve the conflict before staging.".into()),
                 };
