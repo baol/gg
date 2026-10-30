@@ -103,26 +103,26 @@ Goal: deliver the agreed [final interface design](final-design.md): one window f
 | Rebase actions | Reword, fixup, drop, and edit produce the same history as `git rebase -i` with the same todo; backups are created first | Git oracle, CLI |
 | Rebase stops | Continue, Skip, and Abort appear only in the operation area and only when Git supports them | Git oracle, egui interaction |
 
-### Gaps · reviewed 2026-10-30
+### Gaps · reviewed 2026-10-30 · all fixed
 
 Differences between the [final design](final-design.md) and what shipped, plus places that break the [stable layout and no-placeholder rules](design.md). Each fix keeps its own test.
 
 Design not yet implemented:
 
-1. **Shortcuts:** `Ctrl+1` (Local Changes), `Ctrl+2` (History), and `Ctrl+\` (refs sidebar) do not exist; the View menu lacks the Local Changes and History items. **Repository › Quit** is missing, and macOS has no gg › Settings… (`Cmd+,` already works).
+1. **Shortcuts and menus · fixed.** A real 26 px menu bar; View lists Local Changes (`Ctrl+1`), History (`Ctrl+2`), Commit details (`Space`), and Refs sidebar (`Ctrl+\`), and the shortcuts work. Repository ends with Preferences and Quit; macOS has a gg menu with Settings… (`Cmd+,`) and Quit gg.
 2. **Stashes picker · fixed.** Rows show ref, message, branch, age, and file count in fixed slots; the picker keeps a fixed size.
-3. **Search:** the Files group is missing; the toolbar has a Search button rather than a field.
-4. **Conflict stop:** blocks live in the floating Resolve conflicts window, not in the main workspace beside the operation area.
-5. **Preferences · fixed.** Diff (reader presentation, image layout) and Commit (signing default) sections; the details pane and image layout are remembered; stash, merge, new-branch, and fetch-prune choices start from remembered values. There is no stash restore form with options, so none is remembered.
-6. **Frame metrics:** the menu row is 42 px, not 26 px; compact diff rows are 20 px, not 19 px.
+3. **Search · fixed.** A toolbar search field on wide windows (`Ctrl+K` focuses it), the icon on narrow ones, and a Files group that opens the latest commit changing the file in Review on that file.
+4. **Conflict stop · fixed.** Resolve conflicts opens in the main workspace under the operation area; Close or `Esc` returns.
+5. **Preferences · fixed.** Diff (reader presentation, image layout) and Commit (signing default) sections; the details pane and image layout are remembered; stash, merge, new-branch, and fetch-prune choices are remembered.
+6. **Frame metrics · fixed.** Menu bar 26 px; compact diff rows 19 px.
 
 Layout moves with content:
 
-7. **Operation area:** its height follows its content: one line for most operations, three for a rebase stop, a fourth when **Commits made at this stop** appears, and the whole strip appears or disappears with the operation. Everything below it shifts.
-8. **Resolve conflicts window:** sizes itself to its content, so switching files, modes, or result length grows and shrinks it.
-9. **Interactive rebase dialog:** the header range moves as the result count changes length; on the right, the reader moves down when Reword's message box replaces the message text.
-10. **Review header:** Retry, Prev/Next file, and the parent selector come and go, shifting History and the file count.
-11. **Search and stash popups:** grow and shrink with the number of results and the inline drop confirmation.
+7. **Operation area · fixed.** Always present at two lines; idle it summarizes the branch, tracking, changes, and stashes; a rebase stop fits its note and step chips on the second line.
+8. **Conflict workspace · fixed.** Fixed path-list width and fixed heights for blocks, result, and side panes; errors and the empty state share one reserved line.
+9. **Interactive rebase dialog · fixed.** The changing result count comes last in the header; the message or reword field has one fixed slot.
+10. **Review header · fixed.** The parent selector, file count, Retry, History, and Prev/Next file keep reserved slots and are hidden, not removed.
+11. **Search and stash popups · fixed.** Results and the stash list scroll inside fixed heights; the stash actions reserve room for the drop confirmation.
 
 Placeholder text in panes:
 
