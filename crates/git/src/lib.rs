@@ -255,6 +255,11 @@ impl gg_engine::HistoryReader for Session {
     }
 }
 
+/// True when a clean-worktree precondition rejected the action.
+pub fn dirty_tree_error(error: &str) -> bool {
+    error.starts_with("Working tree is not clean")
+}
+
 pub mod backup;
 pub mod blame;
 pub mod blob;

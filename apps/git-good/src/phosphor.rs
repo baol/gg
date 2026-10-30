@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 pub const ARROW_UP: &str = "\u{E08E}";
 pub const ARROW_DOWN: &str = "\u{E03E}";
+pub const CHECK: &str = "\u{E182}";
 
 const FAMILY: &str = "phosphor-regular";
 
@@ -48,7 +49,7 @@ mod tests {
         install(&ctx);
         let font = egui::FontId::new(10.0, FontFamily::Name(FAMILY.into()));
         let _ = crate::tests::run_ui(&ctx, egui::RawInput::default(), |_ui| {});
-        for glyph in [ARROW_UP, ARROW_DOWN] {
+        for glyph in [ARROW_UP, ARROW_DOWN, CHECK] {
             assert!(
                 ctx.fonts_mut(|fonts| fonts.has_glyphs(&font, glyph)),
                 "missing glyph {glyph:?}"
@@ -63,7 +64,7 @@ mod tests {
         let _ = crate::tests::run_ui(&ctx, egui::RawInput::default(), |_ui| {});
         for family in [FontFamily::Proportional, FontFamily::Monospace] {
             let font = egui::FontId::new(11.0, family);
-            for glyph in [ARROW_UP, ARROW_DOWN] {
+            for glyph in [ARROW_UP, ARROW_DOWN, CHECK] {
                 assert!(
                     ctx.fonts_mut(|fonts| fonts.has_glyphs(&font, glyph)),
                     "missing fallback glyph {glyph:?}"
