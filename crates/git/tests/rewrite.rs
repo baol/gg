@@ -369,3 +369,62 @@ fn rewrite_rejects_a_start_outside_head_history() -> Result {
     assert!(error.contains("not an ancestor"), "{error}");
     Ok(())
 }
+
+#[test]
+fn branch_start_prefers_unpushed_commits_then_the_default_branch() -> Result {
+    let dir = repo()?;
+    let path = dir.path();
+    assert_eq!(
+        gg_git::rewrite::branch_start(path)?,
+        None,
+        "main has no own commits"
+    );
+
+    git(path, &["switch", "-q", "-c", "feature"])?;
+    let first = commit(path, "a", "a\n", "first")?;
+    let second = commit(path, "b", "b\n", "second")?;
+    assert_eq!(
+        gg_git::rewrite::branch_start(path)?,
+        Some((first.clone(), 2)),
+        "without an upstream the range starts where the branch left main"
+    );
+
+    git(path, &["update-ref", "refs/remotes/origin/feature", &first])?;
+    git(
+        path,
+        &[
+            "config",
+            "remote.origin.url",
+            "https://example.org/repo.git",
+        ],
+    )?;
+    git(
+        path,
+        &[
+            "config",
+            "remote.origin.fetch",
+            "+refs/heads/*:refs/remotes/origin/*",
+        ],
+    )?;
+    git(path, &["config", "branch.feature.remote", "origin"])?;
+    git(
+        path,
+        &["config", "branch.feature.merge", "refs/heads/feature"],
+    )?;
+    assert_eq!(
+        gg_git::rewrite::branch_start(path)?,
+        Some((second.clone(), 1)),
+        "only commits the upstream lacks"
+    );
+
+    git(
+        path,
+        &["update-ref", "refs/remotes/origin/feature", &second],
+    )?;
+    assert_eq!(
+        gg_git::rewrite::branch_start(path)?,
+        Some((first, 2)),
+        "fully pushed branches fall back to the default branch"
+    );
+    Ok(())
+}

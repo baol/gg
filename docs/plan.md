@@ -85,10 +85,10 @@ Goal: deliver the agreed [final interface design](final-design.md): one window f
 
 ### Increments
 
-1. **Window frame · complete.** Regroup the menus into Repository, Branch, Commit, Changes, View, and Help. Merge the navigation strip into one icon toolbar: refs sidebar toggle, Local Changes/History, Fetch, Pull (rebase) only when behind with its count, Push, New branch, New tag, Merge, Stash changes, Stashes, Reorder and squash, and Recovery. Icons come from the bundled Phosphor font; every button has a tooltip and the same readiness reason as its menu item.
+1. **Window frame · complete.** Regroup the menus into Repository, Branch, Commit, Changes, View, and Help. Merge the navigation strip into one icon toolbar: refs sidebar toggle, Local Changes/History, Fetch, Pull (rebase) only when behind with its count, Push, New branch, New tag, Merge, Stash changes (disabled on a clean worktree), the Stashes picker with Apply, Pop, Show changes, and confirmed Drop, Reorder and squash of the current branch's own commits, and Recovery. Icons come from the bundled Phosphor font; every button has a tooltip and the same readiness reason as its menu item.
 2. **Compact density and one-line headers.** Shorten the tab to **Changes** with a change-count badge fed by a background status count; 22 px history and file rows, one-line commit identity and reader headers, one-character change markers; a comfortable density preference.
 3. **Search.** `Ctrl+K`/`Ctrl+F` field with Filter, Actions, Branches, Commits, and Files results sharing the menu command definitions.
-4. **Stash picker and branch switcher.** Toolbar stash picker with Apply, Pop, Show changes, and confirmed Drop; sidebar stash entries; current-branch button opening a filterable switcher.
+4. **Sidebar stashes and branch switcher.** Sidebar stash entries opening the toolbar picker; current-branch button opening a filterable switcher.
 5. **Rebase engine.** Extend the rewrite plan beyond pick and squash with reword, fixup, drop, and edit (reopen), with CLI support and Git-oracle tests before any UI.
 6. **Interactive rebase dialog.** Replace Reorder and squash with the planned modal: newest-first plan, action chips and keys, consequence badges, the selected commit in the shared reader with inline reword, and Open in Review with return.
 7. **Rebase stops.** Reopened-commit stop in Local Changes with split commits, and the three-column conflict blocks with per-block choices, both in the operation area with Continue, Skip commit, and Abort and restore.

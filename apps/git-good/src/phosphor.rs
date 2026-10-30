@@ -13,19 +13,22 @@ pub const CHECK: &str = "\u{E182}";
 pub const ARCHIVE: &str = "\u{E00C}";
 pub const ARROW_LINE_DOWN: &str = "\u{E05C}";
 pub const ARROW_LINE_UP: &str = "\u{E066}";
+pub const BOX_ARROW_UP: &str = "\u{EE54}";
+pub const CARET_DOWN: &str = "\u{E136}";
 pub const CLOCK_COUNTER_CLOCKWISE: &str = "\u{E1A0}";
 pub const DOWNLOAD_SIMPLE: &str = "\u{E20C}";
 pub const GIT_BRANCH: &str = "\u{E278}";
 pub const GIT_MERGE: &str = "\u{E280}";
 pub const LIST_NUMBERS: &str = "\u{E2F6}";
 pub const SIDEBAR_SIMPLE: &str = "\u{EC24}";
-pub const STACK: &str = "\u{E466}";
 pub const TAG: &str = "\u{E478}";
 
 /// Glyphs used by the window toolbar, checked against the vendored font.
 #[cfg(test)]
-pub const TOOLBAR: [&str; 11] = [
+pub const TOOLBAR: [&str; 12] = [
     ARCHIVE,
+    BOX_ARROW_UP,
+    CARET_DOWN,
     ARROW_LINE_DOWN,
     ARROW_LINE_UP,
     CLOCK_COUNTER_CLOCKWISE,
@@ -34,7 +37,6 @@ pub const TOOLBAR: [&str; 11] = [
     GIT_MERGE,
     LIST_NUMBERS,
     SIDEBAR_SIMPLE,
-    STACK,
     TAG,
 ];
 

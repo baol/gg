@@ -17,6 +17,47 @@ pub fn commits(path: &Path, from: &str) -> Result<Vec<RangeCommit>, String> {
     Ok(range(path, from)?.commits)
 }
 
+/// The first commit of the current branch's own work, for an interactive rebase
+/// that does not depend on a history selection.
+///
+/// Uses the commits the upstream lacks; when everything is pushed (or there is
+/// no upstream), the commits the default branch lacks. Returns the oldest such
+/// commit and the number of commits through HEAD, or `None` when the branch has
+/// no commits of its own.
+pub fn branch_start(path: &Path) -> Result<Option<(String, usize)>, String> {
+    const BASES: [&str; 6] = [
+        "@{upstream}",
+        "refs/remotes/origin/HEAD",
+        "refs/remotes/origin/main",
+        "refs/remotes/origin/master",
+        "refs/heads/main",
+        "refs/heads/master",
+    ];
+    for base in BASES {
+        let output = run(
+            path,
+            &[
+                "rev-list".into(),
+                "--reverse".into(),
+                format!("{base}..HEAD"),
+            ],
+            None,
+        )?;
+        if !output.status.success() {
+            continue;
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let commits = stdout
+            .lines()
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>();
+        if let Some(first) = commits.first() {
+            return Ok(Some(((*first).to_string(), commits.len())));
+        }
+    }
+    Ok(None)
+}
+
 pub fn rewrite(
     path: &Path,
     from: &str,

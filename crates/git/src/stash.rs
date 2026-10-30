@@ -44,6 +44,23 @@ pub fn list(path: &Path) -> Result<StashList, String> {
     Ok(StashList { entries })
 }
 
+/// Whether the worktree has anything to stash: staged, unstaged, or untracked changes.
+pub fn has_changes(path: &Path) -> Result<bool, String> {
+    let output = run(
+        path,
+        &[
+            "status".into(),
+            "--porcelain".into(),
+            "-z".into(),
+            "--untracked-files=normal".into(),
+        ],
+    )?;
+    if !output.status.success() {
+        return Err(failure("Read worktree status", &output));
+    }
+    Ok(!output.stdout.is_empty())
+}
+
 pub fn push(
     path: &Path,
     message: Option<&str>,

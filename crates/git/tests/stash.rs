@@ -199,3 +199,18 @@ fn lists_newest_first_and_preserves_unrelated_files() -> Result {
     assert_eq!(std::fs::read(p.join("keep"))?, b"keep\n");
     Ok(())
 }
+
+#[test]
+fn has_changes_sees_staged_unstaged_and_untracked_work() -> Result {
+    let dir = repo()?;
+    let path = dir.path();
+    assert!(
+        !gg_git::stash::has_changes(path)?,
+        "a clean worktree has nothing to stash"
+    );
+    std::fs::write(path.join("new"), b"new\n")?;
+    assert!(gg_git::stash::has_changes(path)?, "untracked files count");
+    git(path, &["add", "new"])?;
+    assert!(gg_git::stash::has_changes(path)?, "staged files count");
+    Ok(())
+}

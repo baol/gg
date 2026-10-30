@@ -362,6 +362,46 @@ struct RestoreStashDialog {
     error: Option<String>,
 }
 
+/// Repository facts the window frame needs without opening Local Changes,
+/// read on a background thread.
+#[derive(Clone, Debug, Default)]
+struct LocalSummary {
+    /// Whether the worktree has staged, unstaged, or untracked changes.
+    dirty: Option<bool>,
+    stashes: Vec<gg_engine::stash::StashEntry>,
+    /// First commit of the current branch's own work and its commit count.
+    branch_start: Option<(String, usize)>,
+}
+
+impl LocalSummary {
+    fn read(path: PathBuf) -> Self {
+        Self {
+            dirty: gg_git::stash::has_changes(&path).ok(),
+            stashes: gg_git::stash::list(&path)
+                .map(|list| list.entries)
+                .unwrap_or_default(),
+            branch_start: gg_git::rewrite::branch_start(&path).ok().flatten(),
+        }
+    }
+}
+
+/// A command chosen in the toolbar stash picker.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum StashPick {
+    Apply(String),
+    Pop(String),
+    Show { commit: String, message: String },
+    Drop(String),
+}
+
+/// Toolbar stash picker: selected entry and pending drop confirmation.
+#[derive(Clone, Debug, Default)]
+struct StashPicker {
+    selected: usize,
+    confirm_drop: bool,
+    error: Option<String>,
+}
+
 struct StashWindow {
     entries: Vec<gg_engine::stash::StashEntry>,
     error: Option<String>,
@@ -472,6 +512,12 @@ struct FrameReadiness {
     behind: u64,
     pull_reason: Option<&'static str>,
     rewrite_reason: Option<&'static str>,
+    /// Why **Stash changes** is unavailable, if it is.
+    stash_reason: Option<&'static str>,
+    stashes: usize,
+    /// Commits in the current branch's own range for the toolbar rewrite.
+    branch_rewrite_count: usize,
+    branch_rewrite_reason: Option<&'static str>,
 }
 
 /// A command chosen from the window toolbar, applied after the frame is drawn.
@@ -484,7 +530,6 @@ enum ToolbarCommand {
     NewTag,
     Merge,
     Stash,
-    Stashes,
     Rewrite,
     Recovery,
 }
@@ -1065,6 +1110,10 @@ struct Browser {
     rewrite_job: Option<RewriteJob>,
     rewrite_refresh: Option<u64>,
     commit_actions: bool,
+    local_summary: Option<LocalSummary>,
+    local_summary_job: Option<std::sync::mpsc::Receiver<LocalSummary>>,
+    window_focused: bool,
+    stash_picker: StashPicker,
     help_shortcuts: bool,
     conflict_view: Option<ConflictView>,
     reset_confirm: Option<(String, gg_engine::reset::Mode)>,
@@ -1165,6 +1214,10 @@ impl Browser {
             rewrite_job: None,
             rewrite_refresh: None,
             commit_actions: false,
+            local_summary: None,
+            local_summary_job: None,
+            window_focused: true,
+            stash_picker: StashPicker::default(),
             help_shortcuts: false,
             conflict_view: None,
             reset_confirm: None,
@@ -1992,6 +2045,178 @@ impl Browser {
     fn refresh_working(&mut self, ctx: &egui::Context) {
         if let Some(working) = &mut self.working {
             working.refresh(ctx);
+        }
+        self.refresh_local_summary(ctx);
+    }
+
+    /// The toolbar **Stashes** button and its picker popup.
+    fn stash_picker_button(
+        &mut self,
+        ui: &mut egui::Ui,
+        ready: &FrameReadiness,
+    ) -> Option<StashPick> {
+        let reason = if !ready.stash_idle {
+            Some(if ready.has_repo {
+                "Wait for the current operation to finish"
+            } else {
+                "Open a repository first"
+            })
+        } else if ready.stashes == 0 {
+            Some("No stashes")
+        } else {
+            None
+        };
+        let button = egui::Button::new((
+            crate::phosphor::icon(crate::phosphor::BOX_ARROW_UP).size(17.0),
+            egui::RichText::new(ready.stashes.to_string()).size(11.0),
+            crate::phosphor::icon(crate::phosphor::CARET_DOWN).size(10.0),
+        ))
+        .min_size(egui::vec2(28.0, 26.0))
+        .frame_when_inactive(false);
+        let response = ui.add_enabled(reason.is_none(), button);
+        let tip = format!("Stashes ({}) · apply, pop, show, or drop", ready.stashes);
+        let response = match reason {
+            Some(reason) => response.on_disabled_hover_text(format!("{tip}\n{reason}")),
+            None => response.on_hover_text(tip),
+        };
+        if response.clicked() {
+            self.stash_picker.confirm_drop = false;
+            self.stash_picker.error = None;
+        }
+        let entries = self
+            .local_summary
+            .as_ref()
+            .map(|summary| summary.stashes.clone())
+            .unwrap_or_default();
+        let picker = &mut self.stash_picker;
+        let mut pick = None;
+        egui::Popup::from_toggle_button_response(&response)
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+            .show(|ui| {
+                ui.set_width(420.0);
+                ui.label(egui::RichText::new("STASHES").small().weak());
+                for (index, entry) in entries.iter().enumerate() {
+                    let text = format!("{}   {}", entry.reference, entry.message);
+                    if ui
+                        .add(
+                            egui::Button::selectable(picker.selected == index, text)
+                                .truncate()
+                                .min_size(egui::vec2(410.0, 24.0)),
+                        )
+                        .clicked()
+                    {
+                        picker.selected = index;
+                        picker.confirm_drop = false;
+                    }
+                }
+                let Some(entry) = entries.get(picker.selected) else {
+                    return;
+                };
+                ui.separator();
+                if picker.confirm_drop {
+                    ui.label(format!(
+                        "Drop {}? This removes the stash entry, not working files.",
+                        entry.reference
+                    ));
+                    ui.horizontal(|ui| {
+                        if ui.button("Drop").clicked() {
+                            pick = Some(StashPick::Drop(entry.reference.clone()));
+                            picker.confirm_drop = false;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            picker.confirm_drop = false;
+                        }
+                    });
+                } else {
+                    ui.horizontal(|ui| {
+                        if ui
+                            .button(format!("Apply {}", entry.reference))
+                            .on_hover_text("Restore the changes and keep the stash entry")
+                            .clicked()
+                        {
+                            pick = Some(StashPick::Apply(entry.reference.clone()));
+                        }
+                        if ui
+                            .button("Pop")
+                            .on_hover_text("Restore the changes, then remove the stash entry")
+                            .clicked()
+                        {
+                            pick = Some(StashPick::Pop(entry.reference.clone()));
+                        }
+                        if ui.button("Show changes").clicked() {
+                            pick = Some(StashPick::Show {
+                                commit: entry.commit.clone(),
+                                message: entry.message.clone(),
+                            });
+                        }
+                        if ui.button("Drop…").clicked() {
+                            picker.confirm_drop = true;
+                        }
+                    });
+                }
+                if let Some(error) = &picker.error {
+                    ui.colored_label(ui.visuals().error_fg_color, error);
+                }
+            });
+        if pick.is_some() {
+            egui::Popup::close_all(ui.ctx());
+        }
+        pick
+    }
+
+    fn apply_stash_pick(&mut self, ctx: &egui::Context, pick: StashPick) {
+        let result = match pick {
+            StashPick::Apply(reference) => self.restore_stash_inner(ctx, &reference, false, false),
+            StashPick::Pop(reference) => self.restore_stash_inner(ctx, &reference, true, false),
+            StashPick::Drop(reference) => self.drop_stash(ctx, &reference),
+            StashPick::Show { commit, message } => {
+                let return_location = self.capture_return_location();
+                self.open_review_at(ctx, commit, message, Some(return_location));
+                Ok(())
+            }
+        };
+        if let Err(error) = result {
+            self.stash_picker.error = Some(error.clone());
+            self.set_outcome(OutcomeSeverity::Error, error, None, None);
+        }
+        self.refresh_local_summary(ctx);
+    }
+
+    /// Re-read the worktree, stash, and branch facts shown in the window frame.
+    fn refresh_local_summary(&mut self, ctx: &egui::Context) {
+        let path = self
+            .stash_path()
+            .unwrap_or_else(|| PathBuf::from(&self.path));
+        if path.as_os_str().is_empty() {
+            self.local_summary = None;
+            self.local_summary_job = None;
+            return;
+        }
+        // Replacing the receiver drops any older, now stale result.
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let _ = sender.send(LocalSummary::read(path));
+            ctx.request_repaint();
+        });
+        self.local_summary_job = Some(receiver);
+    }
+
+    fn poll_local_summary(&mut self) {
+        let Some(receiver) = &self.local_summary_job else {
+            return;
+        };
+        match receiver.try_recv() {
+            Ok(summary) => {
+                self.local_summary_job = None;
+                let count = summary.stashes.len();
+                self.local_summary = Some(summary);
+                if self.stash_picker.selected >= count {
+                    self.stash_picker.selected = count.saturating_sub(1);
+                }
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => self.local_summary_job = None,
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
         }
     }
 
@@ -2872,14 +3097,41 @@ impl Browser {
         } else {
             None
         };
+        let stash_idle =
+            has_repo && self.branch.is_none() && self.network.is_none() && !self.operation_busy();
+        let summary = self.local_summary.as_ref();
+        let stash_reason = if !has_repo {
+            Some("Open a repository first")
+        } else if !stash_idle {
+            Some("Wait for the current operation to finish")
+        } else if summary.and_then(|summary| summary.dirty) == Some(false) {
+            Some("No local changes to stash")
+        } else {
+            None
+        };
+        let branch_rewrite = summary.and_then(|summary| summary.branch_start.as_ref());
+        let branch_rewrite_reason = if !has_repo {
+            Some("Open a repository first")
+        } else if let Some(reason) = self.mutation_reason() {
+            Some(reason)
+        } else if summary.is_none() {
+            Some("Reading the current branch…")
+        } else if branch_rewrite.is_none() {
+            Some(
+                "The current branch has no commits beyond its upstream or the default branch; use Commit › Reorder and squash to HEAD… on a selected commit",
+            )
+        } else {
+            None
+        };
         FrameReadiness {
             has_repo,
             network_idle: has_repo && network_idle,
             branch_idle: has_repo && branch_idle && self.state.refs.head.is_some(),
-            stash_idle: has_repo
-                && self.branch.is_none()
-                && self.network.is_none()
-                && !self.operation_busy(),
+            stash_idle,
+            stash_reason,
+            stashes: summary.map_or(0, |summary| summary.stashes.len()),
+            branch_rewrite_count: branch_rewrite.map_or(0, |(_, count)| *count),
+            branch_rewrite_reason,
             behind,
             pull_reason,
             rewrite_reason: if self.state.selected.is_none() {
@@ -3342,6 +3594,8 @@ impl Browser {
             self.refresh_mutation();
         }
         self.state.begin(path.clone());
+        self.local_summary = None;
+        self.refresh_local_summary(ctx);
         let request = stream::Request {
             revision: self.state.filter_revision,
             query: self.state.query.clone(),
@@ -4684,6 +4938,12 @@ impl Browser {
         self.sync_mutation();
         let ctx = ui.ctx().clone();
         let ctx = &ctx;
+        self.poll_local_summary();
+        let focused = ctx.input(|i| i.focused);
+        if focused && !self.window_focused {
+            self.refresh_local_summary(ctx);
+        }
+        self.window_focused = focused;
         colors::apply(ctx);
         #[cfg(debug_assertions)]
         if self.open_local
@@ -5414,11 +5674,17 @@ impl Browser {
                         ui.close();
                     }
                     ui.separator();
-                    if ui
-                        .add_enabled(ready.stash_idle, egui::Button::new("Stash changes…"))
-                        .on_hover_text("Record working changes in a new stash entry")
-                        .clicked()
-                    {
+                    let stash = ui
+                        .add_enabled(
+                            ready.stash_reason.is_none(),
+                            egui::Button::new("Stash changes…"),
+                        )
+                        .on_hover_text("Record working changes in a new stash entry");
+                    let stash = match ready.stash_reason {
+                        Some(reason) => stash.on_disabled_hover_text(reason),
+                        None => stash,
+                    };
+                    if stash.clicked() {
                         self.open_stash_dialog();
                         ui.close();
                     }
@@ -5503,6 +5769,7 @@ impl Browser {
             });
         });
         let mut tool = None;
+        let mut stash_pick = None;
         egui::Panel::top("navigation")
             .exact_size(34.0)
             .show(ui, |ui| {
@@ -5609,19 +5876,28 @@ impl Browser {
                         tool = Some(ToolbarCommand::Merge);
                     }
                     separator(ui);
-                    if toolbar_button(ui, icon::ARCHIVE, None, "Stash changes…", idle(ready.stash_idle)) {
+                    if toolbar_button(ui, icon::ARCHIVE, None, "Stash changes…", ready.stash_reason) {
                         tool = Some(ToolbarCommand::Stash);
                     }
-                    if toolbar_button(ui, icon::STACK, None, "Stashes…", idle(ready.stash_idle)) {
-                        tool = Some(ToolbarCommand::Stashes);
+                    if let Some(pick) = self.stash_picker_button(ui, &ready) {
+                        stash_pick = Some(pick);
                     }
                     separator(ui);
+                    let rewrite_tip = if ready.branch_rewrite_count > 0 {
+                        format!(
+                            "Reorder and squash this branch · {} commit{} not on the upstream or default branch",
+                            ready.branch_rewrite_count,
+                            if ready.branch_rewrite_count == 1 { "" } else { "s" }
+                        )
+                    } else {
+                        "Reorder and squash this branch".into()
+                    };
                     if toolbar_button(
                         ui,
                         icon::LIST_NUMBERS,
                         None,
-                        "Reorder and squash to HEAD…",
-                        ready.rewrite_reason,
+                        &rewrite_tip,
+                        ready.branch_rewrite_reason,
                     ) {
                         tool = Some(ToolbarCommand::Rewrite);
                     }
@@ -5636,6 +5912,9 @@ impl Browser {
                     }
                 });
             });
+        if let Some(pick) = stash_pick {
+            self.apply_stash_pick(ctx, pick);
+        }
         match tool {
             Some(ToolbarCommand::Fetch) => self.start_fetch(ctx, None, false),
             Some(ToolbarCommand::Pull) => self.start_pull_rebase(ctx),
@@ -5644,10 +5923,15 @@ impl Browser {
             Some(ToolbarCommand::NewTag) => self.open_new_tag(),
             Some(ToolbarCommand::Merge) => self.open_merge_dialog(),
             Some(ToolbarCommand::Stash) => self.open_stash_dialog(),
-            Some(ToolbarCommand::Stashes) => self.open_stash_window(),
             Some(ToolbarCommand::Rewrite) => {
-                if let Some(id) = self.state.selected.clone() {
-                    self.run_commit_action(ctx, id, CommitAction::Rewrite);
+                let start = self
+                    .local_summary
+                    .as_ref()
+                    .and_then(|summary| summary.branch_start.clone());
+                if let Some((start, _)) = start
+                    && let Err(error) = self.open_rewrite_dialog(&start)
+                {
+                    self.mutation_error = Some(error);
                 }
             }
             Some(ToolbarCommand::Recovery) => self.open_recovery_window(),
@@ -11102,7 +11386,7 @@ mod tests {
             crate::phosphor::TAG,
             crate::phosphor::GIT_MERGE,
             crate::phosphor::ARCHIVE,
-            crate::phosphor::STACK,
+            crate::phosphor::BOX_ARROW_UP,
             crate::phosphor::LIST_NUMBERS,
             crate::phosphor::CLOCK_COUNTER_CLOCKWISE,
         ];
@@ -11151,6 +11435,233 @@ mod tests {
             );
         }
         Ok(())
+    }
+
+    #[test]
+    fn toolbar_rewrite_covers_the_branch_and_keeps_the_selection()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let git = |path: &std::path::Path, args: &[&str]| -> Result<String, String> {
+            let output = std::process::Command::new("git")
+                .arg("-C")
+                .arg(path)
+                .args(args)
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env(
+                    "GIT_CONFIG_GLOBAL",
+                    if cfg!(windows) { "NUL" } else { "/dev/null" },
+                )
+                .env("GIT_AUTHOR_NAME", "Test")
+                .env("GIT_AUTHOR_EMAIL", "test@example.org")
+                .env("GIT_COMMITTER_NAME", "Test")
+                .env("GIT_COMMITTER_EMAIL", "test@example.org")
+                .output()
+                .map_err(|error| error.to_string())?;
+            if output.status.success() {
+                Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+            } else {
+                Err(String::from_utf8_lossy(&output.stderr).into_owned())
+            }
+        };
+        let dir = tempfile::tempdir()?;
+        let path = dir.path();
+        git(path, &["init", "-q", "-b", "main"])?;
+        for i in 0..4 {
+            if i == 2 {
+                git(path, &["switch", "-q", "-c", "feature"])?;
+            }
+            std::fs::write(path.join("a"), format!("{i}\n"))?;
+            git(path, &["add", "a"])?;
+            git(path, &["commit", "-qm", &format!("change {i}")])?;
+        }
+        let ids = git(path, &["rev-list", "HEAD"])?
+            .lines()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        let ctx = egui::Context::default();
+        crate::phosphor::install(&ctx);
+        let mut app = Browser::new(path.to_path_buf());
+        app.state.complete(
+            0,
+            Ok(gg_engine::History {
+                path: path.to_path_buf(),
+                head: "main".into(),
+                commits: ids
+                    .iter()
+                    .enumerate()
+                    .map(|(i, id)| gg_engine::Commit {
+                        id: id.clone(),
+                        parents: ids.get(i + 1).cloned().into_iter().collect(),
+                        author: "Test".into(),
+                        email: "test@example.org".into(),
+                        time: "2026-10-30 12:00:00 +0000".into(),
+                        message: format!("change {}", 3 - i),
+                    })
+                    .collect(),
+                truncated: false,
+                shallow: false,
+            }),
+        );
+        // Select an older commit on main: the toolbar must not depend on it.
+        let selected = ids[3].clone();
+        app.state.selected = Some(selected.clone());
+        app.state.reconcile_selection();
+        app.local_summary = Some(LocalSummary::read(path.to_path_buf()));
+        let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        let pos = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text)
+                    if text.galley.job.text == crate::phosphor::LIST_NUMBERS =>
+                {
+                    Some(text.pos + text.galley.size() / 2.0)
+                }
+                _ => None,
+            })
+            .ok_or("missing rewrite toolbar button")?;
+        let events = vec![
+            egui::Event::PointerMoved(pos),
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ];
+        let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, events), |ctx| {
+            app.draw_ui(ctx)
+        });
+        let dialog = app
+            .rewrite_dialog
+            .as_ref()
+            .ok_or("rewrite dialog did not open")?;
+        assert_eq!(
+            app.state.selected.as_deref(),
+            Some(selected.as_str()),
+            "the toolbar leaves the history selection alone"
+        );
+        assert_eq!(
+            dialog.from, ids[1],
+            "starts at the branch's first own commit"
+        );
+        assert_eq!(
+            dialog.rows.len(),
+            2,
+            "the branch's own commits through HEAD"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn stash_picker_lists_entries_with_restore_show_and_drop()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        crate::phosphor::install(&ctx);
+        let mut app = layout_fixture();
+        app.local_summary = Some(LocalSummary {
+            dirty: Some(true),
+            stashes: (0..2)
+                .map(|index| gg_engine::stash::StashEntry {
+                    index,
+                    reference: format!("stash@{{{index}}}"),
+                    commit: format!("{index:040x}"),
+                    message: format!("WIP {index}"),
+                })
+                .collect(),
+            branch_start: None,
+        });
+        let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        let pos = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text)
+                    if text.galley.job.text == crate::phosphor::BOX_ARROW_UP =>
+                {
+                    Some(text.pos + text.galley.size() / 2.0)
+                }
+                _ => None,
+            })
+            .ok_or("missing stash picker button")?;
+        let click = vec![
+            egui::Event::PointerMoved(pos),
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ];
+        let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, click), |ctx| {
+            app.draw_ui(ctx)
+        });
+        let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        let texts = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) => Some(text.galley.job.text.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        for expected in ["2", "Apply stash@{0}", "Pop", "Show changes", "Drop…"] {
+            assert!(
+                texts.iter().any(|text| text == expected),
+                "missing {expected:?} in {texts:?}"
+            );
+        }
+        assert!(
+            texts.iter().any(|text| text.contains("stash@{1}")),
+            "both entries are listed"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn stash_commands_follow_local_changes_and_entries() {
+        let mut app = layout_fixture();
+        app.local_summary = Some(LocalSummary {
+            dirty: Some(false),
+            stashes: Vec::new(),
+            branch_start: None,
+        });
+        let ready = app.frame_readiness();
+        assert_eq!(ready.stash_reason, Some("No local changes to stash"));
+        assert_eq!(ready.stashes, 0);
+        assert!(ready.branch_rewrite_reason.is_some());
+        app.local_summary = Some(LocalSummary {
+            dirty: Some(true),
+            stashes: vec![gg_engine::stash::StashEntry {
+                index: 0,
+                reference: "stash@{0}".into(),
+                commit: "f".repeat(40),
+                message: "WIP on main".into(),
+            }],
+            branch_start: Some(("e".repeat(40), 2)),
+        });
+        let ready = app.frame_readiness();
+        assert_eq!(ready.stash_reason, None);
+        assert_eq!(ready.stashes, 1);
+        assert_eq!(ready.branch_rewrite_count, 2);
+        assert_eq!(ready.branch_rewrite_reason, None);
     }
 
     #[test]
