@@ -103,6 +103,31 @@ Goal: deliver the agreed [final interface design](final-design.md): one window f
 | Rebase actions | Reword, fixup, drop, and edit produce the same history as `git rebase -i` with the same todo; backups are created first | Git oracle, CLI |
 | Rebase stops | Continue, Skip, and Abort appear only in the operation area and only when Git supports them | Git oracle, egui interaction |
 
+### Gaps · reviewed 2026-10-30
+
+Differences between the [final design](final-design.md) and what shipped, plus places that break the [stable layout and no-placeholder rules](design.md). Each fix keeps its own test.
+
+Design not yet implemented:
+
+1. **Shortcuts:** `Ctrl+1` (Local Changes), `Ctrl+2` (History), and `Ctrl+\` (refs sidebar) do not exist; the View menu lacks the Local Changes and History items. **Repository › Quit** is missing, and macOS has no gg › Settings… (`Cmd+,` already works).
+2. **Stashes picker:** rows show the ref and message only; the design adds branch, age, and file count.
+3. **Search:** the Files group is missing; the toolbar has a Search button rather than a field.
+4. **Conflict stop:** blocks live in the floating Resolve conflicts window, not in the main workspace beside the operation area.
+5. **Preferences:** no Diff or Commit sections yet; the Settings panel plan's layout memory and operation defaults (increments 4–5) remain.
+6. **Frame metrics:** the menu row is 42 px, not 26 px; compact diff rows are 20 px, not 19 px.
+
+Layout moves with content:
+
+7. **Operation area:** its height follows its content: one line for most operations, three for a rebase stop, a fourth when **Commits made at this stop** appears, and the whole strip appears or disappears with the operation. Everything below it shifts.
+8. **Resolve conflicts window:** sizes itself to its content, so switching files, modes, or result length grows and shrinks it.
+9. **Interactive rebase dialog:** the header range moves as the result count changes length; on the right, the reader moves down when Reword's message box replaces the message text.
+10. **Review header:** Retry, Prev/Next file, and the parent selector come and go, shifting History and the file count.
+11. **Search and stash popups:** grow and shrink with the number of results and the inline drop confirmation.
+
+Placeholder text in panes:
+
+12. "Loading…" or "Reading…" text replaces content in: commit details ("Loading message..."), history rows, Review and Local Changes file rows, the reader ("Loading selected-file diff…", "Loading full file…", "Loading attribution…"), file history ("Loading file history…", "Loading versions…"), Review's empty list ("Reading comparison…"), and the Worktrees, submodule, and LFS windows. Endpoint labels show "resolving…". Status-line progress is allowed.
+
 ## Repository setup and branch integration · in review
 
 Goal: make clone destinations quick to compose and branch integration discoverable without weakening Git safety.
