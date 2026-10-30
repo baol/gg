@@ -1843,6 +1843,81 @@ fn rebase_cli_rewrites_records_backup_and_recovers() -> Result {
 }
 
 #[test]
+fn rewrite_cli_rewords_fixes_up_drops_and_edits() -> Result {
+    let repo = tempfile::tempdir()?;
+    init(repo.path(), &["-b", "main"])?;
+    git(repo.path(), &["config", "user.name", "Test"])?;
+    git(repo.path(), &["config", "user.email", "test@example.org"])?;
+    for name in ["base", "one", "two", "three", "four"] {
+        std::fs::write(repo.path().join(name), format!("{name}\n"))?;
+        git(repo.path(), &["add", name])?;
+        git(repo.path(), &["commit", "-qm", name])?;
+    }
+    let text = |args: &[&str]| -> Result<String> {
+        Ok(String::from_utf8(git_output(repo.path(), args)?)?
+            .trim()
+            .to_string())
+    };
+    let one = text(&["rev-parse", "HEAD~3"])?;
+    let two = text(&["rev-parse", "HEAD~2"])?;
+    let three = text(&["rev-parse", "HEAD~1"])?;
+    let four = text(&["rev-parse", "HEAD"])?;
+    let binary = env!("CARGO_BIN_EXE_git-good");
+
+    let out = Command::new(binary)
+        .args([
+            "rewrite",
+            "--from",
+            &one,
+            "--reword",
+            &one,
+            "one, reworded",
+            "--fixup",
+            &two,
+            "--drop",
+            &three,
+            "--edit",
+            &four,
+            "--repo",
+        ])
+        .arg(repo.path())
+        .output()?;
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let receipt: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(receipt["steps"], 4);
+    assert_eq!(receipt["applied"], false);
+    assert_eq!(receipt["in_progress"], true);
+    assert_eq!(receipt["conflicts"], serde_json::json!([]));
+
+    let out = Command::new(binary)
+        .args(["rewrite", "--continue", "--repo"])
+        .arg(repo.path())
+        .output()?;
+    assert!(out.status.success());
+    let receipt: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(receipt["applied"], true);
+    assert_eq!(
+        text(&["log", "--reverse", "--format=%s"])?,
+        "base\none, reworded\nfour"
+    );
+    assert!(!repo.path().join("three").exists());
+    assert_eq!(std::fs::read(repo.path().join("two"))?, b"two\n");
+
+    let out = Command::new(binary)
+        .args(["rewrite", "--repo"])
+        .arg(repo.path())
+        .args(["--from", "HEAD", "--reword", "HEAD"])
+        .output()?;
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("--reword needs a commit and a message"));
+    Ok(())
+}
+
+#[test]
 fn rewrite_cli_reorders_squashes_and_recovers() -> Result {
     let repo = tempfile::tempdir()?;
     init(repo.path(), &["-b", "main"])?;

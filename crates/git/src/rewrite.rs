@@ -1,4 +1,5 @@
-//! Reorder and squash a linear range through an interactive rebase todo.
+//! Rewrite a linear range through an interactive rebase todo: reorder, pick,
+//! reword, edit (stop to reopen), squash, fixup, and drop.
 use gg_engine::rewrite::{Action, RangeCommit, Receipt, Step};
 use std::{
     collections::BTreeSet,
@@ -95,7 +96,7 @@ pub fn rewrite(
                 .ok_or("Rewrite base is missing for a non-root range.")?,
         );
     }
-    let editor = sequence_editor(&steps);
+    let editor = write_plan(path, &steps)?;
     let output = run(path, &args, Some(&editor))?;
     let conflicts = unmerged(path)?;
     let state = crate::mutation::state(path)?;
@@ -109,6 +110,13 @@ pub fn rewrite(
             "Resolve the listed conflicts, stage each path, then continue or abort the rewrite."
                 .into(),
         );
+    } else if in_progress && steps.iter().any(|step| step.action == Action::Edit) {
+        warnings.push(
+            "The rewrite stopped at a reopened commit. Amend or split it, then continue, skip, or abort."
+                .into(),
+        );
+    } else if in_progress {
+        warnings.push(failure("The rewrite stopped", &output));
     }
     if autostash && !output.status.success() {
         warnings.push(
@@ -257,9 +265,6 @@ fn resolve_steps(path: &Path, range: &Range, steps: &[Step]) -> Result<Vec<Step>
     if steps.is_empty() {
         return Err("Rewrite requires at least one step.".into());
     }
-    if steps[0].action != Action::Pick {
-        return Err("The first rewrite step must be pick.".into());
-    }
     let allowed = range
         .commits
         .iter()
@@ -267,6 +272,7 @@ fn resolve_steps(path: &Path, range: &Range, steps: &[Step]) -> Result<Vec<Step>
         .collect::<BTreeSet<_>>();
     let mut seen = BTreeSet::new();
     let mut resolved = Vec::with_capacity(steps.len());
+    let mut kept = false;
     for step in steps {
         let id = resolve(path, &step.commit)?;
         if !allowed.contains(&id) {
@@ -281,9 +287,35 @@ fn resolve_steps(path: &Path, range: &Range, steps: &[Step]) -> Result<Vec<Step>
                 step.commit
             ));
         }
+        let message = match (step.action, &step.message) {
+            (Action::Reword, Some(message)) if !message.trim().is_empty() => Some(message.clone()),
+            (Action::Reword, _) => {
+                return Err(format!("Reword {} needs a non-empty message.", step.commit));
+            }
+            (_, Some(_)) => {
+                return Err(format!(
+                    "Only reword steps carry a message; {} is {}.",
+                    step.commit,
+                    step.action.as_str()
+                ));
+            }
+            (_, None) => None,
+        };
+        match step.action {
+            Action::Squash | Action::Fixup if !kept => {
+                return Err(format!(
+                    "{} {} needs a kept commit below it to combine into.",
+                    capitalized(step.action.as_str()),
+                    step.commit
+                ));
+            }
+            Action::Drop => {}
+            _ => kept = true,
+        }
         resolved.push(Step {
             action: step.action,
             commit: id,
+            message,
         });
     }
     if seen.len() != allowed.len() {
@@ -296,20 +328,72 @@ fn resolve_steps(path: &Path, range: &Range, steps: &[Step]) -> Result<Vec<Step>
             "Every commit in the selected range must appear exactly once; {missing} is missing."
         ));
     }
+    if !kept {
+        return Err(
+            "A rewrite cannot drop every commit. Use Reset to move the branch instead.".into(),
+        );
+    }
     Ok(resolved)
 }
 
-fn sequence_editor(steps: &[Step]) -> String {
-    let mut command = String::from("printf '%s\\n'");
-    for step in steps {
-        command.push_str(" '");
-        command.push_str(step.action.as_str());
-        command.push(' ');
-        command.push_str(&step.commit);
-        command.push('\'');
+fn capitalized(word: &str) -> String {
+    let mut chars = word.chars();
+    chars
+        .next()
+        .map(|first| first.to_uppercase().chain(chars).collect())
+        .unwrap_or_default()
+}
+
+/// Write the todo and reword messages under the Git directory and return the
+/// sequence editor that installs the todo.
+///
+/// A reword becomes `pick` followed by an `exec` that amends only the message,
+/// so Git never needs an interactive editor.
+fn write_plan(path: &Path, steps: &[Step]) -> Result<String, String> {
+    let dir = git_dir(path)?.join("gg-rewrite");
+    if dir.exists() {
+        std::fs::remove_dir_all(&dir)
+            .map_err(|error| format!("Could not clear the previous rewrite plan: {error}"))?;
     }
-    command.push_str(" >");
-    command
+    std::fs::create_dir_all(&dir)
+        .map_err(|error| format!("Could not write the rewrite plan: {error}"))?;
+    let mut todo = String::new();
+    for (index, step) in steps.iter().enumerate() {
+        match (step.action, &step.message) {
+            (Action::Reword, Some(message)) => {
+                let file = dir.join(format!("message-{index}.txt"));
+                std::fs::write(&file, message.as_bytes())
+                    .map_err(|error| format!("Could not write the reword message: {error}"))?;
+                todo.push_str(&format!("pick {}\n", step.commit));
+                todo.push_str(&format!(
+                    "exec git commit --amend --only --allow-empty --cleanup=whitespace -F {}\n",
+                    shell_quote(&file.to_string_lossy())
+                ));
+            }
+            (action, _) => todo.push_str(&format!("{} {}\n", action.as_str(), step.commit)),
+        }
+    }
+    let file = dir.join("todo");
+    std::fs::write(&file, todo.as_bytes())
+        .map_err(|error| format!("Could not write the rewrite plan: {error}"))?;
+    Ok(format!("cp {}", shell_quote(&file.to_string_lossy())))
+}
+
+/// Quote `value` as one POSIX shell word.
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn git_dir(path: &Path) -> Result<std::path::PathBuf, String> {
+    let output = run(
+        path,
+        &["rev-parse".into(), "--absolute-git-dir".into()],
+        None,
+    )?;
+    if !output.status.success() {
+        return Err(failure("Find the Git directory", &output));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().into())
 }
 
 fn raw_has_parent(path: &Path, commit: &str) -> Result<bool, String> {

@@ -1,18 +1,32 @@
-//! Shared reorder and squash plans and receipts.
+//! Shared interactive-rebase plans and receipts.
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Action {
+    /// Keep the commit as it is.
     Pick,
+    /// Keep the commit with the step's new message.
+    Reword,
+    /// Keep the commit and stop after it so it can be amended or split.
+    Edit,
+    /// Combine into the kept commit before it, joining both messages.
     Squash,
+    /// Combine into the kept commit before it, keeping only that message.
+    Fixup,
+    /// Leave the commit out.
+    Drop,
 }
 
 impl Action {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Pick => "pick",
+            Self::Reword => "reword",
+            Self::Edit => "edit",
             Self::Squash => "squash",
+            Self::Fixup => "fixup",
+            Self::Drop => "drop",
         }
     }
 }
@@ -21,6 +35,29 @@ impl Action {
 pub struct Step {
     pub action: Action,
     pub commit: String,
+    /// The new full message of a [`Action::Reword`] step; `None` otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+impl Step {
+    /// A step without a new message.
+    pub fn new(action: Action, commit: impl Into<String>) -> Self {
+        Self {
+            action,
+            commit: commit.into(),
+            message: None,
+        }
+    }
+
+    /// A reword step carrying the commit's new message.
+    pub fn reword(commit: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            action: Action::Reword,
+            commit: commit.into(),
+            message: Some(message.into()),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
