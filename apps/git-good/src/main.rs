@@ -9844,36 +9844,18 @@ impl Browser {
         }
         self.details_rect = egui::Rect::NOTHING;
         if !narrow && self.details_visible {
-            let reserved_refs = if wide_refs { self.refs_width } else { 0.0 };
-            let available =
-                (ctx.content_rect().width() - reserved_refs - history_view::MIN_WIDTH - 16.0)
-                    .max(240.0);
-            let details_default = available.min(320.0);
-            let details = egui::Panel::right("details")
-                .default_size(details_default)
-                .size_range(240.0..=available)
-                .resizable(true)
-                .show_separator_line(false)
-                .frame(
-                    egui::Frame::side_top_panel(ui.style().as_ref())
-                        .inner_margin(12.0)
-                        .stroke(egui::Stroke::NONE),
-                )
+            // The commit inspector sits under the history list, as in the
+            // History mockup; the refs sidebar keeps the full height.
+            let details = egui::Panel::bottom("details")
+                .exact_size(details_view::INSPECTOR_HEIGHT)
+                .resizable(false)
                 .show(ui, |ui| {
-                    let rect = ui.available_rect_before_wrap();
-                    ui.allocate_rect(rect, egui::Sense::hover());
-                    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
-                    child.set_clip_rect(rect.intersect(ui.clip_rect()));
-                    let ui = &mut child;
-                    ui.weak("DETAILS");
-                    ui.add_space(8.0);
+                    ui.add_space(4.0);
                     let commit = self.state.displayed_details();
-                    let loading = self.state.details.is_none();
                     let menu = self.commit_menu_entries();
-                    let command =
-                        details_view::show(ui, commit, loading, &mut self.avatars, |ui| {
-                            commit.and_then(|_| commit_action_menu(ui, &menu))
-                        });
+                    let command = details_view::inspector(ui, commit, &mut self.avatars, |ui| {
+                        commit.and_then(|_| commit_action_menu(ui, &menu))
+                    });
                     if let Some(command) = command
                         && let Some(commit) = commit
                     {
@@ -12564,11 +12546,9 @@ mod tests {
                 assert!(text.contains(&label), "missing {label} at {width}");
             }
             assert_eq!(
-                text.iter()
-                    .filter(|line| **line == "Commit actions")
-                    .count(),
-                1,
-                "the scoped menu replaces the separate window at {width}"
+                text.iter().filter(|line| **line == "Actions").count(),
+                usize::from(width >= 1040.0),
+                "the inspector's Actions button opens the menu at {width}"
             );
             assert!(!text.contains(&"Selected commit actions…"));
         }
@@ -12637,6 +12617,10 @@ mod tests {
         let ctx = egui::Context::default();
         let mut app = layout_fixture();
         app.help_shortcuts = true;
+        // A new window is sized invisibly on its first frame.
+        let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
         let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
             app.draw_ui(ctx)
         });
@@ -12650,7 +12634,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(text.contains(&"Keyboard shortcuts"));
         assert!(text.contains(&"Navigation"));
-        assert!(text.contains(&"Commit actions"));
+        assert!(text.contains(&"Actions"));
         assert!(text.iter().any(|line| line.contains("Alt+A")));
         assert!(
             text.iter().all(|line| !line.contains("View, Stash, Help")),
@@ -12707,6 +12691,10 @@ mod tests {
             recovery: Some(RecoveryAction::Backups),
         });
         app.outcome_details_open = true;
+        // A new window is sized invisibly on its first frame.
+        let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
         let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
             app.draw_ui(ctx)
         });

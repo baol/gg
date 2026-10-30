@@ -144,9 +144,9 @@ Still to build (medium):
 
 Decisions for the review (see the canvas page **Review · as built**):
 
-- Side-by-side diff (large) and a bottom commit inspector instead of the right pane (large).
+- Side-by-side diff (in progress) and the bottom commit inspector (done).
 - The mockup's Unstaged/Staged reader toggle against the shipped rule of one comparison per selected row.
-- History: drop the filter row and show `Commit · N` in the column header, with filtering moved to search?
+- History: the filter row is gone; `Commit · N` and the active filter sit in the column header (done).
 - Decided: follow the mockups. Refresh is automatic (file watcher and before commands), `Ctrl+R` is Reword, `Del` deletes, Preferences is modal, Open in editor uses an editor-command setting. F10 menu focus is not available in egui.
 
 ## Repository setup and branch integration · in review
