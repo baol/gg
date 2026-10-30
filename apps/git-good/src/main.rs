@@ -1485,6 +1485,8 @@ struct Browser {
     refs_width: f32,
     state: state::State,
     pending: Option<stream::Worker>,
+    /// The private backup the last rewrite saved; Abort restores it.
+    rewrite_backup: Option<String>,
     /// Watches the open repository; settled changes refresh what they touch.
     watcher: Option<watcher::Watcher>,
     /// When the history last started loading, so a ref change it already
@@ -1649,6 +1651,7 @@ impl Browser {
             pending: None,
             watcher: None,
             last_load: None,
+            rewrite_backup: None,
             pending_filter_edit: false,
             worker: None,
             staged: None,
@@ -5630,6 +5633,7 @@ impl Browser {
         if let Some(backup) = &receipt.backup {
             details.push(format!("Backup: {backup}"));
         }
+        self.rewrite_backup = receipt.backup.clone();
         if !receipt.conflicts.is_empty() {
             details.push(format!("Conflicts: {}", receipt.conflicts.join(", ")));
         }
@@ -8865,7 +8869,13 @@ impl Browser {
                         && ui.ctx().input_mut(|i| {
                             i.consume_key(egui::Modifiers::COMMAND, egui::Key::Enter)
                         });
-                    match rebase_stop::show(ui, progress, *conflicts, *pending) {
+                    match rebase_stop::show(
+                        ui,
+                        progress,
+                        *conflicts,
+                        *pending,
+                        self.rewrite_backup.as_deref(),
+                    ) {
                         Some(rebase_stop::Command::Continue) => {
                             mutation_action = Some(MutationAction::Continue);
                         }

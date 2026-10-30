@@ -133,6 +133,7 @@ pub fn show(
     progress: &RebaseProgress,
     conflicts: usize,
     pending: bool,
+    backup: Option<&str>,
 ) -> Option<Command> {
     let mut command = None;
     ui.horizontal(|ui| {
@@ -140,7 +141,12 @@ pub fn show(
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui
                 .add_enabled(!pending, egui::Button::new("Abort and restore"))
-                .on_hover_text("Stop the rebase and restore the branch as it was.")
+                .on_hover_text(match backup {
+                    Some(backup) => format!(
+                        "Stop the rebase and restore the branch as it was.\nBackup: {backup}"
+                    ),
+                    None => "Stop the rebase and restore the branch as it was.".to_string(),
+                })
                 .clicked()
             {
                 command = Some(Command::Abort);
