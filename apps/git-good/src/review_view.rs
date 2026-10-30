@@ -657,10 +657,18 @@ impl Review {
             bounded_text::field(ui, message, egui::FontId::proportional(12.0), 22.0);
             return;
         }
+        // History sits on the reader's mode row (mockup), not in the header.
+        self.diff.set_history_button(
+            (self.history.is_none() && !self.embedded).then_some(self.selected.is_some()),
+        );
         if reading || self.history.is_some() {
             self.diff.draw_reading(ui);
         } else {
             self.diff.draw(ui);
+        }
+        if self.diff.take_history_request() && self.history.is_none() {
+            self.open_history = true;
+            ctx.request_repaint();
         }
         if let Some(lines) = self.diff.take_line_history() {
             let start_index = if self.diff.place().side == ReadingSide::Before {
@@ -1029,7 +1037,9 @@ impl Review {
                         {
                             self.retry(ctx);
                         }
-                        let history_shown = self.history.is_none() && (!narrow || self.show_diff);
+                        // Only the narrow file list (no reader) keeps History
+                        // in the header; otherwise it is on the reader's row.
+                        let history_shown = self.history.is_none() && narrow && !self.show_diff;
                         if ui
                             .add_visible(
                                 history_shown,
@@ -1408,7 +1418,8 @@ mod tests {
                     _ => None,
                 })
             };
-            (find("History"), find("Compare with"))
+            // History moved to the reader's row; the header keeps Compare with.
+            (find("Compare with"), find("Compare with"))
         };
         let files = place(&mut view);
         assert!(files.0.is_some() && files.1.is_some(), "{files:?}");

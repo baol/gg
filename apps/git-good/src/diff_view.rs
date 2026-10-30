@@ -148,6 +148,9 @@ pub struct DiffView {
     lfs_request: Option<LfsRequest>,
     /// Repository-relative path chosen with ⋯ › Open in editor.
     editor_request: Option<String>,
+    /// Draw History on the mode row: `Some(enabled)`; the owner opens it.
+    history_button: Option<bool>,
+    history_request: bool,
     offset: f32,
     reset: bool,
     mode: Mode,
@@ -232,6 +235,8 @@ impl Default for DiffView {
             submodule_request: None,
             lfs_request: None,
             editor_request: None,
+            history_button: None,
+            history_request: false,
             offset: 0.0,
             reset: false,
             mode: Mode::Diff,
@@ -388,6 +393,16 @@ impl DiffView {
     }
 
     /// Take an LFS-details request raised by File actions.
+    /// Show History on the mode row (`Some(enabled)`) or not (`None`).
+    pub fn set_history_button(&mut self, button: Option<bool>) {
+        self.history_button = button;
+    }
+
+    /// Take a click on the mode row's History button.
+    pub fn take_history_request(&mut self) -> bool {
+        std::mem::take(&mut self.history_request)
+    }
+
     /// Take the path chosen with ⋯ › Open in editor.
     pub fn take_editor_request(&mut self) -> Option<String> {
         self.editor_request.take()
@@ -1774,7 +1789,7 @@ impl DiffView {
 
     /// One file header: exact path, one scoped action menu, and the exact
     /// endpoints. Low-frequency identity and commands are not permanent rows.
-    fn draw_header(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, change: &FileChange) {
+    fn draw_header(&mut self, ui: &mut egui::Ui, _ctx: &egui::Context, change: &FileChange) {
         let displayed_working = self
             .displayed_working
             .clone()
@@ -1851,94 +1866,6 @@ impl DiffView {
                     self.stage_edit = Some(self.file_edit(false));
                 }
             }
-            ui.menu_button(crate::phosphor::icon(crate::phosphor::DOTS_THREE), |ui| {
-                let capabilities = self.capabilities();
-                for (label, side, enabled) in [
-                    (
-                        "Export before…",
-                        change.old.as_ref(),
-                        capabilities.export_before,
-                    ),
-                    (
-                        "Export after…",
-                        change.new.as_ref(),
-                        capabilities.export_after,
-                    ),
-                ] {
-                    if ui
-                        .add_enabled(enabled && !self.export.busy(), egui::Button::new(label))
-                        .clicked()
-                        && let Some(side) = side
-                    {
-                        self.export.choose(
-                            self.displayed_path.clone(),
-                            side.clone(),
-                            format!("{} · {}", label.trim_end_matches('…'), change.path),
-                        );
-                        ui.close();
-                    }
-                }
-                if self.can_drop_whole() && ui.button("Discard file…").clicked() {
-                    self.stage_edit = Some(self.file_edit(true));
-                    ui.close();
-                }
-                let native = std::str::from_utf8(&change.path_bytes).ok();
-                if ui
-                    .add_enabled(native.is_some(), egui::Button::new("Open in editor"))
-                    .on_hover_text(
-                        "Open the working file with the editor from Preferences, or the system's default app",
-                    )
-                    .on_disabled_hover_text("The path is not valid UTF-8.")
-                    .clicked()
-                {
-                    self.editor_request = native.map(str::to_owned);
-                    ui.close();
-                }
-                if ui
-                    .button(if native.is_some() {
-                        "Copy path"
-                    } else {
-                        "Copy escaped path"
-                    })
-                    .clicked()
-                {
-                    ctx.copy_text(native.unwrap_or(&change.path).to_owned());
-                    ui.close();
-                }
-                if self.is_lfs() {
-                    let request = self
-                        .working
-                        .clone()
-                        .map(LfsRequest::Working)
-                        .or_else(|| Some(LfsRequest::Change(change.clone())));
-                    ui.separator();
-                    if ui.button("LFS details…").clicked() {
-                        self.lfs_request = request;
-                        ui.close();
-                    }
-                }
-                if let Some(request) = self.request_submodule(change) {
-                    ui.separator();
-                    if ui.button("Submodule details…").clicked() {
-                        self.submodule_request = Some(request);
-                        ui.close();
-                    }
-                }
-                ui.separator();
-                if ui
-                    .button(if self.details_open {
-                        "Hide file details"
-                    } else {
-                        "Show file details"
-                    })
-                    .clicked()
-                {
-                    self.details_open = !self.details_open;
-                    ui.close();
-                }
-            })
-            .response
-            .on_hover_text("File actions");
         });
         if !self.details_open {
             return;
@@ -1992,6 +1919,98 @@ impl DiffView {
             )
         };
         bounded_text::field(ui, &text, egui::FontId::monospace(10.0), 18.0);
+    }
+
+    /// The ⋯ File actions menu, at the end of the reader's mode row (mockup).
+    fn file_actions_menu(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, change: &FileChange) {
+        ui.menu_button(crate::phosphor::icon(crate::phosphor::DOTS_THREE), |ui| {
+            let capabilities = self.capabilities();
+            for (label, side, enabled) in [
+                (
+                    "Export before…",
+                    change.old.as_ref(),
+                    capabilities.export_before,
+                ),
+                (
+                    "Export after…",
+                    change.new.as_ref(),
+                    capabilities.export_after,
+                ),
+            ] {
+                if ui
+                    .add_enabled(enabled && !self.export.busy(), egui::Button::new(label))
+                    .clicked()
+                    && let Some(side) = side
+                {
+                    self.export.choose(
+                        self.displayed_path.clone(),
+                        side.clone(),
+                        format!("{} · {}", label.trim_end_matches('…'), change.path),
+                    );
+                    ui.close();
+                }
+            }
+            if self.can_drop_whole() && ui.button("Discard file…").clicked() {
+                self.stage_edit = Some(self.file_edit(true));
+                ui.close();
+            }
+            let native = std::str::from_utf8(&change.path_bytes).ok();
+            if ui
+                .add_enabled(native.is_some(), egui::Button::new("Open in editor"))
+                .on_hover_text(
+                    "Open the working file with the editor from Preferences, or the system's default app",
+                )
+                .on_disabled_hover_text("The path is not valid UTF-8.")
+                .clicked()
+            {
+                self.editor_request = native.map(str::to_owned);
+                ui.close();
+            }
+            if ui
+                .button(if native.is_some() {
+                    "Copy path"
+                } else {
+                    "Copy escaped path"
+                })
+                .clicked()
+            {
+                ctx.copy_text(native.unwrap_or(&change.path).to_owned());
+                ui.close();
+            }
+            if self.is_lfs() {
+                let request = self
+                    .working
+                    .clone()
+                    .map(LfsRequest::Working)
+                    .or_else(|| Some(LfsRequest::Change(change.clone())));
+                ui.separator();
+                if ui.button("LFS details…").clicked() {
+                    self.lfs_request = request;
+                    ui.close();
+                }
+            }
+            if let Some(request) = self.request_submodule(change) {
+                ui.separator();
+                if ui.button("Submodule details…").clicked() {
+                    self.submodule_request = Some(request);
+                    ui.close();
+                }
+            }
+            ui.separator();
+            if ui
+                .button(if self.details_open {
+                    "Hide file details"
+                } else {
+                    "Show file details"
+                })
+                .clicked()
+            {
+                self.details_open = !self.details_open;
+                ui.close();
+            }
+        })
+        .response
+        .on_hover_text("File actions");
     }
 
     /// One short state line for completeness and notes. Sizes and object
@@ -2172,22 +2191,41 @@ impl DiffView {
                     actions.push(Action::Layout(layout));
                 }
             }
-            if self.mode == Mode::Full {
+            // Blame and History sit on this row in both presentations, as in
+            // the mockup; Blame from Diff opens Full file with blame on.
+            {
                 let available = self.attribution_available();
-                let label = if self.attribution {
+                let label = if self.attribution && self.mode == Mode::Full {
                     "Hide blame"
                 } else {
                     "Blame"
                 };
                 let response = ui
                     .add_enabled(available, egui::Button::new(label))
+                    .on_hover_text("Blame · B")
                     .on_disabled_hover_text(if self.working.is_some() {
                         "Attribution is available for committed content"
                     } else {
                         "This side has no committed revision"
                     });
                 if response.clicked() {
-                    actions.push(Action::Attribution);
+                    if self.mode != Mode::Full {
+                        actions.push(Action::Mode(Mode::Full));
+                        if !self.attribution {
+                            actions.push(Action::Attribution);
+                        }
+                    } else {
+                        actions.push(Action::Attribution);
+                    }
+                }
+            }
+            if let Some(available) = self.history_button {
+                let response = ui
+                    .add_enabled(available, egui::Button::new("History"))
+                    .on_hover_text("File history · H")
+                    .on_disabled_hover_text("Select a file to follow its history");
+                if response.clicked() {
+                    self.history_request = true;
                 }
             }
             if self.mode == Mode::Full && self.edge_known {
@@ -2258,6 +2296,7 @@ impl DiffView {
                     actions.push(Action::Change(1));
                 }
             }
+            self.file_actions_menu(ui, &ctx, &change);
         });
         for action in actions {
             match action {

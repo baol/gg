@@ -83,7 +83,7 @@ fn explanation(progress: &RebaseProgress) -> &'static str {
     match &progress.stop {
         RebaseStop::Conflict => "Resolve each conflicted file and stage the result, then continue.",
         RebaseStop::Reopened { base: Some(_), .. } => {
-            "Its changes are staged on its parent in Local Changes. Commit them in one or more parts; unstage what belongs in a later part."
+            "Its changes are staged. Edit, unstage parts to split, then continue."
         }
         RebaseStop::Reopened { base: None, .. } => {
             "A root commit stays at HEAD. Amend it in Local Changes, then continue."

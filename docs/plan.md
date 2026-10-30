@@ -141,12 +141,7 @@ Still to build (medium):
 5. Preferences: done (modal, footer, search, keyboard list, zoom, code font, History display options, pull strategy, force-with-lease offer, clone naming, reopen last repository, commit hooks, backup retention, confirm before Drop and Reset, identity, subject guide, sign tags, and Diff context lines, whitespace, wrap, and invisibles).
 6. Refs sidebar: done (Worktrees group and branch tracking counts).
 
-Small differences left for the review (see the canvas page **Review · as built**):
-
-- Reader header: the mockup puts Diff · Full file · Inline · Side by side · Blame · History · ‹ › · ⋯ on one row; as built, ⋯ sits on the path line, History in the Review header, and Blame only in Full file.
-- Interactive rebase: combined (squash/fixup) rows are not indented 12 px; the selected commit's header has no file count and +/− totals.
-- Rebase stop: the explanation is longer than the mockup's; the backup ref shows on Abort's tooltip rather than in the footer.
-- F10 menu focus is not available in egui.
+Small differences left for the review: none beyond F10 menu focus, which egui does not offer. The reader's one-row header, indented combined rebase rows, the short stop explanation, and the backup named on Abort are done.
 
 Decisions for the review (see the canvas page **Review · as built**):
 

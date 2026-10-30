@@ -468,6 +468,10 @@ impl Dialog {
         }
         let row = &self.plan.rows[index];
         let action = row.action;
+        // Combined rows sit 12 px in, under the commit they join (mockup).
+        if matches!(action, Action::Squash | Action::Fixup) {
+            ui.add_space(12.0);
+        }
         ui.label(
             egui::RichText::new(rebase_plan::short(&row.commit.id))
                 .monospace()
