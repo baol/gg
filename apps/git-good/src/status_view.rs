@@ -657,6 +657,11 @@ impl StatusView {
     }
 
     /// Take an LFS-details request raised by the reader.
+    /// Take the path chosen with ⋯ › Open in editor.
+    pub fn take_editor_request(&mut self) -> Option<String> {
+        self.reader.take_editor_request()
+    }
+
     pub(crate) fn take_lfs_request(&mut self) -> Option<crate::diff_view::LfsRequest> {
         self.reader.take_lfs_request()
     }
@@ -2997,6 +3002,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
         assert!(text.contains(&"Copy path"));
+        assert!(text.contains(&"Open in editor"));
         assert!(!text.contains(&"Stage file"));
         assert!(!text.contains(&"Discard file…"));
         assert!(!view.busy(), "selection and navigation stay available");

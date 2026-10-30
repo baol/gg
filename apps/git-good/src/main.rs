@@ -3167,6 +3167,23 @@ impl Browser {
         self.refresh_mutation();
     }
 
+    /// Open a repository-relative path's working file in the editor from
+    /// Preferences; a failure goes to the status line.
+    fn open_in_editor(&mut self, path: &str) {
+        let Some(workdir) = self.stash_path() else {
+            return;
+        };
+        let file = workdir.join(path);
+        let result = if file.exists() {
+            editor::open(&self.prefs.editor, &file)
+        } else {
+            Err(format!("{path} is not in the working tree."))
+        };
+        if let Err(error) = result {
+            self.set_outcome(OutcomeSeverity::Error, error, None, None);
+        }
+    }
+
     /// The Commit menu's entries, which the Commit actions popup mirrors.
     fn commit_menu_entries(&self) -> Vec<menus::Entry<FrameCommand>> {
         let ready = self.frame_readiness();
@@ -9630,6 +9647,13 @@ impl Browser {
             {
                 self.open_lfs(ctx, request);
             }
+            if let Some(path) = self
+                .working
+                .as_mut()
+                .and_then(|working| working.take_editor_request())
+            {
+                self.open_in_editor(&path);
+            }
             if let Some(stage) = self
                 .working
                 .as_mut()
@@ -9674,6 +9698,13 @@ impl Browser {
                 .and_then(|review| review.take_lfs_request())
             {
                 self.open_lfs(ctx, change);
+            }
+            if let Some(path) = self
+                .review
+                .as_mut()
+                .and_then(|review| review.take_editor_request())
+            {
+                self.open_in_editor(&path);
             }
             if close {
                 let location = self

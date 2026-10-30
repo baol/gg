@@ -194,6 +194,11 @@ impl Review {
     }
 
     /// Take an LFS-details request raised by the reader.
+    /// Take the path chosen with ⋯ › Open in editor.
+    pub fn take_editor_request(&mut self) -> Option<String> {
+        self.diff.take_editor_request()
+    }
+
     pub fn take_lfs_request(&mut self) -> Option<crate::diff_view::LfsRequest> {
         self.diff.take_lfs_request()
     }

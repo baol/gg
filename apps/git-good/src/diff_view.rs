@@ -99,6 +99,8 @@ pub struct DiffView {
     open_commit: Option<(String, String)>,
     submodule_request: Option<SubmoduleRequest>,
     lfs_request: Option<LfsRequest>,
+    /// Repository-relative path chosen with ⋯ › Open in editor.
+    editor_request: Option<String>,
     offset: f32,
     reset: bool,
     mode: Mode,
@@ -173,6 +175,7 @@ impl Default for DiffView {
             open_commit: None,
             submodule_request: None,
             lfs_request: None,
+            editor_request: None,
             offset: 0.0,
             reset: false,
             mode: Mode::Diff,
@@ -322,6 +325,11 @@ impl DiffView {
     }
 
     /// Take an LFS-details request raised by File actions.
+    /// Take the path chosen with ⋯ › Open in editor.
+    pub fn take_editor_request(&mut self) -> Option<String> {
+        self.editor_request.take()
+    }
+
     pub fn take_lfs_request(&mut self) -> Option<LfsRequest> {
         self.lfs_request.take()
     }
@@ -1621,6 +1629,17 @@ impl DiffView {
                     ui.close();
                 }
                 let native = std::str::from_utf8(&change.path_bytes).ok();
+                if ui
+                    .add_enabled(native.is_some(), egui::Button::new("Open in editor"))
+                    .on_hover_text(
+                        "Open the working file with the editor from Preferences, or the system's default app",
+                    )
+                    .on_disabled_hover_text("The path is not valid UTF-8.")
+                    .clicked()
+                {
+                    self.editor_request = native.map(str::to_owned);
+                    ui.close();
+                }
                 if ui
                     .button(if native.is_some() {
                         "Copy path"
