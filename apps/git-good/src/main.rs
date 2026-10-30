@@ -874,6 +874,17 @@ fn is_repository(path: &Path) -> bool {
         .is_ok_and(|status| status.success())
 }
 
+/// Text with right-aligned line numbers, for the conflict Result preview.
+fn numbered(text: &str) -> String {
+    let lines = text.lines().count().max(1);
+    let width = lines.to_string().len();
+    text.lines()
+        .enumerate()
+        .map(|(index, line)| format!("{:>width$}  {line}", index + 1))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// `Name <email>` from the repository's Git config, for Preferences ›
 /// Commit; `None` when Git has no identity.
 fn git_identity(repo: &Path) -> Option<String> {
@@ -1045,6 +1056,8 @@ struct ConflictView {
     blocks_note: Option<String>,
     /// Resolve the whole file from one source instead of block by block.
     whole_file: bool,
+    /// Files resolved and staged while the workspace was open.
+    resolved: Vec<String>,
 }
 
 fn next_conflict_selection(paths: &[String], keep: Option<&str>, previous: usize) -> usize {
@@ -5403,6 +5416,11 @@ impl Browser {
                 self.mutation_notice = Some(summary.clone());
                 self.set_outcome(OutcomeSeverity::Info, summary, None, None);
                 self.refresh_mutation();
+                if let Some(view) = &mut self.conflict_view
+                    && !view.resolved.contains(&file)
+                {
+                    view.resolved.push(file.clone());
+                }
                 self.refresh_conflict_view(ctx, Some(&file));
                 self.load(ctx);
                 self.refresh_working(ctx);
@@ -6045,19 +6063,6 @@ impl Browser {
                 .as_ref()
                 .map(|state| state.conflicts.len())
                 .unwrap_or(view.paths.len());
-            ui.horizontal(|ui| {
-                ui.heading("Resolve conflicts");
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui
-                        .button("Close")
-                        .on_hover_text("Return to the previous view (Esc)")
-                        .clicked()
-                    {
-                        conflict_open = false;
-                    }
-                });
-            });
-            ui.separator();
             ui.scope(|ui| {
                     ui.horizontal(|ui| {
                         ui.strong(
@@ -6072,6 +6077,15 @@ impl Browser {
                         {
                             ui.label(format!("· {}", commit.chars().take(8).collect::<String>()));
                         }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui
+                                .button("Close")
+                                .on_hover_text("Return to the previous view (Esc)")
+                                .clicked()
+                            {
+                                conflict_open = false;
+                            }
+                        });
                     });
                     ui.label(conflict_side_hint(operation));
                     // One fixed line for the error or the empty state.
@@ -6089,7 +6103,13 @@ impl Browser {
                     ui.horizontal_top(|ui| {
                         ui.vertical(|ui| {
                             ui.set_width(CONFLICT_PATHS_WIDTH);
-                            ui.label("Paths");
+                            // Files, as in the conflict mockup: what is left,
+                            // then what was resolved and staged here.
+                            let left = view
+                                .blocks
+                                .as_ref()
+                                .filter(|_| !view.whole_file)
+                                .map(conflict_blocks::Blocks::left);
                             let height = ui.available_height();
                             egui::ScrollArea::vertical()
                                 .id_salt("conflict-paths")
@@ -6097,13 +6117,65 @@ impl Browser {
                                 .min_scrolled_height(height)
                                 .auto_shrink([false, false])
                                 .show(ui, |ui| {
+                                    ui.label(
+                                        egui::RichText::new(format!("CONFLICTED  {}", view.paths.len()))
+                                            .small()
+                                            .weak(),
+                                    );
                                     for (index, path) in view.paths.iter().enumerate() {
+                                        let mut text = egui::text::LayoutJob::default();
+                                        text.append(
+                                            "!  ",
+                                            0.0,
+                                            egui::TextFormat {
+                                                color: ui.visuals().error_fg_color,
+                                                ..Default::default()
+                                            },
+                                        );
+                                        text.append(path, 0.0, egui::TextFormat::default());
+                                        if index == view.selected
+                                            && let Some(left) = left
+                                        {
+                                            text.append(
+                                                &format!("  {left} left"),
+                                                0.0,
+                                                egui::TextFormat {
+                                                    color: ui.visuals().weak_text_color(),
+                                                    ..Default::default()
+                                                },
+                                            );
+                                        }
                                         if ui
-                                            .selectable_label(index == view.selected, path)
+                                            .add(
+                                                egui::Button::selectable(index == view.selected, text)
+                                                    .truncate(),
+                                            )
+                                            .on_hover_text(path)
                                             .clicked()
                                         {
                                             conflict_select = Some(index);
                                         }
+                                    }
+                                    if view.paths.is_empty() && !view.loading {
+                                        ui.weak("All conflicts resolved.");
+                                    }
+                                    ui.add_space(6.0);
+                                    ui.label(
+                                        egui::RichText::new(format!(
+                                            "RESOLVED, STAGED  {}",
+                                            view.resolved.len()
+                                        ))
+                                        .small()
+                                        .weak(),
+                                    );
+                                    for path in &view.resolved {
+                                        ui.add(
+                                            egui::Label::new(
+                                                egui::RichText::new(format!("✓  {path}")).weak(),
+                                            )
+                                            .truncate(),
+                                        )
+                                        .on_hover_text(path);
                                     }
                                 });
                         });
@@ -6205,7 +6277,7 @@ impl Browser {
                                     .min_scrolled_height(150.0)
                                     .auto_shrink([false, false])
                                     .show(ui, |ui| {
-                                        ui.monospace(text);
+                                        ui.monospace(numbered(&text));
                                     });
                                 return;
                             }
@@ -6388,6 +6460,7 @@ impl Browser {
             blocks: None,
             blocks_note: None,
             whole_file: false,
+            resolved: Vec::new(),
         });
         view.keep = keep.map(str::to_string);
         view.previous_selected = view.selected;
@@ -11636,6 +11709,7 @@ mod tests {
                 blocks: None,
                 blocks_note: None,
                 whole_file: false,
+                resolved: Vec::new(),
             });
             let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
                 app.draw_ui(ctx)
@@ -11651,8 +11725,8 @@ mod tests {
                     _ => None,
                 })
                 .collect::<Vec<_>>();
-            assert!(text.iter().any(|line| line.contains("Resolve conflicts")));
-            assert!(text.iter().any(|line| line.contains("Paths")));
+            assert!(text.iter().any(|line| line.contains("CONFLICTED")));
+            assert!(text.iter().any(|line| line.contains("RESOLVED, STAGED")));
             assert!(text.iter().any(|line| line.contains("Base")));
             assert!(text.iter().any(|line| line.contains("Ours")));
             assert!(text.iter().any(|line| line.contains("Theirs")));
@@ -12623,6 +12697,7 @@ mod tests {
             blocks: None,
             blocks_note: None,
             whole_file: false,
+            resolved: Vec::new(),
         });
         let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
             app.draw_ui(ctx)
@@ -12852,6 +12927,7 @@ mod tests {
             blocks: Some(conflict_blocks::Blocks::new(vec![block("1"), block("2")])),
             blocks_note: None,
             whole_file: false,
+            resolved: Vec::new(),
             snapshot: None,
             preview: gg_engine::conflict::Resolution::Working,
             tab: ConflictTab::Ours,
@@ -12928,6 +13004,7 @@ mod tests {
             blocks: None,
             blocks_note: None,
             whole_file: false,
+            resolved: Vec::new(),
             snapshot: Some(gg_engine::conflict::Snapshot {
                 base: Some("1".repeat(40)),
                 ours: Some("2".repeat(40)),
@@ -13329,6 +13406,7 @@ mod tests {
             blocks: None,
             blocks_note: None,
             whole_file: false,
+            resolved: Vec::new(),
         });
         let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
             app.draw_ui(ctx)
@@ -14465,6 +14543,17 @@ mod tests {
         let _ = crate::tests::run_ui(&ctx, input, |ctx| app.draw_ui(ctx));
         assert_eq!(app.state.count, 100_000);
         assert!((app.scroll_offset - offset).abs() < 0.1);
+    }
+
+    #[test]
+    fn result_lines_are_numbered_and_aligned() {
+        assert_eq!(numbered("a\nb"), "1  a\n2  b");
+        let ten = (0..10)
+            .map(|n| n.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(numbered(&ten).starts_with(" 1  0\n"));
+        assert!(numbered(&ten).ends_with("10  9"));
     }
 
     #[test]

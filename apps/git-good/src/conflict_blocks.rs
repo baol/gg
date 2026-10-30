@@ -34,6 +34,28 @@ impl Blocks {
         self.choices.len()
     }
 
+    /// Blocks still without a choice.
+    pub fn left(&self) -> usize {
+        self.count() - self.chosen()
+    }
+
+    /// The line where each block starts in our version of the file (1-based):
+    /// common lines plus our side of the blocks before it.
+    pub fn start_lines(&self) -> Vec<usize> {
+        let mut line = 1;
+        let mut starts = Vec::new();
+        for segment in &self.segments {
+            match segment {
+                Segment::Common(text) => line += text.lines().count(),
+                Segment::Block { ours, .. } => {
+                    starts.push(line);
+                    line += ours.lines().count();
+                }
+            }
+        }
+        starts
+    }
+
     pub fn chosen(&self) -> usize {
         self.choices.iter().flatten().count()
     }
@@ -95,6 +117,7 @@ impl Blocks {
         let mut chosen = None;
         let mut focus = None;
         let wide = ui.available_width() >= 560.0;
+        let starts = self.start_lines();
         egui::ScrollArea::vertical()
             .id_salt("conflict-blocks")
             .max_height((ui.available_height() - 190.0).max(160.0))
@@ -117,6 +140,9 @@ impl Blocks {
                         .show(ui, |ui| {
                             ui.horizontal_wrapped(|ui| {
                                 ui.strong(format!("Conflict {} of {count}", index + 1));
+                                if let Some(line) = starts.get(index) {
+                                    ui.weak(format!("line {line}"));
+                                }
                                 for (key, choice) in BlockChoice::ALL.into_iter().enumerate() {
                                     let selected = self.choices[index] == Some(choice);
                                     let response =
@@ -208,6 +234,16 @@ mod tests {
         blocks.choose(0, BlockChoice::OursThenTheirs);
         assert!(blocks.complete());
         assert_eq!(blocks.text(), "top\nours 1\ntheirs 1\ntheirs 2\nours 3\n");
+    }
+
+    #[test]
+    fn blocks_know_their_start_lines_and_how_many_are_left() {
+        let mut blocks = blocks();
+        // "top" is line 1; each block has one line on our side.
+        assert_eq!(blocks.start_lines(), [2, 3, 4]);
+        assert_eq!(blocks.left(), 3);
+        blocks.choose(0, BlockChoice::Ours);
+        assert_eq!(blocks.left(), 2);
     }
 
     #[test]
