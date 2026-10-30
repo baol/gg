@@ -1,5 +1,6 @@
 //! Per-block conflict resolution: each block shows Base, Ours, and Theirs and
-//! takes one of four choices (keys 1–4 on the current block). The result
+//! takes one of four choices (keys 1–4 on the current block; `[` and `]` move
+//! between blocks). The result
 //! preview keeps markers for blocks without a choice.
 
 use eframe::egui;
@@ -59,8 +60,21 @@ impl Blocks {
             .unwrap_or(index);
     }
 
-    /// Keys 1–4 choose for the current block.
+    /// Move the current block by `step`, wrapping at either end.
+    pub fn step(&mut self, step: isize) {
+        let count = self.count() as isize;
+        if count > 0 {
+            self.current = (self.current as isize + step).rem_euclid(count) as usize;
+        }
+    }
+
+    /// Keys 1–4 choose for the current block; `[` and `]` move between blocks.
     pub fn keys(&mut self, ctx: &egui::Context) {
+        for (key, step) in [(egui::Key::OpenBracket, -1), (egui::Key::CloseBracket, 1)] {
+            if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, key)) {
+                self.step(step);
+            }
+        }
         for (key, choice) in [
             egui::Key::Num1,
             egui::Key::Num2,
@@ -194,6 +208,17 @@ mod tests {
         blocks.choose(0, BlockChoice::OursThenTheirs);
         assert!(blocks.complete());
         assert_eq!(blocks.text(), "top\nours 1\ntheirs 1\ntheirs 2\nours 3\n");
+    }
+
+    #[test]
+    fn brackets_move_between_blocks_and_wrap() {
+        let mut blocks = blocks();
+        blocks.step(-1);
+        assert_eq!(blocks.current, 2);
+        blocks.step(1);
+        assert_eq!(blocks.current, 0);
+        blocks.step(1);
+        assert_eq!(blocks.current, 1);
     }
 
     #[test]
