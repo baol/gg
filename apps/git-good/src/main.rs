@@ -16,6 +16,7 @@ mod diff_worker;
 mod export;
 mod file_history_view;
 mod file_history_worker;
+mod folder_picker;
 mod folders;
 mod graph;
 mod history_view;
@@ -62,7 +63,10 @@ use eframe::egui;
 #[cfg(test)]
 use gg_engine::History;
 use gg_engine::HistoryRequest;
-use std::{ops::Range, path::PathBuf};
+use std::{
+    ops::Range,
+    path::{Path, PathBuf},
+};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args_os().skip(1);
@@ -305,6 +309,16 @@ impl CloneDialog {
             return None;
         }
         Some(PathBuf::from(folder).join(name))
+    }
+}
+
+/// Mark the session default clone folder in the destination list.
+fn clone_folder_label(path: &Path, default: &Path) -> String {
+    let label = path.to_string_lossy();
+    if path == default {
+        format!("{} {label}", phosphor::CHECK)
+    } else {
+        label.into_owned()
     }
 }
 
@@ -948,6 +962,7 @@ struct Browser {
     network_error: Option<String>,
     network_notice: Option<String>,
     clone_dialog: Option<CloneDialog>,
+    clone_folder: PathBuf,
     folders: folders::Roots,
     folders_dialog: Option<FoldersDialog>,
     force_push: Option<ForcePushDialog>,
@@ -1047,6 +1062,7 @@ impl Browser {
             network_error: None,
             network_notice: None,
             clone_dialog: None,
+            clone_folder: folders::starting_folder(),
             folders: folders::Roots::load(),
             folders_dialog: None,
             force_push: None,
@@ -1502,8 +1518,21 @@ impl Browser {
                     ui.add(
                         egui::TextEdit::singleline(&mut dialog.new_root)
                             .hint_text("Absolute folder")
-                            .desired_width(260.0),
+                            .desired_width((ui.available_width() - 84.0).max(120.0)),
                     );
+                    if ui
+                        .button("Browse…")
+                        .on_hover_text("Choose a folder with the desktop dialog")
+                        .clicked()
+                        && let Some(path) = folder_picker::pick_folder(
+                            "Clone folders",
+                            Some(Path::new(dialog.new_root.trim())),
+                        )
+                    {
+                        dialog.new_root = path.to_string_lossy().into_owned();
+                    }
+                });
+                ui.horizontal(|ui| {
                     if ui.button("Add folder").clicked() {
                         add = Some(dialog.new_root.clone());
                     }
@@ -1590,6 +1619,14 @@ impl Browser {
         } else if cancel || !open {
             self.stash_switch = None;
         }
+    }
+
+    /// Remember the chosen parent folder for the rest of the session.
+    fn choose_clone_folder(&mut self, folder: PathBuf) {
+        if let Some(dialog) = &mut self.clone_dialog {
+            dialog.folder = folder.to_string_lossy().into_owned();
+        }
+        self.clone_folder = folder;
     }
 
     fn start_clone(&mut self, ctx: &egui::Context, url: String, destination: Option<PathBuf>) {
@@ -3530,9 +3567,23 @@ impl Browser {
                 .pivot(egui::Align2::CENTER_CENTER)
                 .show(ctx, |ui| {
                     ui.label("Destination");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut dialog.destination).desired_width(360.0),
-                    );
+                    ui.horizontal(|ui| {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut dialog.destination)
+                                .desired_width((ui.available_width() - 84.0).max(160.0)),
+                        );
+                        if ui
+                            .button("Browse…")
+                            .on_hover_text("Choose a folder with the desktop dialog")
+                            .clicked()
+                            && let Some(path) = folder_picker::pick_folder(
+                                "Worktree destination",
+                                Some(Path::new(dialog.destination.trim())),
+                            )
+                        {
+                            dialog.destination = path.to_string_lossy().into_owned();
+                        }
+                    });
                     ui.radio_value(&mut dialog.create, false, "Existing branch");
                     ui.radio_value(&mut dialog.create, true, "New branch");
                     if dialog.create {
@@ -4964,7 +5015,7 @@ impl Browser {
                     {
                         self.clone_dialog = Some(CloneDialog::from_url(
                             clipboard::repository_url(),
-                            folders::starting_folder(),
+                            self.clone_folder.clone(),
                         ));
                         ui.close();
                     }
@@ -5407,9 +5458,20 @@ impl Browser {
                 ui.horizontal(|ui| {
                     let response = ui.add(
                         egui::TextEdit::singleline(&mut self.path)
-                            .desired_width((ui.available_width() - 80.0).max(100.0))
+                            .desired_width((ui.available_width() - 156.0).max(100.0))
                             .hint_text("Repository path"),
                     );
+                    if ui
+                        .button("Browse…")
+                        .on_hover_text("Choose a repository folder with the desktop dialog")
+                        .clicked()
+                        && let Some(path) = folder_picker::pick_folder(
+                            "Open repository",
+                            Some(Path::new(&self.path)),
+                        )
+                    {
+                        self.path = path.to_string_lossy().into_owned();
+                    }
                     let open_ready = self.pending.is_none() && !self.repository_switch_pending();
                     let enter =
                         response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
@@ -5509,6 +5571,7 @@ impl Browser {
         }
         self.draw_folders_dialog(ctx);
         self.draw_stash_switch(ctx);
+        let mut chosen_clone_folder = None;
         if let Some(dialog) = &mut self.clone_dialog {
             let mut submit = None;
             let mut cancelled = false;
@@ -5516,11 +5579,15 @@ impl Browser {
             let mut field_lost_focus = false;
             let mut open =
                 !ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+            let default_folder = self.clone_folder.clone();
             let mut candidates = vec![folders::starting_folder()];
             for root in self.folders.entries() {
                 if !candidates.iter().any(|candidate| candidate == root) {
                     candidates.push(root.clone());
                 }
+            }
+            if !candidates.contains(&default_folder) {
+                candidates.push(default_folder.clone());
             }
             egui::Window::new("Clone repository")
                 .id(egui::Id::unique("clone-repository"))
@@ -5556,27 +5623,44 @@ impl Browser {
                         };
                         egui::ComboBox::from_id_salt("clone-folder")
                             .selected_text(selected)
-                            .width(210.0)
+                            .width(150.0)
                             .show_ui(ui, |ui| {
                                 for candidate in &candidates {
                                     let label = candidate.to_string_lossy().into_owned();
+                                    let text = clone_folder_label(candidate, &default_folder);
                                     if ui
-                                        .selectable_label(
-                                            dialog.folder.trim() == label,
-                                            label.clone(),
-                                        )
+                                        .selectable_label(dialog.folder.trim() == label, text)
                                         .clicked()
                                     {
                                         dialog.folder = label;
+                                        chosen_clone_folder = Some(candidate.clone());
                                     }
                                 }
                             });
                         let folder = ui.add(
                             egui::TextEdit::singleline(&mut dialog.folder)
                                 .hint_text("Parent folder")
-                                .desired_width(220.0),
+                                .desired_width(170.0),
                         );
-                        field_lost_focus |= folder.lost_focus();
+                        if folder.lost_focus() {
+                            field_lost_focus = true;
+                            let typed = PathBuf::from(dialog.folder.trim());
+                            if typed.is_absolute() {
+                                chosen_clone_folder = Some(typed);
+                            }
+                        }
+                        if ui
+                            .button("Browse…")
+                            .on_hover_text("Choose the parent folder with the desktop dialog")
+                            .clicked()
+                            && let Some(path) = folder_picker::pick_folder(
+                                "Clone destination",
+                                Some(Path::new(dialog.folder.trim())),
+                            )
+                        {
+                            dialog.folder = path.to_string_lossy().into_owned();
+                            chosen_clone_folder = Some(path);
+                        }
                         if ui
                             .button("Folders…")
                             .on_hover_text("Configure the folders offered here")
@@ -5646,6 +5730,9 @@ impl Browser {
             } else if !open {
                 self.clone_dialog = None;
             }
+        }
+        if let Some(folder) = chosen_clone_folder {
+            self.choose_clone_folder(folder);
         }
         let track_busy = self.branch.is_some() || self.network.is_some() || self.operation_busy();
         if let Some(remote_branch) = &mut self.track_dialog {
@@ -7349,6 +7436,121 @@ mod tests {
         dialog.name = "project".into();
         dialog.folder = "relative".into();
         assert!(dialog.destination().is_none());
+    }
+
+    #[test]
+    fn the_default_clone_folder_is_marked_and_kept_for_the_session()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let folder = tempfile::tempdir()?;
+        let other = tempfile::tempdir()?;
+        assert_eq!(
+            clone_folder_label(folder.path(), folder.path()),
+            format!("{} {}", phosphor::CHECK, folder.path().display())
+        );
+        assert_eq!(
+            clone_folder_label(other.path(), folder.path()),
+            other.path().to_string_lossy()
+        );
+
+        let mut app = layout_fixture();
+        assert_eq!(app.clone_folder, folders::starting_folder());
+        app.clone_dialog = Some(CloneDialog::from_url(None, app.clone_folder.clone()));
+        app.choose_clone_folder(folder.path().to_path_buf());
+        assert_eq!(app.clone_folder, folder.path());
+        assert_eq!(
+            app.clone_dialog
+                .as_ref()
+                .map(|dialog| dialog.folder.clone()),
+            Some(folder.path().to_string_lossy().into_owned())
+        );
+        let reopened = CloneDialog::from_url(None, app.clone_folder.clone());
+        assert_eq!(reopened.folder, folder.path().to_string_lossy());
+        Ok(())
+    }
+
+    #[test]
+    fn every_folder_field_offers_the_native_picker() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        let rendered = |app: &mut Browser| {
+            let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) => Some(text.galley.job.text.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        app.clone_dialog = Some(CloneDialog::from_url(
+            Some("https://example.org/gg.git".into()),
+            folders::starting_folder(),
+        ));
+        assert!(rendered(&mut app).iter().any(|line| line == "Browse…"));
+        app.clone_dialog = None;
+        app.folders_dialog = Some(FoldersDialog {
+            new_root: String::new(),
+            error: None,
+        });
+        assert!(rendered(&mut app).iter().any(|line| line == "Browse…"));
+        app.folders_dialog = None;
+        app.edit_path = true;
+        assert!(rendered(&mut app).iter().any(|line| line == "Browse…"));
+        app.edit_path = false;
+        app.worktree_window = Some(WorktreeWindow {
+            snapshot: None,
+            selected: None,
+            error: None,
+            notice: None,
+            create: Some(CreateWorktreeDialog {
+                destination: "/projects/next".into(),
+                create: false,
+                branch: String::new(),
+                at: String::new(),
+                error: None,
+            }),
+            confirm_remove: None,
+            busy: None,
+            pending: None,
+        });
+        assert!(rendered(&mut app).iter().any(|line| line == "Browse…"));
+    }
+
+    #[test]
+    fn the_clone_dialog_keeps_its_folder_controls_inside() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        app.clone_dialog = Some(CloneDialog::from_url(
+            Some("https://example.org/team/project.git".into()),
+            folders::starting_folder(),
+        ));
+        for _ in 0..3 {
+            let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+        }
+        let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        let window = ctx.memory(|memory| memory.area_rect(egui::Id::unique("clone-repository")));
+        assert!(window.is_some(), "the clone dialog did not render");
+        let browse = output.shapes.iter().find_map(|shape| match &shape.shape {
+            egui::epaint::Shape::Text(text) if text.galley.job.text == "Browse…" => {
+                Some(egui::Rect::from_min_size(text.pos, text.galley.size()))
+            }
+            _ => None,
+        });
+        assert!(browse.is_some(), "the folder picker button is missing");
+        assert!(
+            window.is_some_and(|window| browse.is_some_and(|button| window.contains_rect(button))),
+            "the folder picker button is clipped: {browse:?} in {window:?}"
+        );
     }
 
     #[test]
