@@ -305,6 +305,21 @@ fn diff_options_id() -> eframe::egui::Id {
     eframe::egui::Id::unique("gg-diff-options")
 }
 
+/// Whether changed Diff lines show tabs as `→` and trailing spaces as `·`;
+/// on until Preferences sets it.
+pub fn diff_invisibles(ctx: &eframe::egui::Context) -> bool {
+    ctx.data(|data| data.get_temp(diff_invisibles_id()))
+        .unwrap_or(true)
+}
+
+pub fn set_diff_invisibles(ctx: &eframe::egui::Context, show: bool) {
+    ctx.data_mut(|data| data.insert_temp(diff_invisibles_id(), show));
+}
+
+fn diff_invisibles_id() -> eframe::egui::Id {
+    eframe::egui::Id::unique("gg-diff-invisibles")
+}
+
 pub fn reader_mode(ctx: &eframe::egui::Context) -> ReaderMode {
     ctx.data(|data| data.get_temp(reader_mode_id()))
         .unwrap_or_default()
@@ -381,6 +396,8 @@ pub struct Prefs {
     pub diff_context: u16,
     /// Which whitespace differences Diff mode shows.
     pub diff_whitespace: Whitespace,
+    /// Changed lines show tabs and trailing spaces.
+    pub show_invisibles: bool,
     path: Option<PathBuf>,
 }
 
@@ -418,6 +435,7 @@ impl Default for Prefs {
             relative_dates: false,
             diff_context: 3,
             diff_whitespace: Whitespace::All,
+            show_invisibles: true,
             path: None,
         }
     }
@@ -478,6 +496,7 @@ impl Prefs {
                 .filter(|lines| DIFF_CONTEXTS.contains(lines))
                 .unwrap_or(defaults.diff_context),
             diff_whitespace: read(path, "diff_whitespace").unwrap_or(defaults.diff_whitespace),
+            show_invisibles: read(path, "show_invisibles").unwrap_or(defaults.show_invisibles),
             path: Some(path.to_path_buf()),
         }
     }
@@ -521,7 +540,8 @@ impl Prefs {
         write(path, "history_tags", &self.history_tags)?;
         write(path, "relative_dates", &self.relative_dates)?;
         write(path, "diff_context", &self.diff_context)?;
-        write(path, "diff_whitespace", &self.diff_whitespace)
+        write(path, "diff_whitespace", &self.diff_whitespace)?;
+        write(path, "show_invisibles", &self.show_invisibles)
     }
 
     /// The comparison options Diff mode reads with.
@@ -610,6 +630,7 @@ mod tests {
         prefs.relative_dates = true;
         prefs.diff_context = 10;
         prefs.diff_whitespace = Whitespace::IgnoreAtEol;
+        prefs.show_invisibles = false;
         prefs.save()?;
         assert_eq!(Prefs::load_from(&path), prefs);
         assert_eq!(read::<u32>(&path, "future_option"), Some(7));

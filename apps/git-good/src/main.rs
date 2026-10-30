@@ -357,7 +357,7 @@ impl PrefSection {
                 "appearance theme dark light system density compact comfortable zoom font size code"
             }
             Self::Diff => {
-                "diff open files full file layout inline side by side images compare context lines whitespace ignore line end"
+                "diff open files full file layout inline side by side images compare context lines whitespace ignore line end display invisible characters tabs trailing spaces"
             }
             Self::Commit => {
                 "commit identity name email signing sign tags subject length guide hooks verify"
@@ -2003,6 +2003,7 @@ impl Browser {
         settings::set_image_layout(ctx, self.prefs.image_layout);
         settings::set_diff_layout(ctx, self.prefs.diff_layout);
         settings::set_diff_options(ctx, self.prefs.diff_options());
+        settings::set_diff_invisibles(ctx, self.prefs.show_invisibles);
         settings::set_subject_guide(ctx, self.prefs.subject_guide);
         settings::set_run_hooks(ctx, self.prefs.run_hooks);
         ctx.set_zoom_factor(f32::from(self.prefs.zoom) / 100.0);
@@ -2440,6 +2441,12 @@ impl Browser {
                                         })
                                         .response
                                         .on_hover_text("Hunk and line staging needs Show all changes; whole files still stage.");
+                                    ui.end_row();
+                                    ui.label("Display");
+                                    ui.vertical(|ui| {
+                                        ui.checkbox(&mut prefs.show_invisibles, "Show invisible characters on changed lines")
+                                            .on_hover_text("Tabs as → and trailing spaces as ·, dimmed, on added and removed lines.");
+                                    });
                                     ui.end_row();
                                 });
                             ui.separator();

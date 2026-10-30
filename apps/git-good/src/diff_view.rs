@@ -2215,6 +2215,7 @@ impl DiffView {
         let mut anchor = self.anchor;
         let mut hunk_toggle = None;
         let mut hunk_action: Option<(usize, bool)> = None;
+        let invisibles = crate::settings::diff_invisibles(&ctx);
         let result = scroll.show_rows(ui, HEIGHT, self.count, |ui, rows| {
             self.range = rows.start.saturating_sub(24)..rows.end.saturating_add(24);
             // A conservative monospace width keeps every source column reachable.
@@ -2297,21 +2298,7 @@ impl DiffView {
                 )
                 .intersect(ui.clip_rect());
                 // Shape only visible source characters, including at deep horizontal offsets.
-                let (start, end, advance) = ui.fonts_mut(|fonts| {
-                    visible_text(
-                        &row.text,
-                        clip.left() - origin.x,
-                        clip.right() - origin.x,
-                        |ch| fonts.glyph_width(&font, ch),
-                    )
-                });
-                ui.painter().with_clip_rect(clip).text(
-                    origin + egui::vec2(advance, 0.0),
-                    egui::Align2::LEFT_CENTER,
-                    &row.text[start..end],
-                    font,
-                    color,
-                );
+                paint_row_text(ui, clip, origin, row, &font, color, invisibles);
                 let hover = if can_edit {
                     match row.kind {
                         RowKind::Hunk => "Click to select all changed lines in this hunk",
@@ -2506,6 +2493,7 @@ impl DiffView {
         let mut toggles: Vec<usize> = vec![];
         let count = self.display_count();
         let split = self.split.clone();
+        let invisibles = crate::settings::diff_invisibles(ctx);
         let result = scroll.show_rows(ui, HEIGHT, count, |ui, rows| {
             let unified = split.rows(rows.clone());
             self.range = unified.start.saturating_sub(24)..unified.end.saturating_add(24);
@@ -2664,13 +2652,14 @@ impl DiffView {
                         egui::pos2(cell.right() - 2.0, cell.bottom()),
                     )
                     .intersect(clip);
-                    paint_code(
+                    paint_row_text(
                         ui,
                         text_clip,
                         egui::pos2(cell.left() + gutter - split_x, cell.center().y),
-                        &row.text,
+                        row,
                         &font,
                         color,
+                        invisibles,
                     );
                 }
                 ui.painter()
@@ -2982,6 +2971,70 @@ fn paint_code(
         font.clone(),
         color,
     );
+}
+
+/// Paint a diff row's source text. With `invisibles`, added and removed
+/// lines draw tabs as `→` and trailing spaces as `·` in the weak color; each
+/// marker replaces one displayed space, so columns do not move.
+fn paint_row_text(
+    ui: &egui::Ui,
+    clip: egui::Rect,
+    origin: egui::Pos2,
+    row: &DiffRow,
+    font: &egui::FontId,
+    color: egui::Color32,
+    invisibles: bool,
+) {
+    if invisibles
+        && matches!(row.kind, RowKind::Added | RowKind::Deleted)
+        && row.bytes.iter().any(|byte| matches!(byte, b' ' | b'\t'))
+    {
+        let (text, marks) = gg_engine::diff::marked(&row.bytes);
+        if !marks.is_empty() {
+            paint_marked(ui, clip, origin, &text, &marks, font, color);
+            return;
+        }
+    }
+    paint_code(ui, clip, origin, &row.text, font, color);
+}
+
+fn paint_marked(
+    ui: &egui::Ui,
+    clip: egui::Rect,
+    origin: egui::Pos2,
+    text: &str,
+    marks: &[Range<usize>],
+    font: &egui::FontId,
+    color: egui::Color32,
+) {
+    let (start, end, advance) = ui.fonts_mut(|fonts| {
+        visible_text(
+            text,
+            clip.left() - origin.x,
+            clip.right() - origin.x,
+            |ch| fonts.glyph_width(font, ch),
+        )
+    });
+    let dim = ui.visuals().weak_text_color();
+    let format = |color| egui::TextFormat::simple(font.clone(), color);
+    let mut job = egui::text::LayoutJob::default();
+    let mut at = start;
+    for mark in marks {
+        if mark.end <= start || mark.start >= end {
+            continue;
+        }
+        if at < mark.start {
+            job.append(&text[at..mark.start], 0.0, format(color));
+        }
+        job.append(&text[mark.clone()], 0.0, format(dim));
+        at = mark.end;
+    }
+    if at < end {
+        job.append(&text[at..end], 0.0, format(color));
+    }
+    let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
+    let top = origin + egui::vec2(advance, -galley.size().y / 2.0);
+    ui.painter().with_clip_rect(clip).galley(top, galley, color);
 }
 
 fn visible_text(
@@ -4252,6 +4305,100 @@ mod tests {
             row(RowKind::Context, Some(4), Some(3), "tail"),
         ];
         doc
+    }
+
+    #[test]
+    fn changed_lines_show_dimmed_tabs_and_trailing_spaces() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let row = |kind, old_line, new_line, bytes: &[u8]| DiffRow {
+            kind,
+            old_line,
+            new_line,
+            text: gg_engine::diff::marked(bytes).0.replace(['→', '·'], " "),
+            bytes: bytes.to_vec(),
+        };
+        let mut doc = FileDiff::summary(DiffKind::Text, 1, 1, "");
+        doc.rows = vec![
+            row(RowKind::Hunk, None, None, b""),
+            row(RowKind::Context, Some(1), Some(1), b"\tkeep \n"),
+            row(RowKind::Deleted, Some(2), None, b"\told\n"),
+            row(RowKind::Added, None, Some(2), b"\tnew = 1  \n"),
+        ];
+        doc.rows[0].text = "@@ -1,2 +1,2 @@".into();
+        for layout in [DiffLayout::Inline, DiffLayout::SideBySide] {
+            for width in [720.0, 1120.0] {
+                for show in [true, false] {
+                    let ctx = egui::Context::default();
+                    crate::settings::set_diff_layout(&ctx, layout);
+                    crate::settings::set_diff_invisibles(&ctx, show);
+                    let mut view = DiffView {
+                        change: Some(file("a", true, true)),
+                        generation: 1,
+                        ..Default::default()
+                    };
+                    view.accept(diff_update(1, doc.clone()), None);
+                    view.change = None;
+                    let mut output = None;
+                    for _ in 0..2 {
+                        output = Some(crate::tests::run_ui(
+                            &ctx,
+                            crate::tests::frame_input(width, 480.0, vec![]),
+                            |ctx| {
+                                egui::CentralPanel::default().show(ctx, |ui| view.draw_reading(ui));
+                            },
+                        ));
+                    }
+                    let output = output.ok_or("no frame")?;
+                    let weak = ctx.global_style().visuals.weak_text_color();
+                    let galleys: Vec<_> = output
+                        .shapes
+                        .iter()
+                        .filter_map(|shape| match &shape.shape {
+                            egui::epaint::Shape::Text(text) => Some(text.galley.clone()),
+                            _ => None,
+                        })
+                        .collect();
+                    let find = |text: &str| galleys.iter().find(|galley| galley.job.text == text);
+                    let case = format!("{layout:?} at {width}, invisibles {show}");
+                    assert!(find("    keep ").is_some(), "context stays plain: {case}");
+                    if show {
+                        let added = find("→   new = 1··").ok_or(format!("added: {case}"))?;
+                        find("→   old").ok_or(format!("removed: {case}"))?;
+                        let colors: Vec<(&str, egui::Color32)> = added
+                            .job
+                            .sections
+                            .iter()
+                            .map(|section| {
+                                (
+                                    &added.job.text
+                                        [section.byte_range.start.0..section.byte_range.end.0],
+                                    section.format.color,
+                                )
+                            })
+                            .collect();
+                        assert_eq!(
+                            colors.first().map(|c| (c.0, c.1 == weak)),
+                            Some(("→", true))
+                        );
+                        assert_eq!(
+                            colors.last().map(|c| (c.0, c.1 == weak)),
+                            Some(("··", true))
+                        );
+                        assert!(
+                            colors.iter().any(|c| c.0 == "   new = 1" && c.1 != weak),
+                            "{case}: {colors:?}"
+                        );
+                    } else {
+                        find("    new = 1  ").ok_or(format!("plain added: {case}"))?;
+                        assert!(
+                            galleys.iter().all(|galley| !galley.job.text.contains('→')),
+                            "{case}"
+                        );
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     #[test]

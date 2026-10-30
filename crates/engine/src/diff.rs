@@ -121,6 +121,52 @@ pub(crate) fn display(bytes: &[u8]) -> String {
     }
     result.replace('\r', "\\r").replace('\t', "    ")
 }
+/// The displayed text of a line with tabs drawn as `→` and trailing spaces
+/// as `·`, plus the byte ranges of those markers in the text. Each marker
+/// takes the place of one displayed space, so columns match [`display`].
+pub fn marked(bytes: &[u8]) -> (String, Vec<std::ops::Range<usize>>) {
+    let body = bytes.strip_suffix(b"\n").unwrap_or(bytes);
+    let core = body.strip_suffix(b"\r").unwrap_or(body);
+    let trailing = core
+        .iter()
+        .rposition(|b| !matches!(b, b' ' | b'\t'))
+        .map_or(0, |i| i + 1);
+    let mut text = String::new();
+    let mut marks = vec![];
+    let mut mark = |text: &mut String, marker: char| {
+        let start = text.len();
+        text.push(marker);
+        marks.push(start..text.len());
+    };
+    let mut offset = 0;
+    let mut rest = body;
+    while !rest.is_empty() {
+        let (valid, invalid) = match std::str::from_utf8(rest) {
+            Ok(valid) => (valid, 0),
+            Err(e) => (
+                std::str::from_utf8(&rest[..e.valid_up_to()]).unwrap_or_default(),
+                e.error_len().unwrap_or(rest.len() - e.valid_up_to()),
+            ),
+        };
+        for (index, ch) in valid.char_indices() {
+            match ch {
+                '\t' => {
+                    mark(&mut text, '→');
+                    text.push_str("   ");
+                }
+                ' ' if offset + index >= trailing => mark(&mut text, '·'),
+                '\r' => text.push_str("\\r"),
+                ch => text.push(ch),
+            }
+        }
+        for b in &rest[valid.len()..valid.len() + invalid] {
+            text.push_str(&format!("\\x{b:02x}"));
+        }
+        offset += valid.len() + invalid;
+        rest = &rest[valid.len() + invalid..];
+    }
+    (text, marks)
+}
 /// One emitted line: kind, zero-based old and new indices, and its bytes.
 type SourceLine<'a> = (RowKind, Option<usize>, Option<usize>, &'a [u8]);
 /// Compare with three context lines, counting every byte.
@@ -312,6 +358,28 @@ mod tests {
         assert!(invalid.rows.iter().any(|r| r.text == "\\xff"));
         Ok(())
     }
+    #[test]
+    fn invisible_markers_keep_display_columns() {
+        let (text, marks) = marked(b"\tif a  b \t \r\n");
+        assert_eq!(text, "→   if a  b·→   ·\\r");
+        let markers: Vec<&str> = marks.iter().map(|range| &text[range.clone()]).collect();
+        assert_eq!(markers, ["→", "·", "→", "·"], "inner spaces stay plain");
+        for line in [
+            &b"\tif a  b \t \r\n"[..],
+            b"plain\n",
+            b"\xff\t \n",
+            b"caf\xc3\xa9  ",
+            b"",
+        ] {
+            let (text, marks) = marked(line);
+            let mut plain = text.clone();
+            for range in marks.iter().rev() {
+                plain.replace_range(range.clone(), " ");
+            }
+            assert_eq!(plain, display(line), "{line:?}");
+        }
+    }
+
     #[test]
     fn empty_binary_limits_and_cancellation_are_explicit() -> Result<(), String> {
         assert!(compare(b"", b"", || false)?.rows.is_empty());
