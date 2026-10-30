@@ -205,9 +205,17 @@ git-good tag --create TAG --at REF -m MESSAGE [--sign] [--repo PATH]   Create an
         return sync_cli::clone(args);
     }
     let headless = first.as_deref() == Some(std::ffi::OsStr::new("history"));
-    let path = if headless { args.next() } else { first }
-        .map(PathBuf::from)
-        .unwrap_or(std::env::current_dir()?);
+    let given = if headless { args.next() } else { first }.map(PathBuf::from);
+    let path = match given {
+        Some(path) => path,
+        None if headless => std::env::current_dir()?,
+        None => launch_folder(
+            std::env::current_dir()?,
+            settings::Prefs::load().reopen_last,
+            &settings::recent(),
+            is_repository,
+        ),
+    };
     if args.next().is_some() {
         return Err("Use git-good --help for usage".into());
     }
@@ -832,6 +840,36 @@ fn window_title(
         }
     }
     title
+}
+
+/// The folder gg opens when launched without a path: the working directory,
+/// or, outside a repository and with Reopen last repository on, the most
+/// recent repository that still is one.
+fn launch_folder(
+    cwd: PathBuf,
+    reopen_last: bool,
+    recent: &[PathBuf],
+    is_repository: impl Fn(&Path) -> bool,
+) -> PathBuf {
+    if !reopen_last || is_repository(&cwd) {
+        return cwd;
+    }
+    recent
+        .iter()
+        .find(|path| is_repository(path))
+        .cloned()
+        .unwrap_or(cwd)
+}
+
+fn is_repository(path: &Path) -> bool {
+    std::process::Command::new("git")
+        .arg("-C")
+        .arg(path)
+        .args(["rev-parse", "--git-dir"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
 }
 
 /// `Name <email>` from the repository's Git config, for Preferences ›
@@ -2232,17 +2270,17 @@ impl Browser {
                             if let Some(error) = &dialog.error {
                                 ui.colored_label(ui.visuals().error_fg_color, error);
                             }
+                            ui.checkbox(
+                                &mut prefs.clone_named_after_repo,
+                                "Name the clone after the repository (e.g. ~/dev/gg)",
+                            );
                             ui.separator();
-                            ui.strong("Avatars");
-                            ui.add_enabled(
-                                !offline_override,
-                                egui::Checkbox::new(
-                                    &mut prefs.network_avatars,
-                                    "Load avatars from the network",
-                                ),
-                            )
-                            .on_disabled_hover_text("GG_OFFLINE is set for this launch.");
-                            ui.weak("Off: cached avatars and initials only.");
+                            ui.strong("Launch");
+                            ui.checkbox(
+                                &mut prefs.reopen_last,
+                                "Reopen the last repository when launched outside one",
+                            );
+                            ui.weak("Without a path gg opens the current folder; when that is not a repository, the most recent one opens instead.");
                             ui.separator();
                             ui.strong("Fetch");
                             ui.checkbox(
@@ -2310,6 +2348,19 @@ impl Browser {
                                     ui.label("History");
                                     ui.vertical(|ui| {
                                         ui.checkbox(&mut prefs.history_avatars, "Show avatars");
+                                        ui.add_enabled(
+                                            !offline_override && prefs.history_avatars,
+                                            egui::Checkbox::new(
+                                                &mut prefs.network_avatars,
+                                                "Load avatars from the network",
+                                            ),
+                                        )
+                                        .on_hover_text("Off: cached avatars and initials only.")
+                                        .on_disabled_hover_text(if offline_override {
+                                            "GG_OFFLINE is set for this launch."
+                                        } else {
+                                            "Avatars are hidden."
+                                        });
                                         ui.checkbox(&mut prefs.history_tags, "Show tags in rows");
                                         ui.checkbox(&mut prefs.relative_dates, "Relative dates");
                                     });
@@ -2929,10 +2980,13 @@ impl Browser {
             FrameCommand::Worktrees => self.open_worktrees(ctx),
             FrameCommand::Open => self.edit_path = true,
             FrameCommand::Clone => {
-                self.clone_dialog = Some(CloneDialog::from_url(
-                    clipboard::repository_url(),
-                    self.clone_start_folder(),
-                ));
+                let mut dialog =
+                    CloneDialog::from_url(clipboard::repository_url(), self.clone_start_folder());
+                if !self.prefs.clone_named_after_repo {
+                    dialog.name_from_url = false;
+                    dialog.name.clear();
+                }
+                self.clone_dialog = Some(dialog);
             }
             FrameCommand::Preferences => {
                 let section = self
@@ -10972,7 +11026,7 @@ mod tests {
                 "Clone folders",
                 "1 repository",
                 "missing",
-                "Load avatars from the network",
+                "Reopen the last repository when launched outside one",
             ] {
                 assert!(
                     text.iter().any(|line| line.contains(expected)),
@@ -14340,6 +14394,26 @@ mod tests {
         let _ = crate::tests::run_ui(&ctx, input, |ctx| app.draw_ui(ctx));
         assert_eq!(app.state.count, 100_000);
         assert!((app.scroll_offset - offset).abs() < 0.1);
+    }
+
+    #[test]
+    fn launch_opens_the_working_folder_or_the_last_repository() {
+        let repos = [PathBuf::from("/gone"), PathBuf::from("/repo")];
+        let is_repo = |path: &Path| path == Path::new("/repo") || path == Path::new("/here");
+        assert_eq!(
+            launch_folder("/here".into(), true, &repos, is_repo),
+            PathBuf::from("/here"),
+            "a repository working folder wins"
+        );
+        assert_eq!(
+            launch_folder("/tmp".into(), true, &repos, is_repo),
+            PathBuf::from("/repo"),
+            "outside a repository the last one that still is one opens"
+        );
+        assert_eq!(
+            launch_folder("/tmp".into(), false, &repos, is_repo),
+            PathBuf::from("/tmp")
+        );
     }
 
     #[test]

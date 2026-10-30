@@ -316,6 +316,10 @@ pub struct Prefs {
     /// Commit subject length guide in characters; 0 is off.
     pub subject_guide: u16,
     pub pull_strategy: PullStrategy,
+    /// Clone fills the folder name from the URL (`~/dev/gg`).
+    pub clone_named_after_repo: bool,
+    /// Launched without a path outside a repository: open the last one.
+    pub reopen_last: bool,
     /// After rewriting a branch that has an upstream, offer Push with
     /// force-with-lease.
     pub offer_force_lease: bool,
@@ -349,6 +353,8 @@ impl Default for Prefs {
             sign_tags: false,
             subject_guide: 72,
             pull_strategy: PullStrategy::default(),
+            clone_named_after_repo: true,
+            reopen_last: true,
             offer_force_lease: true,
             history_avatars: true,
             history_tags: true,
@@ -392,6 +398,9 @@ impl Prefs {
                 .unwrap_or(defaults.code_font),
             sign_tags: read(path, "sign_tags").unwrap_or(defaults.sign_tags),
             pull_strategy: read(path, "pull_strategy").unwrap_or(defaults.pull_strategy),
+            clone_named_after_repo: read(path, "clone_named_after_repo")
+                .unwrap_or(defaults.clone_named_after_repo),
+            reopen_last: read(path, "reopen_last").unwrap_or(defaults.reopen_last),
             offer_force_lease: read(path, "offer_force_lease")
                 .unwrap_or(defaults.offer_force_lease),
             history_avatars: read(path, "history_avatars").unwrap_or(defaults.history_avatars),
@@ -433,6 +442,8 @@ impl Prefs {
         write(path, "sign_tags", &self.sign_tags)?;
         write(path, "subject_guide", &self.subject_guide)?;
         write(path, "pull_strategy", &self.pull_strategy)?;
+        write(path, "clone_named_after_repo", &self.clone_named_after_repo)?;
+        write(path, "reopen_last", &self.reopen_last)?;
         write(path, "offer_force_lease", &self.offer_force_lease)?;
         write(path, "history_avatars", &self.history_avatars)?;
         write(path, "history_tags", &self.history_tags)?;
@@ -507,6 +518,8 @@ mod tests {
         prefs.subject_guide = 50;
         prefs.history_avatars = false;
         prefs.pull_strategy = PullStrategy::FastForward;
+        prefs.clone_named_after_repo = false;
+        prefs.reopen_last = false;
         prefs.offer_force_lease = false;
         prefs.history_tags = false;
         prefs.relative_dates = true;
