@@ -14117,7 +14117,7 @@ mod tests {
             let output = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
                 app.draw_ui(ctx)
             });
-            for label in ["Repository", "Changes", "Commit", "Amend"] {
+            for label in ["Repository", "Changes", "Commit", "Amend HEAD"] {
                 assert!(
                     output.shapes.iter().any(|shape| matches!(
                         &shape.shape,

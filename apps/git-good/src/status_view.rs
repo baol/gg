@@ -930,7 +930,7 @@ impl StatusView {
                     list.collapsed = !list.collapsed;
                 }
             }
-            ui.strong(format!("{} ({count})", group_name(index)));
+            ui.strong(format!("{} {count}", group_name(index).to_uppercase()));
         });
         if collapsible && list.collapsed {
             list.rect = egui::Rect::NOTHING;
@@ -1262,14 +1262,14 @@ impl StatusView {
             ui.add_sized(
                 [width, message_height],
                 egui::TextEdit::multiline(&mut self.message)
-                    .hint_text("Commit message")
+                    .hint_text("Commit message (first line is the subject)")
                     .desired_rows(2),
             );
             ui.vertical(|ui| {
                 ui.horizontal(|ui| {
                     let mut amend = self.amend;
                     if ui
-                        .add_enabled(!busy, egui::Checkbox::new(&mut amend, "Amend"))
+                        .add_enabled(!busy, egui::Checkbox::new(&mut amend, "Amend HEAD"))
                         .on_hover_text(
                             "Show the commit's contents as staged. Unstage removes changes from the amended commit; working files stay unchanged.",
                         )
@@ -1321,7 +1321,7 @@ impl StatusView {
                 let label = if self.commit.is_some() {
                     "Committing…"
                 } else if self.amend {
-                    "Amend commit"
+                    "Amend HEAD"
                 } else {
                     "Commit"
                 };
@@ -1331,8 +1331,10 @@ impl StatusView {
                 );
                 let response = if let Some(reason) = reason {
                     response.on_hover_text(reason)
+                } else if self.amend {
+                    response.on_hover_text("Ctrl+Shift+Enter")
                 } else {
-                    response
+                    response.on_hover_text("Ctrl+Enter")
                 };
                 ui.weak(reason.unwrap_or(if self.amend {
                     "Ready to amend"
@@ -2099,8 +2101,8 @@ mod tests {
                 _ => None,
             })
             .collect::<Vec<_>>();
-        assert!(text.iter().any(|line| line.starts_with("Unstaged (")));
-        assert!(text.iter().any(|line| line.starts_with("Staged (")));
+        assert!(text.iter().any(|line| line.starts_with("UNSTAGED ")));
+        assert!(text.iter().any(|line| line.starts_with("STAGED ")));
         assert!(!text.contains(&"View diff"));
         assert!(!text.contains(&"Split"));
         assert!(!text.contains(&"Review & stage"));
@@ -2261,6 +2263,18 @@ mod tests {
             }
             _ => None,
         })
+    }
+    /// The lowest text with this label: the commit button sits below the
+    /// Amend HEAD checkbox that shares its label.
+    fn button_pos(output: &egui::FullOutput, needle: &str) -> Option<egui::Pos2> {
+        output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) if text.galley.job.text == needle => Some(text.pos),
+                _ => None,
+            })
+            .max_by(|a, b| a.y.total_cmp(&b.y))
     }
     fn wait_text(
         ctx: &egui::Context,
@@ -2924,7 +2938,7 @@ mod tests {
             egui::epaint::Shape::Text(text)
                 if text.galley.job.text.contains("HEAD parent → index")
         )));
-        let amend = text_pos(&output, "Amend commit").ok_or("missing amend button")?;
+        let amend = button_pos(&output, "Amend HEAD").ok_or("missing amend button")?;
         click(&ctx, &mut view, 1120.0, amend + egui::vec2(5.0, 0.0));
         pump(&ctx, &mut view, 1120.0, |view| {
             !view.busy() && view.complete && !view.replacing && view.commit_done.is_some()
@@ -2973,7 +2987,7 @@ mod tests {
         view.message = "amend draft".into();
 
         let output = run(&ctx, &mut view, 1120.0, vec![]);
-        let checkbox = text_pos(&output, "Amend").ok_or("missing amend checkbox")?;
+        let checkbox = text_pos(&output, "Amend HEAD").ok_or("missing amend checkbox")?;
         click(&ctx, &mut view, 1120.0, checkbox + egui::vec2(5.0, 0.0));
         pump(&ctx, &mut view, 1120.0, |view| {
             !view.busy() && view.complete && !view.replacing && !view.amend
@@ -2982,7 +2996,7 @@ mod tests {
         assert_eq!(view.amend_draft, "amend draft");
 
         let output = run(&ctx, &mut view, 1120.0, vec![]);
-        let checkbox = text_pos(&output, "Amend").ok_or("missing amend checkbox")?;
+        let checkbox = text_pos(&output, "Amend HEAD").ok_or("missing amend checkbox")?;
         click(&ctx, &mut view, 1120.0, checkbox + egui::vec2(5.0, 0.0));
         pump(&ctx, &mut view, 1120.0, |view| {
             !view.busy() && view.complete && !view.replacing && view.amend
@@ -3071,7 +3085,7 @@ mod tests {
         assert!(view.lists[0].rows.values().any(|entry| entry.path == "a"));
 
         let output = run(&ctx, &mut view, 1120.0, vec![]);
-        let checkbox = text_pos(&output, "Amend").ok_or("missing amend checkbox")?;
+        let checkbox = text_pos(&output, "Amend HEAD").ok_or("missing amend checkbox")?;
         click(&ctx, &mut view, 1120.0, checkbox + egui::vec2(5.0, 0.0));
         pump(&ctx, &mut view, 1120.0, |view| {
             !view.busy() && view.complete && !view.replacing
@@ -3080,7 +3094,7 @@ mod tests {
         assert!(view.amend_base.is_none());
         assert!(view.lists[1].rows.values().all(|entry| entry.path != "a"));
         let output = run(&ctx, &mut view, 1120.0, vec![]);
-        let checkbox = text_pos(&output, "Amend").ok_or("missing amend checkbox")?;
+        let checkbox = text_pos(&output, "Amend HEAD").ok_or("missing amend checkbox")?;
         click(&ctx, &mut view, 1120.0, checkbox + egui::vec2(5.0, 0.0));
         pump(&ctx, &mut view, 1120.0, |view| {
             !view.busy() && view.complete && !view.replacing
@@ -3108,7 +3122,7 @@ mod tests {
         assert_eq!(file(p, &["show", ":a"])?, b"working\n");
 
         let output = run(&ctx, &mut view, 1120.0, vec![]);
-        let amend = text_pos(&output, "Amend commit").ok_or("missing amend button")?;
+        let amend = button_pos(&output, "Amend HEAD").ok_or("missing amend button")?;
         click(&ctx, &mut view, 1120.0, amend + egui::vec2(5.0, 0.0));
         pump(&ctx, &mut view, 1120.0, |view| {
             !view.busy() && view.complete && !view.replacing && view.commit_done.is_some()
