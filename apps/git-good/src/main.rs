@@ -11427,12 +11427,18 @@ mod tests {
         assert_eq!(one, empty, "the window moved after the first folder");
         assert!(
             app.folders
-                .add("/tmp/another-clone-folder")
+                .add(
+                    &std::env::temp_dir()
+                        .join("another-clone-folder")
+                        .to_string_lossy()
+                )
                 .unwrap_or(false)
         );
         let two = rect(&mut app);
         assert_eq!(two, empty, "the window moved after the second folder");
-        assert!(app.folders.add("/tmp/third-clone-folder").unwrap_or(false));
+        // Absolute on every platform: `/tmp/…` has no drive on Windows.
+        let third = std::env::temp_dir().join("third-clone-folder");
+        assert!(app.folders.add(&third.to_string_lossy()).unwrap_or(false));
         let three = rect(&mut app);
         assert_eq!(three, empty, "the window moved after the third folder");
     }
