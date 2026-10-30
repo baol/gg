@@ -43,6 +43,7 @@ mod review_cli;
 mod review_view;
 mod review_worker;
 mod rewrite_cli;
+mod search;
 mod signature_cli;
 mod signature_worker;
 mod stage_view;
@@ -522,18 +523,48 @@ struct FrameReadiness {
     branch_rewrite_reason: Option<&'static str>,
 }
 
-/// A command chosen from the window toolbar, applied after the frame is drawn.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ToolbarCommand {
+/// A window-frame command chosen from the toolbar or search, applied after
+/// the frame is drawn through one dispatch and readiness.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum FrameCommand {
     Fetch,
     Pull,
     Push,
+    ForcePush,
     NewBranch,
     NewTag,
+    TrackBranch,
     Merge,
+    RebaseOnto,
     Stash,
+    Stashes,
+    /// Reorder and squash the current branch's own commits.
     Rewrite,
+    /// Reorder and squash from the selected commit through HEAD.
+    RewriteSelected,
+    CommitActions,
     Recovery,
+    Worktrees,
+    Open,
+    Clone,
+    Refresh,
+    Folders,
+    Shortcuts,
+    LocalChanges,
+    History,
+    ToggleRefs,
+    /// Filter history by the text.
+    Filter(String),
+    /// Inspect a ref's commit without moving HEAD.
+    Inspect(String),
+}
+
+/// Open `Ctrl+K` search state.
+#[derive(Clone, Debug, Default)]
+struct SearchPalette {
+    query: String,
+    selected: usize,
+    focused: bool,
 }
 
 /// Paints a count badge on the top-right corner of `rect`; nothing for zero.
@@ -1116,6 +1147,7 @@ struct Browser {
     local_summary_job: Option<std::sync::mpsc::Receiver<LocalSummary>>,
     window_focused: bool,
     stash_picker: StashPicker,
+    search: Option<SearchPalette>,
     help_shortcuts: bool,
     conflict_view: Option<ConflictView>,
     reset_confirm: Option<(String, gg_engine::reset::Mode)>,
@@ -1220,6 +1252,15 @@ impl Browser {
             local_summary_job: None,
             window_focused: true,
             stash_picker: StashPicker::default(),
+            // Debug builds open search with `GG_SEARCH=<query>` for native review.
+            search: if cfg!(debug_assertions) {
+                std::env::var("GG_SEARCH").ok().map(|query| SearchPalette {
+                    query,
+                    ..Default::default()
+                })
+            } else {
+                None
+            },
             help_shortcuts: false,
             conflict_view: None,
             reset_confirm: None,
@@ -2049,6 +2090,435 @@ impl Browser {
             working.refresh(ctx);
         }
         self.refresh_local_summary(ctx);
+    }
+
+    /// Runs a toolbar or search command. Readiness is checked by the caller,
+    /// which shows the same disabled reason as the menus.
+    fn run_frame_command(
+        &mut self,
+        ctx: &egui::Context,
+        command: FrameCommand,
+        go_local: &mut bool,
+        go_history: &mut bool,
+    ) {
+        match command {
+            FrameCommand::Fetch => self.start_fetch(ctx, None, false),
+            FrameCommand::Pull => self.start_pull_rebase(ctx),
+            FrameCommand::Push => self.start_push(ctx),
+            FrameCommand::ForcePush => {
+                if let Some(target) = self.force_push_target() {
+                    self.force_push = Some(target);
+                }
+            }
+            FrameCommand::NewBranch => self.open_new_branch(),
+            FrameCommand::NewTag => self.open_new_tag(),
+            FrameCommand::TrackBranch => self.track_dialog = Some(self.default_track_branch()),
+            FrameCommand::Merge => self.open_merge_dialog(),
+            FrameCommand::RebaseOnto => {
+                self.rebase_dialog = Some(RebaseDialog {
+                    reference: String::new(),
+                    autostash: false,
+                    error: None,
+                });
+            }
+            FrameCommand::Stash => self.open_stash_dialog(),
+            FrameCommand::Stashes => self.open_stash_window(),
+            FrameCommand::Rewrite => {
+                let start = self
+                    .local_summary
+                    .as_ref()
+                    .and_then(|summary| summary.branch_start.clone());
+                if let Some((start, _)) = start
+                    && let Err(error) = self.open_rewrite_dialog(&start)
+                {
+                    self.mutation_error = Some(error);
+                }
+            }
+            FrameCommand::RewriteSelected => {
+                if let Some(id) = self.state.selected.clone() {
+                    self.run_commit_action(ctx, id, CommitAction::Rewrite);
+                }
+            }
+            FrameCommand::CommitActions => {
+                self.commit_actions = true;
+                ctx.request_repaint();
+            }
+            FrameCommand::Recovery => self.open_recovery_window(),
+            FrameCommand::Worktrees => self.open_worktrees(ctx),
+            FrameCommand::Open => self.edit_path = true,
+            FrameCommand::Clone => {
+                self.clone_dialog = Some(CloneDialog::from_url(
+                    clipboard::repository_url(),
+                    self.clone_start_folder(),
+                ));
+            }
+            FrameCommand::Refresh => self.load(ctx),
+            FrameCommand::Folders => {
+                self.folders_dialog = Some(FoldersDialog {
+                    new_root: String::new(),
+                    error: None,
+                });
+            }
+            FrameCommand::Shortcuts => self.help_shortcuts = true,
+            FrameCommand::LocalChanges => *go_local = true,
+            FrameCommand::History => *go_history = true,
+            FrameCommand::ToggleRefs => self.refs_visible = !self.refs_visible,
+            FrameCommand::Filter(query) => {
+                self.state.query = query;
+                self.filter_changed();
+                *go_history = true;
+            }
+            FrameCommand::Inspect(commit) => {
+                self.jump_to_ref(commit);
+                *go_history = true;
+            }
+        }
+    }
+
+    /// Applies an edited history filter, as typing in the filter field does.
+    fn filter_changed(&mut self) {
+        if self.worker.is_some() || self.pending.is_some() {
+            self.state.start_filter();
+            self.pending_filter_edit = self.pending.is_some();
+            self.staged = None;
+            self.viewport = 0..64;
+        } else {
+            self.state.reconcile_selection();
+        }
+        self.scroll_to_selection = true;
+    }
+
+    /// Search items: every frame command with its menu home and readiness,
+    /// then branches, remotes, and tags.
+    fn search_items(&self, ready: &FrameReadiness) -> Vec<search::Item<FrameCommand>> {
+        use search::Group;
+        let busy = "Wait for the current operation to finish";
+        let no_repo = "Open a repository first";
+        let idle = |ok: bool| {
+            if ok {
+                None
+            } else if ready.has_repo {
+                Some(busy)
+            } else {
+                Some(no_repo)
+            }
+        };
+        let force = if self.force_push_target().is_some() {
+            idle(ready.network_idle)
+        } else {
+            Some("Force with lease requires an upstream remote-tracking ref; track and fetch first")
+        };
+        let selected = if self.state.selected.is_some() {
+            None
+        } else {
+            Some("Select a commit in History first")
+        };
+        let refresh = if self.pending.is_none() {
+            None
+        } else {
+            Some(busy)
+        };
+        let actions: Vec<(&str, &str, &'static str, Option<&'static str>, FrameCommand)> = vec![
+            (
+                "Fetch",
+                "Repository menu",
+                "",
+                idle(ready.network_idle),
+                FrameCommand::Fetch,
+            ),
+            (
+                "Pull (rebase)",
+                "Repository menu",
+                "",
+                ready.pull_reason,
+                FrameCommand::Pull,
+            ),
+            (
+                "Push",
+                "Repository menu",
+                "",
+                idle(ready.network_idle),
+                FrameCommand::Push,
+            ),
+            (
+                "Force push with lease…",
+                "Repository menu",
+                "",
+                force,
+                FrameCommand::ForcePush,
+            ),
+            ("Open…", "Repository menu", "", None, FrameCommand::Open),
+            ("Clone…", "Repository menu", "", None, FrameCommand::Clone),
+            (
+                "Refresh",
+                "Repository menu",
+                "Ctrl+R",
+                refresh,
+                FrameCommand::Refresh,
+            ),
+            (
+                "Worktrees…",
+                "Repository menu",
+                "",
+                idle(ready.has_repo),
+                FrameCommand::Worktrees,
+            ),
+            (
+                "Recovery…",
+                "Repository menu · backups and reflog",
+                "",
+                idle(ready.has_repo),
+                FrameCommand::Recovery,
+            ),
+            (
+                "Development base folders…",
+                "Repository menu · clone folders",
+                "",
+                None,
+                FrameCommand::Folders,
+            ),
+            (
+                "New branch…",
+                "Branch menu",
+                "",
+                idle(ready.branch_idle),
+                FrameCommand::NewBranch,
+            ),
+            (
+                "New tag…",
+                "Branch menu",
+                "",
+                idle(ready.branch_idle),
+                FrameCommand::NewTag,
+            ),
+            (
+                "Track remote branch…",
+                "Branch menu",
+                "",
+                idle(ready.branch_idle),
+                FrameCommand::TrackBranch,
+            ),
+            (
+                "Merge into current…",
+                "Branch menu",
+                "",
+                idle(ready.branch_idle),
+                FrameCommand::Merge,
+            ),
+            (
+                "Rebase current onto…",
+                "Branch menu",
+                "",
+                idle(ready.branch_idle),
+                FrameCommand::RebaseOnto,
+            ),
+            (
+                "Commit actions…",
+                "Commit menu · selected commit",
+                "Alt+A",
+                selected,
+                FrameCommand::CommitActions,
+            ),
+            (
+                "Reorder and squash to HEAD…",
+                "Commit menu · from the selected commit",
+                "",
+                ready.rewrite_reason,
+                FrameCommand::RewriteSelected,
+            ),
+            (
+                "Reorder and squash this branch",
+                "toolbar · the branch's own commits",
+                "",
+                ready.branch_rewrite_reason,
+                FrameCommand::Rewrite,
+            ),
+            (
+                "Local Changes",
+                "Changes menu",
+                "",
+                idle(ready.has_repo),
+                FrameCommand::LocalChanges,
+            ),
+            (
+                "Stash changes…",
+                "Changes menu",
+                "",
+                ready.stash_reason,
+                FrameCommand::Stash,
+            ),
+            (
+                "Stashes…",
+                "Changes menu · list, restore, or drop",
+                "",
+                idle(ready.stash_idle),
+                FrameCommand::Stashes,
+            ),
+            (
+                "History",
+                "View menu",
+                "",
+                idle(ready.has_repo),
+                FrameCommand::History,
+            ),
+            (
+                "Refs sidebar",
+                "View menu",
+                "",
+                None,
+                FrameCommand::ToggleRefs,
+            ),
+            (
+                "Keyboard shortcuts…",
+                "Help menu",
+                "",
+                None,
+                FrameCommand::Shortcuts,
+            ),
+        ];
+        let mut items = actions
+            .into_iter()
+            .map(|(label, context, key, disabled, command)| search::Item {
+                group: Group::Actions,
+                label: label.into(),
+                context: context.into(),
+                key,
+                disabled,
+                command,
+            })
+            .collect::<Vec<_>>();
+        let head = self
+            .state
+            .refs
+            .head
+            .as_ref()
+            .and_then(|head| head.name.as_deref());
+        for item in &self.state.refs.items {
+            let (group, kind) = match item.kind {
+                gg_engine::refs::RefKind::Branch => (Group::Branches, "branch"),
+                gg_engine::refs::RefKind::Remote => (Group::Remotes, "remote"),
+                gg_engine::refs::RefKind::Tag => (Group::Tags, "tag"),
+            };
+            let current = Some(item.full_name.as_str()) == head;
+            items.push(search::Item {
+                group,
+                label: item.name.clone(),
+                context: format!(
+                    "{kind}{} · {}",
+                    if current { " · current" } else { "" },
+                    item.commit.chars().take(8).collect::<String>()
+                ),
+                key: "",
+                disabled: None,
+                command: FrameCommand::Inspect(item.commit.clone()),
+            });
+        }
+        items
+    }
+
+    /// Draws the `Ctrl+K` search popup and returns the command to run.
+    fn draw_search(&mut self, ctx: &egui::Context, ready: &FrameReadiness) -> Option<FrameCommand> {
+        let palette = self.search.as_mut()?;
+        let query = palette.query.clone();
+        let items = {
+            let palette_query = query.clone();
+            let base = self.search_items(ready);
+            search::results(
+                &palette_query,
+                &base,
+                FrameCommand::Filter(palette_query.trim().to_owned()),
+            )
+        };
+        let palette = self.search.as_mut()?;
+        if palette.selected >= items.len() {
+            palette.selected = items.len().saturating_sub(1);
+        }
+        let (down, up, enter) = ctx.input_mut(|i| {
+            (
+                i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown),
+                i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp),
+                i.consume_key(egui::Modifiers::NONE, egui::Key::Enter),
+            )
+        });
+        if down && palette.selected + 1 < items.len() {
+            palette.selected += 1;
+        }
+        if up {
+            palette.selected = palette.selected.saturating_sub(1);
+        }
+        let mut chosen = enter.then_some(palette.selected);
+        let id = egui::Id::unique("frame-search");
+        let area =
+            egui::Modal::default_area(id).anchor(egui::Align2::RIGHT_TOP, egui::vec2(-8.0, 74.0));
+        let modal = egui::Modal::new(id)
+            .area(area)
+            .backdrop_color(egui::Color32::from_black_alpha(40))
+            .show(ctx, |ui| {
+                ui.set_width(520.0_f32.min(ctx.content_rect().width() - 32.0));
+                let edit = ui.add(
+                    egui::TextEdit::singleline(&mut palette.query)
+                        .hint_text("Search commands, branches, remotes, and tags")
+                        .desired_width(f32::INFINITY),
+                );
+                if !palette.focused {
+                    edit.request_focus();
+                    palette.focused = true;
+                }
+                if edit.changed() {
+                    palette.selected = 0;
+                }
+                ui.add_space(4.0);
+                if items.is_empty() {
+                    ui.weak("No matching commands or refs");
+                }
+                let mut group = None;
+                egui::ScrollArea::vertical()
+                    .max_height(420.0)
+                    .show(ui, |ui| {
+                        for (index, item) in items.iter().enumerate() {
+                            if group != Some(item.group) {
+                                group = Some(item.group);
+                                ui.add_space(4.0);
+                                ui.label(egui::RichText::new(item.group.title()).small().weak());
+                            }
+                            let text = if item.context.is_empty() {
+                                item.label.clone()
+                            } else {
+                                format!("{}   ·   {}", item.label, item.context)
+                            };
+                            let response = ui.add_enabled(
+                                item.disabled.is_none(),
+                                egui::Button::selectable(palette.selected == index, text)
+                                    .truncate()
+                                    .right_text(item.key)
+                                    .min_size(egui::vec2(ui.available_width(), 24.0)),
+                            );
+                            let response = match item.disabled {
+                                Some(reason) => response.on_disabled_hover_text(reason),
+                                None => response,
+                            };
+                            if response.clicked() {
+                                chosen = Some(index);
+                            }
+                            if palette.selected == index && (down || up) {
+                                response.scroll_to_me(None);
+                            }
+                        }
+                    });
+                ui.add_space(4.0);
+                ui.weak(
+                    "Enter: run · Up/Down: choose · Esc: close · every action also lives in a menu",
+                );
+            });
+        let close = modal.should_close();
+        let command = chosen
+            .and_then(|index| items.get(index))
+            .filter(|item| item.disabled.is_none())
+            .map(|item| item.command.clone());
+        if close || command.is_some() {
+            self.search = None;
+        }
+        command
     }
 
     /// The toolbar **Stashes** button and its picker popup.
@@ -5773,6 +6243,7 @@ impl Browser {
         });
         let mut tool = None;
         let mut stash_pick = None;
+        let mut open_search = false;
         egui::Panel::top("navigation")
             .exact_size(34.0)
             .show(ui, |ui| {
@@ -5847,7 +6318,7 @@ impl Browser {
                     };
                     use crate::phosphor as icon;
                     if toolbar_button(ui, icon::DOWNLOAD_SIMPLE, None, "Fetch", idle(ready.network_idle)) {
-                        tool = Some(ToolbarCommand::Fetch);
+                        tool = Some(FrameCommand::Fetch);
                     }
                     let pull_tip = if ready.behind > 0 {
                         format!("Pull {} (rebase)", ready.behind)
@@ -5861,17 +6332,17 @@ impl Browser {
                         &pull_tip,
                         ready.pull_reason,
                     ) {
-                        tool = Some(ToolbarCommand::Pull);
+                        tool = Some(FrameCommand::Pull);
                     }
                     if toolbar_button(ui, icon::ARROW_LINE_UP, None, "Push", idle(ready.network_idle)) {
-                        tool = Some(ToolbarCommand::Push);
+                        tool = Some(FrameCommand::Push);
                     }
                     separator(ui);
                     if toolbar_button(ui, icon::GIT_BRANCH, None, "New branch…", idle(ready.branch_idle)) {
-                        tool = Some(ToolbarCommand::NewBranch);
+                        tool = Some(FrameCommand::NewBranch);
                     }
                     if toolbar_button(ui, icon::TAG, None, "New tag…", idle(ready.branch_idle)) {
-                        tool = Some(ToolbarCommand::NewTag);
+                        tool = Some(FrameCommand::NewTag);
                     }
                     if toolbar_button(
                         ui,
@@ -5880,11 +6351,11 @@ impl Browser {
                         "Merge into current…",
                         idle(ready.branch_idle),
                     ) {
-                        tool = Some(ToolbarCommand::Merge);
+                        tool = Some(FrameCommand::Merge);
                     }
                     separator(ui);
                     if toolbar_button(ui, icon::ARCHIVE, None, "Stash changes…", ready.stash_reason) {
-                        tool = Some(ToolbarCommand::Stash);
+                        tool = Some(FrameCommand::Stash);
                     }
                     if let Some(pick) = self.stash_picker_button(ui, &ready) {
                         stash_pick = Some(pick);
@@ -5906,7 +6377,7 @@ impl Browser {
                         &rewrite_tip,
                         ready.branch_rewrite_reason,
                     ) {
-                        tool = Some(ToolbarCommand::Rewrite);
+                        tool = Some(FrameCommand::Rewrite);
                     }
                     if toolbar_button(
                         ui,
@@ -5915,34 +6386,48 @@ impl Browser {
                         "Recovery…",
                         idle(ready.has_repo),
                     ) {
-                        tool = Some(ToolbarCommand::Recovery);
+                        tool = Some(FrameCommand::Recovery);
                     }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let icon = crate::phosphor::icon(crate::phosphor::MAGNIFYING_GLASS);
+                        // Narrow windows keep the icon only, so it never overlaps the tools.
+                        let button = if ui.available_width() >= 150.0 {
+                            egui::Button::new((
+                                icon.size(14.0),
+                                egui::RichText::new("Search").weak(),
+                                egui::RichText::new("Ctrl+K").small().weak(),
+                            ))
+                            .min_size(egui::vec2(140.0, 24.0))
+                        } else {
+                            egui::Button::new(icon.size(17.0))
+                                .min_size(egui::vec2(28.0, 26.0))
+                                .frame_when_inactive(false)
+                        };
+                        let search = ui.add(button).on_hover_text(
+                            "Search commands, branches, remotes, and tags (Ctrl+K)",
+                        );
+                        if search.clicked() {
+                            open_search = true;
+                        }
+                    });
                 });
             });
         if let Some(pick) = stash_pick {
             self.apply_stash_pick(ctx, pick);
         }
-        match tool {
-            Some(ToolbarCommand::Fetch) => self.start_fetch(ctx, None, false),
-            Some(ToolbarCommand::Pull) => self.start_pull_rebase(ctx),
-            Some(ToolbarCommand::Push) => self.start_push(ctx),
-            Some(ToolbarCommand::NewBranch) => self.open_new_branch(),
-            Some(ToolbarCommand::NewTag) => self.open_new_tag(),
-            Some(ToolbarCommand::Merge) => self.open_merge_dialog(),
-            Some(ToolbarCommand::Stash) => self.open_stash_dialog(),
-            Some(ToolbarCommand::Rewrite) => {
-                let start = self
-                    .local_summary
-                    .as_ref()
-                    .and_then(|summary| summary.branch_start.clone());
-                if let Some((start, _)) = start
-                    && let Err(error) = self.open_rewrite_dialog(&start)
-                {
-                    self.mutation_error = Some(error);
-                }
-            }
-            Some(ToolbarCommand::Recovery) => self.open_recovery_window(),
-            None => {}
+        if open_search || ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::K)) {
+            self.search = match self.search.take() {
+                Some(_) if !open_search => None,
+                _ => Some(SearchPalette::default()),
+            };
+        }
+        if self.search.is_some()
+            && let Some(command) = self.draw_search(ctx, &ready)
+        {
+            tool = Some(command);
+        }
+        if let Some(command) = tool {
+            self.run_frame_command(ctx, command, &mut go_local, &mut go_history);
         }
         if let Some(generation) = self.rewrite_refresh {
             if self.state.loaded_generation >= generation {
@@ -6951,7 +7436,7 @@ impl Browser {
                         ),
                         (
                             "Repository",
-                            "Ctrl/Cmd+R: refresh · Ctrl/Cmd+F: filter · Ctrl/Cmd+C: copy ID",
+                            "Ctrl/Cmd+K: search · Ctrl/Cmd+R: refresh · Ctrl/Cmd+F: filter · Ctrl/Cmd+C: copy ID",
                         ),
                         (
                             "Commit actions",
@@ -7705,15 +8190,7 @@ impl Browser {
                             .desired_width(ui.available_width()),
                     );
                     if response.changed() {
-                        if self.worker.is_some() || self.pending.is_some() {
-                            self.state.start_filter();
-                            self.pending_filter_edit = self.pending.is_some();
-                            self.staged = None;
-                            self.viewport = 0..64;
-                        } else {
-                            self.state.reconcile_selection();
-                        }
-                        self.scroll_to_selection = true;
+                        self.filter_changed();
                     }
                     if response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
                         response.surrender_focus();
@@ -11396,6 +11873,7 @@ mod tests {
             crate::phosphor::BOX_ARROW_UP,
             crate::phosphor::LIST_NUMBERS,
             crate::phosphor::CLOCK_COUNTER_CLOCKWISE,
+            crate::phosphor::MAGNIFYING_GLASS,
         ];
         for width in [720.0, 1120.0] {
             let ctx = egui::Context::default();
@@ -11640,6 +12118,73 @@ mod tests {
             "both entries are listed"
         );
         Ok(())
+    }
+
+    #[test]
+    fn search_filters_history_or_runs_the_chosen_action() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        let frame = |app: &mut Browser, events: Vec<egui::Event>| {
+            let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, events), |ctx| {
+                app.draw_ui(ctx)
+            });
+        };
+        frame(&mut app, vec![]);
+        frame(&mut app, vec![key(egui::Key::K, egui::Modifiers::COMMAND)]);
+        assert!(app.search.is_some(), "Ctrl+K opens search");
+        frame(&mut app, vec![]);
+        frame(&mut app, vec![egui::Event::Text("Subject 7".into())]);
+        frame(&mut app, vec![key(egui::Key::Enter, egui::Modifiers::NONE)]);
+        assert!(app.search.is_none(), "running a result closes search");
+        assert_eq!(
+            app.state.query, "Subject 7",
+            "the first result filters history"
+        );
+
+        let sidebar = app.refs_visible;
+        frame(&mut app, vec![key(egui::Key::K, egui::Modifiers::COMMAND)]);
+        frame(&mut app, vec![]);
+        frame(&mut app, vec![egui::Event::Text("refs sidebar".into())]);
+        frame(
+            &mut app,
+            vec![key(egui::Key::ArrowDown, egui::Modifiers::NONE)],
+        );
+        frame(&mut app, vec![key(egui::Key::Enter, egui::Modifiers::NONE)]);
+        assert!(app.search.is_none());
+        assert_eq!(
+            app.refs_visible, !sidebar,
+            "Down then Enter runs the action"
+        );
+
+        frame(&mut app, vec![key(egui::Key::K, egui::Modifiers::COMMAND)]);
+        frame(&mut app, vec![key(egui::Key::K, egui::Modifiers::COMMAND)]);
+        assert!(app.search.is_none(), "Ctrl+K toggles search closed");
+    }
+
+    #[test]
+    fn search_offers_frame_actions_with_their_readiness_and_refs() {
+        let mut app = layout_fixture();
+        app.state.refs.items = vec![gg_engine::refs::RefItem {
+            name: "release".into(),
+            full_name: "refs/tags/release".into(),
+            kind: gg_engine::refs::RefKind::Tag,
+            commit: "c".repeat(40),
+        }];
+        let ready = app.frame_readiness();
+        let items = app.search_items(&ready);
+        let pull = items
+            .iter()
+            .find(|item| item.label == "Pull (rebase)")
+            .map(|item| item.disabled);
+        assert_eq!(
+            pull,
+            Some(Some("The current branch has no upstream to pull from")),
+            "search shares the toolbar's readiness"
+        );
+        let results = search::results("release", &items, FrameCommand::Filter("release".into()));
+        assert_eq!(results[0].group, search::Group::Filter);
+        assert!(results.iter().any(|item| item.group == search::Group::Tags
+            && item.command == FrameCommand::Inspect("c".repeat(40))));
     }
 
     #[test]
