@@ -84,7 +84,8 @@ impl Blocks {
         egui::ScrollArea::vertical()
             .id_salt("conflict-blocks")
             .max_height((ui.available_height() - 190.0).max(160.0))
-            .auto_shrink([false, true])
+            .min_scrolled_height((ui.available_height() - 190.0).max(160.0))
+            .auto_shrink([false, false])
             .show(ui, |ui| {
                 let mut index = 0;
                 for segment in &self.segments {

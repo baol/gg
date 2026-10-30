@@ -685,6 +685,9 @@ const SEARCH_FILE_LIMIT: usize = 50_000;
 /// Fixed height of the search results popup.
 const SEARCH_RESULTS_HEIGHT: f32 = 360.0;
 
+/// Width of the conflicted-paths list in the conflict workspace.
+const CONFLICT_PATHS_WIDTH: f32 = 220.0;
+
 /// Fixed height of the operation area: two lines.
 const OPERATION_AREA_HEIGHT: f32 = 44.0;
 
@@ -828,7 +831,6 @@ struct ConflictView {
     snapshot: Option<gg_engine::conflict::Snapshot>,
     preview: gg_engine::conflict::Resolution,
     tab: ConflictTab,
-    placed: bool,
     /// Per-block choices for a text conflict.
     blocks: Option<conflict_blocks::Blocks>,
     /// Why this file has no text blocks.
@@ -4678,6 +4680,335 @@ impl Browser {
         });
     }
 
+    /// Resolve conflicts in the main workspace, under the operation area.
+    /// The workspace fills the content area at a fixed size; only a window
+    /// resize changes it.
+    fn draw_conflict_workspace(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
+        let ctx = &ctx;
+        let conflict_mutation = self.mutation.clone();
+        let conflict_pending =
+            self.operation_busy() || self.network.is_some() || self.branch.is_some();
+        let mut conflict_select = None;
+        let mut stage_resolution = false;
+        let mut refresh_content = false;
+        let mut conflict_open = true;
+        if let Some(view) = &mut self.conflict_view
+            && !view.whole_file
+            && let Some(blocks) = &mut view.blocks
+            && crate::navigation::available(ctx)
+            && !ctx.text_edit_focused()
+        {
+            blocks.keys(ctx);
+        }
+        if let Some(view) = &mut self.conflict_view {
+            let operation = conflict_mutation.as_ref().map(|state| state.operation);
+            let unresolved = conflict_mutation
+                .as_ref()
+                .map(|state| state.conflicts.len())
+                .unwrap_or(view.paths.len());
+            ui.horizontal(|ui| {
+                ui.heading("Resolve conflicts");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .button("Close")
+                        .on_hover_text("Return to the previous view (Esc)")
+                        .clicked()
+                    {
+                        conflict_open = false;
+                    }
+                });
+            });
+            ui.separator();
+            ui.scope(|ui| {
+                    ui.horizontal(|ui| {
+                        ui.strong(
+                            operation
+                                .map(gg_engine::mutation::Operation::as_str)
+                                .unwrap_or("operation"),
+                        );
+                        ui.label(format!("· {unresolved} unresolved"));
+                        if let Some(commit) = conflict_mutation
+                            .as_ref()
+                            .and_then(|state| state.commit.as_deref())
+                        {
+                            ui.label(format!("· {}", commit.chars().take(8).collect::<String>()));
+                        }
+                    });
+                    ui.label(conflict_side_hint(operation));
+                    // One fixed line for the error or the empty state.
+                    let note = match (&view.error, view.paths.is_empty() && !view.loading) {
+                        (Some(error), _) => (error.clone(), ui.visuals().error_fg_color),
+                        (None, true) => ("No unmerged paths.".into(), ui.visuals().text_color()),
+                        (None, false) => (String::new(), ui.visuals().text_color()),
+                    };
+                    let (rect, _) = ui.allocate_exact_size(
+                        egui::vec2(ui.available_width(), 20.0),
+                        egui::Sense::hover(),
+                    );
+                    bounded_text::paint(ui, rect, &note.0, egui::FontId::proportional(13.0), note.1);
+                    ui.separator();
+                    ui.horizontal_top(|ui| {
+                        ui.vertical(|ui| {
+                            ui.set_width(CONFLICT_PATHS_WIDTH);
+                            ui.label("Paths");
+                            let height = ui.available_height();
+                            egui::ScrollArea::vertical()
+                                .id_salt("conflict-paths")
+                                .max_height(height)
+                                .min_scrolled_height(height)
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| {
+                                    for (index, path) in view.paths.iter().enumerate() {
+                                        if ui
+                                            .selectable_label(index == view.selected, path)
+                                            .clicked()
+                                        {
+                                            conflict_select = Some(index);
+                                        }
+                                    }
+                                });
+                        });
+                        ui.separator();
+                        ui.vertical(|ui| {
+                            let Some(content) = &view.content else {
+                                if view.loading {
+                                    ui.spinner();
+                                }
+                                return;
+                            };
+                            ui.horizontal(|ui| {
+                                ui.weak("Resolve");
+                                let blocks = view.blocks.is_some();
+                                if ui
+                                    .add_enabled(
+                                        blocks,
+                                        egui::Button::selectable(
+                                            !view.whole_file && blocks,
+                                            "Block by block",
+                                        ),
+                                    )
+                                    .on_disabled_hover_text(
+                                        view.blocks_note.as_deref().unwrap_or("No text blocks."),
+                                    )
+                                    .clicked()
+                                {
+                                    view.whole_file = false;
+                                }
+                                if ui
+                                    .add(egui::Button::selectable(
+                                        view.whole_file || !blocks,
+                                        "Whole file",
+                                    ))
+                                    .clicked()
+                                {
+                                    view.whole_file = true;
+                                }
+                                if let Some(note) = &view.blocks_note {
+                                    ui.weak(note);
+                                }
+                            });
+                            if !view.whole_file
+                                && let Some(blocks) = &mut view.blocks
+                            {
+                                let labels = conflict_blocks::Labels {
+                                    base: conflict_side_label(operation, ConflictSide::Base),
+                                    ours: conflict_side_label(operation, ConflictSide::Ours),
+                                    theirs: conflict_side_label(operation, ConflictSide::Theirs),
+                                };
+                                blocks.show(ui, &labels);
+                                ui.separator();
+                                ui.horizontal(|ui| {
+                                    ui.strong(format!(
+                                        "Result · {}/{} blocks chosen · preview, not staged",
+                                        blocks.chosen(),
+                                        blocks.count()
+                                    ));
+                                    let enabled = !conflict_pending && blocks.complete();
+                                    let response = ui.add_enabled(
+                                        enabled,
+                                        egui::Button::new("Stage resolution"),
+                                    );
+                                    let response = if conflict_pending {
+                                        response.on_disabled_hover_text(
+                                            "Wait for the current operation to finish.",
+                                        )
+                                    } else {
+                                        response.on_disabled_hover_text(
+                                            "Choose a resolution for every block first.",
+                                        )
+                                    };
+                                    if response.clicked() {
+                                        stage_resolution = true;
+                                    }
+                                });
+                                let text = blocks.text();
+                                egui::ScrollArea::both()
+                                    .id_salt("conflict-block-result")
+                                    .max_height(150.0)
+                                    .min_scrolled_height(150.0)
+                                    .auto_shrink([false, false])
+                                    .show(ui, |ui| {
+                                        ui.monospace(text);
+                                    });
+                                return;
+                            }
+                            let snapshot = view.snapshot.clone();
+                            let preview_text = snapshot
+                                .as_ref()
+                                .map(|snapshot| conflict_preview_text(content, snapshot, view.preview))
+                                .unwrap_or_default();
+                            ui.horizontal_wrapped(|ui| {
+                                ui.weak("Preview source");
+                                for (resolution, label) in [
+                                    (gg_engine::conflict::Resolution::Base, "Base"),
+                                    (gg_engine::conflict::Resolution::Ours, "Ours"),
+                                    (gg_engine::conflict::Resolution::Theirs, "Theirs"),
+                                    (gg_engine::conflict::Resolution::Working, "Working file"),
+                                ] {
+                                    if ui
+                                        .selectable_label(view.preview == resolution, label)
+                                        .clicked()
+                                    {
+                                        view.preview = resolution;
+                                        view.tab = ConflictTab::Result;
+                                    }
+                                }
+                                if ui.button("Refresh external edits").clicked() {
+                                    refresh_content = true;
+                                }
+                            });
+                            ui.weak(
+                                "Choosing a source only changes this preview. Stage resolution publishes it once.",
+                            );
+                            if content.binary {
+                                ui.colored_label(ui.visuals().warn_fg_color, "Binary content");
+                            }
+                            if content.truncated {
+                                ui.colored_label(ui.visuals().warn_fg_color, "Content truncated");
+                            }
+                            if ui.available_width() >= 720.0 {
+                                ui.columns(3, |columns| {
+                                    for (column, (title, text)) in columns.iter_mut().zip([
+                                        (conflict_side_label(operation, ConflictSide::Base), &content.base),
+                                        (conflict_side_label(operation, ConflictSide::Ours), &content.ours),
+                                        (conflict_side_label(operation, ConflictSide::Theirs), &content.theirs),
+                                    ]) {
+                                        column.label(title);
+                                        egui::ScrollArea::both()
+                                            .id_salt(title)
+                                            .max_height(240.0)
+                                            .min_scrolled_height(240.0)
+                                            .auto_shrink([false, false])
+                                    .min_scrolled_height(240.0)
+                                    .auto_shrink([false, false])
+                                            .show(column, |ui| {
+                                                ui.monospace(text.as_deref().unwrap_or("(absent)"));
+                                            });
+                                    }
+                                });
+                                ui.separator();
+                                ui.horizontal(|ui| {
+                                    ui.strong(format!(
+                                        "Result · {} · preview, not staged",
+                                        conflict_resolution_label(view.preview)
+                                    ));
+                                    let enabled = !conflict_pending && conflict_preview_available(view);
+                                    let response = ui.add_enabled(
+                                        enabled,
+                                        egui::Button::new("Stage resolution"),
+                                    );
+                                    let response = if enabled {
+                                        response
+                                    } else {
+                                        response.on_disabled_hover_text(conflict_preview_reason(view))
+                                    };
+                                    if response.clicked() {
+                                        stage_resolution = true;
+                                    }
+                                });
+                                egui::ScrollArea::both()
+                                    .id_salt("conflict-result")
+                                    .max_height(150.0)
+                                    .min_scrolled_height(150.0)
+                                    .auto_shrink([false, false])
+                                    .show(ui, |ui| {
+                                        ui.monospace(&preview_text);
+                                    });
+                            } else {
+                                ui.horizontal(|ui| {
+                                    ui.selectable_value(&mut view.tab, ConflictTab::Base, "Base");
+                                    ui.selectable_value(&mut view.tab, ConflictTab::Ours, "Ours");
+                                    ui.selectable_value(
+                                        &mut view.tab,
+                                        ConflictTab::Theirs,
+                                        "Theirs",
+                                    );
+                                    ui.selectable_value(
+                                        &mut view.tab,
+                                        ConflictTab::Result,
+                                        "Result",
+                                    );
+                                });
+                                let text = match view.tab {
+                                    ConflictTab::Base => content.base.as_deref().unwrap_or("(absent)"),
+                                    ConflictTab::Ours => content.ours.as_deref().unwrap_or("(absent)"),
+                                    ConflictTab::Theirs => {
+                                        content.theirs.as_deref().unwrap_or("(absent)")
+                                    }
+                                    ConflictTab::Result => &preview_text,
+                                };
+                                egui::ScrollArea::both()
+                                    .id_salt("conflict-side")
+                                    .max_height(280.0)
+                                    .min_scrolled_height(280.0)
+                                    .auto_shrink([false, false])
+                                    .show(ui, |ui| {
+                                        ui.monospace(text);
+                                    });
+                                ui.horizontal(|ui| {
+                                    ui.weak(format!(
+                                        "Result · {} · preview, not staged",
+                                        conflict_resolution_label(view.preview)
+                                    ));
+                                    let enabled = !conflict_pending && conflict_preview_available(view);
+                                    let response = ui.add_enabled(
+                                        enabled,
+                                        egui::Button::new("Stage resolution"),
+                                    );
+                                    let response = if enabled {
+                                        response
+                                    } else {
+                                        response.on_disabled_hover_text(conflict_preview_reason(view))
+                                    };
+                                    if response.clicked() {
+                                        stage_resolution = true;
+                                    }
+                                });
+                            }
+                        });
+                    });
+                });
+        }
+        if let Some(index) = conflict_select
+            && let Some(view) = &mut self.conflict_view
+        {
+            view.selected = index;
+        }
+        if conflict_select.is_some() || refresh_content {
+            self.load_conflict_content(ctx);
+        }
+        if stage_resolution
+            && let Err(error) = self.stage_conflict_resolution(ctx)
+            && let Some(view) = &mut self.conflict_view
+        {
+            view.error = Some(error);
+        }
+        if self.conflict_view.is_some() && !conflict_open {
+            self.conflict_view = None;
+        }
+    }
+
     fn open_conflict_view(&mut self, ctx: &egui::Context) {
         self.refresh_conflict_view(ctx, None);
     }
@@ -4698,7 +5029,6 @@ impl Browser {
             snapshot: None,
             preview: gg_engine::conflict::Resolution::Working,
             tab: ConflictTab::Ours,
-            placed: false,
             blocks: None,
             blocks_note: None,
             whole_file: false,
@@ -6236,6 +6566,13 @@ impl Browser {
             && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
         {
             self.close_search(ctx);
+        } else if self.conflict_view.is_some()
+            && crate::navigation::available(ctx)
+            && !ctx.text_edit_focused()
+            && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+        {
+            // Esc leaves the conflict workspace before any view can take it.
+            self.conflict_view = None;
         }
         self.poll_local_summary();
         let focused = ctx.input(|i| i.focused);
@@ -8258,309 +8595,6 @@ impl Browser {
             }
         }
 
-        let conflict_mutation = self.mutation.clone();
-        let conflict_pending =
-            self.operation_busy() || self.network.is_some() || self.branch.is_some();
-        let mut conflict_select = None;
-        let mut stage_resolution = false;
-        let mut refresh_content = false;
-        let mut conflict_open = true;
-        if let Some(view) = &mut self.conflict_view
-            && !view.whole_file
-            && let Some(blocks) = &mut view.blocks
-            && crate::navigation::available(ctx)
-            && !ctx.text_edit_focused()
-        {
-            blocks.keys(ctx);
-        }
-        if let Some(view) = &mut self.conflict_view {
-            let operation = conflict_mutation.as_ref().map(|state| state.operation);
-            let unresolved = conflict_mutation
-                .as_ref()
-                .map(|state| state.conflicts.len())
-                .unwrap_or(view.paths.len());
-            let mut window = egui::Window::new("Resolve conflicts")
-                .id(egui::Id::unique("resolve-conflicts"))
-                .open(&mut conflict_open)
-                .collapsible(false)
-                .resizable(true)
-                .default_width((ctx.content_rect().width() - 32.0).clamp(360.0, 900.0))
-                .max_height((ctx.content_rect().height() - 120.0).max(240.0));
-            if !view.placed {
-                window = window.current_pos(egui::pos2(ctx.content_rect().left() + 16.0, 116.0));
-                view.placed = true;
-            }
-            window.show(ctx, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.strong(
-                            operation
-                                .map(gg_engine::mutation::Operation::as_str)
-                                .unwrap_or("operation"),
-                        );
-                        ui.label(format!("· {unresolved} unresolved"));
-                        if let Some(commit) = conflict_mutation
-                            .as_ref()
-                            .and_then(|state| state.commit.as_deref())
-                        {
-                            ui.label(format!("· {}", commit.chars().take(8).collect::<String>()));
-                        }
-                        if view.loading {
-                            ui.spinner();
-                        }
-                    });
-                    ui.label(conflict_side_hint(operation));
-                    if let Some(error) = &view.error {
-                        ui.colored_label(ui.visuals().error_fg_color, error);
-                    }
-                    if view.paths.is_empty() && !view.loading {
-                        ui.label("No unmerged paths.");
-                    }
-                    ui.separator();
-                    ui.horizontal_top(|ui| {
-                        ui.vertical(|ui| {
-                            ui.label("Paths");
-                            egui::ScrollArea::vertical()
-                                .id_salt("conflict-paths")
-                                .max_height(360.0)
-                                .show(ui, |ui| {
-                                    for (index, path) in view.paths.iter().enumerate() {
-                                        if ui
-                                            .selectable_label(index == view.selected, path)
-                                            .clicked()
-                                        {
-                                            conflict_select = Some(index);
-                                        }
-                                    }
-                                });
-                        });
-                        ui.separator();
-                        ui.vertical(|ui| {
-                            let Some(content) = &view.content else {
-                                if view.loading {
-                                    ui.spinner();
-                                }
-                                return;
-                            };
-                            ui.horizontal(|ui| {
-                                ui.weak("Resolve");
-                                let blocks = view.blocks.is_some();
-                                if ui
-                                    .add_enabled(
-                                        blocks,
-                                        egui::Button::selectable(
-                                            !view.whole_file && blocks,
-                                            "Block by block",
-                                        ),
-                                    )
-                                    .on_disabled_hover_text(
-                                        view.blocks_note.as_deref().unwrap_or("No text blocks."),
-                                    )
-                                    .clicked()
-                                {
-                                    view.whole_file = false;
-                                }
-                                if ui
-                                    .add(egui::Button::selectable(
-                                        view.whole_file || !blocks,
-                                        "Whole file",
-                                    ))
-                                    .clicked()
-                                {
-                                    view.whole_file = true;
-                                }
-                                if let Some(note) = &view.blocks_note {
-                                    ui.weak(note);
-                                }
-                            });
-                            if !view.whole_file
-                                && let Some(blocks) = &mut view.blocks
-                            {
-                                let labels = conflict_blocks::Labels {
-                                    base: conflict_side_label(operation, ConflictSide::Base),
-                                    ours: conflict_side_label(operation, ConflictSide::Ours),
-                                    theirs: conflict_side_label(operation, ConflictSide::Theirs),
-                                };
-                                blocks.show(ui, &labels);
-                                ui.separator();
-                                ui.horizontal(|ui| {
-                                    ui.strong(format!(
-                                        "Result · {}/{} blocks chosen · preview, not staged",
-                                        blocks.chosen(),
-                                        blocks.count()
-                                    ));
-                                    let enabled = !conflict_pending && blocks.complete();
-                                    let response = ui.add_enabled(
-                                        enabled,
-                                        egui::Button::new("Stage resolution"),
-                                    );
-                                    let response = if conflict_pending {
-                                        response.on_disabled_hover_text(
-                                            "Wait for the current operation to finish.",
-                                        )
-                                    } else {
-                                        response.on_disabled_hover_text(
-                                            "Choose a resolution for every block first.",
-                                        )
-                                    };
-                                    if response.clicked() {
-                                        stage_resolution = true;
-                                    }
-                                });
-                                let text = blocks.text();
-                                egui::ScrollArea::both()
-                                    .id_salt("conflict-block-result")
-                                    .max_height(150.0)
-                                    .show(ui, |ui| {
-                                        ui.monospace(text);
-                                    });
-                                return;
-                            }
-                            let snapshot = view.snapshot.clone();
-                            let preview_text = snapshot
-                                .as_ref()
-                                .map(|snapshot| conflict_preview_text(content, snapshot, view.preview))
-                                .unwrap_or_default();
-                            ui.horizontal_wrapped(|ui| {
-                                ui.weak("Preview source");
-                                for (resolution, label) in [
-                                    (gg_engine::conflict::Resolution::Base, "Base"),
-                                    (gg_engine::conflict::Resolution::Ours, "Ours"),
-                                    (gg_engine::conflict::Resolution::Theirs, "Theirs"),
-                                    (gg_engine::conflict::Resolution::Working, "Working file"),
-                                ] {
-                                    if ui
-                                        .selectable_label(view.preview == resolution, label)
-                                        .clicked()
-                                    {
-                                        view.preview = resolution;
-                                        view.tab = ConflictTab::Result;
-                                    }
-                                }
-                                if ui.button("Refresh external edits").clicked() {
-                                    refresh_content = true;
-                                }
-                            });
-                            ui.weak(
-                                "Choosing a source only changes this preview. Stage resolution publishes it once.",
-                            );
-                            if content.binary {
-                                ui.colored_label(ui.visuals().warn_fg_color, "Binary content");
-                            }
-                            if content.truncated {
-                                ui.colored_label(ui.visuals().warn_fg_color, "Content truncated");
-                            }
-                            if ui.available_width() >= 720.0 {
-                                ui.columns(3, |columns| {
-                                    for (column, (title, text)) in columns.iter_mut().zip([
-                                        (conflict_side_label(operation, ConflictSide::Base), &content.base),
-                                        (conflict_side_label(operation, ConflictSide::Ours), &content.ours),
-                                        (conflict_side_label(operation, ConflictSide::Theirs), &content.theirs),
-                                    ]) {
-                                        column.label(title);
-                                        egui::ScrollArea::both()
-                                            .id_salt(title)
-                                            .max_height(240.0)
-                                            .show(column, |ui| {
-                                                ui.monospace(text.as_deref().unwrap_or("(absent)"));
-                                            });
-                                    }
-                                });
-                                ui.separator();
-                                ui.horizontal(|ui| {
-                                    ui.strong(format!(
-                                        "Result · {} · preview, not staged",
-                                        conflict_resolution_label(view.preview)
-                                    ));
-                                    let enabled = !conflict_pending && conflict_preview_available(view);
-                                    let response = ui.add_enabled(
-                                        enabled,
-                                        egui::Button::new("Stage resolution"),
-                                    );
-                                    let response = if enabled {
-                                        response
-                                    } else {
-                                        response.on_disabled_hover_text(conflict_preview_reason(view))
-                                    };
-                                    if response.clicked() {
-                                        stage_resolution = true;
-                                    }
-                                });
-                                egui::ScrollArea::both()
-                                    .id_salt("conflict-result")
-                                    .max_height(150.0)
-                                    .show(ui, |ui| {
-                                        ui.monospace(&preview_text);
-                                    });
-                            } else {
-                                ui.horizontal(|ui| {
-                                    ui.selectable_value(&mut view.tab, ConflictTab::Base, "Base");
-                                    ui.selectable_value(&mut view.tab, ConflictTab::Ours, "Ours");
-                                    ui.selectable_value(
-                                        &mut view.tab,
-                                        ConflictTab::Theirs,
-                                        "Theirs",
-                                    );
-                                    ui.selectable_value(
-                                        &mut view.tab,
-                                        ConflictTab::Result,
-                                        "Result",
-                                    );
-                                });
-                                let text = match view.tab {
-                                    ConflictTab::Base => content.base.as_deref().unwrap_or("(absent)"),
-                                    ConflictTab::Ours => content.ours.as_deref().unwrap_or("(absent)"),
-                                    ConflictTab::Theirs => {
-                                        content.theirs.as_deref().unwrap_or("(absent)")
-                                    }
-                                    ConflictTab::Result => &preview_text,
-                                };
-                                egui::ScrollArea::both()
-                                    .id_salt("conflict-side")
-                                    .max_height(280.0)
-                                    .show(ui, |ui| {
-                                        ui.monospace(text);
-                                    });
-                                ui.horizontal(|ui| {
-                                    ui.weak(format!(
-                                        "Result · {} · preview, not staged",
-                                        conflict_resolution_label(view.preview)
-                                    ));
-                                    let enabled = !conflict_pending && conflict_preview_available(view);
-                                    let response = ui.add_enabled(
-                                        enabled,
-                                        egui::Button::new("Stage resolution"),
-                                    );
-                                    let response = if enabled {
-                                        response
-                                    } else {
-                                        response.on_disabled_hover_text(conflict_preview_reason(view))
-                                    };
-                                    if response.clicked() {
-                                        stage_resolution = true;
-                                    }
-                                });
-                            }
-                        });
-                    });
-                });
-        }
-        if let Some(index) = conflict_select
-            && let Some(view) = &mut self.conflict_view
-        {
-            view.selected = index;
-        }
-        if conflict_select.is_some() || refresh_content {
-            self.load_conflict_content(ctx);
-        }
-        if stage_resolution
-            && let Err(error) = self.stage_conflict_resolution(ctx)
-            && let Some(view) = &mut self.conflict_view
-        {
-            view.error = Some(error);
-        }
-        if self.conflict_view.is_some() && !conflict_open {
-            self.conflict_view = None;
-        }
         if self.help_shortcuts {
             let mut open = true;
             egui::Window::new("Keyboard shortcuts")
@@ -8986,6 +9020,10 @@ impl Browser {
         self.draw_signature(ctx);
         self.draw_tag_create(ctx);
         self.draw_force_push(ctx);
+        if self.conflict_view.is_some() {
+            egui::CentralPanel::default().show(ui, |ui| self.draw_conflict_workspace(ui));
+            return;
+        }
         if self.working.is_some() {
             let external = self.external_operation_reason();
             let close = self.working.as_mut().is_some_and(|working| {
@@ -10590,7 +10628,6 @@ mod tests {
                 }),
                 preview: gg_engine::conflict::Resolution::Working,
                 tab: ConflictTab::Ours,
-                placed: false,
                 blocks: None,
                 blocks_note: None,
                 whole_file: false,
@@ -11557,7 +11594,6 @@ mod tests {
             snapshot: None,
             preview: gg_engine::conflict::Resolution::Working,
             tab: ConflictTab::Ours,
-            placed: false,
             blocks: None,
             blocks_note: None,
             whole_file: false,
@@ -11762,6 +11798,88 @@ mod tests {
     }
 
     #[test]
+    fn conflicts_open_in_the_main_workspace_and_hold_still() -> Result<(), String> {
+        let ctx = egui::Context::default();
+        crate::phosphor::install(&ctx);
+        let mut app = layout_fixture();
+        let block = |n: &str| gg_engine::conflict::Segment::Block {
+            ours: format!("ours {n}\n"),
+            base: format!("base {n}\n"),
+            theirs: format!("theirs {n}\n"),
+        };
+        app.conflict_view = Some(ConflictView {
+            paths: vec!["a".into()],
+            selected: 0,
+            previous_selected: 0,
+            keep: None,
+            content: Some(gg_engine::conflict::Content {
+                path: "a".into(),
+                base: Some("base\n".into()),
+                ours: Some("ours\n".into()),
+                theirs: Some("theirs\n".into()),
+                binary: false,
+                truncated: false,
+            }),
+            error: None,
+            loading: false,
+            worker: None,
+            blocks: Some(conflict_blocks::Blocks::new(vec![block("1"), block("2")])),
+            blocks_note: None,
+            whole_file: false,
+            snapshot: None,
+            preview: gg_engine::conflict::Resolution::Working,
+            tab: ConflictTab::Ours,
+        });
+        let result_y = |app: &mut Browser, events: Vec<egui::Event>| {
+            let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, events), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let text = shown_text(&output);
+            assert!(
+                !text
+                    .iter()
+                    .any(|line| line.starts_with("Filter by message")),
+                "the workspace replaces History: {text:?}"
+            );
+            output.shapes.iter().find_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) if text.galley.job.text.starts_with("Result ·") => {
+                    Some(text.pos.y)
+                }
+                _ => None,
+            })
+        };
+        let before = result_y(&mut app, vec![]).ok_or("no result line")?;
+        let chosen = result_y(&mut app, vec![key(egui::Key::Num1, egui::Modifiers::NONE)]);
+        assert_eq!(
+            chosen,
+            Some(before),
+            "choosing a block does not move the result"
+        );
+        if let Some(view) = &mut app.conflict_view {
+            view.error = Some("The conflict changed. Refresh external edits and retry.".into());
+        }
+        assert_eq!(
+            result_y(&mut app, vec![]),
+            Some(before),
+            "an error has its own line"
+        );
+        let _ = crate::tests::run_ui(
+            &ctx,
+            frame_input(
+                1120.0,
+                740.0,
+                vec![key(egui::Key::Escape, egui::Modifiers::NONE)],
+            ),
+            |ctx| app.draw_ui(ctx),
+        );
+        assert!(app.conflict_view.is_none(), "Esc closes the workspace");
+        Ok(())
+    }
+
+    #[test]
     fn conflict_staging_uses_the_operation_worker() {
         let ctx = egui::Context::default();
         let mut app = layout_fixture();
@@ -11781,7 +11899,6 @@ mod tests {
             error: None,
             loading: false,
             worker: None,
-            placed: false,
             blocks: None,
             blocks_note: None,
             whole_file: false,
@@ -12191,7 +12308,6 @@ mod tests {
             snapshot: None,
             preview: gg_engine::conflict::Resolution::Working,
             tab: ConflictTab::Base,
-            placed: false,
             blocks: None,
             blocks_note: None,
             whole_file: false,
