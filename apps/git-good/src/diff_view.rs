@@ -1651,8 +1651,11 @@ impl DiffView {
         bounded_text::field(ui, &text, egui::FontId::monospace(10.0), 18.0);
     }
 
-    /// One short state line for completeness, notes, and loading. Sizes and
-    /// object identity live in File details instead of permanent rows.
+    /// One short state line for completeness and notes. Sizes and object
+    /// identity live in File details instead of permanent rows. The line is
+    /// always reserved, so nothing below moves when a note comes or goes, and
+    /// it never announces loading: the previous content simply stays until
+    /// its replacement is ready.
     fn draw_status(&mut self, ui: &mut egui::Ui) {
         let pending = self.content_pending();
         let mut parts: Vec<String> = vec![];
@@ -1661,15 +1664,11 @@ impl DiffView {
                 if !full.complete {
                     parts.push("bounded".into());
                 }
-                if pending {
-                    parts.push("loading · previous content retained".into());
-                } else if !full.note.is_empty() && !full.note.starts_with("Working snapshot") {
+                if !pending && !full.note.is_empty() && !full.note.starts_with("Working snapshot") {
                     parts.push(full.note.clone());
                 }
             } else if self.error.is_some() {
                 parts.push("Full file unavailable".into());
-            } else {
-                parts.push("Loading full file…".into());
             }
         } else if let Some(info) = &self.info {
             if !info.complete {
@@ -1684,26 +1683,17 @@ impl DiffView {
             if !pending && !detail.is_empty() && detail != "Empty file" {
                 parts.push(detail.to_owned());
             }
-            if pending {
-                parts.push("loading · previous diff retained".into());
-            }
         } else if self.error.is_some() {
             parts.push("Diff unavailable".into());
-        } else {
-            parts.push("Loading selected-file diff…".into());
         }
-        if self.attribution {
-            if self.blame_loading {
-                parts.push("Loading attribution…".into());
-            } else if let Some(error) = &self.blame_error {
-                parts.push(format!(
-                    "Attribution unavailable: {}",
-                    error.lines().next().unwrap_or_default()
-                ));
-            }
-        }
-        if parts.is_empty() {
-            return;
+        if self.attribution
+            && !self.blame_loading
+            && let Some(error) = &self.blame_error
+        {
+            parts.push(format!(
+                "Attribution unavailable: {}",
+                error.lines().next().unwrap_or_default()
+            ));
         }
         bounded_text::field(
             ui,
@@ -1980,14 +1970,8 @@ impl DiffView {
             for index in rows {
                 let (rect, response) =
                     ui.allocate_exact_size(egui::vec2(width, HEIGHT), egui::Sense::click());
+                // A row not read yet keeps its slot, empty.
                 let Some(row) = self.rows.get(&index) else {
-                    ui.painter().text(
-                        rect.left_center(),
-                        egui::Align2::LEFT_CENTER,
-                        "Loading…",
-                        egui::FontId::monospace(12.0),
-                        ui.visuals().weak_text_color(),
-                    );
                     continue;
                 };
                 let (sign, color, fill) = crate::colors::diff(ui.visuals(), row.kind);
@@ -2250,11 +2234,10 @@ impl DiffView {
             self.reading_keys(ctx);
         }
         let Some(full) = &self.full else {
-            ui.weak(if self.error.is_some() {
-                "Full file unavailable"
-            } else {
-                "Loading full file…"
-            });
+            // Until the first side arrives the pane stays empty.
+            if self.error.is_some() {
+                ui.weak("Full file unavailable");
+            }
             self.send(ctx);
             return;
         };

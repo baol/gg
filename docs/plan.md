@@ -126,7 +126,7 @@ Layout moves with content:
 
 Placeholder text in panes:
 
-12. "Loading…" or "Reading…" text replaces content in: commit details ("Loading message..."), history rows, Review and Local Changes file rows, the reader ("Loading selected-file diff…", "Loading full file…", "Loading attribution…"), file history ("Loading file history…", "Loading versions…"), Review's empty list ("Reading comparison…"), and the Worktrees, submodule, and LFS windows. Endpoint labels show "resolving…". Status-line progress is allowed.
+12. **· fixed.** Panes now keep their slots empty or keep the previous content instead. Previously, "Loading…" or "Reading…" text replaced content in: commit details ("Loading message..."), history rows, Review and Local Changes file rows, the reader ("Loading selected-file diff…", "Loading full file…", "Loading attribution…"), file history ("Loading file history…", "Loading versions…"), Review's empty list ("Reading comparison…"), and the Worktrees, submodule, and LFS windows. Endpoint labels show "resolving…". Status-line progress is allowed.
 
 ## Repository setup and branch integration · in review
 

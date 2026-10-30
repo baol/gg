@@ -113,8 +113,9 @@ pub fn show(
             ui.add_space(10.0);
             ui.separator();
             ui.add_space(6.0);
+            // While the full message loads its slot stays empty.
             let body = if loading {
-                "Loading message..."
+                ""
             } else {
                 commit
                     .message

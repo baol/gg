@@ -4841,7 +4841,8 @@ impl Browser {
         self.worktree_generation += 1;
         let generation = self.worktree_generation;
         let label = match &action {
-            worktree_worker::Action::List => "Reading worktrees…",
+            // Reads keep the window busy without announcing it.
+            worktree_worker::Action::List => "",
             worktree_worker::Action::Add(_) => "Adding worktree…",
             worktree_worker::Action::Remove(_) => "Removing worktree…",
         };
@@ -5007,7 +5008,7 @@ impl Browser {
                     {
                         create_open = true;
                     }
-                    if let Some(busy) = &window.busy {
+                    if let Some(busy) = window.busy.as_deref().filter(|busy| !busy.is_empty()) {
                         ui.spinner();
                         ui.weak(busy);
                     }
@@ -5020,11 +5021,10 @@ impl Browser {
                 }
                 ui.separator();
                 let Some(snapshot) = &window.snapshot else {
-                    ui.weak(if window.busy.is_some() {
-                        "Reading worktrees…"
-                    } else {
-                        "Worktrees unavailable."
-                    });
+                    // Until the first list arrives the window stays empty.
+                    if window.busy.is_none() {
+                        ui.weak("Worktrees unavailable.");
+                    }
                     return;
                 };
                 for (index, worktree) in snapshot.worktrees.iter().enumerate() {
@@ -5291,7 +5291,8 @@ impl Browser {
         self.submodule_generation += 1;
         let generation = self.submodule_generation;
         let label = match action {
-            submodule_worker::Action::Read { .. } => "Reading submodule…",
+            // Reads keep the window busy without announcing it.
+            submodule_worker::Action::Read { .. } => "",
             submodule_worker::Action::Update => "Updating submodule…",
         };
         if let Some(window) = &mut self.submodule_window {
@@ -5435,11 +5436,6 @@ impl Browser {
                             {
                                 ask_update = true;
                             }
-                        });
-                    } else if window.busy.is_some() {
-                        ui.horizontal(|ui| {
-                            ui.spinner();
-                            ui.weak("Reading submodule…");
                         });
                     }
                     if let Some(error) = &window.error {
@@ -5741,7 +5737,8 @@ impl Browser {
         self.lfs_generation += 1;
         let generation = self.lfs_generation;
         let label = match action {
-            lfs_worker::Action::Read(_) => "Reading LFS pointer…",
+            // Reads keep the window busy without announcing it.
+            lfs_worker::Action::Read(_) => "",
             lfs_worker::Action::Fetch(_) => "Fetching LFS object…",
         };
         if let Some(window) = &mut self.lfs_window {
@@ -5875,11 +5872,6 @@ impl Browser {
                             ask_fetch = true;
                         }
                         ui.weak("Fetching does not change or smudge working files.");
-                    } else if window.busy.is_some() {
-                        ui.horizontal(|ui| {
-                            ui.spinner();
-                            ui.weak("Reading LFS pointer…");
-                        });
                     }
                     if let Some(error) = &window.error {
                         ui.colored_label(ui.visuals().error_fg_color, error);
@@ -9247,14 +9239,8 @@ impl Browser {
                                             egui::vec2(ui.available_width(), crate::density::row()),
                                             egui::Sense::hover(),
                                         );
+                                        // A row not read yet keeps its slot, empty.
                                         self.row_rects.push((row, rect));
-                                        ui.painter().text(
-                                            rect.left_center() + egui::vec2(30.0, 0.0),
-                                            egui::Align2::LEFT_CENTER,
-                                            "Loading...",
-                                            egui::FontId::proportional(12.0),
-                                            ui.visuals().weak_text_color(),
-                                        );
                                     }
                                 }
                             },
@@ -9266,7 +9252,7 @@ impl Browser {
                         ui.spacing_mut().item_spacing.y = previous_spacing;
                     });
             } else if self.pending.is_some() {
-                ui.label("Reading repository history…");
+                // The status line reports the read; the pane stays empty.
             } else {
                 ui.label("Choose Open… to enter a repository path.");
             }

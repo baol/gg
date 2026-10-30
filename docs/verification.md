@@ -215,7 +215,7 @@ The opt-in timing check passed. Frame timings exclude GPU presentation.
 - All 61 default workspace tests, formatting, Clippy, and debug build pass on Linux.
 - Git-oracle tests verify root/first-parent comparisons, nested paths, statuses, object IDs/modes, file-to-directory replacement, empty commits, merge-parent selection, and pinned comparisons with unavailable blobs.
 - CLI tests verify discovery, explicit repository, exact path bytes, JSON, and error exits.
-- A controlled 10,000-file reader verifies first-page delivery, complete enumeration, deep/back page reload, retained errors, and shutdown. UI tests verify placeholder stability and review/history isolation with exact Back anchors.
+- A controlled 10,000-file reader verifies first-page delivery, complete enumeration, deep/back page reload, retained errors, and shutdown. UI tests verify placeholder stability and review/history isolation with exact Back anchors. Unread rows keep empty slots with no loading text; loaded rows stay visible.
 - Native X11 review confirms status/path rows, metadata, paging, and Back at [1120×740](screenshots/m1-files-wide.png) and [720×480](screenshots/m1-files-narrow.png).
 - Large-tree latency/peak-memory measurements and selected-file diffs remain in the [M1 plan](plan.md).
 

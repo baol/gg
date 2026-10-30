@@ -1037,15 +1037,8 @@ impl StatusView {
                         egui::FontId::proportional(12.0),
                         ui.visuals().text_color(),
                     );
-                } else {
-                    ui.painter().text(
-                        rect.left_center(),
-                        egui::Align2::LEFT_CENTER,
-                        "Loading…",
-                        egui::FontId::proportional(12.0),
-                        ui.visuals().weak_text_color(),
-                    );
                 }
+                // A row not read yet keeps its slot, empty.
             }
         });
         list.rect = out.inner_rect;

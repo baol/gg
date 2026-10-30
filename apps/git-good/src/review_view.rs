@@ -32,7 +32,8 @@ fn short_id(id: &str) -> String {
 fn review_source(reference: Option<&str>, id: Option<&str>, absent: &str) -> String {
     match (reference, id) {
         (Some(reference), Some(id)) => format!("{reference} ({})", short_id(id)),
-        (Some(reference), None) => format!("{reference} (resolving…)"),
+        // The commit arrives with the comparison; until then the name alone.
+        (Some(reference), None) => reference.to_string(),
         (None, Some(id)) => short_id(id),
         (None, None) => absent.to_string(),
     }
@@ -172,13 +173,13 @@ impl Review {
         let parent = self.comparison.as_ref().and_then(|c| c.parent.as_deref());
         if let Some(against) = self.request.against.as_deref() {
             (
-                review_source(Some(against), parent, "resolving…"),
-                review_source(None, Some(after_id), "resolving…"),
+                review_source(Some(against), parent, ""),
+                review_source(None, Some(after_id), ""),
             )
         } else {
             (
                 review_source(None, parent, "empty tree"),
-                review_source(None, Some(after_id), "resolving…"),
+                review_source(None, Some(after_id), ""),
             )
         }
     }
@@ -846,11 +847,10 @@ impl Review {
             });
             self.rect = ui.available_rect_before_wrap();
             if self.count == 0 {
-                ui.weak(if self.complete {
-                    "This comparison has no changed files."
-                } else {
-                    "Reading comparison…"
-                });
+                // An empty list stays empty until the first files arrive.
+                if self.complete {
+                    ui.weak("This comparison has no changed files.");
+                }
                 return;
             }
             let mut scroll = egui::ScrollArea::vertical().id_salt("review-files");
@@ -931,15 +931,8 @@ impl Review {
                             response.surrender_focus();
                             self.selected = Some(row);
                         }
-                    } else {
-                        bounded_text::paint(
-                            ui,
-                            path,
-                            "Loading…",
-                            egui::FontId::proportional(12.0),
-                            ui.visuals().weak_text_color(),
-                        );
                     }
+                    // A row not read yet keeps its slot, empty.
                 }
             });
             self.offset = result.state.clamped_offset().y;
@@ -1194,6 +1187,50 @@ mod tests {
             place(&mut view),
             files,
             "Prev/Next file appear in reserved slots"
+        );
+    }
+
+    #[test]
+    fn unread_rows_stay_empty_and_loaded_rows_stay_put() {
+        let ctx = egui::Context::default();
+        let mut view = Review::fixture(&ctx);
+        let frame = |view: &mut Review| {
+            crate::tests::run_ui(
+                &ctx,
+                crate::tests::frame_input(1120.0, 740.0, vec![]),
+                |ui| {
+                    view.draw_ui(ui);
+                },
+            )
+        };
+        let _ = frame(&mut view);
+        // Rows 1–4 are still being read while row 0 is shown.
+        for row in 1..5 {
+            view.rows.remove(&row);
+        }
+        let output = frame(&mut view);
+        let texts = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) => Some(text.galley.job.text.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            !texts.iter().any(|text| {
+                let text = text.to_lowercase();
+                text.contains("loading") || text.contains("resolving")
+            }),
+            "no placeholder text in the pane: {texts:?}"
+        );
+        assert!(
+            texts.iter().any(|text| text.starts_with("src/0000-")),
+            "the loaded row stays visible: {texts:?}"
+        );
+        assert!(
+            !texts.iter().any(|text| text.starts_with("src/0001-")),
+            "an unread row stays empty"
         );
     }
 
