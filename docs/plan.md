@@ -128,6 +128,27 @@ Placeholder text in panes:
 
 12. **· fixed.** Panes now keep their slots empty or keep the previous content instead. Previously, "Loading…" or "Reading…" text replaced content in: commit details ("Loading message..."), history rows, Review and Local Changes file rows, the reader ("Loading selected-file diff…", "Loading full file…", "Loading attribution…"), file history ("Loading file history…", "Loading versions…"), Review's empty list ("Reading comparison…"), and the Worktrees, submodule, and LFS windows. Endpoint labels show "resolving…". Status-line progress is allowed.
 
+### Mockup alignment · reviewed 2026-10-30 · in progress
+
+Second pass comparing every Final-page board with the app. Done: menus from one command table, About gg, rebase plan and stop wording, Changes group headers with Stage all/Unstage all, commit box wording, toolbar tooltips with shortcuts, the search placeholder, Blame and the ‹ › ⋯ reader buttons, refs sidebar groups, history pill order and colors, the History footer, the window title, and `[`/`]` between conflict blocks.
+
+Still to build (medium):
+
+1. Review header: subject, hash pill, author · date, and a **Compare with** select (parents and HEAD); `FILES n +x −y` with per-file stats; left-elided paths; a fixed 300 px file list.
+2. Changes: per-row stage/unstage buttons; line selection bar with Clear; S/U keys.
+3. Conflict workspace: files panel with resolved list and blocks left; Open in editor; result line numbers.
+4. Rebase stop: **Commits made at this stop** section in Local Changes.
+5. Stash picker: two-line rows and Up/Down/Enter/Del keys.
+6. Preferences: footer with the config path and Close; search field; the settings listed on the Final page that are not built yet.
+7. Refs sidebar: **Worktrees** group and branch tracking counts.
+
+Decisions for the review (see the canvas page **Review · as built**):
+
+- Side-by-side diff (large) and a bottom commit inspector instead of the right pane (large).
+- The mockup's Unstaged/Staged reader toggle against the shipped rule of one comparison per selected row.
+- History: drop the filter row and show `Commit · N` in the column header, with filtering moved to search?
+- Preferences modal or not; Reword on `Ctrl+R` (taken by Refresh); `Del` for Delete; `Alt+A` for commit actions; F10 menu focus (not available in egui).
+
 ## Repository setup and branch integration · in review
 
 Goal: make clone destinations quick to compose and branch integration discoverable without weakening Git safety.
