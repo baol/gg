@@ -94,3 +94,26 @@ fn backup_refs_work_in_sha256_repositories() -> Result {
     );
     Ok(())
 }
+
+#[test]
+fn prune_deletes_only_gg_backups_older_than_the_age() -> Result {
+    let dir = repo()?;
+    let p = dir.path();
+    let head = String::from_utf8(git(p, &["rev-parse", "HEAD"])?)?
+        .trim()
+        .to_string();
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?;
+    let day: u128 = 86_400 * 1_000_000_000;
+    let old = format!("refs/gg/backup/rewrite/{}", now.as_nanos() - 40 * day);
+    let recent = format!("refs/gg/backup/amend/{}", now.as_nanos() - day);
+    git(p, &["update-ref", &old, &head])?;
+    git(p, &["update-ref", &recent, &head])?;
+    git(p, &["update-ref", "refs/heads/keep-me", &head])?;
+    let removed = gg_git::backup::prune(p, std::time::Duration::from_secs(30 * 86_400))?;
+    assert_eq!(removed, 1);
+    let refs = String::from_utf8(git(p, &["for-each-ref", "--format=%(refname)"])?)?;
+    assert!(!refs.contains(&old), "{refs}");
+    assert!(refs.contains(&recent), "{refs}");
+    assert!(refs.contains("refs/heads/keep-me"), "{refs}");
+    Ok(())
+}

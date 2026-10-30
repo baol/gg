@@ -37,6 +37,33 @@ pub fn create(path: &Path, label: &str, target: &str) -> Result<String, String> 
     Ok(name)
 }
 
+/// Delete gg's backup references older than `age`, judged by the creation
+/// time in their names; returns how many were deleted. Other references are
+/// never touched.
+pub fn prune(path: &Path, age: std::time::Duration) -> Result<usize, String> {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| format!("Read the system clock: {e}"))?
+        .as_nanos();
+    let cutoff = now.saturating_sub(age.as_nanos());
+    let mut removed = 0;
+    for backup in list(path)? {
+        let created = backup_nanos(&backup.reference);
+        if created == 0 || created >= cutoff {
+            continue;
+        }
+        let output = run(
+            path,
+            &["update-ref".into(), "-d".into(), backup.reference.clone()],
+        )?;
+        if !output.status.success() {
+            return Err(failure("Delete an old backup", &output));
+        }
+        removed += 1;
+    }
+    Ok(removed)
+}
+
 pub fn list(path: &Path) -> Result<Vec<Backup>, String> {
     let output = run(
         path,

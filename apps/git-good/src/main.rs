@@ -2485,6 +2485,19 @@ impl Browser {
                             );
                             ui.weak("After rewriting a published branch, the status line offers Push with force-with-lease….");
                             ui.separator();
+                            ui.strong("Keep private backups");
+                            ui.horizontal(|ui| {
+                                for days in settings::BACKUP_DAYS {
+                                    let label = if days == 0 {
+                                        "Forever".to_string()
+                                    } else {
+                                        format!("{days} days")
+                                    };
+                                    ui.selectable_value(&mut prefs.backup_days, days, label);
+                                }
+                            });
+                            ui.weak("Older backups are deleted when a repository opens.");
+                            ui.separator();
                             ui.strong("Recovery");
                             ui.weak(
                                 "Every rewrite creates a private backup ref first. Repository › Recovery… lists them with the reflog.",
@@ -3479,6 +3492,21 @@ impl Browser {
             self.apply_changes(ctx, changes, first);
         }
         self.refresh_mutation();
+    }
+
+    /// Delete old private backups in the background, by Preferences ›
+    /// Rebase & recovery › Keep private backups; off by default.
+    fn prune_backups(&self, path: &Path) {
+        if self.prefs.backup_days == 0 || cfg!(test) {
+            return;
+        }
+        let path = path.to_path_buf();
+        let age = std::time::Duration::from_secs(u64::from(self.prefs.backup_days) * 86_400);
+        let _ = std::thread::Builder::new()
+            .name("gg-prune-backups".into())
+            .spawn(move || {
+                let _ = gg_git::backup::prune(&path, age);
+            });
     }
 
     /// Open a repository-relative path's working file in the editor from
@@ -6525,6 +6553,9 @@ impl Browser {
         }
         self.refresh_local_summary(ctx);
         self.last_load = Some(std::time::Instant::now());
+        if switching || self.watcher.is_none() {
+            self.prune_backups(&path);
+        }
         if self
             .watcher
             .as_ref()

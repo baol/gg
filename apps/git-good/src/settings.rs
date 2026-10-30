@@ -39,6 +39,9 @@ impl PullStrategy {
     }
 }
 
+/// Backup retention choices in days; 0 keeps them forever.
+pub const BACKUP_DAYS: [u16; 3] = [30, 90, 0];
+
 /// Interface zoom choices, in percent.
 pub const ZOOMS: [u16; 3] = [100, 110, 125];
 /// Code font sizes, in tenths of a pixel.
@@ -337,6 +340,9 @@ pub struct Prefs {
     pub clone_named_after_repo: bool,
     /// Launched without a path outside a repository: open the last one.
     pub reopen_last: bool,
+    /// Delete gg's private backups older than this many days; 0 keeps
+    /// them forever (the default, so upgrading never deletes backups).
+    pub backup_days: u16,
     /// After rewriting a branch that has an upstream, offer Push with
     /// force-with-lease.
     pub offer_force_lease: bool,
@@ -374,6 +380,7 @@ impl Default for Prefs {
             clone_named_after_repo: true,
             reopen_last: true,
             offer_force_lease: true,
+            backup_days: 0,
             history_avatars: true,
             history_tags: true,
             relative_dates: false,
@@ -422,6 +429,9 @@ impl Prefs {
             reopen_last: read(path, "reopen_last").unwrap_or(defaults.reopen_last),
             offer_force_lease: read(path, "offer_force_lease")
                 .unwrap_or(defaults.offer_force_lease),
+            backup_days: read(path, "backup_days")
+                .filter(|days| BACKUP_DAYS.contains(days))
+                .unwrap_or(defaults.backup_days),
             history_avatars: read(path, "history_avatars").unwrap_or(defaults.history_avatars),
             history_tags: read(path, "history_tags").unwrap_or(defaults.history_tags),
             relative_dates: read(path, "relative_dates").unwrap_or(defaults.relative_dates),
@@ -465,6 +475,7 @@ impl Prefs {
         write(path, "clone_named_after_repo", &self.clone_named_after_repo)?;
         write(path, "reopen_last", &self.reopen_last)?;
         write(path, "offer_force_lease", &self.offer_force_lease)?;
+        write(path, "backup_days", &self.backup_days)?;
         write(path, "history_avatars", &self.history_avatars)?;
         write(path, "history_tags", &self.history_tags)?;
         write(path, "relative_dates", &self.relative_dates)
@@ -542,6 +553,7 @@ mod tests {
         prefs.clone_named_after_repo = false;
         prefs.reopen_last = false;
         prefs.offer_force_lease = false;
+        prefs.backup_days = 30;
         prefs.history_tags = false;
         prefs.relative_dates = true;
         prefs.save()?;
