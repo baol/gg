@@ -134,7 +134,7 @@ Second pass comparing every Final-page board with the app. Done: the Changes rea
 
 Still to build (medium):
 
-1. Review file list (decided: follow the mockup): a fixed 300 px file list. Done: background per-file +/− line counts, the `FILES n +x −y` header, and start-elided paths.
+1. Review file list · done (decided: follow the mockup): background per-file +/− line counts, the `FILES n +x −y` header, start-elided paths, and a fixed 300 px file list.
 2. Conflict workspace: files panel with resolved list and blocks left; result line numbers. **Open in editor** needs a way to launch the user's editor (a new dependency or a setting): decide in review.
 3. Rebase stop: **Commits made at this stop** section in Local Changes.
 4. Stash picker: two-line rows (Up/Down/Enter/Del keys are done).

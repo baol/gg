@@ -828,3 +828,12 @@ Linux x86_64 · Rust 1.97.0 · Xvfb/llvmpipe · this repository's own history an
 - `split_rows` unit tests cover pairing, padding, unpaired changes, run boundaries, the display/unified mapping in both directions, and paging; egui tests at 720 and 1120 widths find the Inline | Side by side toggle and both line number columns, and keep `[`/`]` navigation; settings tests round-trip `diff_layout`.
 - Native X11 at 1280×740: a commit review in Side by side (paired deletions and additions, context in both columns, hunk header across both) and Local Changes in Side by side with **Stage hunk** and **Discard hunk** on each header and padded cells beside longer additions. Only the dark theme was inspected natively.
 - Limitation: the two columns share one horizontal offset driven by sideways scrolling; there is no horizontal scroll bar in Side by side.
+
+## Review file list · 2026-10-30
+
+Linux x86_64 · Rust 1.97.0 · Xvfb/llvmpipe · this repository's own history and a disposable 5,000-file fixture.
+
+- `cargo fmt --all --check` and `cargo clippy --workspace --all-targets --locked -- -D warnings` passed; `cargo test --workspace --locked` passed 633 tests (4 ignored opt-in performance checks).
+- `line_stats_match_git_numstat` compares every counted file of a fixture commit with `git diff --numstat`; the worker test checks that counts and the total fill in behind a 10,000-file listing and complete only after it; egui tests at 720 and 1120 widths check the `FILES n` header, the right-aligned count slot, start-elided paths that do not move when counts arrive, and the 300 px wide list.
+- Native X11 at 1280×740: `GG_REVIEW=HEAD~1` showed `FILES 2`, `+53 −6`, and `+41 −5`/`+12 −1` rows matching `git diff --numstat`; a 5,000-file commit stayed responsive while listing, showing `FILES 3234+` and `+680+ −680+` as counts filled in. At 720×480 the list kept the full width with the same header and counts. Only the dark theme was inspected natively.
+- Limitation: counts use the reader's Myers diff with its 250-ms deadline, so a pathological file past the deadline may count more lines than Git's heuristics; gitlinks and files over the text budget stay uncounted.

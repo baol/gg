@@ -8,6 +8,8 @@ use gg_engine::{file::ReadingSide, review::*};
 use std::{collections::BTreeMap, ops::Range};
 #[cfg(test)]
 const ROW: f32 = crate::density::COMPACT_ROW;
+/// Width of the file list beside the reader in wide layouts.
+const FILE_LIST_WIDTH: f32 = 300.0;
 /// Font of the per-file line counts.
 fn stat_font() -> egui::FontId {
     egui::FontId::monospace(10.5)
@@ -1155,14 +1157,16 @@ impl Review {
                 .exact_size(height)
                 .show(ui, |ui| self.draw_reader(ui, ctx, false));
             egui::CentralPanel::default().show(ui, |ui| self.draw_files(ui, reveal));
-        } else {
-            if !narrow {
-                egui::Panel::right("review-file-diff")
-                    .default_size(640.0)
-                    .size_range(400.0..=(ctx.content_rect().width() - 320.0).max(400.0))
-                    .show(ui, |ui| self.draw_reader(ui, ctx, false));
-            }
+        } else if narrow {
             egui::CentralPanel::default().show(ui, |ui| self.draw_files(ui, reveal));
+        } else {
+            // A fixed file list at the left, the reader in the remaining
+            // width, as in the Review mockup.
+            egui::Panel::left("review-files")
+                .exact_size(FILE_LIST_WIDTH)
+                .resizable(false)
+                .show(ui, |ui| self.draw_files(ui, reveal));
+            egui::CentralPanel::default().show(ui, |ui| self.draw_reader(ui, ctx, false));
         }
         self.reconcile_history_selection(ctx);
         if self.history.is_none()
@@ -1592,6 +1596,11 @@ mod tests {
             assert!((total.center().y - header.center().y).abs() < 1.0);
             let list = view.rect;
             assert!(total.right() <= list.right() && stat.right() <= list.right());
+            if width > 1040.0 {
+                assert!(list.right() <= FILE_LIST_WIDTH + 1.0, "{list:?}");
+            } else {
+                assert!(list.width() > width - 40.0, "{list:?}");
+            }
         }
         Ok(())
     }
