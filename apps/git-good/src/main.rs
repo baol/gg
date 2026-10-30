@@ -12012,7 +12012,7 @@ mod tests {
                 "Skip commit",
                 "Abort and restore",
                 "Commit or stash the 2 remaining changed files first.",
-                "third change",
+                "cccccccc pick",
             ] {
                 assert!(
                     text.iter().any(|line| line.contains(expected)),

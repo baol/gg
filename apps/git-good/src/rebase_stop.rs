@@ -104,7 +104,12 @@ fn chips(ui: &mut egui::Ui, progress: &RebaseProgress) {
         ui.weak(format!("{} {first} done", phosphor::CHECK));
     }
     for (index, step) in steps.enumerate().skip(first).take(last + 1 - first) {
-        let label = format!("{} {}", step.action, step.subject);
+        // As in the mockup: the step's ID and action; the subject is on hover.
+        let label = format!(
+            "{} {}",
+            &step.commit[..step.commit.len().min(8)],
+            step.action
+        );
         let text = if index < current {
             egui::RichText::new(format!("{} {label}", phosphor::CHECK)).weak()
         } else if index == current {
