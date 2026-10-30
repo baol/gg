@@ -46,6 +46,11 @@ pub fn list(path: &Path) -> Result<StashList, String> {
 
 /// Whether the worktree has anything to stash: staged, unstaged, or untracked changes.
 pub fn has_changes(path: &Path) -> Result<bool, String> {
+    Ok(change_count(path)? > 0)
+}
+
+/// Number of changed paths: staged, unstaged, untracked, or conflicted, each path once.
+pub fn change_count(path: &Path) -> Result<usize, String> {
     let output = run(
         path,
         &[
@@ -58,7 +63,19 @@ pub fn has_changes(path: &Path) -> Result<bool, String> {
     if !output.status.success() {
         return Err(failure("Read worktree status", &output));
     }
-    Ok(!output.stdout.is_empty())
+    let mut count = 0;
+    let mut records = output.stdout.split(|byte| *byte == 0);
+    while let Some(record) = records.next() {
+        if record.len() < 3 {
+            continue;
+        }
+        count += 1;
+        // Renames and copies carry their original path in the next field.
+        if matches!(record[0], b'R' | b'C') || matches!(record[1], b'R' | b'C') {
+            records.next();
+        }
+    }
+    Ok(count)
 }
 
 pub fn push(

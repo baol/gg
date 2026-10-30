@@ -381,7 +381,7 @@ fn scrollbar_release_followed_by_pointer_motion_in_one_frame_keeps_release_posit
 fn keyboard_on_visible_rows_preserves_viewport() -> Result {
     // Selection changes should preserve spatial context when both rows already fit.
     let mut h = Harness::new(100_000);
-    h.app.restore_offset = Some(4000.0);
+    h.app.restore_offset = Some(150.0 * crate::history_view::ROW_HEIGHT);
     h.frame(vec![]);
     h.publish(100_000)?;
     h.frame(vec![]);

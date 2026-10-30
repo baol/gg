@@ -3,7 +3,7 @@ use crate::avatars::Avatars;
 use eframe::egui;
 use gg_engine::Commit;
 
-pub const ROW_HEIGHT: f32 = 26.0;
+pub const ROW_HEIGHT: f32 = 22.0;
 pub const MIN_WIDTH: f32 = 610.0;
 
 #[derive(Clone, Debug, PartialEq, Eq)]

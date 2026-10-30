@@ -6,7 +6,7 @@ use crate::{
 use eframe::egui;
 use gg_engine::{file::ReadingSide, review::*};
 use std::{collections::BTreeMap, ops::Range};
-const ROW: f32 = 26.0;
+const ROW: f32 = 22.0;
 
 fn short_id(id: &str) -> String {
     id.chars().take(8).collect()
@@ -725,7 +725,7 @@ impl Review {
         }
         egui::CentralPanel::default().show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.add_sized([86.0, ROW], egui::Label::new("STATUS"));
+                ui.add_space(26.0);
                 ui.weak("PATH");
             });
             self.rect = ui.available_rect_before_wrap();
@@ -783,7 +783,7 @@ impl Review {
                     let rect = response.rect.shrink2(egui::vec2(6.0, 0.0));
                     let status = egui::Rect::from_min_max(
                         rect.min,
-                        egui::pos2(rect.left() + 80.0, rect.bottom()),
+                        egui::pos2(rect.left() + 14.0, rect.bottom()),
                     );
                     let path = egui::Rect::from_min_max(
                         egui::pos2(status.right() + 8.0, rect.top()),
@@ -791,11 +791,12 @@ impl Review {
                     );
                     if let Some(change) = change {
                         let (label, color) = crate::colors::change(ui.visuals(), &change.kind);
+                        let response = response.clone().on_hover_text(label);
                         bounded_text::paint(
                             ui,
                             status,
-                            label,
-                            egui::FontId::proportional(12.0),
+                            crate::colors::change_symbol(&change.kind),
+                            egui::FontId::proportional(13.0),
                             color,
                         );
                         bounded_text::paint(

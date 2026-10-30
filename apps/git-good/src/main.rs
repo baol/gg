@@ -366,8 +366,8 @@ struct RestoreStashDialog {
 /// read on a background thread.
 #[derive(Clone, Debug, Default)]
 struct LocalSummary {
-    /// Whether the worktree has staged, unstaged, or untracked changes.
-    dirty: Option<bool>,
+    /// Changed paths: staged, unstaged, untracked, or conflicted, each once.
+    changes: Option<usize>,
     stashes: Vec<gg_engine::stash::StashEntry>,
     /// First commit of the current branch's own work and its commit count.
     branch_start: Option<(String, usize)>,
@@ -376,7 +376,7 @@ struct LocalSummary {
 impl LocalSummary {
     fn read(path: PathBuf) -> Self {
         Self {
-            dirty: gg_git::stash::has_changes(&path).ok(),
+            changes: gg_git::stash::change_count(&path).ok(),
             stashes: gg_git::stash::list(&path)
                 .map(|list| list.entries)
                 .unwrap_or_default(),
@@ -515,6 +515,8 @@ struct FrameReadiness {
     /// Why **Stash changes** is unavailable, if it is.
     stash_reason: Option<&'static str>,
     stashes: usize,
+    /// Changed paths shown on the Changes tab badge; zero when unknown.
+    changes: usize,
     /// Commits in the current branch's own range for the toolbar rewrite.
     branch_rewrite_count: usize,
     branch_rewrite_reason: Option<&'static str>,
@@ -534,6 +536,28 @@ enum ToolbarCommand {
     Recovery,
 }
 
+/// Paints a count badge on the top-right corner of `rect`; nothing for zero.
+fn paint_badge(ui: &egui::Ui, rect: egui::Rect, count: u64) {
+    if count == 0 {
+        return;
+    }
+    let text = if count > 99 {
+        "99+".into()
+    } else {
+        count.to_string()
+    };
+    let font = egui::FontId::proportional(9.0);
+    let ink = egui::Color32::from_rgb(27, 27, 27);
+    let galley = ui.painter().layout_no_wrap(text, font, ink);
+    let size = egui::vec2((galley.size().x + 6.0).max(12.0), 12.0);
+    let badge =
+        egui::Rect::from_min_size(egui::pos2(rect.right() - size.x + 1.0, rect.top()), size);
+    ui.painter()
+        .rect_filled(badge, 6.0, egui::Color32::from_rgb(237, 166, 78));
+    ui.painter()
+        .galley(badge.center() - galley.size() / 2.0, galley, ink);
+}
+
 /// One icon button in the window toolbar; returns whether it was clicked.
 fn toolbar_button(
     ui: &mut egui::Ui,
@@ -546,29 +570,7 @@ fn toolbar_button(
         .min_size(egui::vec2(28.0, 26.0))
         .frame_when_inactive(false);
     let response = ui.add_enabled(disabled.is_none(), button);
-    if let Some(count) = badge.filter(|count| *count > 0) {
-        let text = if count > 99 {
-            "99+".into()
-        } else {
-            count.to_string()
-        };
-        let font = egui::FontId::proportional(9.0);
-        let galley = ui
-            .painter()
-            .layout_no_wrap(text, font, egui::Color32::from_rgb(27, 27, 27));
-        let size = egui::vec2((galley.size().x + 6.0).max(12.0), 12.0);
-        let rect = egui::Rect::from_min_size(
-            egui::pos2(response.rect.right() - size.x + 1.0, response.rect.top()),
-            size,
-        );
-        ui.painter()
-            .rect_filled(rect, 6.0, egui::Color32::from_rgb(237, 166, 78));
-        ui.painter().galley(
-            rect.center() - galley.size() / 2.0,
-            galley,
-            egui::Color32::from_rgb(27, 27, 27),
-        );
-    }
+    paint_badge(ui, response.rect, badge.unwrap_or(0));
     let response = response.on_hover_text(tooltip);
     let response = match disabled {
         Some(reason) => response.on_disabled_hover_text(format!("{tooltip}\n{reason}")),
@@ -3104,7 +3106,7 @@ impl Browser {
             Some("Open a repository first")
         } else if !stash_idle {
             Some("Wait for the current operation to finish")
-        } else if summary.and_then(|summary| summary.dirty) == Some(false) {
+        } else if summary.and_then(|summary| summary.changes) == Some(0) {
             Some("No local changes to stash")
         } else {
             None
@@ -3130,6 +3132,7 @@ impl Browser {
             stash_idle,
             stash_reason,
             stashes: summary.map_or(0, |summary| summary.stashes.len()),
+            changes: summary.and_then(|summary| summary.changes).unwrap_or(0),
             branch_rewrite_count: branch_rewrite.map_or(0, |(_, count)| *count),
             branch_rewrite_reason,
             behind,
@@ -5795,15 +5798,19 @@ impl Browser {
                         self.refs_visible = !self.refs_visible;
                     }
                     ui.add_space(6.0);
-                    if ui
+                    let changes = ui
                         .add_enabled(
                             has_repo,
-                            egui::Button::selectable(local_selected, "Local Changes")
-                                .min_size(egui::vec2(112.0, 24.0)),
+                            egui::Button::selectable(local_selected, "Changes")
+                                .min_size(egui::vec2(96.0, 24.0)),
                         )
-                        .on_hover_text("Stage, unstage, commit, and amend in one view")
-                        .clicked()
-                    {
+                        .on_hover_text(match ready.changes {
+                            0 => "Local Changes: stage, unstage, commit, and amend".to_string(),
+                            1 => "Local Changes: 1 changed file".to_string(),
+                            count => format!("Local Changes: {count} changed files"),
+                        });
+                    paint_badge(ui, changes.rect, ready.changes as u64);
+                    if changes.clicked() {
                         go_local = true;
                     }
                     if ui
@@ -11079,7 +11086,7 @@ mod tests {
                 } else {
                     assert_eq!(app.details_rect, egui::Rect::NOTHING);
                 }
-                for label in ["Repository", "View", "Local Changes"] {
+                for label in ["Repository", "View", "Changes"] {
                     let shape = output.shapes.iter().find_map(|shape| match &shape.shape {
                         egui::epaint::Shape::Text(text) if text.galley.job.text == label => {
                             Some(text)
@@ -11182,14 +11189,14 @@ mod tests {
             let nav = |label: &str| {
                 output.shapes.iter().find_map(|shape| match &shape.shape {
                     egui::epaint::Shape::Text(text)
-                        if text.galley.job.text == label && text.pos.y < 80.0 =>
+                        if text.galley.job.text == label && (42.0..80.0).contains(&text.pos.y) =>
                     {
                         Some(text.pos)
                     }
                     _ => None,
                 })
             };
-            let local = nav("Local Changes").ok_or("missing Local Changes")?;
+            let local = nav("Changes").ok_or("missing Local Changes")?;
             let history = nav("History").ok_or("missing History")?;
             assert!(
                 local.x < history.x,
@@ -11233,7 +11240,7 @@ mod tests {
             let output = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
                 app.draw_ui(ctx)
             });
-            for label in ["Repository", "Local Changes", "Commit", "Amend"] {
+            for label in ["Repository", "Changes", "Commit", "Amend"] {
                 assert!(
                     output.shapes.iter().any(|shape| matches!(
                         &shape.shape,
@@ -11248,7 +11255,7 @@ mod tests {
                     .iter()
                     .filter_map(|shape| match &shape.shape {
                         egui::epaint::Shape::Text(text)
-                            if text.galley.job.text == "Local Changes" =>
+                            if text.galley.job.text == "Changes" && text.pos.y > 42.0 =>
                         {
                             Some(text.pos.x)
                         }
@@ -11567,7 +11574,7 @@ mod tests {
         crate::phosphor::install(&ctx);
         let mut app = layout_fixture();
         app.local_summary = Some(LocalSummary {
-            dirty: Some(true),
+            changes: Some(2),
             stashes: (0..2)
                 .map(|index| gg_engine::stash::StashEntry {
                     index,
@@ -11639,7 +11646,7 @@ mod tests {
     fn stash_commands_follow_local_changes_and_entries() {
         let mut app = layout_fixture();
         app.local_summary = Some(LocalSummary {
-            dirty: Some(false),
+            changes: Some(0),
             stashes: Vec::new(),
             branch_start: None,
         });
@@ -11648,7 +11655,7 @@ mod tests {
         assert_eq!(ready.stashes, 0);
         assert!(ready.branch_rewrite_reason.is_some());
         app.local_summary = Some(LocalSummary {
-            dirty: Some(true),
+            changes: Some(2),
             stashes: vec![gg_engine::stash::StashEntry {
                 index: 0,
                 reference: "stash@{0}".into(),

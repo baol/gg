@@ -1450,17 +1450,59 @@ impl DiffView {
     /// One file header: exact path, one scoped action menu, and the exact
     /// endpoints. Low-frequency identity and commands are not permanent rows.
     fn draw_header(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, change: &FileChange) {
+        let displayed_working = self
+            .displayed_working
+            .clone()
+            .or_else(|| self.working.clone());
+        let endpoints = if let Some(working) = &displayed_working {
+            Some(self.working_route(working))
+        } else if self.displayed.is_none() || self.displayed_generation == self.generation {
+            match (&self.before_endpoint, &self.after_endpoint) {
+                (Some(before), Some(after)) => Some(format!(
+                    "{} {before} → {} {after}",
+                    self.old_label, self.new_label
+                )),
+                _ => None,
+            }
+        } else {
+            None
+        };
         ui.horizontal(|ui| {
             let stage_width = if self.stage.is_some() { 78.0 } else { 0.0 };
             let width = (ui.available_width() - 104.0 - stage_width).max(80.0);
             let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 24.0), egui::Sense::hover());
+            // Path and exact comparison endpoints share one line.
+            let path_font = egui::FontId::proportional(14.0);
+            let path_width = ui
+                .painter()
+                .layout_no_wrap(change.path.clone(), path_font.clone(), egui::Color32::WHITE)
+                .size()
+                .x
+                .min(rect.width() * 0.6);
+            let path_rect =
+                egui::Rect::from_min_size(rect.min, egui::vec2(path_width + 1.0, rect.height()));
             bounded_text::paint(
                 ui,
-                rect,
+                path_rect,
                 &change.path,
-                egui::FontId::proportional(14.0),
+                path_font,
                 ui.visuals().text_color(),
             );
+            if let Some(endpoints) = &endpoints {
+                let endpoint_rect = egui::Rect::from_min_max(
+                    egui::pos2(path_rect.right() + 12.0, rect.top()),
+                    rect.max,
+                );
+                if endpoint_rect.width() > 24.0 {
+                    bounded_text::paint(
+                        ui,
+                        endpoint_rect,
+                        endpoints,
+                        egui::FontId::monospace(11.0),
+                        ui.visuals().weak_text_color(),
+                    );
+                }
+            }
             if let Some(stage) = self.stage {
                 let label = if stage.verb == "Unstage" {
                     "Unstage"
@@ -1554,27 +1596,6 @@ impl DiffView {
                 }
             });
         });
-        let displayed_working = self
-            .displayed_working
-            .clone()
-            .or_else(|| self.working.clone());
-        if let Some(working) = &displayed_working {
-            bounded_text::field(
-                ui,
-                &self.working_route(working),
-                egui::FontId::monospace(11.0),
-                20.0,
-            );
-        } else if (self.displayed.is_none() || self.displayed_generation == self.generation)
-            && let (Some(before), Some(after)) = (&self.before_endpoint, &self.after_endpoint)
-        {
-            bounded_text::field(
-                ui,
-                &format!("{} {before} → {} {after}", self.old_label, self.new_label),
-                egui::FontId::monospace(11.0),
-                20.0,
-            );
-        }
         if !self.details_open {
             return;
         }
@@ -3505,7 +3526,7 @@ mod tests {
     }
 
     #[test]
-    fn the_reader_header_names_both_exact_endpoints() {
+    fn the_reader_header_names_both_exact_endpoints() -> Result<(), Box<dyn std::error::Error>> {
         let ctx = egui::Context::default();
         let mut view = DiffView {
             change: Some(file("src/app.rs", true, true)),
@@ -3519,11 +3540,23 @@ mod tests {
                 egui::CentralPanel::default().show(ctx, |ui| view.draw(ui));
             },
         );
-        assert!(output.shapes.iter().any(|shape| matches!(
-            &shape.shape,
-            egui::epaint::Shape::Text(text)
-                if text.galley.job.text == "Before main (11111111) → After feature (22222222)"
-        )));
+        let find = |label: &str| {
+            output.shapes.iter().find_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) if text.galley.job.text == label => {
+                    Some(egui::Rect::from_min_size(text.pos, text.galley.size()))
+                }
+                _ => None,
+            })
+        };
+        let endpoints = find("Before main (11111111) → After feature (22222222)")
+            .ok_or("missing endpoint label")?;
+        let path = find("src/app.rs").ok_or("missing path label")?;
+        assert!(
+            (endpoints.center().y - path.center().y).abs() < 4.0,
+            "endpoints share the path line: {path:?} {endpoints:?}"
+        );
+        assert!(endpoints.left() > path.right(), "{path:?} {endpoints:?}");
+        Ok(())
     }
 
     #[test]

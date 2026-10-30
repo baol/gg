@@ -7,7 +7,7 @@ use crate::{
 use eframe::egui;
 use gg_engine::status::{Area, Kind, StatusEntry};
 use std::{collections::BTreeMap, ops::Range, path::PathBuf};
-const HEIGHT: f32 = 24.0;
+const HEIGHT: f32 = 22.0;
 const GROUP_HEADER: f32 = 24.0;
 const WIDE_LAYOUT: f32 = 900.0;
 type Comparison = (Vec<u8>, Area);
@@ -47,6 +47,17 @@ fn commit_reason<'a>(
 fn group_name(list: usize) -> &'static str {
     if list == 0 { "Unstaged" } else { "Staged" }
 }
+/// One-character change marker for a status row; the full kind is in the tooltip.
+fn kind_symbol(kind: Kind) -> &'static str {
+    match kind {
+        Kind::Added | Kind::IntentToAdd => "+",
+        Kind::Deleted => "−",
+        Kind::Modified => "~",
+        Kind::TypeChanged => "T",
+        Kind::Conflicted => "!",
+    }
+}
+
 fn area_badge(entry: &StatusEntry) -> Option<&'static str> {
     match entry.area {
         Area::Untracked => Some("Untracked"),
@@ -988,41 +999,34 @@ impl StatusView {
                     } else {
                         ui.visuals().warn_fg_color
                     };
-                    if let Some(badge) = area_badge(entry) {
-                        bounded_text::paint(
-                            ui,
-                            egui::Rect::from_min_size(rect.min, egui::vec2(68.0, HEIGHT)),
-                            badge,
-                            egui::FontId::proportional(12.0),
-                            area_color,
-                        );
-                    }
-                    let kind_x = if area_badge(entry).is_some() {
-                        74.0
-                    } else {
-                        0.0
+                    let (symbol, symbol_color) = match entry.area {
+                        Area::Untracked => ("?", area_color),
+                        Area::Conflict => ("!", area_color),
+                        _ => (kind_symbol(entry.kind), color),
                     };
-                    let path_x = kind_x + 78.0;
-                    for (x, width, text, color) in [
-                        (kind_x, path_x - kind_x - 6.0, entry.kind.label(), color),
-                        (
-                            path_x,
-                            rect.width() - path_x,
-                            entry.path.as_str(),
-                            ui.visuals().text_color(),
+                    let description = match area_badge(entry) {
+                        Some(badge) => format!("{badge} · {}", entry.kind.label()),
+                        None => entry.kind.label().to_string(),
+                    };
+                    let _ = response.clone().on_hover_text(description);
+                    bounded_text::paint(
+                        ui,
+                        egui::Rect::from_min_size(rect.min, egui::vec2(14.0, HEIGHT)),
+                        symbol,
+                        egui::FontId::proportional(13.0),
+                        symbol_color,
+                    );
+                    let path_x = 22.0;
+                    bounded_text::paint(
+                        ui,
+                        egui::Rect::from_min_size(
+                            rect.min + egui::vec2(path_x, 0.0),
+                            egui::vec2((rect.width() - path_x).max(0.0), HEIGHT),
                         ),
-                    ] {
-                        bounded_text::paint(
-                            ui,
-                            egui::Rect::from_min_size(
-                                rect.min + egui::vec2(x, 0.0),
-                                egui::vec2(width.max(0.0), HEIGHT),
-                            ),
-                            text,
-                            egui::FontId::proportional(12.0),
-                            color,
-                        );
-                    }
+                        entry.path.as_str(),
+                        egui::FontId::proportional(12.0),
+                        ui.visuals().text_color(),
+                    );
                 } else {
                     ui.painter().text(
                         rect.left_center(),
@@ -1601,6 +1605,27 @@ impl StatusView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn change_markers_are_single_distinct_characters() {
+        let kinds = [
+            Kind::Added,
+            Kind::Modified,
+            Kind::Deleted,
+            Kind::TypeChanged,
+            Kind::Conflicted,
+        ];
+        let symbols = kinds.map(kind_symbol);
+        for symbol in symbols {
+            assert_eq!(symbol.chars().count(), 1, "{symbol:?}");
+        }
+        let mut unique = symbols.to_vec();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(unique.len(), kinds.len(), "{symbols:?}");
+        assert_eq!(kind_symbol(Kind::IntentToAdd), kind_symbol(Kind::Added));
+    }
+
     fn entry(list: usize, row: usize) -> StatusEntry {
         let area = if list == 0 {
             Area::Unstaged

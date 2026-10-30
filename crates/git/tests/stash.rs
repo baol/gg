@@ -212,5 +212,13 @@ fn has_changes_sees_staged_unstaged_and_untracked_work() -> Result {
     assert!(gg_git::stash::has_changes(path)?, "untracked files count");
     git(path, &["add", "new"])?;
     assert!(gg_git::stash::has_changes(path)?, "staged files count");
+    git(path, &["commit", "-qm", "new"])?;
+    git(path, &["mv", "new", "renamed"])?;
+    std::fs::write(path.join("extra"), b"extra\n")?;
+    assert_eq!(
+        gg_git::stash::change_count(path)?,
+        2,
+        "a rename counts once, plus the untracked file"
+    );
     Ok(())
 }
