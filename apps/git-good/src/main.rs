@@ -4363,11 +4363,16 @@ impl Browser {
         compact: bool,
     ) -> Option<BranchPick> {
         let head = self.state.refs.head.as_ref();
-        let name = match (
-            self.rebase_step_label(),
-            head.and_then(|head| head.name.as_deref()),
-        ) {
-            (Some(step), _) => step,
+        // During a rebase the button keeps the branch's name, as in the
+        // mockup; the step is in the operation area and the window title.
+        let rebasing = self.rebase_progress().map(|progress| {
+            progress
+                .branch
+                .clone()
+                .unwrap_or_else(|| "detached HEAD".into())
+        });
+        let name = match (rebasing, head.and_then(|head| head.name.as_deref())) {
+            (Some(branch), _) => branch,
             (None, Some(full)) => full.strip_prefix("refs/heads/").unwrap_or(full).to_string(),
             (None, None) if head.is_some_and(|head| head.detached) => "detached HEAD".into(),
             (None, None) => "no branch".into(),
