@@ -159,6 +159,12 @@ impl Dialog {
         }
     }
 
+    /// Start the plan as it stands, as Start rebase would; `None` when the
+    /// plan cannot run.
+    pub fn start_now(&self) -> Option<Outcome> {
+        self.start()
+    }
+
     fn start(&self) -> Option<Outcome> {
         self.plan.steps().ok().map(|steps| Outcome::Start {
             from: self.from.clone(),

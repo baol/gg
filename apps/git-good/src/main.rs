@@ -2469,6 +2469,8 @@ impl Browser {
                             ui.weak(
                                 "Rebase and interactive rebase dialogs start with this choice; each rebase still asks.",
                             );
+                            ui.checkbox(&mut prefs.confirm_destructive, "Confirm before Drop and Reset");
+                            ui.weak("Off: Commit › Drop… runs without the plan, and Reset current branch to here… resets Mixed (never Hard). Both still save a backup.");
                             ui.separator();
                             ui.strong("Pull strategy");
                             ui.horizontal(|ui| {
@@ -3090,7 +3092,7 @@ impl Browser {
                     ctx.copy_text(id.clone());
                 }
             }
-            FrameCommand::RebasePreset(action) => self.rebase_preset(action),
+            FrameCommand::RebasePreset(action) => self.rebase_preset(ctx, action),
             FrameCommand::StageAll => self.change_all(ctx, gg_git::worktree_changes::stage_all),
             FrameCommand::UnstageAll => {
                 self.change_all(ctx, gg_git::worktree_changes::unstage_all);
@@ -3563,7 +3565,7 @@ impl Browser {
 
     /// Commit › Reword / Reopen / Fixup / Drop: the interactive rebase dialog
     /// with the selected commit preset, so the plan stays reviewable.
-    fn rebase_preset(&mut self, action: gg_engine::rewrite::Action) {
+    fn rebase_preset(&mut self, ctx: &egui::Context, action: gg_engine::rewrite::Action) {
         let Some(id) = self.state.selected.clone() else {
             return;
         };
@@ -3586,6 +3588,27 @@ impl Browser {
         }
         if let Some(dialog) = &mut self.rewrite_dialog {
             dialog.preset(&id, action);
+        }
+        // Confirm before Drop off: run the drop without showing the plan.
+        if action == gg_engine::rewrite::Action::Drop
+            && !self.prefs.confirm_destructive
+            && let Some(rebase_dialog::Outcome::Start {
+                from,
+                steps,
+                autostash,
+            }) = self
+                .rewrite_dialog
+                .as_ref()
+                .and_then(|dialog| dialog.start_now())
+        {
+            match self.begin_rewrite(ctx, from, steps, autostash) {
+                Ok(()) => self.rewrite_dialog = None,
+                Err(error) => {
+                    if let Some(dialog) = &mut self.rewrite_dialog {
+                        dialog.error = Some(error);
+                    }
+                }
+            }
         }
     }
 
@@ -5182,7 +5205,15 @@ impl Browser {
                     self.mutation_error = Some(error);
                 }
             }
-            CommitAction::Reset(mode) => self.reset_confirm = Some((id, mode)),
+            CommitAction::Reset(mode) => {
+                if self.prefs.confirm_destructive {
+                    self.reset_confirm = Some((id, mode));
+                } else if let Err(error) = self.start_reset(ctx, &id, gg_engine::reset::Mode::Mixed)
+                {
+                    // Without the question, never Hard: working files stay.
+                    self.mutation_error = Some(error);
+                }
+            }
             CommitAction::Rewrite => {
                 if let Err(error) = self.open_rewrite_dialog(&id) {
                     self.mutation_error = Some(error);
@@ -8290,7 +8321,7 @@ impl Browser {
                         && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, key))
                         && self.frame_readiness().rewrite_reason.is_none()
                     {
-                        self.rebase_preset(action);
+                        self.rebase_preset(ctx, action);
                     }
                 }
                 let page = self.page_rows.saturating_sub(1).max(1) as i32;
@@ -14435,6 +14466,30 @@ mod tests {
         let _ = crate::tests::run_ui(&ctx, input, |ctx| app.draw_ui(ctx));
         assert_eq!(app.state.count, 100_000);
         assert!((app.scroll_offset - offset).abs() < 0.1);
+    }
+
+    #[test]
+    fn reset_asks_first_unless_confirmation_is_off() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        let id = "a".repeat(40);
+        app.run_commit_action(
+            &ctx,
+            id.clone(),
+            CommitAction::Reset(gg_engine::reset::Mode::Hard),
+        );
+        assert_eq!(
+            app.reset_confirm,
+            Some((id.clone(), gg_engine::reset::Mode::Hard)),
+            "the question comes first by default"
+        );
+        app.reset_confirm = None;
+        app.prefs.confirm_destructive = false;
+        app.run_commit_action(&ctx, id, CommitAction::Reset(gg_engine::reset::Mode::Hard));
+        assert_eq!(
+            app.reset_confirm, None,
+            "no question when confirmation is off"
+        );
     }
 
     #[test]

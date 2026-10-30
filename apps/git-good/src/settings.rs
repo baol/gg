@@ -340,6 +340,9 @@ pub struct Prefs {
     pub clone_named_after_repo: bool,
     /// Launched without a path outside a repository: open the last one.
     pub reopen_last: bool,
+    /// Drop… and Reset current branch to here… ask first; off runs them at
+    /// once (Reset as Mixed, never Hard), still saving a backup.
+    pub confirm_destructive: bool,
     /// Delete gg's private backups older than this many days; 0 keeps
     /// them forever (the default, so upgrading never deletes backups).
     pub backup_days: u16,
@@ -381,6 +384,7 @@ impl Default for Prefs {
             reopen_last: true,
             offer_force_lease: true,
             backup_days: 0,
+            confirm_destructive: true,
             history_avatars: true,
             history_tags: true,
             relative_dates: false,
@@ -432,6 +436,8 @@ impl Prefs {
             backup_days: read(path, "backup_days")
                 .filter(|days| BACKUP_DAYS.contains(days))
                 .unwrap_or(defaults.backup_days),
+            confirm_destructive: read(path, "confirm_destructive")
+                .unwrap_or(defaults.confirm_destructive),
             history_avatars: read(path, "history_avatars").unwrap_or(defaults.history_avatars),
             history_tags: read(path, "history_tags").unwrap_or(defaults.history_tags),
             relative_dates: read(path, "relative_dates").unwrap_or(defaults.relative_dates),
@@ -476,6 +482,7 @@ impl Prefs {
         write(path, "reopen_last", &self.reopen_last)?;
         write(path, "offer_force_lease", &self.offer_force_lease)?;
         write(path, "backup_days", &self.backup_days)?;
+        write(path, "confirm_destructive", &self.confirm_destructive)?;
         write(path, "history_avatars", &self.history_avatars)?;
         write(path, "history_tags", &self.history_tags)?;
         write(path, "relative_dates", &self.relative_dates)
@@ -554,6 +561,7 @@ mod tests {
         prefs.reopen_last = false;
         prefs.offer_force_lease = false;
         prefs.backup_days = 30;
+        prefs.confirm_destructive = false;
         prefs.history_tags = false;
         prefs.relative_dates = true;
         prefs.save()?;
