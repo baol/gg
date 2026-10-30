@@ -207,6 +207,8 @@ mod tests {
                     parent: None,
                     parents: vec![],
                     subject: "root".into(),
+                    author: String::new(),
+                    date: String::new(),
                 },
                 next: 0,
                 visits: visits.clone(),

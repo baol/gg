@@ -122,16 +122,47 @@ impl Review {
     }
 
     /// One-line commit identity: short ID and subject.
+    /// Subject, hash pill, and author · date, as in the Review mockup.
     fn draw_identity(&self, ui: &mut egui::Ui) {
         let id = self
             .comparison
             .as_ref()
             .map(|c| c.commit.as_str())
             .unwrap_or(self.request.revision.as_str());
-        ui.label(egui::RichText::new(short_id(id)).monospace().weak())
-            .on_hover_text(id);
-        ui.add(egui::Label::new(egui::RichText::new(&self.subject).strong()).truncate())
+        let byline = self
+            .comparison
+            .as_ref()
+            .filter(|comparison| !comparison.author.is_empty())
+            .map(|comparison| format!("{} · {}", comparison.author, comparison.date));
+        // The subject truncates; the hash pill and the byline keep their width.
+        let byline_width = byline.as_ref().map_or(0.0, |text| {
+            ui.painter()
+                .layout_no_wrap(
+                    text.clone(),
+                    egui::TextStyle::Body.resolve(ui.style()),
+                    egui::Color32::PLACEHOLDER,
+                )
+                .size()
+                .x
+        });
+        let reserved = byline_width + 90.0 + 3.0 * ui.spacing().item_spacing.x;
+        ui.scope(|ui| {
+            ui.set_max_width((ui.available_width() - reserved).max(80.0));
+            ui.add(
+                egui::Label::new(egui::RichText::new(&self.subject).strong().size(13.5)).truncate(),
+            )
             .on_hover_text(&self.subject);
+        });
+        ui.label(
+            egui::RichText::new(format!(" {} ", &id[..id.len().min(8)]))
+                .monospace()
+                .size(11.0)
+                .background_color(ui.visuals().faint_bg_color),
+        )
+        .on_hover_text(id);
+        if let Some(byline) = byline {
+            ui.weak(byline);
+        }
     }
 
     /// Record the exact caller state before a tool opens this review.
@@ -985,6 +1016,8 @@ impl Review {
                 parent: None,
                 parents: vec![],
                 subject: "Review fixture".into(),
+                author: String::new(),
+                date: String::new(),
             },
             count: 1000,
             complete: true,
@@ -1283,6 +1316,8 @@ mod tests {
             parent: Some("b".repeat(40)),
             parents: Vec::new(),
             subject: "Compare".into(),
+            author: String::new(),
+            date: String::new(),
         });
         view.rows.insert(
             0,
@@ -1631,6 +1666,8 @@ mod tests {
                     parent: None,
                     parents: vec![],
                     subject: "fixture".into(),
+                    author: String::new(),
+                    date: String::new(),
                 },
                 count: 1001,
                 complete: false,

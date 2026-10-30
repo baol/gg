@@ -17,6 +17,12 @@ pub struct Comparison {
     pub parent: Option<String>,
     pub parents: Vec<String>,
     pub subject: String,
+    /// Author name of the compared commit.
+    #[serde(default)]
+    pub author: String,
+    /// Author date of the compared commit, `YYYY-MM-DD`.
+    #[serde(default)]
+    pub date: String,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FileSide {

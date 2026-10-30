@@ -134,7 +134,7 @@ Second pass comparing every Final-page board with the app. Done: menus from one 
 
 Still to build (medium):
 
-1. Review header: subject, hash pill, author · date, and a **Compare with** select (parents and HEAD); `FILES n +x −y` with per-file stats; left-elided paths; a fixed 300 px file list.
+1. Review header: a **Compare with** select (subject, hash pill, and author · date are done) (parents and HEAD); `FILES n +x −y` with per-file stats; left-elided paths; a fixed 300 px file list.
 2. Changes: per-row stage/unstage buttons; line selection bar with Clear; S/U keys.
 3. Conflict workspace: files panel with resolved list and blocks left; Open in editor; result line numbers.
 4. Rebase stop: **Commits made at this stop** section in Local Changes.

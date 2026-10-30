@@ -430,6 +430,8 @@ fn comparison_is_pinned_and_reads_trees_without_blobs() -> Result {
     )?;
     assert_eq!(reader.comparison().commit, id);
     assert!(reader.comparison().parent.is_none());
+    assert_eq!(reader.comparison().author, "Test Author");
+    assert_eq!(reader.comparison().date, "2026-01-01");
     let mut count = 0;
     loop {
         match reader.step()? {

@@ -115,6 +115,15 @@ impl ReviewSession {
                 .unwrap_or("(empty message)")
                 .into()
         };
+        let (author, date) = {
+            let decoded = commit.decode()?;
+            let author = decoded.author()?;
+            let time = author.time()?.format(gix::date::time::format::ISO8601)?;
+            (
+                author.name.to_string(),
+                time.get(..10).unwrap_or(&time).to_string(),
+            )
+        };
         let comparison = Comparison {
             path: repo.workdir().unwrap_or(repo.path()).to_path_buf(),
             commit: commit.id.to_string(),
@@ -128,6 +137,8 @@ impl ReviewSession {
                 parents.iter().map(ToString::to_string).collect()
             },
             subject,
+            author,
+            date,
         };
         drop(commit);
         Ok(Self {

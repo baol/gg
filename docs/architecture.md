@@ -411,6 +411,8 @@ Full-file rows are fixed-height and virtualized with exact one-based line number
 
 `[` and `]` move to the previous or next change. In full-file mode a change is a contiguous run of marked lines; in diff mode it is a hunk. Visible **Prev change**/**Next change** buttons perform the same actions, name the current change and total, and stay disabled when the file has no changes. Jumping to a hunk requests the page that contains it from the retained diff document rather than scanning loaded rows.
 
+The Review header names the commit as in the Review mockup: the subject (13.5 px, truncated first), the 8-character ID in a pill, and `author · YYYY-MM-DD` from the comparison. Debug builds open a commit in Review with `GG_REVIEW=<commit>`.
+
 `Alt+Up` and `Alt+Down` change the selected file while staying in the reading view. The review header exposes **Prev file**/**Next file** for the same action. The selected file, presentation, and side survive the move; the line position is restored when the new file has that line and clamped otherwise. `Esc` still returns to the file list, and `Enter` opens the selected file.
 
 The place is `{ path bytes, revision, start_line, end_line }`, with one-based inclusive lines and exact path bytes. Engine `Place` stores that identity so path, blame, and line history all use one anchor. A deleted range keeps the before side explicit; history must not silently discard it.

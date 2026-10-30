@@ -1378,6 +1378,8 @@ struct Browser {
     open_local: bool,
     /// Debug: `GG_REBASE=<commit>` opens the interactive rebase from there.
     open_rebase: Option<String>,
+    /// Debug: `GG_REVIEW=<commit>` opens that commit in Review.
+    open_review: Option<String>,
     /// The reopened commit Local Changes was last opened for.
     reopen_seen: Option<String>,
     operation_worker: Option<std::sync::mpsc::Receiver<Result<OperationOutcome, String>>>,
@@ -1510,6 +1512,11 @@ impl Browser {
             reopen_seen: None,
             open_rebase: if cfg!(debug_assertions) {
                 std::env::var("GG_REBASE").ok()
+            } else {
+                None
+            },
+            open_review: if cfg!(debug_assertions) {
+                std::env::var("GG_REVIEW").ok()
             } else {
                 None
             },
@@ -7473,6 +7480,12 @@ impl Browser {
         }
         self.open_reopened_commit(ctx);
         self.remember_layout(ctx);
+        #[cfg(debug_assertions)]
+        if self.state.history.is_some()
+            && let Some(revision) = self.open_review.take()
+        {
+            self.open_review_at(ctx, revision, String::new(), None);
+        }
         #[cfg(debug_assertions)]
         if self.state.history.is_some()
             && let Some(from) = self.open_rebase.take()
