@@ -3,7 +3,9 @@ use crate::avatars::Avatars;
 use eframe::egui;
 use gg_engine::Commit;
 
-pub const ROW_HEIGHT: f32 = 26.0;
+/// Compact row height; runtime code uses `crate::density::row()`.
+#[cfg(test)]
+pub const ROW_HEIGHT: f32 = crate::density::COMPACT_ROW;
 pub const MIN_WIDTH: f32 = 610.0;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -47,35 +49,80 @@ fn text(ui: &egui::Ui, rect: egui::Rect, value: &str, color: egui::Color32, mono
 }
 
 pub fn sort_labels(refs: &mut [gg_engine::refs::RefItem], head_name: Option<&str>) {
+    // Tags first, then branches (the checked-out one first), then remotes,
+    // as in the History mockup.
     refs.sort_by_key(|item| {
         (
-            Some(item.full_name.as_str()) != head_name,
             match item.kind {
                 gg_engine::refs::RefKind::Tag => 0,
                 gg_engine::refs::RefKind::Branch => 1,
                 gg_engine::refs::RefKind::Remote => 2,
             },
+            Some(item.full_name.as_str()) != head_name,
             item.name.clone(),
         )
     });
 }
 
-pub fn header(ui: &mut egui::Ui) {
+/// Column titles, as in the History mockup: `Commit · 164`, and the active
+/// filter as a chip with a clear button. Returns true when the filter is
+/// cleared.
+pub fn header(ui: &mut egui::Ui, count: &str, filter: &str) -> bool {
     let (rect, _) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), ROW_HEIGHT),
+        egui::vec2(ui.available_width(), crate::density::row()),
         egui::Sense::hover(),
     );
-    for (cell, label) in columns(rect)
+    let cells = columns(rect);
+    let commit = format!("Commit · {count}");
+    for (cell, label) in cells
         .into_iter()
-        .zip(["", "Commit", "Author", "Hash", "Date"])
+        .zip(["", commit.as_str(), "Author", "Hash", "Date"])
     {
-        text(ui, cell, label, ui.visuals().text_color(), false);
+        text(ui, cell, label, ui.visuals().weak_text_color(), false);
+    }
+    let mut cleared = false;
+    if !filter.is_empty() {
+        let width = ui
+            .painter()
+            .layout_no_wrap(
+                commit,
+                egui::FontId::proportional(12.0),
+                egui::Color32::PLACEHOLDER,
+            )
+            .size()
+            .x;
+        let slot = egui::Rect::from_min_max(
+            egui::pos2(cells[1].left() + width + 12.0, rect.top() + 1.0),
+            egui::pos2(cells[1].right() - 4.0, rect.bottom() - 1.0),
+        );
+        if slot.width() > 60.0 {
+            let mut chip = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(slot)
+                    .layout(egui::Layout::left_to_right(egui::Align::Center)),
+            );
+            chip.spacing_mut().item_spacing.x = 4.0;
+            chip.add(
+                egui::Label::new(
+                    egui::RichText::new(format!("filter “{filter}”"))
+                        .small()
+                        .background_color(ui.visuals().faint_bg_color),
+                )
+                .truncate(),
+            )
+            .on_hover_text("Ctrl+F or Ctrl+K changes the filter");
+            cleared = chip
+                .small_button("×")
+                .on_hover_text("Clear the filter")
+                .clicked();
+        }
     }
     ui.painter().hline(
         rect.x_range(),
         rect.bottom(),
         ui.visuals().widgets.noninteractive.bg_stroke,
     );
+    cleared
 }
 
 fn paint_refs_and_subject(
@@ -208,6 +255,24 @@ fn ref_label_colors(
         gg_engine::refs::RefKind::Remote => egui::Color32::from_rgb(160, 164, 176),
         gg_engine::refs::RefKind::Tag => egui::Color32::from_rgb(224, 178, 96),
     };
+    // Dark mode uses the mockup's pill colors: gold tags, blue branches.
+    if visuals.dark_mode {
+        match kind {
+            gg_engine::refs::RefKind::Tag => {
+                return (
+                    egui::Color32::from_rgb(0x4d, 0x3a, 0x14),
+                    egui::Color32::from_rgb(0xf0, 0xc3, 0x5a),
+                );
+            }
+            gg_engine::refs::RefKind::Branch => {
+                return (
+                    egui::Color32::from_rgb(0x1d, 0x3a, 0x57),
+                    egui::Color32::from_rgb(0x9c, 0xca, 0xf5),
+                );
+            }
+            gg_engine::refs::RefKind::Remote => {}
+        }
+    }
     let foreground = if selected {
         visuals.strong_text_color()
     } else {
@@ -231,7 +296,7 @@ pub fn row(
     avatars: &mut Avatars,
 ) -> (egui::Response, Option<RefAction>) {
     let response = ui.add_sized(
-        [ui.available_width(), ROW_HEIGHT],
+        [ui.available_width(), crate::density::row()],
         egui::Button::new("")
             .fill(if selected {
                 crate::colors::selection(ui.visuals())
@@ -274,15 +339,32 @@ pub fn row(
             );
         }
     }
+    // Preferences › Appearance › History: tags in rows, avatars, dates.
+    let shown_refs;
+    let refs = if crate::density::show_tags() {
+        refs
+    } else {
+        shown_refs = refs
+            .iter()
+            .filter(|item| item.kind != gg_engine::refs::RefKind::Tag)
+            .cloned()
+            .collect::<Vec<_>>();
+        &shown_refs
+    };
     let action = paint_refs_and_subject(ui, subject, refs, head_name, commit, selected);
-    let avatar = egui::Rect::from_center_size(
-        egui::pos2(author.left() + 14.0, author.center().y),
-        egui::vec2(18.0, 18.0),
-    );
-    avatars.paint(ui, &commit.email, &commit.author, avatar);
+    let name_left = if crate::density::show_avatars() {
+        let avatar = egui::Rect::from_center_size(
+            egui::pos2(author.left() + 14.0, author.center().y),
+            egui::vec2(18.0, 18.0),
+        );
+        avatars.paint(ui, &commit.email, &commit.author, avatar);
+        author.left() + 25.0
+    } else {
+        author.left() + 4.0
+    };
     text(
         ui,
-        egui::Rect::from_min_max(egui::pos2(author.left() + 25.0, author.top()), author.max),
+        egui::Rect::from_min_max(egui::pos2(name_left, author.top()), author.max),
         &commit.author,
         muted,
         false,
@@ -295,7 +377,16 @@ pub fn row(
         true,
     );
     let short_date = commit.time.split_whitespace().next().unwrap_or_default();
-    text(ui, date, short_date, muted, false);
+    let relative = crate::density::relative_dates()
+        .then(|| relative_date(&commit.time, now_seconds()))
+        .flatten();
+    text(
+        ui,
+        date,
+        relative.as_deref().unwrap_or(short_date),
+        muted,
+        false,
+    );
     let refs = refs
         .iter()
         .map(|item| item.name.as_str())
@@ -316,9 +407,106 @@ pub fn row(
     (response, action)
 }
 
+fn now_seconds() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs() as i64)
+}
+
+/// Seconds since the epoch for `YYYY-MM-DD HH:MM:SS ±HHMM` (also
+/// accepting `T` and a `±HH:MM` offset).
+fn parse_time(value: &str) -> Option<i64> {
+    let value = value.replace('T', " ");
+    let mut parts = value.split_whitespace();
+    let date = parts.next()?;
+    let clock = parts.next().unwrap_or("00:00:00");
+    let zone = parts.next().unwrap_or("+0000").replace(':', "");
+    let mut date = date.split('-').map(str::parse::<i64>);
+    let (year, month, day) = (date.next()?.ok()?, date.next()?.ok()?, date.next()?.ok()?);
+    let mut clock = clock.split(':').map(str::parse::<i64>);
+    let hour = clock.next()?.ok()?;
+    let minute = clock.next().and_then(Result::ok).unwrap_or(0);
+    let second = clock.next().and_then(Result::ok).unwrap_or(0);
+    let sign = if zone.starts_with('-') { -1 } else { 1 };
+    let zone = zone.trim_start_matches(['+', '-']);
+    let offset = zone.get(..2)?.parse::<i64>().ok()? * 3600
+        + zone
+            .get(2..4)
+            .and_then(|m| m.parse::<i64>().ok())
+            .unwrap_or(0)
+            * 60;
+    // Days from civil (Howard Hinnant's algorithm).
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let doy = (153 * (month + if month > 2 { -3 } else { 9 }) + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    Some(days * 86_400 + hour * 3600 + minute * 60 + second - sign * offset)
+}
+
+/// `5 min ago`, `3 h ago`, `2 days ago`, `3 weeks ago`, `4 months ago`,
+/// `2 years ago`; `None` when the time cannot be read.
+fn relative_date(time: &str, now: i64) -> Option<String> {
+    let age = (now - parse_time(time)?).max(0);
+    let (count, unit) = match age {
+        0..60 => return Some("just now".into()),
+        60..3_600 => (age / 60, "min"),
+        3_600..86_400 => (age / 3_600, "h"),
+        86_400..1_209_600 => (age / 86_400, "day"),
+        1_209_600..5_184_000 => (age / 604_800, "week"),
+        5_184_000..31_536_000 => (age / 2_592_000, "month"),
+        _ => (age / 31_536_000, "year"),
+    };
+    let plural = if count != 1 && !matches!(unit, "min" | "h") {
+        "s"
+    } else {
+        ""
+    };
+    Some(format!("{count} {unit}{plural} ago"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn relative_dates_read_git_times_with_offsets() {
+        let now = parse_time("2026-10-30 12:00:00 +0000").unwrap_or_default();
+        assert_eq!(parse_time("1970-01-01 00:00:00 +0000"), Some(0));
+        assert_eq!(
+            parse_time("2026-10-30 14:00:00 +0200"),
+            Some(now),
+            "the offset is applied"
+        );
+        let ago = |time| relative_date(time, now);
+        assert_eq!(
+            ago("2026-10-30 11:59:30 +0000").as_deref(),
+            Some("just now")
+        );
+        assert_eq!(
+            ago("2026-10-30 11:55:00 +0000").as_deref(),
+            Some("5 min ago")
+        );
+        assert_eq!(ago("2026-10-30T09:00:00+00:00").as_deref(), Some("3 h ago"));
+        assert_eq!(
+            ago("2026-10-29 12:00:00 +0000").as_deref(),
+            Some("1 day ago")
+        );
+        assert_eq!(
+            ago("2026-10-09 12:00:00 +0000").as_deref(),
+            Some("3 weeks ago")
+        );
+        assert_eq!(
+            ago("2026-06-30 12:00:00 +0000").as_deref(),
+            Some("4 months ago")
+        );
+        assert_eq!(
+            ago("2024-10-30 12:00:00 +0000").as_deref(),
+            Some("2 years ago")
+        );
+        assert_eq!(ago("not a date"), None);
+    }
     #[test]
     fn cells_are_disjoint_and_contained_at_all_supported_widths() {
         for width in [MIN_WIDTH, 720.0, 1120.0, 2560.0] {
@@ -545,7 +733,7 @@ mod tests {
     }
 
     #[test]
-    fn current_branch_sorts_before_tags_and_other_refs() {
+    fn tags_sort_first_then_the_current_branch() {
         let id = "a".repeat(40);
         let mut refs = [
             gg_engine::refs::RefItem {
@@ -568,8 +756,8 @@ mod tests {
             },
         ];
         sort_labels(&mut refs, Some("refs/heads/main"));
-        assert_eq!(refs[0].name, "main");
-        assert_eq!(refs[1].name, "v1.0");
+        assert_eq!(refs[0].name, "v1.0");
+        assert_eq!(refs[1].name, "main");
         assert_eq!(refs[2].name, "zzz");
     }
 

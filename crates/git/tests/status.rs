@@ -1147,6 +1147,48 @@ fn add_patch(path: &Path, file: &str, answers: &str) -> Result {
 }
 
 #[test]
+fn staging_follows_the_reader_context_and_refuses_hidden_whitespace() -> Result {
+    use gg_engine::diff::{Options, RowKind, Whitespace};
+    let dir = tempfile::tempdir()?;
+    hunk_fixture(dir.path(), "sha1")?;
+    let req = request(dir.path(), b"a", Area::Unstaged)?;
+    let wide = Options {
+        context: 10,
+        whitespace: Whitespace::All,
+    };
+    let headers: Vec<String> = gg_git::working_diff::read_with(&req, wide, || false)?
+        .rows
+        .iter()
+        .filter(|row| row.kind == RowKind::Hunk)
+        .map(|row| row.text.clone())
+        .collect();
+    assert_eq!(headers, ["@@ -1,12 +1,12 @@"], "ten lines join both edits");
+    let ignored = Options {
+        context: 10,
+        whitespace: Whitespace::IgnoreAll,
+    };
+    let refused =
+        gg_git::stage::changes_with(&req, &gg_git::patch::edits_from_headers(&headers), ignored);
+    assert!(
+        refused
+            .as_ref()
+            .is_err_and(|error| error.contains("whitespace")),
+        "{refused:?}"
+    );
+    assert!(
+        gg_git::stage::hunks(&req, &headers).is_err(),
+        "a ten-line header is stale for the three-line comparison"
+    );
+    gg_git::stage::changes_with(&req, &gg_git::patch::edits_from_headers(&headers), wide)?;
+    assert_eq!(
+        git(dir.path(), &["show", ":a"])?,
+        std::fs::read(dir.path().join("a"))?
+    );
+    oracle(dir.path())?;
+    Ok(())
+}
+
+#[test]
 fn stage_hunks_match_git_add_patch_and_keep_remaining_edits() -> Result {
     for hash in ["sha1", "sha256"] {
         let ours = tempfile::tempdir()?;

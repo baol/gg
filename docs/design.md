@@ -4,7 +4,9 @@ Purpose: define shared layout and interaction rules.
 
 - Use external references for density, hierarchy, alignment, and readable diffs while following gg's CLI-first workflow and milestone scope. Link to external references; commit original gg visuals and assets with compatible licenses and required attribution.
 - Group repository actions in **Repository** and presentation options in **View**. Keep primary navigation visible; place file actions beside the file list.
-- Reserve compact, stable slots for text, controls, images, and loading states.
+- **Hold the layout still while content changes.** Panes, windows, columns, controls, and text keep their position and size when content loads, grows, shrinks, or is replaced. Only a window resize resizes panes automatically; a pane changes size otherwise only when the user drags its edge. Reserve fixed slots for content that comes and goes (counts, badges, disable reasons, errors, optional buttons, extra lines), give windows and dialogs a fixed size with scrolling content, and truncate rather than reflow.
+- **Never show placeholder text such as "Loading…" in a pane.** Keep the displayed content until its replacement is ready, then replace it in one step. A pane with nothing to show yet stays empty. Long-running work reports progress in the operation area or the status line, not in place of content.
+- Reserve compact, stable slots for text, controls, images, and states.
 - Embed the root `gg.png` as the native window icon and toolbar brand. Keep the toolbar image in a fixed 30-pixel slot, with its aspect ratio and “gg · good git” accessible label.
 - Filter thumbnails to their displayed physical pixel size; regenerate on display-scale changes. Preserve transparent edges and cache list/detail sizes from one source image.
 - Keep fields on one line. Expose overflow through clickable `...` and full-text tooltips.
@@ -16,6 +18,8 @@ Purpose: define shared layout and interaction rules.
 - Reveal keyboard selection with one minimal, bounded scroll adjustment. Preserve visible row positions between input and idle frames.
 
 Screen layouts and streaming contracts: [architecture](architecture.md).
+
+Agreed final interface (window frame, menus and toolbar, search, interactive rebase, Preferences): [final design](final-design.md).
 
 Journey review and proposed M7 interfaces: [user flows](user-flows.md) and [interactive mockups](ui-mockups.html). Proposals do not change shipped behavior or milestone status.
 

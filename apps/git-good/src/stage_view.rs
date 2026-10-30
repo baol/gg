@@ -84,7 +84,26 @@ impl StageActions {
 
     /// Apply one reader edit. Duplicate submissions are refused while pending.
     pub fn apply(&mut self, edit: StageEdit, ctx: &egui::Context) {
+        self.apply_all(vec![edit], ctx);
+    }
+
+    /// Apply reader edits as one mutation: one whole-file edit, or hunk and
+    /// line edits across several hunks. All edits share one direction.
+    pub fn apply_all(&mut self, edits: Vec<StageEdit>, ctx: &egui::Context) {
         if self.mutation.is_some() {
+            return;
+        }
+        let Some(first) = edits.first() else {
+            return;
+        };
+        let discard = first.discard;
+        let whole = first.scope == StageScope::File;
+        if edits
+            .iter()
+            .any(|edit| edit.discard != discard || (edit.scope == StageScope::File) != whole)
+            || (whole && edits.len() > 1)
+        {
+            self.error = Some("Apply one kind of change at a time.".into());
             return;
         }
         self.error = None;
@@ -96,13 +115,15 @@ impl StageActions {
             self.error = Some("Resolve the conflict before staging or discarding.".into());
             return;
         }
-        if edit.discard && area == Area::Staged {
+        if discard && area == Area::Staged {
             self.error = Some("Discard is only available for working changes.".into());
             return;
         }
-        let patch = match edit.scope {
-            StageScope::File => None,
-            StageScope::Hunk | StageScope::Selected => {
+        let patch = if whole {
+            None
+        } else {
+            let mut patch = Vec::with_capacity(edits.len());
+            for edit in &edits {
                 let Some(header) = edit.header.clone() else {
                     self.error =
                         Some("The selected hunk is no longer loaded. Refresh the diff.".into());
@@ -117,10 +138,11 @@ impl StageActions {
                         _ => None,
                     })
                     .collect();
-                Some(Edit { header, changes })
+                patch.push(Edit { header, changes });
             }
+            Some(patch)
         };
-        self.label = Some(if edit.discard {
+        self.label = Some(if discard {
             "Discarding…"
         } else if area == Area::Staged {
             "Unstaging…"
@@ -129,26 +151,28 @@ impl StageActions {
         });
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         let repaint = ctx.clone();
+        // Hunk headers come from the reader, which compares with these options.
+        let options = crate::settings::diff_options(ctx);
         let result = thread::Builder::new()
             .name("gg-stage-mutate".into())
             .spawn(move || {
-                let operation = match (area, edit.discard, patch) {
+                let operation = match (area, discard, patch) {
                     (Area::Staged, true, _) => {
                         Err("Discard is only available for working changes".into())
                     }
                     (Area::Staged, false, None) => gg_git::unstage::file(&request),
-                    (Area::Staged, false, Some(edit)) => {
-                        gg_git::unstage::changes(&request, &[edit])
+                    (Area::Staged, false, Some(edits)) => {
+                        gg_git::unstage::changes_with(&request, &edits, options)
                     }
                     (Area::Unstaged | Area::Untracked, true, None) => gg_git::drop::file(&request),
-                    (Area::Unstaged | Area::Untracked, true, Some(edit)) => {
-                        gg_git::drop::changes(&request, &[edit])
+                    (Area::Unstaged | Area::Untracked, true, Some(edits)) => {
+                        gg_git::drop::changes_with(&request, &edits, options)
                     }
                     (Area::Unstaged | Area::Untracked, false, None) => {
                         gg_git::stage::file(&request)
                     }
-                    (Area::Unstaged | Area::Untracked, false, Some(edit)) => {
-                        gg_git::stage::changes(&request, &[edit])
+                    (Area::Unstaged | Area::Untracked, false, Some(edits)) => {
+                        gg_git::stage::changes_with(&request, &edits, options)
                     }
                     (Area::Conflict, _, _) => Err("Resolve the conflict before staging.".into()),
                 };

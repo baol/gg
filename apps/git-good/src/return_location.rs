@@ -27,13 +27,15 @@ pub enum ReturnLocation {
         /// Source-specific entry identity: reflog selector or backup reference.
         entry: String,
     },
+    /// The interactive rebase dialog, which keeps its plan while held.
+    Rebase,
 }
 
 impl ReturnLocation {
     pub fn location(&self) -> Option<&HistoryLocation> {
         match self {
             Self::History(location) | Self::Details(location) => Some(location),
-            Self::Recovery { .. } => None,
+            Self::Recovery { .. } | Self::Rebase => None,
         }
     }
 

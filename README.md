@@ -45,11 +45,12 @@ git good
 
 ## UI overview
 
-- **History and Refs** — Stream and filter commit history with commit lanes and branch, remote, and tag pills. Switch branches, create tracking branches, merge, or rebase from the **Refs** sidebar or menu.
+- **History and Refs** — Stream and filter commit history with commit lanes and branch, remote, and tag pills. Switch branches, create tracking branches, merge, or rebase from the refs sidebar or the **Branch** menu; the toolbar puts fetch, pull, push, branch, tag, merge, stash, rewrite, and recovery one click away.
 - **Commit review** — Press **Enter** on a commit to inspect changed files, side-by-side or inline diffs, image previews, blame, and file history.
 - **Local Changes** — Inspect staged, unstaged, untracked, and conflicted files. Stage, unstage, or discard whole files, hunks, or individual lines, then commit or amend `HEAD`.
-- **Rewrites and recovery** — Cherry-pick, revert, reset, or reorder and squash commits to `HEAD`. In-progress operations show a banner with **Resolve conflicts…**, **Continue**, **Skip**, and **Abort**. Automatic private backups (`Repository → Backups…`) and `Repository → Reflog…` let you restore previous branch tips.
+- **Rewrites and recovery** — Cherry-pick, revert, reset, or rewrite commits with an interactive rebase (pick, reword, reopen, squash, fixup, drop, reorder). Rebase stops show the step, a reopened commit opens in Local Changes to split, and conflicts resolve block by block, with **Continue**, **Skip commit**, and **Abort and restore**. Automatic private backups and the reflog under `Repository → Recovery…` let you restore previous branch tips.
 - **Sync and Stash** — Fetch, push, and clone from **Repository** with live progress and cancellation, or park work from **Stash**.
+- **Preferences** — `Repository → Preferences…` (`Ctrl+,`) sets the theme, compact or comfortable rows, clone folders with a preferred one, network avatars, and the rebase autostash default.
 - **Keyboard navigation** — Navigate with arrows or `j`/`k`, toggle details with `Space`, open commit actions with `Alt+A`, and view all shortcuts under **Help**.
 
 ## Documentation

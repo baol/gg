@@ -286,9 +286,29 @@ pub struct View {
     textures: [Option<egui::TextureHandle>; 2],
     hex: bool,
     layout: Layout,
+    /// Whether `layout` was taken from the remembered choice yet.
+    seeded: bool,
     size: Size,
     split: f32,
     opacity: f32,
+}
+
+impl Layout {
+    fn from_setting(layout: crate::settings::ImageLayout) -> Self {
+        match layout {
+            crate::settings::ImageLayout::SideBySide => Self::SideBySide,
+            crate::settings::ImageLayout::Swipe => Self::Swipe,
+            crate::settings::ImageLayout::Onion => Self::Onion,
+        }
+    }
+
+    fn setting(self) -> crate::settings::ImageLayout {
+        match self {
+            Self::SideBySide => crate::settings::ImageLayout::SideBySide,
+            Self::Swipe => crate::settings::ImageLayout::Swipe,
+            Self::Onion => crate::settings::ImageLayout::Onion,
+        }
+    }
 }
 
 impl Default for View {
@@ -297,6 +317,7 @@ impl Default for View {
             textures: [None, None],
             hex: false,
             layout: Layout::SideBySide,
+            seeded: false,
             size: Size::Fit,
             split: 0.5,
             opacity: 0.5,
@@ -306,6 +327,11 @@ impl Default for View {
 
 impl View {
     pub fn draw(&mut self, ui: &mut egui::Ui, pair: &Pair, keyboard: bool) {
+        if !self.seeded {
+            self.seeded = true;
+            self.layout = Layout::from_setting(crate::settings::image_layout(ui.ctx()));
+        }
+        let before_layout = self.layout;
         let previews = [&pair.before, &pair.after];
         for (i, p) in previews.iter().enumerate() {
             if self.textures[i].is_none()
@@ -340,6 +366,10 @@ impl View {
                     .clicked()
                 {
                     self.layout = Layout::Onion;
+                }
+                if self.layout != before_layout {
+                    // Remember the choice for the next comparison.
+                    crate::settings::set_image_layout(ui.ctx(), self.layout.setting());
                 }
                 if self.layout == Layout::Swipe {
                     ui.separator();
@@ -675,6 +705,67 @@ mod tests {
         Ok(())
     }
     #[test]
+    fn the_layout_starts_from_and_remembers_the_last_choice() {
+        let ctx = egui::Context::default();
+        crate::settings::set_image_layout(&ctx, crate::settings::ImageLayout::Swipe);
+        let pair = Pair {
+            before: Preview::note("before"),
+            after: Preview::note("after"),
+        };
+        let mut view = View::default();
+        let output = crate::tests::run_ui(
+            &ctx,
+            crate::tests::frame_input(1120.0, 740.0, vec![]),
+            |ui| view.draw(ui, &pair, false),
+        );
+        assert!(
+            view.layout == Layout::Swipe,
+            "starts from the remembered layout"
+        );
+        let onion = output.shapes.iter().find_map(|shape| match &shape.shape {
+            egui::epaint::Shape::Text(text) if text.galley.job.text == "Onion skin" => {
+                Some(text.visual_bounding_rect().center())
+            }
+            _ => None,
+        });
+        let Some(pos) = onion else {
+            unreachable!("the Onion skin choice is drawn at wide widths")
+        };
+        let click = vec![
+            egui::Event::PointerMoved(pos),
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ];
+        let _ = crate::tests::run_ui(
+            &ctx,
+            crate::tests::frame_input(1120.0, 740.0, click),
+            |ui| view.draw(ui, &pair, false),
+        );
+        assert_eq!(
+            crate::settings::image_layout(&ctx),
+            crate::settings::ImageLayout::Onion,
+            "the choice is remembered for the next comparison"
+        );
+        let mut next = View::default();
+        let _ = crate::tests::run_ui(
+            &ctx,
+            crate::tests::frame_input(1120.0, 740.0, vec![]),
+            |ui| next.draw(ui, &pair, false),
+        );
+        assert!(next.layout == Layout::Onion);
+    }
+
+    #[test]
     fn single_content_preview_draws_images_and_hex_within_a_bounded_height()
     -> Result<(), Box<dyn std::error::Error>> {
         let pixels = image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
@@ -732,6 +823,7 @@ mod tests {
         let ctx = egui::Context::default();
         let mut view = View {
             layout: Layout::Onion,
+            seeded: true,
             opacity: 0.25,
             ..Default::default()
         };
@@ -876,6 +968,7 @@ mod tests {
         let ctx = egui::Context::default();
         let mut view = View {
             layout: Layout::Swipe,
+            seeded: true,
             ..Default::default()
         };
         let output = crate::tests::run_ui(

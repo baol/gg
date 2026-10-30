@@ -107,6 +107,44 @@ fn paint_weighted(
     more
 }
 
+/// Paint a path on one line, eliding its start so the file name stays
+/// visible. Returns whether the path was shortened; the caller names the full
+/// path on hover.
+pub fn paint_path(
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    value: &str,
+    font: egui::FontId,
+    color: egui::Color32,
+) -> bool {
+    let single_line = value.replace(['\n', '\r', '\t'], " ");
+    let width = |text: &str| {
+        ui.fonts_mut(|fonts| fonts.layout_no_wrap(text.to_owned(), font.clone(), color))
+            .size()
+            .x
+    };
+    let shown = if width(&single_line) <= rect.width() {
+        single_line
+    } else {
+        // The shortest suffix start whose "…" + suffix still fits.
+        let starts: Vec<usize> = single_line.char_indices().map(|(at, _)| at).collect();
+        let (mut low, mut high) = (0, starts.len());
+        while low < high {
+            let middle = (low + high) / 2;
+            if width(&format!("…{}", &single_line[starts[middle]..])) <= rect.width() {
+                high = middle;
+            } else {
+                low = middle + 1;
+            }
+        }
+        format!("…{}", starts.get(low).map_or("", |at| &single_line[*at..]))
+    };
+    let galley = ui.fonts_mut(|fonts| fonts.layout_no_wrap(shown.clone(), font, color));
+    let at = egui::pos2(rect.left(), rect.center().y - galley.size().y / 2.0);
+    ui.painter().with_clip_rect(rect).galley(at, galley, color);
+    shown != value
+}
+
 pub fn show_disclosure(ctx: &egui::Context) {
     let value = ctx.data(|data| data.get_temp::<String>(disclosure_id()));
     if let Some(value) = value {
@@ -134,6 +172,53 @@ pub fn show_disclosure(ctx: &egui::Context) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn long_paths_keep_their_file_name_and_elide_the_start() {
+        for scale in [1.0, 2.0] {
+            let ctx = egui::Context::default();
+            ctx.set_pixels_per_point(scale);
+            let slot = egui::Rect::from_min_size(egui::pos2(20.0, 20.0), egui::vec2(160.0, 22.0));
+            let long = "apps/very/deeply/nested/folder/structure/with/日本語/stage_view.rs";
+            let mut elided = [None, None];
+            let output = crate::tests::run_ui(
+                &ctx,
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(720.0, 480.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    egui::CentralPanel::default().show(ui, |ui| {
+                        let font = egui::FontId::proportional(12.0);
+                        let color = ui.visuals().text_color();
+                        elided[0] = Some(paint_path(ui, slot, long, font.clone(), color));
+                        let below = slot.translate(egui::vec2(0.0, 30.0));
+                        elided[1] = Some(paint_path(ui, below, "src/a.rs", font, color));
+                    });
+                },
+            );
+            assert_eq!(elided, [Some(true), Some(false)]);
+            let texts: Vec<_> = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) => Some(text.clone()),
+                    _ => None,
+                })
+                .collect();
+            let shortened = texts
+                .iter()
+                .find(|text| text.galley.job.text.starts_with('…'))
+                .map(|text| (text.galley.job.text.clone(), text.galley.size().x));
+            let (text, width) = shortened.unwrap_or_default();
+            assert!(text.ends_with("/stage_view.rs"), "{text}");
+            assert!(width <= slot.width() + 0.5, "{width}");
+            assert!(texts.iter().any(|text| text.galley.job.text == "src/a.rs"));
+        }
+    }
 
     #[test]
     fn overflow_opens_exact_text_without_changing_the_slot() {

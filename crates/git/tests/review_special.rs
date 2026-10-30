@@ -309,3 +309,121 @@ fn full_file_absent_and_gitlink_sides_are_explicit() -> Result {
     assert!(gitlink.note.contains("commit ID"));
     Ok(())
 }
+#[test]
+fn line_stats_match_git_numstat() -> Result {
+    use gg_engine::review::LineStat;
+    use std::collections::BTreeMap;
+    let dir = tempfile::tempdir()?;
+    let path = dir.path();
+    git(path, &["init"], b"")?;
+    let blob = |bytes: &[u8]| git(path, &["hash-object", "-w", "--stdin"], bytes);
+    let original: String = (0..200).map(|i| format!("line {i}\n")).collect();
+    let edited: String = (0..200)
+        .filter(|i| i % 37 != 5)
+        .flat_map(|i| {
+            let line = if i % 23 == 0 {
+                format!("changed {i}\n")
+            } else {
+                format!("line {i}\n")
+            };
+            let extra = if i % 51 == 7 { "inserted\n" } else { "" };
+            [line, extra.to_string()]
+        })
+        .collect();
+    let (old_edit, new_edit) = (blob(original.as_bytes())?, blob(edited.as_bytes())?);
+    let gone = blob(b"one\ntwo\nthree\n")?;
+    let added = blob(b"fresh\nfile")?;
+    let (eol_old, eol_new) = (blob(b"a\nb")?, blob(b"a\nb\n")?);
+    let (bin_old, bin_new) = (blob(b"\0old")?, blob(b"\0new")?);
+    let mode = blob(b"same\n")?;
+    let (type_old, type_new) = (blob(b"x\ny\n")?, blob(b"target")?);
+    let module = |digit: &str| digit.repeat(40);
+    let before = tree(
+        path,
+        &[
+            (b"bin", "100644", &bin_old),
+            (b"deleted.txt", "100644", &gone),
+            (b"edit.txt", "100644", &old_edit),
+            (b"mode", "100644", &mode),
+            (b"module", "160000", &module("1")),
+            (b"noeol", "100644", &eol_old),
+            (b"type", "100644", &type_old),
+        ],
+    )?;
+    let after = tree(
+        path,
+        &[
+            (b"added.txt", "100644", &added),
+            (b"bin", "100644", &bin_new),
+            (b"edit.txt", "100644", &new_edit),
+            (b"mode", "100755", &mode),
+            (b"module", "160000", &module("2")),
+            (b"noeol", "100644", &eol_new),
+            (b"type", "120000", &type_new),
+        ],
+    )?;
+    let parent = git(path, &["commit-tree", &before, "-m", "before"], b"")?;
+    let commit = git(
+        path,
+        &["commit-tree", &after, "-p", &parent, "-m", "after"],
+        b"",
+    )?;
+    // Git reports a type change as a deletion plus an addition; sum them.
+    let mut expected: BTreeMap<String, LineStat> = BTreeMap::new();
+    for line in git(path, &["diff", "--numstat", &parent, &commit], b"")?.lines() {
+        let mut fields = line.splitn(3, '\t');
+        let (added, deleted) = (fields.next(), fields.next());
+        let name = fields.next().ok_or("numstat path")?.to_string();
+        let stat = match (added, deleted) {
+            (Some("-"), Some("-")) => LineStat::Binary,
+            (Some(added), Some(deleted)) => LineStat::Lines {
+                added: added.parse()?,
+                deleted: deleted.parse()?,
+            },
+            _ => return Err("numstat line".into()),
+        };
+        let entry = expected.entry(name).or_insert(LineStat::Lines {
+            added: 0,
+            deleted: 0,
+        });
+        *entry = match (*entry, stat) {
+            (
+                LineStat::Lines { added, deleted },
+                LineStat::Lines {
+                    added: a,
+                    deleted: d,
+                },
+            ) => LineStat::Lines {
+                added: added + a,
+                deleted: deleted + d,
+            },
+            (_, other) => other,
+        };
+    }
+    let mut reader = gg_git::review::ReviewSession::open(&ReviewRequest {
+        path: path.into(),
+        revision: commit,
+        parent: None,
+        against: None,
+    })?;
+    let stats = gg_git::review::LineStats::open(path)?;
+    let mut actual = BTreeMap::new();
+    loop {
+        match reader.step()? {
+            ReviewStep::Change(change) => {
+                actual.insert(change.path.clone(), stats.count(&change)?);
+            }
+            ReviewStep::Complete => break,
+            ReviewStep::Pending => {}
+        }
+    }
+    // A gitlink names commits, not lines: Review leaves it uncounted.
+    assert_eq!(actual.remove("module"), Some(LineStat::Skipped));
+    expected.remove("module");
+    assert_eq!(actual, expected);
+    assert!(matches!(
+        actual.get("edit.txt"),
+        Some(LineStat::Lines { added, deleted }) if *added > 0 && *deleted > 0
+    ));
+    Ok(())
+}

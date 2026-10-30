@@ -1,4 +1,6 @@
-//! Persisted development base folders offered as clone destinations.
+//! Development base folders offered as clone destinations, kept under the
+//! `clone_folders` key of the settings file. A legacy `gg/roots.json` next to
+//! it is read once when the key is absent.
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -25,9 +27,13 @@ impl Roots {
     }
 
     pub fn load_from(path: &Path) -> Self {
-        let stored = std::fs::read(path)
-            .ok()
-            .and_then(|bytes| serde_json::from_slice::<Stored>(&bytes).ok())
+        let stored = crate::settings::read::<Stored>(path, KEY)
+            .or_else(|| {
+                let legacy = path.with_file_name("roots.json");
+                std::fs::read(legacy)
+                    .ok()
+                    .and_then(|bytes| serde_json::from_slice::<Stored>(&bytes).ok())
+            })
             .unwrap_or_default();
         let preferred = stored
             .preferred
@@ -49,18 +55,27 @@ impl Roots {
     }
 
     pub fn save_to(&self, path: &Path) -> Result<(), String> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("Create {}: {e}", parent.display()))?;
-        }
         let stored = Stored {
             roots: self.entries.clone(),
             preferred: self.preferred.clone(),
         };
-        let bytes = serde_json::to_vec_pretty(&stored)
-            .map_err(|e| format!("Encode development base folders: {e}"))?;
-        std::fs::write(path, bytes)
-            .map_err(|e| format!("Write development base folders to {}: {e}", path.display()))
+        crate::settings::write(path, KEY, &stored)
+    }
+
+    /// Move the folder at `index` one place up (`true`) or down.
+    pub fn move_entry(&mut self, index: usize, up: bool) -> bool {
+        let other = if up {
+            index.checked_sub(1)
+        } else {
+            (index + 1 < self.entries.len()).then_some(index + 1)
+        };
+        match other {
+            Some(other) if index < self.entries.len() => {
+                self.entries.swap(index, other);
+                true
+            }
+            _ => false,
+        }
     }
 
     pub fn entries(&self) -> &[PathBuf] {
@@ -117,8 +132,9 @@ impl Roots {
     pub fn remove(&mut self, index: usize) -> bool {
         if index < self.entries.len() {
             let removed = self.entries.remove(index);
+            // Removing the preferred folder makes the first one preferred.
             if self.preferred.as_ref() == Some(&removed) {
-                self.preferred = None;
+                self.preferred = self.entries.first().cloned();
             }
             true
         } else {
@@ -150,31 +166,27 @@ pub fn normalize_folder(value: &str) -> Result<PathBuf, String> {
             .ok_or("Home folder is unavailable.")?,
         value => PathBuf::from(value),
     };
-    let path = if expanded.is_absolute() {
-        expanded
-    } else {
-        starting_folder().join(expanded)
-    };
-    if !path.is_absolute() {
+    if !expanded.is_absolute() {
         return Err("Folder must be an absolute path.".into());
     }
-    Ok(path)
+    Ok(expanded)
 }
 
+const KEY: &str = "clone_folders";
+
 pub fn settings_path() -> Option<PathBuf> {
-    if let Some(folder) = std::env::var_os("XDG_CONFIG_HOME") {
-        return Some(PathBuf::from(folder).join("gg").join("roots.json"));
-    }
-    if cfg!(windows) {
-        return std::env::var_os("APPDATA")
-            .map(|folder| PathBuf::from(folder).join("gg").join("roots.json"));
-    }
-    std::env::var_os("HOME").map(|home| {
-        PathBuf::from(home)
-            .join(".config")
-            .join("gg")
-            .join("roots.json")
-    })
+    crate::settings::path()
+}
+
+/// Repositories directly inside `folder`, or `None` when it is missing.
+pub fn repository_count(folder: &Path) -> Option<usize> {
+    let entries = std::fs::read_dir(folder).ok()?;
+    Some(
+        entries
+            .flatten()
+            .filter(|entry| entry.path().join(".git").exists())
+            .count(),
+    )
 }
 
 #[cfg(test)]
@@ -201,8 +213,11 @@ mod tests {
         assert!(!loaded.remove(9));
         loaded.save_to(&path)?;
         assert_eq!(Roots::load_from(&path).entries(), &[second]);
-        assert!(normalize_folder("relative/path").is_ok());
-        assert!(normalize_folder("").is_err());
+        assert_eq!(
+            normalize_folder("relative/path"),
+            Err("Folder must be an absolute path.".into())
+        );
+        assert_eq!(normalize_folder("  "), Err("Folder is empty.".into()));
         Ok(())
     }
 
@@ -234,8 +249,58 @@ mod tests {
         assert_eq!(loaded.default_folder(), second);
 
         assert!(loaded.remove(1));
-        assert_eq!(loaded.preferred(), None);
+        assert_eq!(
+            loaded.preferred(),
+            Some(first.as_path()),
+            "removing the preferred folder prefers the first"
+        );
         assert_eq!(loaded.default_folder(), first);
+        Ok(())
+    }
+
+    #[test]
+    fn migrates_roots_json_and_keeps_other_settings() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let first = dir.path().join("projects");
+        let second = dir.path().join("work");
+        std::fs::write(
+            dir.path().join("roots.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "roots": [first, second],
+                "preferred": second,
+            }))?,
+        )?;
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, br#"{"theme": "light"}"#)?;
+        let mut roots = Roots::load_from(&path);
+        assert_eq!(roots.entries(), &[first.clone(), second.clone()]);
+        assert_eq!(
+            roots.preferred(),
+            Some(second.as_path()),
+            "the default survives"
+        );
+        assert!(roots.move_entry(1, true));
+        assert!(!roots.move_entry(0, true));
+        roots.save_to(&path)?;
+        // The settings file now wins over the legacy file.
+        std::fs::write(dir.path().join("roots.json"), b"{}")?;
+        let loaded = Roots::load_from(&path);
+        assert_eq!(loaded.entries(), &[second.clone(), first.clone()]);
+        assert_eq!(
+            crate::settings::read::<crate::settings::Theme>(&path, "theme"),
+            Some(crate::settings::Theme::Light)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn counts_repositories_and_reports_missing_folders() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        std::fs::create_dir_all(dir.path().join("one/.git"))?;
+        std::fs::create_dir_all(dir.path().join("two/.git"))?;
+        std::fs::create_dir_all(dir.path().join("plain"))?;
+        assert_eq!(repository_count(dir.path()), Some(2));
+        assert_eq!(repository_count(&dir.path().join("missing")), None);
         Ok(())
     }
 

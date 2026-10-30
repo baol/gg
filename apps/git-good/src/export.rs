@@ -1,4 +1,5 @@
 //! Explicit export to a new destination; temporary output is removed on failure/cancel.
+use crate::navigation::ModalWindow;
 use eframe::egui;
 use gg_engine::review::FileSide;
 use std::{
@@ -72,6 +73,7 @@ impl Export {
         let mut open = !ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
         egui::Window::new("Export file version")
             .id(egui::Id::unique("export-file"))
+            .modal(ctx, egui::Id::unique("export-file"))
             .open(&mut open)
             .resizable(true)
             .default_width(460.0)

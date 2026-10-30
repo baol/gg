@@ -54,6 +54,16 @@ pub fn change(visuals: &Visuals, kind: &ChangeKind) -> (&'static str, Color32) {
         ChangeKind::TypeChanged => ("~ Type", Color32::from_rgb(170, 160, 230)),
     }
 }
+/// One-character change marker; the full kind from [`change`] belongs in the tooltip.
+pub fn change_symbol(kind: &ChangeKind) -> &'static str {
+    match kind {
+        ChangeKind::Added => "+",
+        ChangeKind::Deleted => "−",
+        ChangeKind::Modified => "~",
+        ChangeKind::TypeChanged => "T",
+    }
+}
+
 pub fn selection(visuals: &Visuals) -> Color32 {
     if visuals.dark_mode {
         visuals.selection.bg_fill.gamma_multiply(0.55)
@@ -84,6 +94,27 @@ pub fn apply(ctx: &eframe::egui::Context) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn review_change_markers_match_their_labels() {
+        for kind in [
+            ChangeKind::Added,
+            ChangeKind::Deleted,
+            ChangeKind::Modified,
+            ChangeKind::TypeChanged,
+        ] {
+            let symbol = change_symbol(&kind);
+            assert_eq!(symbol.chars().count(), 1);
+            let (label, _) = change(&Visuals::dark(), &kind);
+            assert!(label.ends_with(match kind {
+                ChangeKind::Added => "Added",
+                ChangeKind::Deleted => "Deleted",
+                ChangeKind::Modified => "Modified",
+                ChangeKind::TypeChanged => "Type",
+            }));
+        }
+    }
+
     fn contrast(foreground: Color32, background: Color32) -> f32 {
         let luminance = |color: Color32| {
             let [r, g, b, _] = color.to_array();

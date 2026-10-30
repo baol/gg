@@ -50,6 +50,8 @@ git good stash apply|pop [STASH] [--index] [--repo PATH]
 git good stash drop [STASH] [--repo PATH]
 ```
 
+`git good stash list` entries carry `index`, `reference`, `commit`, `message`, `branch` (`null` for a detached HEAD), and `age` (relative, such as `3 days ago`); `files` is `null` there because counting files reads each entry.
+
 ## Merge, rebase, rewrite, and conflicts
 
 ```sh
@@ -57,7 +59,8 @@ git good merge REF [--no-ff] [--repo PATH]
 git good merge --continue|--abort [--repo PATH]
 git good rebase REF [--autostash] [--repo PATH]
 git good rebase --continue|--skip|--abort [--repo PATH]
-git good rewrite --from COMMIT --pick COMMIT... [--squash COMMIT]... [--autostash] [--repo PATH]
+git good rewrite --from COMMIT STEP... [--autostash] [--repo PATH]
+#   STEP: --pick|--edit|--squash|--fixup|--drop COMMIT, or --reword COMMIT MESSAGE
 git good rewrite --continue|--skip|--abort [--repo PATH]
 git good cherry-pick COMMIT [--repo PATH]
 git good revert COMMIT [--repo PATH]

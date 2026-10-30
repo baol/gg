@@ -79,6 +79,76 @@ Goal: consolidate navigation, reading, scoped commands, operations, and recovery
 
 Implementation handoff: [phased implementation and verification prompts](implementation-prompts.md). These increments change no deferred M7 scope: LFS smudging/materialization remains planned.
 
+## Final interface · staged
+
+Goal: deliver the agreed [final interface design](final-design.md): one window frame with a menu bar and icon toolbar, compact density, search, a richer interactive rebase, and Preferences. Each increment ships on its own, updates its owning architecture section, and keeps every existing command reachable.
+
+### Increments
+
+1. **Window frame · complete.** Regroup the menus into Repository, Branch, Commit, Changes, View, and Help. Merge the navigation strip into one icon toolbar: refs sidebar toggle, Local Changes/History, Fetch, Pull (rebase) only when behind with its count, Push, New branch, New tag, Merge, Stash changes (disabled on a clean worktree), the Stashes picker with Apply, Pop, Show changes, and confirmed Drop, Reorder and squash (now Interactive rebase) of the current branch's own commits, and Recovery. Icons come from the bundled Phosphor font; every button has a tooltip and the same readiness reason as its menu item.
+2. **Compact density · complete.** Shorten the tab to **Changes** with a change-count badge fed by the background summary; 22 px history, Review file, and Local Changes rows; one-character change markers with the full kind on hover; path and endpoints on one reader line. **Follow-ups:** the comfortable density preference moves to Preferences (8); the one-line commit identity in Review moves with the review header rework in 6.
+3. **Search · complete.** `Ctrl+K` and a toolbar Search button open grouped Filter, Actions, Branches, Remotes, and Tags results that share the toolbar's command dispatch and readiness; Filter is first and finds commits. **Follow-up:** a Files group, which needs a tracked-path index.
+4. **Sidebar stashes, branch switcher, and modal dialogs · complete.** Sidebar stash entries opening the toolbar picker; current-branch button with ahead/behind counts opening a filterable switcher that uses the validated switch; decision dialogs become modal with a dimmed, click-absorbing backdrop while tool windows stay non-modal.
+5. **Rebase engine · complete.** Extend the rewrite plan beyond pick and squash with reword, fixup, drop, and edit (reopen), with CLI support and Git-oracle tests before any UI.
+6. **Interactive rebase dialog and review header · complete.** Fold the Review commit identity into one line. Replace Reorder and squash with the planned modal: newest-first plan, action chips and keys, consequence badges, the selected commit in the shared reader with inline reword, and Open in Review with return.
+7. **Rebase stops · complete.** Reopened-commit stop in Local Changes with split commits, and the three-column conflict blocks with per-block choices, both in the operation area with Continue, Skip commit, and Abort and restore.
+8. **Preferences · complete.** Repository › Preferences… window per the [Settings panel](#settings-panel--planned) plan, starting with clone folders and a preferred folder.
+
+### Acceptance
+
+| Scenario | Expected result | Method |
+| --- | --- | --- |
+| Window frame | Menu titles and toolbar buttons keep their order and position in both views and at 720 and 1120 widths; each toolbar button matches its menu item's enablement and reason | egui geometry and interaction, native review |
+| Pull when behind | Pull is enabled only when the current branch is behind its upstream and names the count; otherwise it is disabled with the reason | egui interaction, Git oracle |
+| Rebase actions | Reword, fixup, drop, and edit produce the same history as `git rebase -i` with the same todo; backups are created first | Git oracle, CLI |
+| Rebase stops | Continue, Skip, and Abort appear only in the operation area and only when Git supports them | Git oracle, egui interaction |
+
+### Gaps · reviewed 2026-10-30 · all fixed
+
+Differences between the [final design](final-design.md) and what shipped, plus places that break the [stable layout and no-placeholder rules](design.md). Each fix keeps its own test.
+
+Design not yet implemented:
+
+1. **Shortcuts and menus · fixed.** A real 26 px menu bar; View lists Local Changes (`Ctrl+1`), History (`Ctrl+2`), Commit details (`Space`), and Refs sidebar (`Ctrl+\`), and the shortcuts work. Repository ends with Preferences and Quit; macOS has a gg menu with Settings… (`Cmd+,`) and Quit.
+2. **Stashes picker · fixed.** Rows show ref, message, branch, age, and file count in fixed slots; the picker keeps a fixed size.
+3. **Search · fixed.** A toolbar search field on wide windows (`Ctrl+K` focuses it), the icon on narrow ones, and a Files group that opens the latest commit changing the file in Review on that file.
+4. **Conflict stop · fixed.** Resolve conflicts opens in the main workspace under the operation area; Close or `Esc` returns.
+5. **Preferences · fixed.** Diff (reader presentation, image layout) and Commit (signing default) sections; the details pane and image layout are remembered; stash, merge, new-branch, and fetch-prune choices are remembered.
+6. **Frame metrics · fixed.** Menu bar 26 px; compact diff rows 19 px.
+
+Layout moves with content:
+
+7. **Operation area · fixed.** Always present at two lines; idle it summarizes the branch, tracking, changes, and stashes; a rebase stop fits its note and step chips on the second line.
+8. **Conflict workspace · fixed.** Fixed path-list width and fixed heights for blocks, result, and side panes; errors and the empty state share one reserved line.
+9. **Interactive rebase dialog · fixed.** The changing result count comes last in the header; the message or reword field has one fixed slot.
+10. **Review header · fixed.** The parent selector, file count, Retry, History, and Prev/Next file keep reserved slots and are hidden, not removed.
+11. **Search and stash popups · fixed.** Results and the stash list scroll inside fixed heights; the stash actions reserve room for the drop confirmation.
+
+Placeholder text in panes:
+
+12. **· fixed.** Panes now keep their slots empty or keep the previous content instead. Previously, "Loading…" or "Reading…" text replaced content in: commit details ("Loading message..."), history rows, Review and Local Changes file rows, the reader ("Loading selected-file diff…", "Loading full file…", "Loading attribution…"), file history ("Loading file history…", "Loading versions…"), Review's empty list ("Reading comparison…"), and the Worktrees, submodule, and LFS windows. Endpoint labels show "resolving…". Status-line progress is allowed.
+
+### Mockup alignment · reviewed 2026-10-30 · in progress
+
+Second pass comparing every Final-page board with the app. Done: the Changes reader's Unstaged | Staged toggle (decided: follow the mockup) and line selection bar with Clear, menus from one command table, About gg, rebase plan and stop wording, Changes group headers with Stage all/Unstage all, commit box wording, toolbar tooltips with shortcuts, the search placeholder, Blame and the ‹ › ⋯ reader buttons, refs sidebar groups, history pill order and colors, the History footer, the window title, and `[`/`]` between conflict blocks.
+
+Still to build (medium):
+
+1. Review file list · done (decided: follow the mockup): background per-file +/− line counts, the `FILES n +x −y` header, start-elided paths, and a fixed 300 px file list.
+2. Conflict workspace: done (files panel with resolved list and blocks left, line numbers, Open in editor with an editor setting).
+3. Rebase stop: done (**Commits made at this stop** in Local Changes).
+4. Stash picker: done (two-line rows and keys).
+5. Preferences: done (modal, footer, search, keyboard list, zoom, code font, History display options, pull strategy, force-with-lease offer, clone naming, reopen last repository, commit hooks, backup retention, confirm before Drop and Reset, identity, subject guide, sign tags, and Diff context lines, whitespace, wrap, and invisibles).
+6. Refs sidebar: done (Worktrees group and branch tracking counts).
+
+Small differences left for the review: none beyond F10 menu focus, which egui does not offer. The reader's one-row header, indented combined rebase rows, the short stop explanation, and the backup named on Abort are done.
+
+Decisions for the review (see the canvas page **Review · as built**):
+
+- Side-by-side diff, the bottom commit inspector, and the Unstaged/Staged reader toggle (all done).
+- History: the filter row is gone; `Commit · N` and the active filter sit in the column header (done).
+- Decided: follow the mockups. Refresh is automatic (file watcher and before commands), `Ctrl+R` is Reword, `Del` deletes, Preferences is modal, Open in editor uses an editor-command setting. F10 menu focus is not available in egui.
+
 ## Repository setup and branch integration · in review
 
 Goal: make clone destinations quick to compose and branch integration discoverable without weakening Git safety.
@@ -108,11 +178,13 @@ Goal: gather user preferences in one Settings window and keep them across launch
 
 ### Increments
 
-1. **Settings store.** Persist preferences in `gg/settings.json` under the OS configuration directory; read `gg/roots.json` once and fold it in. Unknown or malformed values fall back to defaults without losing the rest.
-2. **General.** Theme (system, light, dark) and network avatars (on, or cached avatars and initials). Promote the `GG_THEME` and `GG_OFFLINE` debug switches to these settings; keep the variables as overrides.
-3. **Repositories.** Move Development base folders and the default clone folder into Settings; keep Repository → Clone's **Folders…** shortcut.
-4. **Layout.** Remember Commit details visibility and the binary preview layout.
-5. **Operation defaults.** Remember the last choices for stash (include untracked, keep staged), stash restore (restore staged, remove after restore), merge (always create a merge commit), new branch (switch after creation), and fetch prune. Dialogs open with these values; every operation stays explicitly submitted.
+Status: complete. Increments 1–3 shipped with the final interface; 4 and 5 shipped with the Diff and Commit sections.
+
+1. **Settings store · complete.** Persist preferences in `gg/settings.json` under the OS configuration directory; read `gg/roots.json` once and fold it in. Unknown or malformed values fall back to defaults without losing the rest.
+2. **General · complete.** Theme (system, light, dark) and network avatars (on, or cached avatars and initials). Promote the `GG_THEME` and `GG_OFFLINE` debug switches to these settings; keep the variables as overrides.
+3. **Repositories · complete.** Move Development base folders and the default clone folder into Settings; keep Repository → Clone's **Folders…** shortcut.
+4. **Layout · complete.** Remember Commit details visibility and the binary preview layout.
+5. **Operation defaults · complete.** Remember the last choices for stash (include untracked, keep staged), stash restore (restore staged, remove after restore), merge (always create a merge commit), new branch (switch after creation), and fetch prune. Dialogs open with these values; every operation stays explicitly submitted.
 
 ### Acceptance
 

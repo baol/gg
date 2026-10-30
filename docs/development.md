@@ -24,13 +24,15 @@ The native UI uses egui/eframe 0.37 on wgpu 30. wgpu enables Vulkan, Metal, DX12
 
 | Variable | Effect |
 | --- | --- |
-| `GG_OFFLINE=1` | Use cached avatars and initials |
+| `GG_OFFLINE=1` | Use cached avatars and initials for this launch; overrides Preferences › General without changing it |
 | `GG_SCREENSHOT=/absolute/path.ppm` | Debug build: capture after loading, then exit |
 | `GG_SCREENSHOT_DELAY_MS=500` | Debug build: settle time before the screenshot |
 | `GG_WINDOW_SIZE=720x480` | Debug window size |
 | `GG_LOCAL_CHANGES=1` | Debug: open Local Changes after history loads |
+| `GG_SEARCH=text` | Debug: open `Ctrl+K` search with the text |
+| `GG_REBASE=COMMIT` | Debug: open the interactive rebase dialog from the commit through HEAD |
 | `GG_DETAILS=1` | Debug narrow-screen details view |
-| `GG_THEME=light` | Debug light-theme layout and contrast inspection |
+| `GG_THEME=light` or `dark` | Debug: override the saved theme without changing it |
 
 Use an isolated display for captures. Avatar cache: `git-good/avatars-v2-128` under the OS cache directory (XDG cache, macOS Library/Caches, or Windows LocalAppData).
 

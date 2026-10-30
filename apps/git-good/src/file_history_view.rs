@@ -566,10 +566,11 @@ impl FileHistory {
             return None;
         }
         if self.timeline.is_none() {
+            // The reader stays empty until the first page arrives.
             return Some(if self.error.is_some() {
                 "File history unavailable"
             } else {
-                "Loading file history…"
+                ""
             });
         }
         Some(match self.current() {
@@ -628,8 +629,6 @@ impl FileHistory {
                 ui.weak(timeline.position(self.index));
             } else if self.error.is_some() {
                 ui.weak("History unavailable");
-            } else {
-                ui.weak("Loading versions…");
             }
         });
         if let Some(version) = self.current().cloned() {

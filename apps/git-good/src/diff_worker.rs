@@ -39,6 +39,8 @@ struct Request {
     side: ReadingSide,
     /// One-based line to center the first diff page on after a mode or file change.
     line: Option<usize>,
+    /// Context and whitespace; a change comes with a new generation.
+    options: gg_engine::diff::Options,
 }
 
 #[derive(Clone)]
@@ -54,6 +56,10 @@ pub struct Update {
     pub full: Option<Result<FileText, String>>,
     /// Row indices of diff hunks, so change navigation can reach any page.
     pub hunks: Vec<usize>,
+    /// Side-by-side pairing of the whole document's rows.
+    pub split: Arc<crate::split_rows::Layout>,
+    /// Displayed characters of every document row, for wrapping unloaded rows.
+    pub widths: Arc<Vec<u32>>,
 }
 
 pub struct Worker {
@@ -62,6 +68,7 @@ pub struct Worker {
     generation: Arc<AtomicU64>,
     stop: Arc<AtomicBool>,
     thread: thread::Thread,
+    options: std::cell::Cell<gg_engine::diff::Options>,
 }
 
 impl Worker {
@@ -70,9 +77,14 @@ impl Worker {
             ctx,
             |request, cancelled| {
                 if let Some(working) = &request.working {
-                    gg_git::working_diff::read(working, cancelled)
+                    gg_git::working_diff::read_with(working, request.options, cancelled)
                 } else {
-                    gg_git::diff::read(&request.path, &request.change, cancelled)
+                    gg_git::diff::read_with(
+                        &request.path,
+                        &request.change,
+                        request.options,
+                        cancelled,
+                    )
                 }
             },
             |request, side, changed, cancelled| {
@@ -114,6 +126,8 @@ impl Worker {
                 let mut loaded = 0;
                 let mut max_columns = 0;
                 let mut hunks: Vec<usize> = vec![];
+                let mut split = Arc::new(crate::split_rows::Layout::default());
+                let mut widths: Arc<Vec<u32>> = Arc::default();
                 let mut preview = None;
                 let mut full: Option<(u64, ReadingSide, Result<FileText, String>)> = None;
                 while !s.load(Ordering::Relaxed) {
@@ -126,6 +140,8 @@ impl Worker {
                         document = None;
                         full = None;
                         hunks.clear();
+                        split = Arc::default();
+                        widths = Arc::default();
                         let cancelled = || {
                             s.load(Ordering::Relaxed)
                                 || g.load(Ordering::Relaxed) != request.generation
@@ -151,16 +167,21 @@ impl Worker {
                         if cancelled() {
                             continue;
                         }
-                        max_columns = result
-                            .as_ref()
-                            .map(|doc| {
-                                doc.rows
-                                    .iter()
-                                    .map(|r| r.text.chars().count())
-                                    .max()
-                                    .unwrap_or(0)
-                            })
-                            .unwrap_or(0);
+                        widths = Arc::new(
+                            result
+                                .as_ref()
+                                .map(|doc| {
+                                    doc.rows
+                                        .iter()
+                                        .map(|r| {
+                                            u32::try_from(r.text.chars().count())
+                                                .unwrap_or(u32::MAX)
+                                        })
+                                        .collect()
+                                })
+                                .unwrap_or_default(),
+                        );
+                        max_columns = widths.iter().max().copied().unwrap_or(0) as usize;
                         if let Ok(doc) = &result {
                             hunks = doc
                                 .rows
@@ -169,6 +190,9 @@ impl Worker {
                                 .filter(|(_, row)| row.kind == gg_engine::diff::RowKind::Hunk)
                                 .map(|(index, _)| index)
                                 .collect();
+                            split = Arc::new(crate::split_rows::Layout::from_kinds(
+                                doc.rows.iter().map(|row| row.kind),
+                            ));
                         }
                         document = Some(result);
                         loaded = request.generation;
@@ -191,6 +215,8 @@ impl Worker {
                                 result: Err(error.clone()),
                                 full: None,
                                 hunks: vec![],
+                                split: Arc::default(),
+                                widths: Arc::default(),
                             });
                             ctx.request_repaint();
                         }
@@ -250,6 +276,8 @@ impl Worker {
                             result,
                             full: Some(body),
                             hunks: hunks.clone(),
+                            split: split.clone(),
+                            widths: widths.clone(),
                         }
                     } else {
                         let start = match request.line {
@@ -293,6 +321,8 @@ impl Worker {
                             result: Ok(page),
                             full: None,
                             hunks: hunks.clone(),
+                            split: split.clone(),
+                            widths: widths.clone(),
                         }
                     };
                     if g.load(Ordering::Relaxed) != request.generation {
@@ -311,7 +341,14 @@ impl Worker {
             generation,
             stop,
             thread: handle.thread().clone(),
+            options: std::cell::Cell::default(),
         })
+    }
+
+    /// Context and whitespace for the following requests. The reader starts
+    /// a new generation whenever they change, so a document never mixes them.
+    pub fn set_options(&self, options: gg_engine::diff::Options) {
+        self.options.set(options);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -379,6 +416,7 @@ impl Worker {
                 mode,
                 side,
                 line,
+                options: self.options.get(),
             });
             self.thread.unpark();
         }

@@ -2,7 +2,7 @@
 
 Purpose: reduce competing interaction patterns and give gg's views a shared navigation, reading, action, and recovery model.
 
-Status: design proposal, 2026-10-25. This revises the direction of the [flow review](user-flows.md), not the shipped behavior in [architecture](architecture.md). Explore the [coherence prototype](ui-coherence.html). The earlier 20-screen mockup pack remains the baseline; the new prototype demonstrates a smaller shared workspace with fictional data and local interactions.
+Status: design proposal, 2026-10-25. Its window frame, menus, and rewrite dialog are superseded by the [final design](final-design.md) (2026-10-30). This revises the direction of the [flow review](user-flows.md), not the shipped behavior in [architecture](architecture.md). Explore the [coherence prototype](ui-coherence.html). The earlier 20-screen mockup pack remains the baseline; the new prototype demonstrates a smaller shared workspace with fictional data and local interactions.
 
 ## Main finding
 
@@ -18,7 +18,7 @@ The product does not need fewer Git capabilities. It needs fewer rules for findi
 | Commit review, full-width reading, file history, blame, and staging grow their own headers | Use one file workspace with a source pair, file selector, presentation controls, and content | Remove separate Diff/Full-file viewers and a second history reader |
 | Staging changes layout between two panes, tabs, and stacked Split | Keep Unstaged files above Staged files on the left, the selected comparison on the right, and commit/amend below the comparison | Both file groups stay visible; selecting an entry chooses the comparison without a duplicate Staged/Unstaged switch |
 | Before/After navigates versions while Old/New selects content | **Older version / Newer version** moves in history; **Before / After** selects content | Remove overloaded directional terms |
-| Full file, blame, and history can look like peer destinations | Diff/Full file is presentation; **Show attribution** is a Full-file overlay; **File history** changes the comparison source in place | Remove separate blame navigation and preserve the original comparison as the history return point |
+| Full file, blame, and history can look like peer destinations | Diff/Full file is presentation; **Blame** is a Full-file overlay; **File history** changes the comparison source in place | Remove separate blame navigation and preserve the original comparison as the history return point |
 | Whole-file conflict choices replace and stage; externally edited content has a different route | Preview a resolution, then use **Stage resolution** for every source | Separate choosing content from publishing it; no content selection silently stages |
 | Continue/Skip/Abort, progress, and recovery appear in multiple places; rewrite keeps a blocking modal | Show one operation area beneath primary navigation; configuration closes on submission | Remove duplicate progress/recovery controls and the rewrite-specific progress dialog |
 | Stash Apply and Pop are adjacent operations | One **Restore stash…** form, with **Remove stash after successful restore** | Remove parallel forms; retain the underlying Apply/Pop semantics and CLI commands |
@@ -46,7 +46,7 @@ Wide layouts retain file selection to the left of the reader. Local Changes uses
 | Comparison source | Commit parent, the selected Staged/Unstaged list entry, or file-history version | Exact Before/After endpoints; no duplicate staged-state switch in the reader |
 | Diff / Full file | Present the same comparison | Presentation only |
 | Before / After | Choose content in Full file | Inspection side only; hidden in unified Diff |
-| Show attribution | Add commit provenance to Full file | Overlay only; a label explains unsupported/uncommitted attribution |
+| Blame | Add commit provenance to Full file | Overlay only; a label explains unsupported/uncommitted attribution |
 | Older version / Newer version | Move along content versions | Current file-history version and comparison edge |
 | Previous change / Next change | Move within the current content | Reading place only |
 | File actions | Export, copy path, scoped mutations where applicable | Explicit command with a named target |
@@ -86,7 +86,7 @@ If validation interrupts a requested action, retain an **intent**, not a queued 
 
 ### Inspect a change
 
-History → select commit → Open commit → choose file → Diff/Full file. Show attribution toggles in place. File history adds the version strip to the same reader. Close file history restores the original comparison. Back returns to History with the same commit selected. Opening the same commit from Recovery instead returns to Recovery.
+History → select commit → Open commit → choose file → Diff/Full file. Blame toggles in place. File history adds the version strip to the same reader. Close file history restores the original comparison. Back returns to History with the same commit selected. Opening the same commit from Recovery instead returns to Recovery.
 
 ### Commit a portion of the work
 

@@ -16,9 +16,22 @@ pub fn read(
     request: &WorkingRequest,
     cancelled: impl Fn() -> bool,
 ) -> std::result::Result<FileDiff, String> {
-    read_inner(request, &cancelled).map_err(|e| format!("Compare {}: {e}", request.entry.path))
+    read_with(request, diff::Options::default(), cancelled)
 }
-fn read_inner(request: &WorkingRequest, cancelled: &dyn Fn() -> bool) -> Result<FileDiff> {
+/// Compare one working entry with the reader's context and whitespace options.
+pub fn read_with(
+    request: &WorkingRequest,
+    options: diff::Options,
+    cancelled: impl Fn() -> bool,
+) -> std::result::Result<FileDiff, String> {
+    read_inner(request, options, &cancelled)
+        .map_err(|e| format!("Compare {}: {e}", request.entry.path))
+}
+fn read_inner(
+    request: &WorkingRequest,
+    options: diff::Options,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<FileDiff> {
     let check = || -> Result<()> {
         if cancelled() {
             Err("Comparison cancelled".into())
@@ -142,7 +155,7 @@ fn read_inner(request: &WorkingRequest, cancelled: &dyn Fn() -> bool) -> Result<
             after = normalized;
         }
         check()?;
-        let mut diff = diff::compare(&before, &after, cancelled)?;
+        let mut diff = diff::compare_with(&before, &after, options, cancelled)?;
         if let (Some(old), Some(new_mode)) = (&index_side, effective_mode)
             && old.mode != new_mode
         {

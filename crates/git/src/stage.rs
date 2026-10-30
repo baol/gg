@@ -16,7 +16,16 @@ pub fn hunks(request: &WorkingRequest, selected: &[String]) -> std::result::Resu
         .map_err(|e| format!("Stage hunks for {}: {e}", request.entry.path))
 }
 pub fn changes(request: &WorkingRequest, edits: &[Edit]) -> std::result::Result<(), String> {
-    apply_changes(request, edits).map_err(|e| format!("Stage {}: {e}", request.entry.path))
+    changes_with(request, edits, diff::Options::default())
+}
+/// Stage hunks and lines picked in a diff shown with `options`; the hunk
+/// headers must come from a comparison with the same context.
+pub fn changes_with(
+    request: &WorkingRequest,
+    edits: &[Edit],
+    options: diff::Options,
+) -> std::result::Result<(), String> {
+    apply_changes(request, edits, options).map_err(|e| format!("Stage {}: {e}", request.entry.path))
 }
 fn apply_file(request: &WorkingRequest) -> Result<()> {
     match request.entry.area {
@@ -88,10 +97,11 @@ fn apply_file(request: &WorkingRequest) -> Result<()> {
     }
     patch::publish(index, lock, request)
 }
-fn apply_changes(request: &WorkingRequest, edits: &[Edit]) -> Result<()> {
+fn apply_changes(request: &WorkingRequest, edits: &[Edit], options: diff::Options) -> Result<()> {
     if edits.is_empty() {
         return Err("Select at least one hunk or line".into());
     }
+    patch::check_exact(options)?;
     if request.entry.area != Area::Unstaged || request.entry.kind != Kind::Modified {
         return Err("Select an unstaged modification to stage changes".into());
     }
@@ -137,7 +147,7 @@ fn apply_changes(request: &WorkingRequest, edits: &[Edit]) -> Result<()> {
         .convert_to_git(std::io::Cursor::new(&captured.bytes), &relative, &index)?
         .take((MAX_BLOB_BYTES + 1) as u64)
         .read_to_end(&mut after)?;
-    let comparison = diff::compare(&before, &after, || false)?;
+    let comparison = diff::compare_with(&before, &after, options, || false)?;
     if comparison.kind != DiffKind::Text {
         return Err("Partial staging requires a text comparison".into());
     }

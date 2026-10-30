@@ -56,7 +56,7 @@ flowchart TD
     Resolve --> Continue[Continue / supported Skip / Abort]
     Continue -->|More conflicts| Resolve
     Continue -->|Finished| History
-    History --> Rewrite[Reorder and squash]
+    History --> Rewrite[Interactive rebase]
     Rewrite --> Resolve
     Rewrite --> Backup[Backups / reflog]
     Backup --> Recover[Open / create branch / confirmed reset]
@@ -90,7 +90,7 @@ flowchart TD
 **Entry:** Local Changes. **Goal:** commit only intended index contents.
 
 1. Scan and group staged, unstaged, untracked, and conflicted paths; keep scan completion distinct from a clean tree.
-2. Select an entry in either counted group. It immediately selects that comparison in the shared reader: Staged is HEAD → index, Unstaged is index → working file, and amend is HEAD parent → index. There is no separate View diff step or Staged/Unstaged reader switch; the reader stays in place, and its header names the path, exact endpoints, and Diff/Full file once. Enter opens review; double-click on a Local Changes file row stages or unstages the whole file.
+2. Select an entry in either counted group. It immediately selects that comparison in the shared reader: Staged is HEAD → index, Unstaged is index → working file, and amend is HEAD parent → index. The reader header's Unstaged | Staged toggle switches the same path between both comparisons, with a side that has no changes disabled and its reason shown; there is no separate View diff step, the reader stays in place, and its header names the path, exact endpoints, and Diff/Full file once. Enter opens review; double-click on a Local Changes file row stages or unstages the whole file.
 3. **Stage**/**Unstage** is the selected file's own header button and applies to the whole path. Double-click an Unstaged or Untracked row to stage it, or a Staged row to unstage it; conflict and intent-to-add rows do not toggle. After staging a file, select the next Unstaged row in display order (previous when it was last); if none remain, keep the newly staged row selected. After unstaging, follow the same path into Unstaged. Stage hunk for one hunk or select changed lines and Stage selected; Unstage and Discard mirror those scopes. The same reader keeps Diff/Full, Before/After, and the reading place; refresh both lists and the active comparison in place and preserve independent selections and scroll.
 4. Return to files and enter a message. Enable Commit only when the validated scan is complete, the message is nonempty, and staged changes exist. Name any blocking conflict or unsupported index state.
 5. Commit the index through hooks. On success clear only the submitted draft; History refreshes and selects the new commit.
@@ -157,7 +157,7 @@ flowchart TD
 
 1. Name operation, unresolved count, and operation commit. Select an unresolved path; load Base/Ours/Theirs on workers.
 2. Explain side identities for that operation. For rebase, Ours is the rebased destination/current replay state and Theirs the commit being replayed; never equate Ours with 'my branch' universally.
-3. Choose Base, Ours, Theirs, or the working file to change only the Result preview. Edit externally and use Refresh external edits to preview it. **Stage resolution** is the single publication step; it validates the original stages and working bytes and stages the previewed result. State those consequences next to the controls. Select the next unresolved path after success.
+3. For a text file, choose per conflict block: Ours, Theirs, Ours + theirs, or Theirs + ours (keys 1–4). The Result preview keeps markers for open blocks; Stage resolution is enabled once every block has a choice. Otherwise, or in Whole file mode, choose Base, Ours, Theirs, or the working file to change only the Result preview. Edit externally and use Refresh external edits to preview it. **Stage resolution** is the single publication step; it validates the original stages and working bytes and stages the previewed result. State those consequences next to the controls. Select the next unresolved path after success.
 4. Keep Continue disabled until unresolved paths reach zero; then run it on the operation worker. A later conflict returns to this flow.
 5. Abort requests Git's recovery and refreshes; report any failure rather than promise removal of all user edits. Skip exists only for supporting operations (rebase/cherry-pick/revert), never merge. Narrow layouts show side tabs with bounded content.
 
@@ -165,13 +165,14 @@ flowchart TD
 
 ### F10 · Rewrite and recover a previous tip
 
-**Entry:** selected history commit → Reorder and squash to HEAD.
+**Entry:** selected history commit → Interactive rebase from here (`R`), or the toolbar's Interactive rebase of this branch.
 
-1. Resolve the inclusive linear range oldest first; reject merge ranges. Show every commit exactly once, Up/Down, and Pick/Squash. The first row always remains Pick.
-2. Review the plan, clean-worktree/autostash choice, and private-backup notice; confirm the rewrite.
-3. Close the plan on submission. The operation area shows Rewriting commits, then Refreshing history until the replacement history is accepted; browsing stays available and the old history remains labeled. Conflicts use F09.
-4. From Repository → Recovery choose Backups or Reflog, then inspect the source, kind, subject, and commit time. **Open commit** verifies content in the ordinary reader; Back returns to that source, the Reflog reference filter, and the selected entry.
-5. **Create branch here…** opens the shared branch form with **Switch after creation** off. Reset branch here offers Soft (move tip), Mixed (also reset index), or Hard (also discard staged/working changes), with exact-target confirmation and Hard warning. Copy hash/ref is read-only. Keep backups after recovery.
+1. Resolve the inclusive linear range; reject merge ranges. Show every commit exactly once, newest first, with move controls, drag, and an action chip: Pick, Reword, Reopen, Squash, Fixup, Drop. Squash and Fixup combine into the nearest kept commit below; consequence badges say where.
+2. Inspect the selected commit's files and diff beside the plan, or Open in Review and come back to the same plan. Reword edits the message in place.
+3. Review the result count, clean-worktree/autostash choice, the refs that stay on the original commits, and the private-backup notice; Start rebase.
+4. Close the plan on submission. The operation area shows Rewriting commits, then Refreshing history until the replacement history is accepted; browsing stays available and the old history remains labeled. Conflicts use F09.
+5. From Repository → Recovery choose Backups or Reflog, then inspect the source, kind, subject, and commit time. **Open commit** verifies content in the ordinary reader; Back returns to that source, the Reflog reference filter, and the selected entry.
+6. **Create branch here…** opens the shared branch form with **Switch after creation** off. Reset branch here offers Soft (move tip), Mixed (also reset index), or Hard (also discard staged/working changes), with exact-target confirmation and Hard warning. Copy hash/ref is read-only. Keep backups after recovery.
 
 **Completion:** rewritten history or a recovered tip is reachable and selection restores. **Mockup:** Rewrite → Recovery; primary Create branch here demonstrates the nondestructive route.
 
@@ -189,9 +190,9 @@ flowchart TD
 
 ### F12 · Attribute and trace a line or range · M7
 
-**Entry:** line/range selection in Reading → **Show attribution** or `B`, then **Line history**. Attribution on either committed side, line/range mapping, **Open commit**, and deleted-line Before anchoring are implemented. **Contract:** anchor exact path bytes, revision, and inclusive lines; map single lines through blame and ranges through diff hunks.
+**Entry:** line/range selection in Reading → **Blame** or `B`, then **Line history**. Attribution on either committed side, line/range mapping, **Open commit**, and deleted-line Before anchoring are implemented. **Contract:** anchor exact path bytes, revision, and inclusive lines; map single lines through blame and ranges through diff hunks.
 
-1. Show attribution beside source lines: origin commit, author, and date; selecting a line shows its complete metadata and Open commit/Line history actions. Keep the selected place visible when toggling attribution.
+1. Blame shows attribution beside source lines: origin commit, author, and date; selecting a line shows its complete metadata and Open commit/Line history actions. Keep the selected place visible when toggling attribution.
 2. Line history opens the same version timeline anchored to the place. Follow renames and remap line numbers; name both the current path/range and old path when changed.
 3. A deleted range explicitly anchors Before. If the range spans divergent hunks, ask which predecessor to follow and show candidate ranges; do not silently shrink the selection or invent a common boundary.
 4. Back returns through timeline → blame → reader with selection restored. A cancelled/stale worker result never replaces a newer place.

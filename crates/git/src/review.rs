@@ -115,6 +115,15 @@ impl ReviewSession {
                 .unwrap_or("(empty message)")
                 .into()
         };
+        let (author, date) = {
+            let decoded = commit.decode()?;
+            let author = decoded.author()?;
+            let time = author.time()?.format(gix::date::time::format::ISO8601)?;
+            (
+                author.name.to_string(),
+                time.get(..10).unwrap_or(&time).to_string(),
+            )
+        };
         let comparison = Comparison {
             path: repo.workdir().unwrap_or(repo.path()).to_path_buf(),
             commit: commit.id.to_string(),
@@ -128,6 +137,8 @@ impl ReviewSession {
                 parents.iter().map(ToString::to_string).collect()
             },
             subject,
+            author,
+            date,
         };
         drop(commit);
         Ok(Self {
@@ -231,5 +242,73 @@ impl ReviewReader for ReviewSession {
                 self.comparison.path.display()
             )
         })
+    }
+}
+
+/// Counts added and deleted lines of changed files in one repository.
+pub struct LineStats {
+    repo: gix::Repository,
+}
+impl LineStats {
+    pub fn open(path: &std::path::Path) -> Result<Self, String> {
+        let repo = gix::discover(path).map_err(|e| e.to_string())?;
+        Ok(Self { repo })
+    }
+    /// Count one change; object headers are checked before content is read.
+    pub fn count(&self, change: &FileChange) -> Result<LineStat, String> {
+        self.count_inner(change)
+            .map_err(|e| format!("Could not count lines of {}: {e}", change.path))
+    }
+    fn count_inner(&self, change: &FileChange) -> Result<LineStat, Error> {
+        let gitlink = |side: &Option<FileSide>| side.as_ref().is_some_and(|s| s.mode == 0o160000);
+        if gitlink(&change.old) || gitlink(&change.new) {
+            return Ok(LineStat::Skipped);
+        }
+        if let (Some(old), Some(new)) = (&change.old, &change.new)
+            && old.id == new.id
+        {
+            return Ok(LineStat::Lines {
+                added: 0,
+                deleted: 0,
+            });
+        }
+        let size = |side: &Option<FileSide>| -> Result<u64, Error> {
+            match side {
+                Some(side) => Ok(self
+                    .repo
+                    .find_header(gix::ObjectId::from_hex(side.id.as_bytes())?)?
+                    .size()),
+                None => Ok(0),
+            }
+        };
+        let limit = gg_engine::diff::MAX_BLOB_BYTES as u64;
+        if size(&change.old)? > limit || size(&change.new)? > limit {
+            return Ok(LineStat::Skipped);
+        }
+        let bytes = |side: &Option<FileSide>| -> Result<Vec<u8>, Error> {
+            match side {
+                Some(side) => Ok(self
+                    .repo
+                    .find_blob(gix::ObjectId::from_hex(side.id.as_bytes())?)?
+                    .data
+                    .clone()),
+                None => Ok(Vec::new()),
+            }
+        };
+        let (old, new) = (bytes(&change.old)?, bytes(&change.new)?);
+        // Git splits a file/symlink type change into a deletion and an
+        // addition, so every line of each side counts.
+        if change.kind == ChangeKind::TypeChanged {
+            return Ok(
+                match (LineStat::compare(&old, b""), LineStat::compare(b"", &new)) {
+                    (LineStat::Lines { deleted, .. }, LineStat::Lines { added, .. }) => {
+                        LineStat::Lines { added, deleted }
+                    }
+                    (LineStat::Binary, _) | (_, LineStat::Binary) => LineStat::Binary,
+                    _ => LineStat::Skipped,
+                },
+            );
+        }
+        Ok(LineStat::compare(&old, &new))
     }
 }

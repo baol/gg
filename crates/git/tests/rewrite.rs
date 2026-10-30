@@ -86,6 +86,27 @@ fn rewrite_lists_a_linear_range_oldest_first() -> Result {
             .collect::<Vec<_>>(),
         vec!["one", "two", "three"]
     );
+    assert!(commits.iter().all(|commit| commit.author == "Test"));
+    assert!(commits.iter().all(|commit| !commit.date.is_empty()));
+    assert_eq!(commits[1].message, "two");
+
+    git(
+        dir.path(),
+        &[
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "four",
+            "-m",
+            "body\nline",
+        ],
+    )?;
+    let (commits, base) = gg_git::rewrite::plan_range(dir.path(), &second)?;
+    assert_eq!(base.as_deref(), Some(first.as_str()));
+    assert_eq!(commits.len(), 3);
+    assert_eq!(commits[2].subject, "four");
+    assert_eq!(commits[2].message, "four\n\nbody\nline");
     Ok(())
 }
 
@@ -95,18 +116,9 @@ fn rewrite_reorders_commits_and_records_the_previous_tip() -> Result {
     let p = dir.path();
     let previous = head(p)?;
     let steps = vec![
-        gg_engine::rewrite::Step {
-            action: gg_engine::rewrite::Action::Pick,
-            commit: second.clone(),
-        },
-        gg_engine::rewrite::Step {
-            action: gg_engine::rewrite::Action::Pick,
-            commit: first.clone(),
-        },
-        gg_engine::rewrite::Step {
-            action: gg_engine::rewrite::Action::Pick,
-            commit: third.clone(),
-        },
+        gg_engine::rewrite::Step::new(gg_engine::rewrite::Action::Pick, &second),
+        gg_engine::rewrite::Step::new(gg_engine::rewrite::Action::Pick, &first),
+        gg_engine::rewrite::Step::new(gg_engine::rewrite::Action::Pick, &third),
     ];
     let receipt = gg_git::rewrite::rewrite(p, &first, &steps, false)?;
     assert!(receipt.applied);
@@ -137,18 +149,9 @@ fn rewrite_squashes_commits_and_keeps_the_combined_message() -> Result {
     let (dir, first, second, third) = rewrite_commits()?;
     let p = dir.path();
     let steps = vec![
-        gg_engine::rewrite::Step {
-            action: gg_engine::rewrite::Action::Pick,
-            commit: first.clone(),
-        },
-        gg_engine::rewrite::Step {
-            action: gg_engine::rewrite::Action::Squash,
-            commit: second.clone(),
-        },
-        gg_engine::rewrite::Step {
-            action: gg_engine::rewrite::Action::Pick,
-            commit: third.clone(),
-        },
+        gg_engine::rewrite::Step::new(gg_engine::rewrite::Action::Pick, &first),
+        gg_engine::rewrite::Step::new(gg_engine::rewrite::Action::Squash, &second),
+        gg_engine::rewrite::Step::new(gg_engine::rewrite::Action::Pick, &third),
     ];
     let receipt = gg_git::rewrite::rewrite(p, &first, &steps, false)?;
     assert!(receipt.applied);
@@ -170,14 +173,8 @@ fn rewrite_supports_a_root_range() -> Result {
     let root = head(p)?;
     let second = commit(p, "one", "one\n", "one")?;
     let steps = vec![
-        gg_engine::rewrite::Step {
-            action: gg_engine::rewrite::Action::Pick,
-            commit: root.clone(),
-        },
-        gg_engine::rewrite::Step {
-            action: gg_engine::rewrite::Action::Squash,
-            commit: second.clone(),
-        },
+        gg_engine::rewrite::Step::new(gg_engine::rewrite::Action::Pick, &root),
+        gg_engine::rewrite::Step::new(gg_engine::rewrite::Action::Squash, &second),
     ];
     let receipt = gg_git::rewrite::rewrite(p, &root, &steps, false)?;
     assert!(receipt.applied);
@@ -194,14 +191,10 @@ fn rewrite_supports_a_root_range() -> Result {
 fn rewrite_validates_the_full_step_set() -> Result {
     let (dir, first, second, _) = rewrite_commits()?;
     let p = dir.path();
-    let pick = |commit: &str| gg_engine::rewrite::Step {
-        action: gg_engine::rewrite::Action::Pick,
-        commit: commit.to_string(),
-    };
-    let squash = |commit: &str| gg_engine::rewrite::Step {
-        action: gg_engine::rewrite::Action::Squash,
-        commit: commit.to_string(),
-    };
+    let pick =
+        |commit: &str| gg_engine::rewrite::Step::new(gg_engine::rewrite::Action::Pick, commit);
+    let squash =
+        |commit: &str| gg_engine::rewrite::Step::new(gg_engine::rewrite::Action::Squash, commit);
 
     let error = match gg_git::rewrite::rewrite(p, &first, &[], false) {
         Ok(_) => return Err("empty rewrite unexpectedly succeeded".into()),
@@ -213,7 +206,7 @@ fn rewrite_validates_the_full_step_set() -> Result {
         Ok(_) => return Err("squash-first rewrite unexpectedly succeeded".into()),
         Err(error) => error,
     };
-    assert!(error.contains("first rewrite step must be pick"), "{error}");
+    assert!(error.contains("needs a kept commit below"), "{error}");
 
     let error = match gg_git::rewrite::rewrite(p, &first, &[pick(&first), pick(&first)], false) {
         Ok(_) => return Err("duplicate rewrite unexpectedly succeeded".into()),
@@ -264,14 +257,8 @@ fn rewrite_conflict_can_abort_or_skip() -> Result {
     let second = commit(p, "a", "two\n", "two")?;
     let previous = head(p)?;
     let reorder = vec![
-        gg_engine::rewrite::Step {
-            action: gg_engine::rewrite::Action::Pick,
-            commit: second.clone(),
-        },
-        gg_engine::rewrite::Step {
-            action: gg_engine::rewrite::Action::Pick,
-            commit: first.clone(),
-        },
+        gg_engine::rewrite::Step::new(gg_engine::rewrite::Action::Pick, &second),
+        gg_engine::rewrite::Step::new(gg_engine::rewrite::Action::Pick, &first),
     ];
     let receipt = gg_git::rewrite::rewrite(p, &first, &reorder, false)?;
     assert!(!receipt.applied);
@@ -302,18 +289,9 @@ fn rewrite_requires_a_clean_worktree_unless_autostash_is_enabled() -> Result {
     let before = head(p)?;
     std::fs::write(p.join("one"), b"dirty\n")?;
     let steps = vec![
-        gg_engine::rewrite::Step {
-            action: gg_engine::rewrite::Action::Pick,
-            commit: second.clone(),
-        },
-        gg_engine::rewrite::Step {
-            action: gg_engine::rewrite::Action::Pick,
-            commit: first.clone(),
-        },
-        gg_engine::rewrite::Step {
-            action: gg_engine::rewrite::Action::Pick,
-            commit: third.clone(),
-        },
+        gg_engine::rewrite::Step::new(gg_engine::rewrite::Action::Pick, &second),
+        gg_engine::rewrite::Step::new(gg_engine::rewrite::Action::Pick, &first),
+        gg_engine::rewrite::Step::new(gg_engine::rewrite::Action::Pick, &third),
     ];
     let error = match gg_git::rewrite::rewrite(p, &first, &steps, false) {
         Ok(_) => return Err("dirty rewrite unexpectedly succeeded".into()),
@@ -367,5 +345,385 @@ fn rewrite_rejects_a_start_outside_head_history() -> Result {
         Err(error) => error,
     };
     assert!(error.contains("not an ancestor"), "{error}");
+    Ok(())
+}
+
+#[test]
+fn branch_start_prefers_unpushed_commits_then_the_default_branch() -> Result {
+    let dir = repo()?;
+    let path = dir.path();
+    assert_eq!(
+        gg_git::rewrite::branch_start(path)?,
+        None,
+        "main has no own commits"
+    );
+
+    git(path, &["switch", "-q", "-c", "feature"])?;
+    let first = commit(path, "a", "a\n", "first")?;
+    let second = commit(path, "b", "b\n", "second")?;
+    assert_eq!(
+        gg_git::rewrite::branch_start(path)?,
+        Some((first.clone(), 2)),
+        "without an upstream the range starts where the branch left main"
+    );
+
+    git(path, &["update-ref", "refs/remotes/origin/feature", &first])?;
+    git(
+        path,
+        &[
+            "config",
+            "remote.origin.url",
+            "https://example.org/repo.git",
+        ],
+    )?;
+    git(
+        path,
+        &[
+            "config",
+            "remote.origin.fetch",
+            "+refs/heads/*:refs/remotes/origin/*",
+        ],
+    )?;
+    git(path, &["config", "branch.feature.remote", "origin"])?;
+    git(
+        path,
+        &["config", "branch.feature.merge", "refs/heads/feature"],
+    )?;
+    assert_eq!(
+        gg_git::rewrite::branch_start(path)?,
+        Some((second.clone(), 1)),
+        "only commits the upstream lacks"
+    );
+
+    git(
+        path,
+        &["update-ref", "refs/remotes/origin/feature", &second],
+    )?;
+    assert_eq!(
+        gg_git::rewrite::branch_start(path)?,
+        Some((first, 2)),
+        "fully pushed branches fall back to the default branch"
+    );
+    Ok(())
+}
+
+fn step(action: gg_engine::rewrite::Action, commit: &str) -> gg_engine::rewrite::Step {
+    gg_engine::rewrite::Step::new(action, commit)
+}
+
+fn message(path: &Path, rev: &str) -> Result<String> {
+    Ok(
+        String::from_utf8(git(path, &["log", "-1", "--format=%B", rev])?)?
+            .trim_end()
+            .to_string(),
+    )
+}
+
+#[test]
+fn rewrite_rewords_a_commit_without_an_editor() -> Result {
+    use gg_engine::rewrite::{Action, Step};
+    let (dir, first, second, third) = rewrite_commits()?;
+    let p = dir.path();
+    let steps = vec![
+        step(Action::Pick, &first),
+        Step::reword(
+            &second,
+            "two, reworded\n\n# kept as typed\nBody's 'quoted' line",
+        ),
+        step(Action::Pick, &third),
+    ];
+    let receipt = gg_git::rewrite::rewrite(p, &first, &steps, false)?;
+    assert!(receipt.applied, "{receipt:?}");
+    assert_eq!(subjects(p)?, vec!["base", "one", "two, reworded", "three"]);
+    assert_eq!(
+        message(p, "HEAD^")?,
+        "two, reworded\n\n# kept as typed\nBody's 'quoted' line"
+    );
+    assert_eq!(std::fs::read(p.join("two"))?, b"two\n");
+    Ok(())
+}
+
+#[test]
+fn rewrite_fixup_keeps_only_the_older_message() -> Result {
+    use gg_engine::rewrite::Action;
+    let (dir, first, second, third) = rewrite_commits()?;
+    let p = dir.path();
+    let steps = vec![
+        step(Action::Pick, &first),
+        step(Action::Fixup, &second),
+        step(Action::Pick, &third),
+    ];
+    let receipt = gg_git::rewrite::rewrite(p, &first, &steps, false)?;
+    assert!(receipt.applied, "{receipt:?}");
+    assert_eq!(subjects(p)?, vec!["base", "one", "three"]);
+    assert_eq!(message(p, "HEAD^")?, "one");
+    assert_eq!(std::fs::read(p.join("two"))?, b"two\n");
+    Ok(())
+}
+
+#[test]
+fn rewrite_squash_and_fixup_skip_dropped_commits() -> Result {
+    use gg_engine::rewrite::Action;
+    let (dir, first, second, third) = rewrite_commits()?;
+    let p = dir.path();
+    let steps = vec![
+        step(Action::Pick, &first),
+        step(Action::Drop, &second),
+        step(Action::Fixup, &third),
+    ];
+    let receipt = gg_git::rewrite::rewrite(p, &first, &steps, false)?;
+    assert!(receipt.applied, "{receipt:?}");
+    assert_eq!(subjects(p)?, vec!["base", "one"]);
+    assert!(!p.join("two").exists());
+    assert_eq!(std::fs::read(p.join("three"))?, b"three\n");
+    Ok(())
+}
+
+#[test]
+fn rewrite_drops_a_commit() -> Result {
+    use gg_engine::rewrite::Action;
+    let (dir, first, second, third) = rewrite_commits()?;
+    let p = dir.path();
+    let steps = vec![
+        step(Action::Drop, &first),
+        step(Action::Pick, &second),
+        step(Action::Pick, &third),
+    ];
+    let receipt = gg_git::rewrite::rewrite(p, &first, &steps, false)?;
+    assert!(receipt.applied, "{receipt:?}");
+    assert_eq!(subjects(p)?, vec!["base", "two", "three"]);
+    assert!(!p.join("one").exists());
+    Ok(())
+}
+
+#[test]
+fn rewrite_reopen_stages_the_commit_and_reports_progress() -> Result {
+    use gg_engine::mutation::RebaseStop;
+    use gg_engine::rewrite::Action;
+    let (dir, first, second, third) = rewrite_commits()?;
+    let p = dir.path();
+    git(p, &["commit", "-q", "--amend", "-m", "three", "-m", "body"])?;
+    let third_amended = head(p)?;
+    git(p, &["reset", "-q", "--hard", &third_amended])?;
+    let _ = third;
+    commit(p, "four", "four\n", "four")?;
+    let four = head(p)?;
+    // Reword "two" so the plan carries one more line; reopen "three".
+    let steps = vec![
+        step(Action::Pick, &first),
+        step(Action::Pick, &second),
+        step(Action::Edit, &third_amended),
+        step(Action::Pick, &four),
+    ];
+    let receipt = gg_git::rewrite::rewrite(p, &first, &steps, false)?;
+    assert!(!receipt.applied);
+    assert!(receipt.in_progress);
+    assert!(receipt.conflicts.is_empty());
+    assert!(
+        receipt
+            .warnings
+            .iter()
+            .any(|w| w.contains("reopened commit")),
+        "{:?}",
+        receipt.warnings
+    );
+    assert_eq!(head(p)?, second, "HEAD is the reopened commit's parent");
+    assert_eq!(
+        String::from_utf8(git(p, &["diff", "--cached", "--name-only"])?)?.trim(),
+        "three",
+        "the reopened commit's changes are staged"
+    );
+
+    let progress = gg_git::mutation::rebase_progress(p)?.ok_or("no rebase progress")?;
+    assert_eq!(progress.branch.as_deref(), Some("main"));
+    assert_eq!(progress.position(), (3, 4));
+    assert_eq!(
+        progress
+            .done
+            .iter()
+            .map(|step| (step.action.as_str(), step.subject.as_str()))
+            .collect::<Vec<_>>(),
+        [("pick", "one"), ("pick", "two"), ("pick", "three")]
+    );
+    assert_eq!(progress.todo[0].commit, four);
+    assert_eq!(progress.todo[0].subject, "four");
+    assert_eq!(progress.tracked_changes, 1);
+    match &progress.stop {
+        RebaseStop::Reopened {
+            base,
+            commit,
+            subject,
+            message,
+            made,
+        } => {
+            assert_eq!(base.as_deref(), Some(second.as_str()));
+            assert_eq!(commit, &third_amended);
+            assert_eq!(subject, "three");
+            assert_eq!(message, "three\n\nbody");
+            assert!(made.is_empty());
+        }
+        other => return Err(format!("expected a reopened stop, got {other:?}").into()),
+    }
+
+    // Split the reopened commit into two commits.
+    std::fs::write(p.join("extra"), b"extra\n")?;
+    git(p, &["commit", "-qm", "three, part 1"])?;
+    git(p, &["add", "extra"])?;
+    git(p, &["commit", "-qm", "three, part 2"])?;
+    let progress = gg_git::mutation::rebase_progress(p)?.ok_or("no rebase progress")?;
+    assert_eq!(progress.tracked_changes, 0);
+    let RebaseStop::Reopened { made, .. } = &progress.stop else {
+        return Err("expected a reopened stop".into());
+    };
+    assert_eq!(
+        made.iter()
+            .map(|step| step.subject.as_str())
+            .collect::<Vec<_>>(),
+        ["three, part 1", "three, part 2"]
+    );
+    let done = gg_git::mutation::continue_operation(p, gg_engine::mutation::Operation::Rebase)?;
+    assert!(done.applied, "{done:?}");
+    assert_eq!(
+        subjects(p)?,
+        vec![
+            "base",
+            "one",
+            "two",
+            "three, part 1",
+            "three, part 2",
+            "four"
+        ]
+    );
+    assert_eq!(gg_git::mutation::rebase_progress(p)?, None);
+    Ok(())
+}
+
+#[test]
+fn rebase_progress_reports_a_conflict_stop() -> Result {
+    use gg_engine::mutation::RebaseStop;
+    let dir = repo()?;
+    let p = dir.path();
+    std::fs::write(p.join("a"), b"base\n")?;
+    git(p, &["add", "a"])?;
+    git(p, &["commit", "-qm", "add a"])?;
+    let first = commit(p, "a", "one\n", "one")?;
+    let second = commit(p, "a", "two\n", "two")?;
+    let reorder = vec![
+        gg_engine::rewrite::Step::new(gg_engine::rewrite::Action::Pick, &second),
+        gg_engine::rewrite::Step::new(gg_engine::rewrite::Action::Pick, &first),
+    ];
+    gg_git::rewrite::rewrite(p, &first, &reorder, false)?;
+    let progress = gg_git::mutation::rebase_progress(p)?.ok_or("no rebase progress")?;
+    assert_eq!(progress.stop, RebaseStop::Conflict);
+    assert_eq!(progress.position(), (1, 2));
+    assert_eq!(progress.done[0].subject, "two");
+    assert_eq!(progress.todo[0].subject, "one");
+    gg_git::mutation::abort_operation(p, gg_engine::mutation::Operation::Rebase)?;
+    assert_eq!(gg_git::mutation::rebase_progress(p)?, None);
+    Ok(())
+}
+
+#[test]
+fn rewrite_reopen_of_a_root_commit_stays_at_head() -> Result {
+    use gg_engine::mutation::RebaseStop;
+    use gg_engine::rewrite::Action;
+    let dir = repo()?;
+    let p = dir.path();
+    let root = head(p)?;
+    let second = commit(p, "one", "one\n", "one")?;
+    let steps = vec![step(Action::Edit, &root), step(Action::Pick, &second)];
+    let receipt = gg_git::rewrite::rewrite(p, &root, &steps, false)?;
+    assert!(receipt.in_progress);
+    assert_eq!(head(p)?, root, "a root commit cannot be staged on a parent");
+    let progress = gg_git::mutation::rebase_progress(p)?.ok_or("no rebase progress")?;
+    assert!(
+        matches!(&progress.stop, RebaseStop::Reopened { base: None, .. }),
+        "{:?}",
+        progress.stop
+    );
+    gg_git::mutation::continue_operation(p, gg_engine::mutation::Operation::Rebase)?;
+    assert_eq!(subjects(p)?, vec!["base", "one"]);
+    Ok(())
+}
+
+#[test]
+fn rewrite_validates_new_actions() -> Result {
+    use gg_engine::rewrite::{Action, Step};
+    let (dir, first, second, third) = rewrite_commits()?;
+    let p = dir.path();
+    let before = head(p)?;
+    let expect_error = |steps: Vec<Step>, needle: &str| -> Result {
+        match gg_git::rewrite::rewrite(p, &first, &steps, false) {
+            Ok(receipt) => Err(format!("{needle}: unexpectedly succeeded {receipt:?}").into()),
+            Err(error) if error.contains(needle) => Ok(()),
+            Err(error) => Err(format!("expected {needle:?}, got {error:?}").into()),
+        }
+    };
+    expect_error(
+        vec![
+            step(Action::Drop, &first),
+            step(Action::Fixup, &second),
+            step(Action::Pick, &third),
+        ],
+        "needs a kept commit below",
+    )?;
+    expect_error(
+        vec![
+            step(Action::Pick, &first),
+            Step::reword(&second, "  \n"),
+            step(Action::Pick, &third),
+        ],
+        "needs a non-empty message",
+    )?;
+    expect_error(
+        vec![
+            step(Action::Pick, &first),
+            step(Action::Reword, &second),
+            step(Action::Pick, &third),
+        ],
+        "needs a non-empty message",
+    )?;
+    let mut with_message = step(Action::Pick, &second);
+    with_message.message = Some("new".into());
+    expect_error(
+        vec![
+            step(Action::Pick, &first),
+            with_message,
+            step(Action::Pick, &third),
+        ],
+        "Only reword steps carry a message",
+    )?;
+    expect_error(
+        vec![
+            step(Action::Drop, &first),
+            step(Action::Drop, &second),
+            step(Action::Drop, &third),
+        ],
+        "Use Reset",
+    )?;
+    assert_eq!(head(p)?, before);
+    assert_eq!(gg_git::mutation::state(p)?, None);
+    Ok(())
+}
+
+#[test]
+fn rewrite_handles_a_repository_path_with_quotes_and_spaces() -> Result {
+    use gg_engine::rewrite::{Action, Step};
+    let outer = tempfile::tempdir()?;
+    let p = outer.path().join("it's a repo");
+    std::fs::create_dir(&p)?;
+    git(&p, &["init", "-q", "-b", "main"])?;
+    git(&p, &["config", "user.name", "Test"])?;
+    git(&p, &["config", "user.email", "test@example.org"])?;
+    commit(&p, "base", "base\n", "base")?;
+    let first = commit(&p, "one", "one\n", "one")?;
+    let second = commit(&p, "two", "two\n", "two")?;
+    let steps = vec![
+        Step::reword(&first, "one, reworded"),
+        step(Action::Drop, &second),
+    ];
+    let receipt = gg_git::rewrite::rewrite(&p, &first, &steps, false)?;
+    assert!(receipt.applied, "{receipt:?}");
+    assert_eq!(subjects(&p)?, vec!["base", "one, reworded"]);
     Ok(())
 }

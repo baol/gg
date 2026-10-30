@@ -10,6 +10,14 @@ use std::{
 };
 
 const CACHE_SIZE: usize = 128;
+
+/// Whether avatars may be fetched from the network; off uses the cache and
+/// initials. Set from Preferences (and `GG_OFFLINE`).
+static NETWORK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+pub fn set_network(enabled: bool) {
+    NETWORK.store(enabled, std::sync::atomic::Ordering::Relaxed);
+}
 type Reply = (String, Option<egui::ColorImage>);
 
 struct Portrait {
@@ -257,7 +265,7 @@ impl Avatars {
                     let mut attempted = HashSet::new();
                     while let Ok(key) = requests.recv() {
                         let image = cached_image(root.as_deref(), &key, &mut attempted, || {
-                            if std::env::var_os("GG_OFFLINE").is_some() {
+                            if !NETWORK.load(std::sync::atomic::Ordering::Relaxed) {
                                 Err(())
                             } else {
                                 fetch(&client, &key)

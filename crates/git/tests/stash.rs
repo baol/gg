@@ -199,3 +199,58 @@ fn lists_newest_first_and_preserves_unrelated_files() -> Result {
     assert_eq!(std::fs::read(p.join("keep"))?, b"keep\n");
     Ok(())
 }
+
+#[test]
+fn has_changes_sees_staged_unstaged_and_untracked_work() -> Result {
+    let dir = repo()?;
+    let path = dir.path();
+    assert!(
+        !gg_git::stash::has_changes(path)?,
+        "a clean worktree has nothing to stash"
+    );
+    std::fs::write(path.join("new"), b"new\n")?;
+    assert!(gg_git::stash::has_changes(path)?, "untracked files count");
+    git(path, &["add", "new"])?;
+    assert!(gg_git::stash::has_changes(path)?, "staged files count");
+    git(path, &["commit", "-qm", "new"])?;
+    git(path, &["mv", "new", "renamed"])?;
+    std::fs::write(path.join("extra"), b"extra\n")?;
+    assert_eq!(
+        gg_git::stash::change_count(path)?,
+        2,
+        "a rename counts once, plus the untracked file"
+    );
+    Ok(())
+}
+
+#[test]
+fn entries_name_their_branch_age_and_file_count() -> Result {
+    let dir = repo()?;
+    let p = dir.path();
+    // Tracked and untracked changes on main.
+    std::fs::write(p.join("a"), b"changed\n")?;
+    std::fs::write(p.join("b"), b"new\n")?;
+    git(p, &["add", "b"])?;
+    std::fs::write(p.join("untracked"), b"u\n")?;
+    git(p, &["stash", "push", "-q", "-u", "-m", "work on main"])?;
+    // One tracked change on a detached HEAD.
+    git(p, &["switch", "-q", "--detach"])?;
+    std::fs::write(p.join("a"), b"detached\n")?;
+    git(p, &["stash", "push", "-q"])?;
+
+    let list = gg_git::stash::list_with_files(p)?;
+    assert_eq!(list.entries.len(), 2);
+    let detached = &list.entries[0];
+    let main = &list.entries[1];
+    assert_eq!(main.branch.as_deref(), Some("main"));
+    assert_eq!(main.files, Some(3), "a, b, and the untracked file");
+    assert!(!main.age.is_empty(), "{main:?}");
+    assert_eq!(detached.branch, None);
+    assert_eq!(detached.files, Some(1));
+
+    // The plain list stays cheap and leaves the counts out.
+    let plain = gg_git::stash::list(p)?;
+    assert_eq!(plain.entries[1].branch.as_deref(), Some("main"));
+    assert_eq!(plain.entries[1].files, None);
+    Ok(())
+}

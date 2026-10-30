@@ -1,12 +1,60 @@
 //! A review context keeps history input and viewport state untouched.
 use crate::{
     bounded_text,
-    review_worker::{Update, Worker},
+    review_worker::{StatsUpdate, Update, Worker},
 };
 use eframe::egui;
 use gg_engine::{file::ReadingSide, review::*};
 use std::{collections::BTreeMap, ops::Range};
-const ROW: f32 = 26.0;
+#[cfg(test)]
+const ROW: f32 = crate::density::COMPACT_ROW;
+/// Width of the file list beside the reader in wide layouts.
+const FILE_LIST_WIDTH: f32 = 300.0;
+/// Font of the per-file line counts.
+fn stat_font() -> egui::FontId {
+    egui::FontId::monospace(10.5)
+}
+
+/// Compact line count: exact below 10,000, then thousands (`12k`).
+fn stat_number(value: u64) -> String {
+    if value < 10_000 {
+        value.to_string()
+    } else {
+        format!("{}k", value / 1000)
+    }
+}
+
+/// `+18 −7` for a row; zero sides are left out, as in the Review mockup.
+fn stat_label(stat: &LineStat) -> String {
+    match *stat {
+        LineStat::Lines { added, deleted } => {
+            let mut parts = Vec::new();
+            if added > 0 {
+                parts.push(format!("+{}", stat_number(added.into())));
+            }
+            if deleted > 0 {
+                parts.push(format!("−{}", stat_number(deleted.into())));
+            }
+            parts.join(" ")
+        }
+        LineStat::Binary => "bin".into(),
+        LineStat::Skipped => String::new(),
+    }
+}
+
+/// Run `add` in a scope that keeps its space but draws nothing when hidden.
+fn visible_scope<R>(
+    ui: &mut egui::Ui,
+    visible: bool,
+    add: impl FnOnce(&mut egui::Ui) -> R,
+) -> egui::InnerResponse<R> {
+    ui.scope(|ui| {
+        if !visible {
+            ui.set_invisible();
+        }
+        add(ui)
+    })
+}
 
 fn short_id(id: &str) -> String {
     id.chars().take(8).collect()
@@ -15,7 +63,8 @@ fn short_id(id: &str) -> String {
 fn review_source(reference: Option<&str>, id: Option<&str>, absent: &str) -> String {
     match (reference, id) {
         (Some(reference), Some(id)) => format!("{reference} ({})", short_id(id)),
-        (Some(reference), None) => format!("{reference} (resolving…)"),
+        // The commit arrives with the comparison; until then the name alone.
+        (Some(reference), None) => reference.to_string(),
         (None, Some(id)) => short_id(id),
         (None, None) => absent.to_string(),
     }
@@ -29,6 +78,10 @@ pub struct Review {
     pub comparison: Option<Comparison>,
     pub rows: BTreeMap<usize, FileChange>,
     pub count: usize,
+    /// Line counts of cached rows, filled in behind the listing.
+    stats: BTreeMap<usize, LineStat>,
+    /// Running line totals; incomplete until every file is counted.
+    stat_total: StatsUpdate,
     pub selected: Option<usize>,
     complete: bool,
     error: Option<String>,
@@ -48,10 +101,19 @@ pub struct Review {
     saved_reader: Option<crate::reader::ReaderContext>,
     history_entry_row: Option<usize>,
     reveal_selection: bool,
+    /// Drawn inside another surface: no Back button, identity, or status
+    /// line, and the reader sits below the file list.
+    embedded: bool,
+    /// File to select and read once its row arrives.
+    pending_path: Option<String>,
+    /// The commit's parents, kept while comparing against HEAD (that
+    /// comparison does not list them) so Compare with can return to one.
+    known_parents: Vec<String>,
 }
 impl Review {
     pub fn new(request: ReviewRequest, subject: String, ctx: &egui::Context) -> Self {
         let mut view = Self {
+            known_parents: Vec::new(),
             request,
             subject,
             worker: None,
@@ -59,6 +121,8 @@ impl Review {
             comparison: None,
             rows: BTreeMap::new(),
             count: 0,
+            stats: BTreeMap::new(),
+            stat_total: StatsUpdate::default(),
             selected: None,
             complete: false,
             error: None,
@@ -78,9 +142,68 @@ impl Review {
             saved_reader: None,
             history_entry_row: None,
             reveal_selection: false,
+            embedded: false,
+            pending_path: None,
         };
         view.retry(ctx);
         view
+    }
+
+    /// Show the review inside another surface, such as the interactive rebase
+    /// dialog: files above the reader, no Back button, identity, or status line.
+    pub fn embedded(mut self) -> Self {
+        self.embedded = true;
+        self
+    }
+
+    /// Open on `path`: select it and show its reader once its row arrives.
+    pub fn select_path(mut self, path: String) -> Self {
+        self.pending_path = Some(path);
+        self
+    }
+
+    /// One-line commit identity: short ID and subject.
+    /// Subject, hash pill, and author · date, as in the Review mockup.
+    fn draw_identity(&self, ui: &mut egui::Ui) {
+        let id = self
+            .comparison
+            .as_ref()
+            .map(|c| c.commit.as_str())
+            .unwrap_or(self.request.revision.as_str());
+        let byline = self
+            .comparison
+            .as_ref()
+            .filter(|comparison| !comparison.author.is_empty())
+            .map(|comparison| format!("{} · {}", comparison.author, comparison.date));
+        // The subject truncates; the hash pill and the byline keep their width.
+        let byline_width = byline.as_ref().map_or(0.0, |text| {
+            ui.painter()
+                .layout_no_wrap(
+                    text.clone(),
+                    egui::TextStyle::Body.resolve(ui.style()),
+                    egui::Color32::PLACEHOLDER,
+                )
+                .size()
+                .x
+        });
+        let reserved = byline_width + 90.0 + 3.0 * ui.spacing().item_spacing.x;
+        ui.scope(|ui| {
+            ui.set_max_width((ui.available_width() - reserved).max(80.0));
+            ui.add(
+                egui::Label::new(egui::RichText::new(&self.subject).strong().size(13.5)).truncate(),
+            )
+            .on_hover_text(&self.subject);
+        });
+        ui.label(
+            egui::RichText::new(format!(" {} ", &id[..id.len().min(8)]))
+                .monospace()
+                .size(11.0)
+                .background_color(ui.visuals().faint_bg_color),
+        )
+        .on_hover_text(id);
+        if let Some(byline) = byline {
+            ui.weak(byline);
+        }
     }
 
     /// Record the exact caller state before a tool opens this review.
@@ -108,6 +231,11 @@ impl Review {
     }
 
     /// Take an LFS-details request raised by the reader.
+    /// Take the path chosen with ⋯ › Open in editor.
+    pub fn take_editor_request(&mut self) -> Option<String> {
+        self.diff.take_editor_request()
+    }
+
     pub fn take_lfs_request(&mut self) -> Option<crate::diff_view::LfsRequest> {
         self.diff.take_lfs_request()
     }
@@ -122,13 +250,13 @@ impl Review {
         let parent = self.comparison.as_ref().and_then(|c| c.parent.as_deref());
         if let Some(against) = self.request.against.as_deref() {
             (
-                review_source(Some(against), parent, "resolving…"),
-                review_source(None, Some(after_id), "resolving…"),
+                review_source(Some(against), parent, ""),
+                review_source(None, Some(after_id), ""),
             )
         } else {
             (
                 review_source(None, parent, "empty tree"),
-                review_source(None, Some(after_id), "resolving…"),
+                review_source(None, Some(after_id), ""),
             )
         }
     }
@@ -262,7 +390,7 @@ impl Review {
         let Some(comparison) = &self.comparison else {
             return;
         };
-        if parent == 0 || parent > comparison.parents.len() {
+        if parent == 0 || parent > self.known_parents.len().max(comparison.parents.len()) {
             return;
         }
         let path = comparison.path.clone();
@@ -271,6 +399,22 @@ impl Review {
         self.request.path = path;
         self.request.revision = commit;
         self.request.parent = Some(parent);
+        self.request.against = None;
+        self.retry(ctx);
+    }
+
+    /// Compare the commit against HEAD instead of a parent.
+    fn compare_with_head(&mut self, ctx: &egui::Context) {
+        let Some(comparison) = &self.comparison else {
+            return;
+        };
+        let path = comparison.path.clone();
+        let commit = comparison.commit.clone();
+        self.abandon_history();
+        self.request.path = path;
+        self.request.revision = commit;
+        self.request.parent = None;
+        self.request.against = Some("HEAD".into());
         self.retry(ctx);
     }
     fn adopt_replacement(&mut self) {
@@ -290,6 +434,8 @@ impl Review {
             return;
         }
         self.rows.clear();
+        self.stats.clear();
+        self.stat_total = StatsUpdate::default();
         self.selected = None;
         self.count = 0;
         self.offset = 0.0;
@@ -297,6 +443,200 @@ impl Review {
         self.restore_files = true;
         self.diff = crate::diff_view::DiffView::default();
     }
+    /// Adopt line counts. A retried, immutable comparison keeps its finished
+    /// total while the new counter catches up.
+    fn apply_stats(&mut self, update: StatsUpdate) {
+        let StatsUpdate {
+            rows,
+            added,
+            deleted,
+            complete,
+        } = update;
+        self.stats.extend(rows);
+        if complete || !self.stat_total.complete {
+            self.stat_total = StatsUpdate {
+                rows: Vec::new(),
+                added,
+                deleted,
+                complete,
+            };
+        }
+    }
+
+    /// Paint the list header: `FILES n` at the left and the line totals,
+    /// with `+` while incomplete, at the right.
+    fn draw_list_header(&self, ui: &mut egui::Ui) {
+        let (rect, _) = ui.allocate_exact_size(
+            egui::vec2(ui.available_width(), crate::density::row()),
+            egui::Sense::hover(),
+        );
+        let rect = rect.shrink2(egui::vec2(6.0, 0.0));
+        let font = egui::FontId::proportional(11.0);
+        let weak = ui.visuals().weak_text_color();
+        let more = if self.complete { "" } else { "+" };
+        bounded_text::paint(
+            ui,
+            rect,
+            &format!("FILES {}{more}", self.count),
+            font.clone(),
+            weak,
+        );
+        let total = &self.stat_total;
+        if total.added == 0 && total.deleted == 0 {
+            return;
+        }
+        let more = if total.complete { "" } else { "+" };
+        let mut job = egui::text::LayoutJob::default();
+        let format = |color| egui::TextFormat::simple(font.clone(), color);
+        let added = crate::colors::diff(ui.visuals(), gg_engine::diff::RowKind::Added).1;
+        let deleted = crate::colors::diff(ui.visuals(), gg_engine::diff::RowKind::Deleted).1;
+        job.append(&format!("+{}{more}", total.added), 0.0, format(added));
+        job.append(&format!("−{}{more}", total.deleted), 6.0, format(deleted));
+        let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
+        let at = egui::pos2(
+            rect.right() - galley.size().x,
+            rect.center().y - galley.size().y / 2.0,
+        );
+        ui.painter()
+            .with_clip_rect(rect)
+            .galley(at, galley, ui.visuals().text_color());
+    }
+
+    /// The changed-file list: header, then virtualized rows.
+    fn draw_files(&mut self, ui: &mut egui::Ui, reveal: bool) {
+        self.draw_list_header(ui);
+        self.rect = ui.available_rect_before_wrap();
+        if self.count == 0 {
+            // An empty list stays empty until the first files arrive.
+            if self.complete {
+                ui.weak("This comparison has no changed files.");
+            }
+            return;
+        }
+        let mut scroll = egui::ScrollArea::vertical().id_salt("review-files");
+        if self.restore_files {
+            scroll = scroll.vertical_scroll_offset(self.offset);
+            self.restore_files = false;
+        }
+        if reveal && let Some(row) = self.selected {
+            let height = ui.available_height();
+            let top = row as f32 * crate::density::row();
+            let offset = if top < self.offset {
+                top
+            } else if top + crate::density::row() > self.offset + height {
+                top + crate::density::row() - height
+            } else {
+                self.offset
+            };
+            scroll = scroll.vertical_scroll_offset(offset.clamp(
+                0.0,
+                (self.count as f32 * crate::density::row() - height).max(0.0),
+            ));
+        }
+        ui.spacing_mut().item_spacing.y = 0.0;
+        // The count slot fits the widest compact count, so rows never move
+        // as counts arrive.
+        let stat_width = ui
+            .fonts_mut(|fonts| {
+                fonts.layout_no_wrap(
+                    "+9999 −9999".into(),
+                    stat_font(),
+                    egui::Color32::PLACEHOLDER,
+                )
+            })
+            .size()
+            .x;
+        let result = scroll.show_rows(ui, crate::density::row(), self.count, |ui, rows| {
+            self.viewport = rows.start.saturating_sub(24)..rows.end.saturating_add(24);
+            self.row_rects.clear();
+            for row in rows {
+                let change = self.rows.get(&row);
+                let response = ui.add_sized(
+                    [ui.available_width(), crate::density::row()],
+                    egui::Button::new("")
+                        .fill(if self.selected == Some(row) {
+                            crate::colors::selection(ui.visuals())
+                        } else {
+                            egui::Color32::TRANSPARENT
+                        })
+                        .stroke(egui::Stroke::NONE)
+                        .corner_radius(0.0)
+                        .selected(self.selected == Some(row))
+                        .sense(if change.is_some() {
+                            egui::Sense::click()
+                        } else {
+                            egui::Sense::hover()
+                        }),
+                );
+                self.row_rects.push((row, response.rect));
+                let rect = response.rect.shrink2(egui::vec2(6.0, 0.0));
+                let status = egui::Rect::from_min_max(
+                    rect.min,
+                    egui::pos2(rect.left() + 14.0, rect.bottom()),
+                );
+                let stat = egui::Rect::from_min_max(
+                    egui::pos2(rect.right() - stat_width, rect.top()),
+                    rect.max,
+                );
+                let path = egui::Rect::from_min_max(
+                    egui::pos2(status.right() + 8.0, rect.top()),
+                    egui::pos2(stat.left() - 6.0, rect.bottom()),
+                );
+                if let Some(change) = change {
+                    if let Some(label) = self.stats.get(&row).map(stat_label) {
+                        let galley = ui.fonts_mut(|fonts| {
+                            fonts.layout_no_wrap(label, stat_font(), egui::Color32::PLACEHOLDER)
+                        });
+                        let at = egui::pos2(
+                            stat.right() - galley.size().x,
+                            stat.center().y - galley.size().y / 2.0,
+                        );
+                        ui.painter().with_clip_rect(stat).galley(
+                            at,
+                            galley,
+                            ui.visuals().weak_text_color(),
+                        );
+                    }
+                    let (label, color) = crate::colors::change(ui.visuals(), &change.kind);
+                    // Long paths lose their start so the file name stays
+                    // visible; hovering the row names the full path.
+                    let elided = bounded_text::paint_path(
+                        ui,
+                        path,
+                        &change.path,
+                        egui::FontId::proportional(13.0),
+                        ui.visuals().strong_text_color(),
+                    );
+                    let response = response.clone().on_hover_text(if elided {
+                        format!("{} · {label}", change.path)
+                    } else {
+                        label.to_string()
+                    });
+                    bounded_text::paint(
+                        ui,
+                        status,
+                        crate::colors::change_symbol(&change.kind),
+                        egui::FontId::proportional(13.0),
+                        color,
+                    );
+                    if response.double_clicked() {
+                        response.surrender_focus();
+                        self.selected = Some(row);
+                        self.show_diff = true;
+                    } else if response.clicked() {
+                        response.surrender_focus();
+                        self.selected = Some(row);
+                    }
+                }
+                // A row not read yet keeps its slot, empty.
+            }
+        });
+        self.offset = result.state.clamped_offset().y;
+        self.page = (result.inner_rect.height() / crate::density::row())
+            .floor()
+            .max(1.0) as usize;
+    }
+
     /// Draw the history strip above whichever reader path is active.
     fn draw_reader(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, reading: bool) {
         let mut message = None;
@@ -317,10 +657,18 @@ impl Review {
             bounded_text::field(ui, message, egui::FontId::proportional(12.0), 22.0);
             return;
         }
+        // History sits on the reader's mode row (mockup), not in the header.
+        self.diff.set_history_button(
+            (self.history.is_none() && !self.embedded).then_some(self.selected.is_some()),
+        );
         if reading || self.history.is_some() {
             self.diff.draw_reading(ui);
         } else {
             self.diff.draw(ui);
+        }
+        if self.diff.take_history_request() && self.history.is_none() {
+            self.open_history = true;
+            ctx.request_repaint();
         }
         if let Some(lines) = self.diff.take_line_history() {
             let start_index = if self.diff.place().side == ReadingSide::Before {
@@ -331,24 +679,30 @@ impl Review {
             self.open_history_now_with_lines(ctx, Some(lines), start_index);
         }
     }
-    /// Return true when Back is explicitly requested.
+    /// The back pill's label, as in the mockup: `‹ History`, followed by a
+    /// dimmed `Esc`.
     fn back_label(&self) -> &'static str {
         if self.show_diff {
-            "Back to files"
+            "‹ Files"
         } else if matches!(
             self.return_location,
             Some(crate::return_location::ReturnLocation::Recovery { .. })
         ) {
-            "Back to recovery"
+            "‹ Recovery"
+        } else if matches!(
+            self.return_location,
+            Some(crate::return_location::ReturnLocation::Rebase)
+        ) {
+            "‹ Rebase"
         } else {
-            "Back to history"
+            "‹ History"
         }
     }
 
     pub(crate) fn draw_ui(&mut self, ui: &mut egui::Ui) -> bool {
         let ctx = ui.ctx().clone();
         let ctx = &ctx;
-        let narrow = ctx.content_rect().width() < 1040.0;
+        let narrow = !self.embedded && ctx.content_rect().width() < 1040.0;
         if self.open_history {
             self.open_history = false;
             self.open_history_now(ctx);
@@ -427,6 +781,12 @@ impl Review {
         if self.replacing && self.staged.is_some() && replacement_safe {
             self.adopt_replacement();
         }
+        // Counts wait while a replacement is pending; they name its rows.
+        if !self.replacing
+            && let Some(update) = self.worker.as_ref().and_then(Worker::poll_stats)
+        {
+            self.apply_stats(update);
+        }
         if !self.replacing
             && let Some(update) = &self.staged
         {
@@ -446,6 +806,9 @@ impl Review {
                 self.subject = update.comparison.subject.clone();
                 self.request.revision = update.comparison.commit.clone();
                 self.request.path = update.comparison.path.clone();
+                if !update.comparison.parents.is_empty() {
+                    self.known_parents = update.comparison.parents.clone();
+                }
                 self.comparison = Some(update.comparison.clone());
                 if self.selected.is_none() && self.count > 0 && pinned.is_none() {
                     self.selected = Some(0);
@@ -453,6 +816,21 @@ impl Review {
             }
             if quiet && pinned.is_none() && !scrollbar {
                 self.staged = None;
+            }
+        }
+        if let Some(path) = &self.pending_path {
+            if let Some(row) = self
+                .rows
+                .iter()
+                .find(|(_, change)| &change.path == path)
+                .map(|(row, _)| *row)
+            {
+                self.selected = Some(row);
+                self.show_diff = true;
+                self.reveal_selection = true;
+                self.pending_path = None;
+            } else if self.complete && self.staged.is_none() {
+                self.pending_path = None;
             }
         }
         while self.rows.len() > 768 {
@@ -471,6 +849,11 @@ impl Review {
             } else {
                 break;
             }
+        }
+        // Counts of rows far from the viewport are re-sent when they return.
+        if self.stats.len() > 768 {
+            let keep = self.viewport.start.saturating_sub(256)..self.viewport.end + 256;
+            self.stats.retain(|row, _| keep.contains(row));
         }
         let mut back = false;
         let mut reveal = self.reveal_selection;
@@ -559,10 +942,15 @@ impl Review {
             );
         }
         egui::Panel::top("review-header")
-            .exact_size(42.0)
+            .exact_size(34.0)
             .show(ui, |ui| {
                 ui.horizontal_centered(|ui| {
-                    if self.history.is_none() && ui.button(self.back_label()).clicked() {
+                    if !self.embedded
+                        && self.history.is_none()
+                        && ui
+                            .button((self.back_label(), egui::RichText::new("Esc").small().weak()))
+                            .clicked()
+                    {
                         if self.show_diff {
                             self.show_diff = false;
                             self.restore_files = true;
@@ -570,25 +958,119 @@ impl Review {
                             back = true;
                         }
                     }
-                    ui.separator();
-                    ui.strong("Changed files");
-                    if self.show_diff {
+                    if !self.embedded {
+                        ui.separator();
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        // Every control keeps its slot; ones that do not apply are
+                        // hidden rather than removed, so nothing shifts when the
+                        // comparison loads, fails, or the reading mode changes.
+                        // Compare with: each parent, or HEAD, as in the
+                        // Review mockup. Hidden (slot kept) until loaded.
+                        let parents = if self.known_parents.is_empty() {
+                            self.comparison
+                                .as_ref()
+                                .map(|comparison| comparison.parents.clone())
+                                .unwrap_or_default()
+                        } else {
+                            self.known_parents.clone()
+                        };
+                        let against_head = self.request.against.as_deref() == Some("HEAD");
+                        visible_scope(ui, self.comparison.is_some() && !self.embedded, |ui| {
+                            let short = |id: &str| id[..id.len().min(8)].to_string();
+                            let current = if against_head {
+                                "HEAD".to_string()
+                            } else {
+                                let parent = self.request.parent.unwrap_or(1);
+                                parents.get(parent - 1).map_or_else(
+                                    || "parent".to_string(),
+                                    |id| {
+                                        if parents.len() > 1 {
+                                            format!("parent {parent} {}", short(id))
+                                        } else {
+                                            format!("parent {}", short(id))
+                                        }
+                                    },
+                                )
+                            };
+                            let mut choice = None;
+                            egui::ComboBox::from_id_salt("review-parent")
+                                .width(150.0)
+                                .selected_text(current)
+                                .show_ui(ui, |ui| {
+                                    for (index, id) in parents.iter().enumerate() {
+                                        let label = if parents.len() > 1 {
+                                            format!("parent {} {}", index + 1, short(id))
+                                        } else {
+                                            format!("parent {}", short(id))
+                                        };
+                                        let selected = !against_head
+                                            && self.request.parent.unwrap_or(1) == index + 1;
+                                        if ui
+                                            .selectable_label(selected, label)
+                                            .on_hover_text(id)
+                                            .clicked()
+                                        {
+                                            choice = Some(Some(index + 1));
+                                        }
+                                    }
+                                    if ui.selectable_label(against_head, "HEAD").clicked() {
+                                        choice = Some(None);
+                                    }
+                                });
+                            ui.weak("Compare with");
+                            match choice {
+                                Some(Some(parent))
+                                    if against_head
+                                        || self.request.parent.unwrap_or(1) != parent =>
+                                {
+                                    self.request.against = None;
+                                    self.switch_parent(parent, ctx);
+                                }
+                                Some(None) if !against_head => self.compare_with_head(ctx),
+                                _ => {}
+                            }
+                        });
                         if ui
-                            .add_enabled(
-                                self.count > 0 && self.selected.unwrap_or(0) > 0,
-                                egui::Button::new("Prev file"),
-                            )
+                            .add_visible(self.error.is_some(), egui::Button::new("Retry"))
                             .clicked()
                         {
-                            self.selected = Some(self.selected.unwrap_or(0).saturating_sub(1));
-                            reveal = true;
+                            self.retry(ctx);
                         }
+                        // Only the narrow file list (no reader) keeps History
+                        // in the header; otherwise it is on the reader's row.
+                        let history_shown = self.history.is_none() && narrow && !self.show_diff;
                         if ui
-                            .add_enabled(
-                                self.count > 0
-                                    && self.selected.map_or(0, |row| row + 1) < self.count,
-                                egui::Button::new("Next file"),
+                            .add_visible(
+                                history_shown,
+                                egui::Button::new("History").sense(if history_available {
+                                    egui::Sense::click()
+                                } else {
+                                    egui::Sense::hover()
+                                }),
                             )
+                            .on_hover_text(if history_available {
+                                "Follow the selected file's history (H)"
+                            } else {
+                                "Select a file to follow its history"
+                            })
+                            .clicked()
+                            && history_available
+                        {
+                            self.open_history = true;
+                            ctx.request_repaint();
+                        }
+                        let next_enabled = self.show_diff
+                            && self.count > 0
+                            && self.selected.map_or(0, |row| row + 1) < self.count;
+                        if ui
+                            .scope(|ui| {
+                                if !self.show_diff {
+                                    ui.set_invisible();
+                                }
+                                ui.add_enabled(next_enabled, egui::Button::new("Next file"))
+                            })
+                            .inner
                             .clicked()
                         {
                             self.selected = Some(
@@ -599,234 +1081,106 @@ impl Review {
                             );
                             reveal = true;
                         }
-                    }
-                    if self.history.is_none()
-                        && (!narrow || self.show_diff)
-                        && ui
-                            .add_enabled(history_available, egui::Button::new("History"))
-                            .on_disabled_hover_text("Select a file to follow its history")
+                        let prev_enabled =
+                            self.show_diff && self.count > 0 && self.selected.unwrap_or(0) > 0;
+                        if ui
+                            .scope(|ui| {
+                                if !self.show_diff {
+                                    ui.set_invisible();
+                                }
+                                ui.add_enabled(prev_enabled, egui::Button::new("Prev file"))
+                            })
+                            .inner
                             .clicked()
-                    {
-                        self.open_history = true;
-                        ctx.request_repaint();
-                    }
-                    if self.error.is_some() && ui.button("Retry").clicked() {
-                        self.retry(ctx);
-                    }
-                    let label = format!(
-                        "{}{} file{}",
-                        self.count,
-                        if self.complete { "" } else { "+" },
-                        if self.count == 1 && self.complete {
-                            ""
-                        } else {
-                            "s"
+                        {
+                            self.selected = Some(self.selected.unwrap_or(0).saturating_sub(1));
+                            reveal = true;
                         }
-                    );
-                    ui.weak(label);
-                    if let Some(comparison) = &self.comparison {
-                        let parents = comparison.parents.clone();
-                        if parents.len() > 1 {
-                            let mut parent = self.request.parent.unwrap_or(1);
-                            let before = parent;
-                            egui::ComboBox::from_id_salt("review-parent")
-                                .width(150.0)
-                                .selected_text(format!("Parent {parent} of {}", parents.len()))
-                                .show_ui(ui, |ui| {
-                                    for (index, id) in parents.iter().enumerate() {
-                                        ui.selectable_value(
-                                            &mut parent,
-                                            index + 1,
-                                            format!(
-                                                "Parent {} · {}",
-                                                index + 1,
-                                                &id[..id.len().min(8)]
-                                            ),
-                                        )
-                                        .on_hover_text(id);
-                                    }
-                                });
-                            if parent != before {
-                                self.switch_parent(parent, ctx);
-                            }
+                        if self.history.is_none() && !self.embedded {
+                            ui.with_layout(
+                                egui::Layout::left_to_right(egui::Align::Center),
+                                |ui| self.draw_identity(ui),
+                            );
                         }
-                    }
+                    });
                 });
             });
-        if self.history.is_none() {
-            egui::Panel::top("review-identity")
+        if !self.embedded {
+            egui::Panel::bottom("review-status")
                 .exact_size(26.0)
                 .show(ui, |ui| {
-                    bounded_text::field(ui, &self.subject, egui::FontId::proportional(16.0), 24.0);
-                });
-        }
-        egui::Panel::bottom("review-status")
-            .exact_size(26.0)
-            .show(ui, |ui| {
-                let pending = if self.request.against.is_some() {
-                    "Loading comparison · showing previous comparison".into()
-                } else {
-                    format!(
-                        "Loading parent {} · showing previous comparison",
-                        self.request.parent.unwrap_or(1)
-                    )
-                };
-                let failure = self.error.as_ref().map(|error| {
-                    if self.replacing {
-                        if self.request.against.is_some() {
-                            format!("Comparison failed · showing previous comparison · {error}")
+                    let pending = if self.request.against.is_some() {
+                        "Loading comparison · showing previous comparison".into()
+                    } else {
+                        format!(
+                            "Loading parent {} · showing previous comparison",
+                            self.request.parent.unwrap_or(1)
+                        )
+                    };
+                    let failure = self.error.as_ref().map(|error| {
+                        if self.replacing {
+                            if self.request.against.is_some() {
+                                format!("Comparison failed · showing previous comparison · {error}")
+                            } else {
+                                format!(
+                                    "Parent {} failed · showing previous comparison · {error}",
+                                    self.request.parent.unwrap_or(1)
+                                )
+                            }
                         } else {
-                            format!(
-                                "Parent {} failed · showing previous comparison · {error}",
-                                self.request.parent.unwrap_or(1)
-                            )
+                            error.clone()
+                        }
+                    });
+                    let history_state = self
+                        .history
+                        .as_ref()
+                        .map(|history| (history.pending(), history.error().map(str::to_owned)));
+                    let text = if let Some((pending, error)) = &history_state {
+                        if let Some(error) = error {
+                            error.as_str()
+                        } else if *pending {
+                            "Loading earlier versions…"
+                        } else {
+                            crate::navigation::HISTORY_HINT
                         }
                     } else {
-                        error.clone()
-                    }
+                        failure.as_deref().unwrap_or(if self.replacing {
+                            &pending
+                        } else if self.show_diff && self.diff.binary() {
+                            "Scroll to inspect · Export either side · Esc: files"
+                        } else if self.show_diff {
+                            crate::navigation::READING_HINT
+                        } else if self.complete {
+                            "Esc: history · Up/Down: files · [ ]: changes · Alt+Left/Right: versions · H: file history · B: blame"
+                        } else {
+                            "Reading changed files…"
+                        })
+                    };
+                    bounded_text::field(ui, text, egui::FontId::proportional(12.0), 18.0);
                 });
-                let history_state = self
-                    .history
-                    .as_ref()
-                    .map(|history| (history.pending(), history.error().map(str::to_owned)));
-                let text = if let Some((pending, error)) = &history_state {
-                    if let Some(error) = error {
-                        error.as_str()
-                    } else if *pending {
-                        "Loading earlier versions…"
-                    } else {
-                        crate::navigation::HISTORY_HINT
-                    }
-                } else {
-                    failure.as_deref().unwrap_or(if self.replacing {
-                        &pending
-                    } else if self.show_diff && self.diff.binary() {
-                        "Scroll to inspect · Export either side · Esc: files"
-                    } else if self.show_diff {
-                        crate::navigation::READING_HINT
-                    } else if self.complete {
-                        "Up/Down / j k: select · PgUp/PgDn: page · Esc: history"
-                    } else {
-                        "Reading changed files…"
-                    })
-                };
-                bounded_text::field(ui, text, egui::FontId::proportional(12.0), 18.0);
-            });
+        }
         if self.show_diff {
             egui::CentralPanel::default().show(ui, |ui| self.draw_reader(ui, ctx, true));
             bounded_text::show_disclosure(ctx);
             return back;
         }
-        if !narrow {
-            egui::Panel::right("review-file-diff")
-                .default_size(640.0)
-                .size_range(400.0..=(ctx.content_rect().width() - 320.0).max(400.0))
+        if self.embedded {
+            let height = (ui.available_height() * 0.72).max(120.0);
+            egui::Panel::bottom("review-file-diff")
+                .exact_size(height)
                 .show(ui, |ui| self.draw_reader(ui, ctx, false));
+            egui::CentralPanel::default().show(ui, |ui| self.draw_files(ui, reveal));
+        } else if narrow {
+            egui::CentralPanel::default().show(ui, |ui| self.draw_files(ui, reveal));
+        } else {
+            // A fixed file list at the left, the reader in the remaining
+            // width, as in the Review mockup.
+            egui::Panel::left("review-files")
+                .exact_size(FILE_LIST_WIDTH)
+                .resizable(false)
+                .show(ui, |ui| self.draw_files(ui, reveal));
+            egui::CentralPanel::default().show(ui, |ui| self.draw_reader(ui, ctx, false));
         }
-        egui::CentralPanel::default().show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.add_sized([86.0, ROW], egui::Label::new("STATUS"));
-                ui.weak("PATH");
-            });
-            self.rect = ui.available_rect_before_wrap();
-            if self.count == 0 {
-                ui.weak(if self.complete {
-                    "This comparison has no changed files."
-                } else {
-                    "Reading comparison…"
-                });
-                return;
-            }
-            let mut scroll = egui::ScrollArea::vertical().id_salt("review-files");
-            if self.restore_files {
-                scroll = scroll.vertical_scroll_offset(self.offset);
-                self.restore_files = false;
-            }
-            if reveal && let Some(row) = self.selected {
-                let height = ui.available_height();
-                let top = row as f32 * ROW;
-                let offset = if top < self.offset {
-                    top
-                } else if top + ROW > self.offset + height {
-                    top + ROW - height
-                } else {
-                    self.offset
-                };
-                scroll = scroll.vertical_scroll_offset(
-                    offset.clamp(0.0, (self.count as f32 * ROW - height).max(0.0)),
-                );
-            }
-            ui.spacing_mut().item_spacing.y = 0.0;
-            let result = scroll.show_rows(ui, ROW, self.count, |ui, rows| {
-                self.viewport = rows.start.saturating_sub(24)..rows.end.saturating_add(24);
-                self.row_rects.clear();
-                for row in rows {
-                    let change = self.rows.get(&row);
-                    let response = ui.add_sized(
-                        [ui.available_width(), ROW],
-                        egui::Button::new("")
-                            .fill(if self.selected == Some(row) {
-                                crate::colors::selection(ui.visuals())
-                            } else {
-                                egui::Color32::TRANSPARENT
-                            })
-                            .stroke(egui::Stroke::NONE)
-                            .corner_radius(0.0)
-                            .selected(self.selected == Some(row))
-                            .sense(if change.is_some() {
-                                egui::Sense::click()
-                            } else {
-                                egui::Sense::hover()
-                            }),
-                    );
-                    self.row_rects.push((row, response.rect));
-                    let rect = response.rect.shrink2(egui::vec2(6.0, 0.0));
-                    let status = egui::Rect::from_min_max(
-                        rect.min,
-                        egui::pos2(rect.left() + 80.0, rect.bottom()),
-                    );
-                    let path = egui::Rect::from_min_max(
-                        egui::pos2(status.right() + 8.0, rect.top()),
-                        rect.max,
-                    );
-                    if let Some(change) = change {
-                        let (label, color) = crate::colors::change(ui.visuals(), &change.kind);
-                        bounded_text::paint(
-                            ui,
-                            status,
-                            label,
-                            egui::FontId::proportional(12.0),
-                            color,
-                        );
-                        bounded_text::paint(
-                            ui,
-                            path,
-                            &change.path,
-                            egui::FontId::proportional(13.0),
-                            ui.visuals().strong_text_color(),
-                        );
-                        if response.double_clicked() {
-                            response.surrender_focus();
-                            self.selected = Some(row);
-                            self.show_diff = true;
-                        } else if response.clicked() {
-                            response.surrender_focus();
-                            self.selected = Some(row);
-                        }
-                    } else {
-                        bounded_text::paint(
-                            ui,
-                            path,
-                            "Loading…",
-                            egui::FontId::proportional(12.0),
-                            ui.visuals().weak_text_color(),
-                        );
-                    }
-                }
-            });
-            self.offset = result.state.clamped_offset().y;
-            self.page = (result.inner_rect.height() / ROW).floor().max(1.0) as usize;
-        });
         self.reconcile_history_selection(ctx);
         if self.history.is_none()
             && (!narrow || self.show_diff)
@@ -872,13 +1226,15 @@ impl Review {
                 parent: None,
                 parents: vec![],
                 subject: "Review fixture".into(),
+                author: String::new(),
+                date: String::new(),
             },
             count: 1000,
             complete: true,
             error: None,
             rows: (0..64)
                 .map(|row| {
-                    let path = format!("src/{row:04}-{}.rs", "long-path-".repeat(20));
+                    let path = format!("src/{}/{row:04}.rs", "long-path-".repeat(20));
                     (
                         row,
                         FileChange {
@@ -1009,13 +1365,271 @@ mod tests {
         assert!(output.shapes.iter().any(|shape| matches!(
             &shape.shape,
             egui::epaint::Shape::Text(text)
-                if text.galley.job.text == "Back to recovery"
+                if text.galley.job.text == "‹ Recovery"
         )));
         assert!(!output.shapes.iter().any(|shape| matches!(
             &shape.shape,
             egui::epaint::Shape::Text(text)
-                if text.galley.job.text == "Back to history"
+                if text.galley.job.text == "‹ History"
         )));
+    }
+
+    #[test]
+    fn select_path_opens_the_reader_on_that_file() {
+        let ctx = egui::Context::default();
+        let mut view = Review::fixture(&ctx);
+        let wanted = format!("src/{}/0003.rs", "long-path-".repeat(20));
+        view.pending_path = Some(wanted.clone());
+        for _ in 0..2 {
+            let _ = crate::tests::run_ui(
+                &ctx,
+                crate::tests::frame_input(1120.0, 740.0, vec![]),
+                |ctx| {
+                    view.draw_ui(ctx);
+                },
+            );
+        }
+        assert_eq!(view.selected, Some(3));
+        assert!(view.show_diff);
+        assert_eq!(view.pending_path, None);
+    }
+
+    #[test]
+    fn header_controls_keep_their_place_across_states() {
+        let ctx = egui::Context::default();
+        let mut view = Review::fixture(&ctx);
+        let place = |view: &mut Review| {
+            let mut output = None;
+            for _ in 0..2 {
+                output = Some(crate::tests::run_ui(
+                    &ctx,
+                    crate::tests::frame_input(1120.0, 740.0, vec![]),
+                    |ctx| {
+                        view.draw_ui(ctx);
+                    },
+                ));
+            }
+            let Some(output) = output else { unreachable!() };
+            let find = |wanted: &str| {
+                output.shapes.iter().find_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) if text.galley.job.text == wanted => {
+                        Some(text.pos)
+                    }
+                    _ => None,
+                })
+            };
+            // History moved to the reader's row; the header keeps Compare with.
+            (find("Compare with"), find("Compare with"))
+        };
+        let files = place(&mut view);
+        assert!(files.0.is_some() && files.1.is_some(), "{files:?}");
+        view.error = Some("transient failure".into());
+        assert_eq!(place(&mut view), files, "Retry appears in its own slot");
+        view.error = None;
+        view.show_diff = true;
+        assert_eq!(
+            place(&mut view),
+            files,
+            "Prev/Next file appear in reserved slots"
+        );
+    }
+
+    #[test]
+    fn unread_rows_stay_empty_and_loaded_rows_stay_put() {
+        let ctx = egui::Context::default();
+        let mut view = Review::fixture(&ctx);
+        let frame = |view: &mut Review| {
+            crate::tests::run_ui(
+                &ctx,
+                crate::tests::frame_input(1120.0, 740.0, vec![]),
+                |ui| {
+                    view.draw_ui(ui);
+                },
+            )
+        };
+        let _ = frame(&mut view);
+        // Rows 1–4 are still being read while row 0 is shown.
+        for row in 1..5 {
+            view.rows.remove(&row);
+        }
+        let output = frame(&mut view);
+        let texts = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) => Some(text.galley.job.text.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            !texts.iter().any(|text| {
+                let text = text.to_lowercase();
+                text.contains("loading") || text.contains("resolving")
+            }),
+            "no placeholder text in the pane: {texts:?}"
+        );
+        assert!(
+            texts.iter().any(|text| text.ends_with("/0000.rs")),
+            "the loaded row stays visible: {texts:?}"
+        );
+        assert!(
+            !texts.iter().any(|text| text.ends_with("/0001.rs")),
+            "an unread row stays empty"
+        );
+    }
+
+    #[test]
+    fn commit_identity_shares_one_line_with_back() {
+        for width in [720.0, 1120.0] {
+            let ctx = egui::Context::default();
+            let mut view = Review::fixture(&ctx);
+            let mut output = None;
+            for _ in 0..2 {
+                output = Some(crate::tests::run_ui(
+                    &ctx,
+                    crate::tests::frame_input(width, 740.0, vec![]),
+                    |ctx| {
+                        view.draw_ui(ctx);
+                    },
+                ));
+            }
+            let Some(output) = output else { unreachable!() };
+            let row = |wanted: &str| {
+                output.shapes.iter().find_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) if text.galley.job.text == wanted => {
+                        Some(text.visual_bounding_rect().center().y)
+                    }
+                    _ => None,
+                })
+            };
+            let back = row("‹ History");
+            let subject = row("Review fixture");
+            assert!(
+                back.zip(subject).is_some_and(|(a, b)| (a - b).abs() < 2.0),
+                "width {width}: back={back:?} subject={subject:?}"
+            );
+        }
+    }
+
+    /// Text shapes with their painted rectangles.
+    fn texts(output: &egui::FullOutput) -> Vec<(String, egui::Rect)> {
+        output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) => Some((
+                    text.galley.job.text.clone(),
+                    egui::Rect::from_min_size(text.pos, text.galley.size()),
+                )),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn file_list_header_and_line_counts_keep_their_slots_at_both_widths() -> Result<(), String> {
+        for width in [720.0, 1120.0] {
+            let ctx = egui::Context::default();
+            let mut view = Review::fixture(&ctx);
+            let draw = |view: &mut Review| {
+                let mut output = None;
+                for _ in 0..2 {
+                    output = Some(crate::tests::run_ui(
+                        &ctx,
+                        crate::tests::frame_input(width, 740.0, vec![]),
+                        |ui| {
+                            view.draw_ui(ui);
+                        },
+                    ));
+                }
+                output.map(|output| texts(&output)).ok_or("no frame")
+            };
+            let before = draw(&mut view)?;
+            // Only the list's rows; the reader names the selected path too.
+            let rows = view.rect;
+            let path = |texts: &[(String, egui::Rect)], row: &str| {
+                texts
+                    .iter()
+                    .find(|(text, rect)| text.ends_with(row) && rows.contains(rect.center()))
+                    .cloned()
+                    .ok_or(format!("width {width}: path {row} missing"))
+            };
+            // Long paths lose their start, so the file name stays visible.
+            let (first, first_rect) = path(&before, "/0000.rs")?;
+            assert!(first.starts_with('…'), "{first}");
+            let header = before
+                .iter()
+                .find(|(text, _)| text == "FILES 1000")
+                .map(|(_, rect)| *rect)
+                .ok_or("files header")?;
+            assert!(header.bottom() <= first_rect.top() + 1.0);
+            assert!(
+                !before.iter().any(|(text, _)| text.ends_with(" files")
+                    && text.starts_with(|c: char| c.is_ascii_digit())),
+                "the list header replaces the separate file count"
+            );
+            // Counts arrive in the background: the listing does not move.
+            view.apply_stats(StatsUpdate {
+                rows: vec![
+                    (
+                        0,
+                        LineStat::Lines {
+                            added: 18,
+                            deleted: 7,
+                        },
+                    ),
+                    (
+                        1,
+                        LineStat::Lines {
+                            added: 12_345,
+                            deleted: 0,
+                        },
+                    ),
+                    (2, LineStat::Binary),
+                    (3, LineStat::Skipped),
+                ],
+                added: 12_363,
+                deleted: 7,
+                complete: false,
+            });
+            let after = draw(&mut view)?;
+            for row in ["/0000.rs", "/0001.rs", "/0002.rs", "/0003.rs"] {
+                assert_eq!(path(&after, row)?, path(&before, row)?, "{row} moved");
+            }
+            let find = |wanted: &str| {
+                after
+                    .iter()
+                    .find(|(text, _)| text == wanted)
+                    .map(|(_, rect)| *rect)
+                    .ok_or(format!("width {width}: {wanted} missing"))
+            };
+            let (stat, large, binary) = (find("+18 −7")?, find("+12k")?, find("bin")?);
+            assert!((stat.right() - large.right()).abs() < 0.5);
+            assert!((stat.right() - binary.right()).abs() < 0.5);
+            assert!(first_rect.right() < stat.left());
+            let total = find("+12363+−7+")?;
+            assert!((total.center().y - header.center().y).abs() < 1.0);
+            let list = view.rect;
+            assert!(total.right() <= list.right() && stat.right() <= list.right());
+            if width > 1040.0 {
+                assert!(list.right() <= FILE_LIST_WIDTH + 1.0, "{list:?}");
+            } else {
+                assert!(list.width() > width - 40.0, "{list:?}");
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn line_stat_labels_follow_the_mockup() {
+        let lines = |added, deleted| LineStat::Lines { added, deleted };
+        assert_eq!(stat_label(&lines(18, 7)), "+18 −7");
+        assert_eq!(stat_label(&lines(15, 0)), "+15");
+        assert_eq!(stat_label(&lines(0, 11)), "−11");
+        assert_eq!(stat_label(&lines(0, 0)), "");
+        assert_eq!(stat_label(&lines(100_000, 9_999)), "+100k −9999");
+        assert_eq!(stat_label(&LineStat::Binary), "bin");
+        assert_eq!(stat_label(&LineStat::Skipped), "");
     }
 
     #[test]
@@ -1031,6 +1645,8 @@ mod tests {
             parent: Some("b".repeat(40)),
             parents: Vec::new(),
             subject: "Compare".into(),
+            author: String::new(),
+            date: String::new(),
         });
         view.rows.insert(
             0,
@@ -1119,6 +1735,29 @@ mod tests {
         }
         Ok(())
     }
+    #[test]
+    fn compare_with_switches_between_head_and_a_parent() -> Result<(), String> {
+        let ctx = egui::Context::default();
+        let mut view = Review::fixture(&ctx);
+        let _ = crate::tests::run_ui(
+            &ctx,
+            crate::tests::frame_input(1120.0, 740.0, vec![]),
+            |ui| {
+                view.draw_ui(ui);
+            },
+        );
+        let comparison = view.comparison.as_mut().ok_or("comparison missing")?;
+        comparison.parents = vec!["first".into()];
+        view.known_parents = vec!["first".into()];
+        view.compare_with_head(&ctx);
+        assert_eq!(view.request.against.as_deref(), Some("HEAD"));
+        assert_eq!(view.request.parent, None);
+        view.switch_parent(1, &ctx);
+        assert_eq!(view.request.against, None, "a parent replaces HEAD");
+        assert_eq!(view.request.parent, Some(1));
+        Ok(())
+    }
+
     #[test]
     fn parent_replacement_retains_identity_until_pointer_leaves_and_resets_selection()
     -> Result<(), String> {
@@ -1241,8 +1880,8 @@ mod tests {
                 "Diff",
                 "Full file",
                 "No changes",
-                "< Prev",
-                "Next >",
+                crate::phosphor::CARET_LEFT,
+                crate::phosphor::CARET_RIGHT,
             ] {
                 assert!(
                     text.iter().any(|line| line.contains(label)),
@@ -1379,6 +2018,8 @@ mod tests {
                     parent: None,
                     parents: vec![],
                     subject: "fixture".into(),
+                    author: String::new(),
+                    date: String::new(),
                 },
                 count: 1001,
                 complete: false,

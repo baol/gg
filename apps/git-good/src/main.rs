@@ -9,10 +9,13 @@ mod branding;
 mod clipboard;
 mod colors;
 mod commit_cli;
+mod conflict_blocks;
 mod conflict_cli;
+mod density;
 mod details_view;
 mod diff_view;
 mod diff_worker;
+mod editor;
 mod export;
 mod file_history_view;
 mod file_history_worker;
@@ -25,6 +28,7 @@ mod interaction_tests;
 mod lfs_cli;
 mod lfs_worker;
 mod line_map_worker;
+mod menus;
 mod merge_cli;
 mod mutation_cli;
 mod navigation;
@@ -32,6 +36,9 @@ mod network;
 mod phosphor;
 mod reader;
 mod rebase_cli;
+mod rebase_dialog;
+mod rebase_plan;
+mod rebase_stop;
 mod records;
 mod reflog_cli;
 mod reflog_view;
@@ -43,8 +50,11 @@ mod review_cli;
 mod review_view;
 mod review_worker;
 mod rewrite_cli;
+mod search;
+mod settings;
 mod signature_cli;
 mod signature_worker;
+mod split_rows;
 mod stage_view;
 mod stash_cli;
 mod state;
@@ -57,8 +67,11 @@ mod submodule_worker;
 mod sync_cli;
 mod tag_cli;
 mod thumbnails;
+mod watcher;
 mod worktree_cli;
 mod worktree_worker;
+mod wrap_rows;
+use crate::navigation::ModalWindow;
 use eframe::egui;
 #[cfg(test)]
 use gg_engine::History;
@@ -77,7 +90,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("--help")) {
         println!(
-            "gg · good git\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good refs [PATH]      Print branches, remotes, tags, and HEAD as JSON\ngit-good status [PATH] [--file PATH --area AREA]   Print working status or diff as JSON\ngit-good stage --file PATH [--hunk HEADER]... [--repo PATH]   Stage one file or selected hunks\ngit-good unstage --file PATH [--repo PATH]   Unstage one file\ngit-good commit [--amend] [--sign|--no-sign] -m MESSAGE [--repo PATH]   Commit the index or amend HEAD after Git hooks\ngit-good reflog [REF] [--repo PATH]   Print reflog entries as JSON\ngit-good blame PATH [--revision REF] [--lines START,END] [--repo PATH]   Print line attribution as JSON\ngit-good worktree <list|add|remove> [OPTIONS] [--repo PATH]   List, add, or remove worktrees\ngit-good submodule <status|update> PATH [OPTIONS] [--repo PATH]   Inspect or update a gitlink submodule\ngit-good lfs <status|fetch> PATH [--area staged|unstaged|untracked|conflict] [--revision REF] [--before REF] [--repo PATH]   Inspect or fetch an LFS pointer\ngit-good signature <config|verify> [REF] [--repo PATH]   Read signing config or verify a commit/tag\ngit-good switch [--create] [--stash [--include-untracked]] BRANCH [--repo PATH]   Switch to or create a local branch, optionally stashing changes first\ngit-good fetch [REMOTE] [--prune] [--repo PATH]   Fetch and update remote-tracking refs\ngit-good push [REMOTE] [BRANCH] [--set-upstream] [--force-with-lease] [--repo PATH]   Push a local branch, with an explicit lease when rewriting\ngit-good clone URL [PATH]   Clone a repository and open it\ngit-good stash <list|push|apply|pop|drop> [OPTIONS] [--repo PATH]   List or mutate stashes\ngit-good cherry-pick COMMIT [--repo PATH]   Apply a commit\ngit-good revert COMMIT [--repo PATH]   Invert a commit\ngit-good merge REF [--no-ff] [--repo PATH]   Merge a branch, remote, or tag\ngit-good rebase REF [--autostash] [--repo PATH]   Rebase the current branch onto a branch, remote, or tag\ngit-good rebase --continue|--skip|--abort [--repo PATH]   Recover an in-progress rebase\ngit-good rewrite --from COMMIT --pick COMMIT... --squash COMMIT... [--autostash] [--repo PATH]   Reorder or squash a linear range\ngit-good rewrite --continue|--skip|--abort [--repo PATH]   Recover an in-progress rewrite\ngit-good conflicts [--repo PATH]   List unmerged paths\ngit-good conflict --file PATH [--use ours|theirs|--stage] [--repo PATH]   Read or resolve a conflict\ngit-good reset --soft|--mixed|--hard COMMIT [--repo PATH]   Reset the current branch\ngit-good branch --delete BRANCH [--force] [--repo PATH]   Delete a local branch\ngit-good branch --create NAME [--at REF] [--repo PATH]   Create a local branch without switching\ngit-good tag --delete TAG [--repo PATH]   Delete a local tag
+            "gg · good git\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good refs [PATH]      Print branches, remotes, tags, and HEAD as JSON\ngit-good status [PATH] [--file PATH --area AREA]   Print working status or diff as JSON\ngit-good stage --file PATH [--hunk HEADER]... [--repo PATH]   Stage one file or selected hunks\ngit-good unstage --file PATH [--repo PATH]   Unstage one file\ngit-good commit [--amend] [--sign|--no-sign] -m MESSAGE [--repo PATH]   Commit the index or amend HEAD after Git hooks\ngit-good reflog [REF] [--repo PATH]   Print reflog entries as JSON\ngit-good blame PATH [--revision REF] [--lines START,END] [--repo PATH]   Print line attribution as JSON\ngit-good worktree <list|add|remove> [OPTIONS] [--repo PATH]   List, add, or remove worktrees\ngit-good submodule <status|update> PATH [OPTIONS] [--repo PATH]   Inspect or update a gitlink submodule\ngit-good lfs <status|fetch> PATH [--area staged|unstaged|untracked|conflict] [--revision REF] [--before REF] [--repo PATH]   Inspect or fetch an LFS pointer\ngit-good signature <config|verify> [REF] [--repo PATH]   Read signing config or verify a commit/tag\ngit-good switch [--create] [--stash [--include-untracked]] BRANCH [--repo PATH]   Switch to or create a local branch, optionally stashing changes first\ngit-good fetch [REMOTE] [--prune] [--repo PATH]   Fetch and update remote-tracking refs\ngit-good push [REMOTE] [BRANCH] [--set-upstream] [--force-with-lease] [--repo PATH]   Push a local branch, with an explicit lease when rewriting\ngit-good clone URL [PATH]   Clone a repository and open it\ngit-good stash <list|push|apply|pop|drop> [OPTIONS] [--repo PATH]   List or mutate stashes\ngit-good cherry-pick COMMIT [--repo PATH]   Apply a commit\ngit-good revert COMMIT [--repo PATH]   Invert a commit\ngit-good merge REF [--no-ff] [--repo PATH]   Merge a branch, remote, or tag\ngit-good rebase REF [--autostash] [--repo PATH]   Rebase the current branch onto a branch, remote, or tag\ngit-good rebase --continue|--skip|--abort [--repo PATH]   Recover an in-progress rebase\ngit-good rewrite --from COMMIT STEP... [--autostash] [--repo PATH]   Pick, reword, edit, squash, fixup, drop, or reorder a linear range (STEP: --pick|--edit|--squash|--fixup|--drop COMMIT, --reword COMMIT MESSAGE)\ngit-good rewrite --continue|--skip|--abort [--repo PATH]   Recover an in-progress rewrite\ngit-good conflicts [--repo PATH]   List unmerged paths\ngit-good conflict --file PATH [--use ours|theirs|--stage] [--repo PATH]   Read or resolve a conflict\ngit-good reset --soft|--mixed|--hard COMMIT [--repo PATH]   Reset the current branch\ngit-good branch --delete BRANCH [--force] [--repo PATH]   Delete a local branch\ngit-good branch --create NAME [--at REF] [--repo PATH]   Create a local branch without switching\ngit-good tag --delete TAG [--repo PATH]   Delete a local tag
 git-good tag --create TAG --at REF -m MESSAGE [--sign] [--repo PATH]   Create an annotated or signed tag\ngit-good show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]   Review or export\n\nBrowse commits reachable from HEAD and all local, remote, and tag refs."
         );
         return Ok(());
@@ -193,9 +206,17 @@ git-good tag --create TAG --at REF -m MESSAGE [--sign] [--repo PATH]   Create an
         return sync_cli::clone(args);
     }
     let headless = first.as_deref() == Some(std::ffi::OsStr::new("history"));
-    let path = if headless { args.next() } else { first }
-        .map(PathBuf::from)
-        .unwrap_or(std::env::current_dir()?);
+    let given = if headless { args.next() } else { first }.map(PathBuf::from);
+    let path = match given {
+        Some(path) => path,
+        None if headless => std::env::current_dir()?,
+        None => launch_folder(
+            std::env::current_dir()?,
+            settings::Prefs::load().reopen_last,
+            &settings::recent(),
+            is_repository,
+        ),
+    };
     if args.next().is_some() {
         return Err("Use git-good --help for usage".into());
     }
@@ -226,17 +247,10 @@ git-good tag --create TAG --at REF -m MESSAGE [--sign] [--repo PATH]   Create an
             ..Default::default()
         },
         Box::new(move |cc| {
-            cc.egui_ctx.set_visuals(
-                if cfg!(debug_assertions)
-                    && std::env::var("GG_THEME").is_ok_and(|theme| theme == "light")
-                {
-                    egui::Visuals::light()
-                } else {
-                    egui::Visuals::dark()
-                },
-            );
             phosphor::install(&cc.egui_ctx);
             let mut app = Browser::new(path);
+            app.apply_prefs(&cc.egui_ctx);
+            app.details_visible = app.prefs.details_visible;
             app.load(&cc.egui_ctx);
             Ok(Box::new(app))
         }),
@@ -322,9 +336,93 @@ fn clone_folder_label(path: &Path, default: &Path) -> String {
     }
 }
 
+/// Sections of the Preferences window.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PrefSection {
+    General,
+    Appearance,
+    Diff,
+    Commit,
+    Rebase,
+    Keyboard,
+}
+
+impl PrefSection {
+    /// Words the Preferences search matches for this section.
+    fn keywords(self) -> &'static str {
+        match self {
+            Self::General => {
+                "general clone folders avatars network fetch prune editor open dialog defaults stash merge branch"
+            }
+            Self::Appearance => {
+                "appearance theme dark light system density compact comfortable zoom font size code"
+            }
+            Self::Diff => {
+                "diff open files full file layout inline side by side images compare context lines whitespace ignore line end display wrap long lines invisible characters tabs trailing spaces"
+            }
+            Self::Commit => {
+                "commit identity name email signing sign tags subject length guide hooks verify"
+            }
+            Self::Rebase => {
+                "rebase recovery stash autostash backup pull strategy merge fast-forward push force lease keep backups days retention confirm drop reset"
+            }
+            Self::Keyboard => "keyboard shortcuts keys",
+        }
+    }
+
+    fn matches(self, query: &str) -> bool {
+        let haystack = format!("{} {}", self.label(), self.keywords()).to_lowercase();
+        query
+            .to_lowercase()
+            .split_whitespace()
+            .all(|word| haystack.contains(word))
+    }
+
+    const ALL: [Self; 6] = [
+        Self::General,
+        Self::Appearance,
+        Self::Diff,
+        Self::Commit,
+        Self::Rebase,
+        Self::Keyboard,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::General => "General",
+            Self::Appearance => "Appearance",
+            Self::Diff => "Diff",
+            Self::Commit => "Commit",
+            Self::Rebase => "Rebase & recovery",
+            Self::Keyboard => "Keyboard",
+        }
+    }
+}
+
+/// The Preferences window (Repository › Preferences…), non-modal.
 struct FoldersDialog {
+    section: PrefSection,
+    /// Search preferences: sections without a match are hidden.
+    search: String,
+    /// `user.name <user.email>` from Git config, read when the window opens.
+    identity: Option<String>,
     new_root: String,
     error: Option<String>,
+    /// Repository count per clone folder; `None` for a missing folder.
+    counts: Vec<(PathBuf, Option<usize>)>,
+}
+
+impl FoldersDialog {
+    fn new(section: PrefSection) -> Self {
+        Self {
+            section,
+            search: String::new(),
+            identity: None,
+            new_root: String::new(),
+            error: None,
+            counts: Vec::new(),
+        }
+    }
 }
 
 struct StashSwitchDialog {
@@ -359,6 +457,88 @@ struct RestoreStashDialog {
     reference: String,
     restore_index: bool,
     remove: bool,
+    error: Option<String>,
+}
+
+/// Repository facts the window frame needs without opening Local Changes,
+/// read on a background thread.
+#[derive(Clone, Debug, Default)]
+struct LocalSummary {
+    /// Changed paths: staged, unstaged, untracked, or conflicted, each once.
+    changes: Option<usize>,
+    stashes: Vec<gg_engine::stash::StashEntry>,
+    /// First commit of the current branch's own work and its commit count.
+    branch_start: Option<(String, usize)>,
+    /// Steps and stop of an interactive rebase in progress.
+    rebase: Option<gg_engine::mutation::RebaseProgress>,
+    /// Tracked paths for the search Files group, bounded.
+    files: Vec<String>,
+    /// This repository's worktrees, for the refs sidebar.
+    worktrees: Vec<gg_engine::worktree::Worktree>,
+}
+
+impl LocalSummary {
+    fn read(path: PathBuf) -> Self {
+        Self {
+            changes: gg_git::stash::change_count(&path).ok(),
+            stashes: gg_git::stash::list_with_files(&path)
+                .map(|list| list.entries)
+                .unwrap_or_default(),
+            branch_start: gg_git::rewrite::branch_start(&path).ok().flatten(),
+            rebase: gg_git::mutation::rebase_progress(&path).ok().flatten(),
+            files: gg_git::files::tracked(&path, SEARCH_FILE_LIMIT).unwrap_or_default(),
+            worktrees: gg_git::worktree::list(&path)
+                .map(|snapshot| snapshot.worktrees)
+                .unwrap_or_default(),
+        }
+    }
+}
+
+/// A choice made in the toolbar branch switcher.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum BranchPick {
+    Switch(String),
+    New,
+}
+
+fn branch_switcher_popup_id() -> egui::Id {
+    egui::Id::unique("toolbar-branch-switcher")
+}
+
+/// Local branches for the switcher: short name and whether it is checked
+/// out, filtered by every word of `filter`, current branch first.
+fn switcher_branches(refs: &gg_engine::refs::Snapshot, filter: &str) -> Vec<(String, bool)> {
+    let head = refs.head.as_ref().and_then(|head| head.name.as_deref());
+    let mut branches = refs
+        .items
+        .iter()
+        .filter(|item| item.kind == gg_engine::refs::RefKind::Branch)
+        .filter(|item| crate::search::matches(filter, &item.name))
+        .map(|item| (item.name.clone(), Some(item.full_name.as_str()) == head))
+        .collect::<Vec<_>>();
+    branches.sort_by_key(|(_, current)| !*current);
+    branches
+}
+
+/// The toolbar stash picker's popup, also opened from the sidebar.
+fn stash_picker_popup_id() -> egui::Id {
+    egui::Id::unique("toolbar-stash-picker")
+}
+
+/// A command chosen in the toolbar stash picker.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum StashPick {
+    Apply(String),
+    Pop(String),
+    Show { commit: String, message: String },
+    Drop(String),
+}
+
+/// Toolbar stash picker: selected entry and pending drop confirmation.
+#[derive(Clone, Debug, Default)]
+struct StashPicker {
+    selected: usize,
+    confirm_drop: bool,
     error: Option<String>,
 }
 
@@ -462,6 +642,323 @@ impl RecoveryView {
     }
 }
 
+/// Command readiness shared by the menu bar and the icon toolbar.
+#[derive(Clone, Copy, Debug)]
+struct FrameReadiness {
+    has_repo: bool,
+    network_idle: bool,
+    branch_idle: bool,
+    stash_idle: bool,
+    behind: u64,
+    pull_reason: Option<&'static str>,
+    rewrite_reason: Option<&'static str>,
+    /// Why **Stash changes** is unavailable, if it is.
+    stash_reason: Option<&'static str>,
+    stashes: usize,
+    /// Changed paths shown on the Changes tab badge; zero when unknown.
+    changes: usize,
+    /// Commits in the current branch's own range for the toolbar rewrite.
+    branch_rewrite_count: usize,
+    branch_rewrite_reason: Option<&'static str>,
+}
+
+/// A window-frame command chosen from the toolbar or search, applied after
+/// the frame is drawn through one dispatch and readiness.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum FrameCommand {
+    Fetch,
+    Pull,
+    Push,
+    ForcePush,
+    NewBranch,
+    NewTag,
+    TrackBranch,
+    Merge,
+    RebaseOnto,
+    Stash,
+    Stashes,
+    /// Interactive rebase of the current branch's own commits.
+    Rewrite,
+    /// Interactive rebase from the selected commit through HEAD.
+    RewriteSelected,
+    Recovery,
+    Worktrees,
+    Open,
+    Clone,
+    Preferences,
+    Shortcuts,
+    LocalChanges,
+    History,
+    ToggleRefs,
+    /// Filter history by the text.
+    Filter(String),
+    /// Inspect a ref's commit without moving HEAD.
+    Inspect(String),
+    /// Open the latest commit that changed this path, on that file.
+    OpenFile(String),
+    OpenRecent(PathBuf),
+    Backups,
+    Reflog,
+    Quit,
+    /// Open the toolbar branch switcher.
+    SwitchTo,
+    SetUpstream,
+    RenameBranch,
+    DeleteBranch,
+    ReviewSelected,
+    CompareHead,
+    CopyId,
+    CherryPick,
+    Revert,
+    ResetHere,
+    /// Interactive rebase with the selected commit preset to this action.
+    RebasePreset(gg_engine::rewrite::Action),
+    StageAll,
+    UnstageAll,
+    DiscardAll,
+    CommitNow,
+    AmendHead,
+    ResolveConflicts,
+    ToggleDetails,
+    SetDensity(settings::Density),
+    SetDiffLayout(settings::DiffLayout),
+    SetTheme(settings::Theme),
+    Documentation,
+    About,
+    /// A menu item that is shown but cannot run yet.
+    Unavailable,
+}
+
+/// Branch › Rename… for the current branch.
+struct RenameDialog {
+    old: String,
+    new: String,
+    error: Option<String>,
+}
+
+/// Branch › Set upstream… for the current branch.
+struct UpstreamDialog {
+    branch: String,
+    upstream: String,
+    error: Option<String>,
+}
+
+/// Branch › Delete…: choose the local branch, then the usual confirmation.
+struct DeletePick {
+    name: String,
+}
+
+/// Open `Ctrl+K` search state.
+#[derive(Clone, Debug)]
+struct SearchPalette {
+    query: String,
+    selected: usize,
+    focused: bool,
+    /// Typed into the toolbar field; results open under `anchor`.
+    in_field: bool,
+    anchor: egui::Rect,
+    /// File results for `files_query`, recomputed only when it changes.
+    files_query: String,
+    file_items: Vec<search::Item<FrameCommand>>,
+}
+
+impl Default for SearchPalette {
+    fn default() -> Self {
+        Self {
+            query: String::new(),
+            selected: 0,
+            focused: false,
+            in_field: false,
+            anchor: egui::Rect::NOTHING,
+            files_query: String::new(),
+            file_items: Vec::new(),
+        }
+    }
+}
+
+fn search_field_id() -> egui::Id {
+    egui::Id::unique("toolbar-search-field")
+}
+
+/// Most tracked paths kept for the search Files group.
+const SEARCH_FILE_LIMIT: usize = 50_000;
+
+/// Fixed height of the search results popup.
+const SEARCH_RESULTS_HEIGHT: f32 = 360.0;
+
+/// Width of the conflicted-paths list in the conflict workspace.
+const CONFLICT_PATHS_WIDTH: f32 = 220.0;
+
+/// Fixed height of the operation area: two lines.
+const OPERATION_AREA_HEIGHT: f32 = 44.0;
+
+/// Height of the menu bar row (final design: 26 px).
+const MENU_BAR_HEIGHT: f32 = 26.0;
+
+/// Paints a count badge on the top-right corner of `rect`; nothing for zero.
+fn paint_badge(ui: &egui::Ui, rect: egui::Rect, count: u64) {
+    if count == 0 {
+        return;
+    }
+    let text = if count > 99 {
+        "99+".into()
+    } else {
+        count.to_string()
+    };
+    let font = egui::FontId::proportional(9.0);
+    let ink = egui::Color32::from_rgb(27, 27, 27);
+    let galley = ui.painter().layout_no_wrap(text, font, ink);
+    let size = egui::vec2((galley.size().x + 6.0).max(12.0), 12.0);
+    let badge =
+        egui::Rect::from_min_size(egui::pos2(rect.right() - size.x + 1.0, rect.top()), size);
+    ui.painter()
+        .rect_filled(badge, 6.0, egui::Color32::from_rgb(237, 166, 78));
+    ui.painter()
+        .galley(badge.center() - galley.size() / 2.0, galley, ink);
+}
+
+/// The OS window title, as in the mockups: `gg — ~/path`, and the rebase
+/// step while one is stopped.
+fn window_title(
+    path: &str,
+    home: Option<&str>,
+    rebase: Option<&gg_engine::mutation::RebaseProgress>,
+) -> String {
+    let shown = match home.filter(|home| !home.is_empty()) {
+        Some(home) if path == home => "~".to_string(),
+        Some(home) => match path.strip_prefix(home) {
+            Some(rest) if rest.starts_with('/') => format!("~{rest}"),
+            _ => path.to_string(),
+        },
+        None => path.to_string(),
+    };
+    let mut title = format!("gg — {shown}");
+    if let Some(progress) = rebase {
+        let (step, total) = progress.position();
+        if progress.stop == gg_engine::mutation::RebaseStop::Conflict {
+            title.push_str(&format!(" — rebase conflict · step {step} of {total}"));
+        } else {
+            title.push_str(&format!(
+                " — rebasing {} · step {step} of {total}",
+                progress.branch.as_deref().unwrap_or("detached HEAD")
+            ));
+        }
+    }
+    title
+}
+
+/// The folder gg opens when launched without a path: the working directory,
+/// or, outside a repository and with Reopen last repository on, the most
+/// recent repository that still is one.
+fn launch_folder(
+    cwd: PathBuf,
+    reopen_last: bool,
+    recent: &[PathBuf],
+    is_repository: impl Fn(&Path) -> bool,
+) -> PathBuf {
+    if !reopen_last || is_repository(&cwd) {
+        return cwd;
+    }
+    recent
+        .iter()
+        .find(|path| is_repository(path))
+        .cloned()
+        .unwrap_or(cwd)
+}
+
+fn is_repository(path: &Path) -> bool {
+    std::process::Command::new("git")
+        .arg("-C")
+        .arg(path)
+        .args(["rev-parse", "--git-dir"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+/// Text with right-aligned line numbers, for the conflict Result preview.
+fn numbered(text: &str) -> String {
+    let lines = text.lines().count().max(1);
+    let width = lines.to_string().len();
+    text.lines()
+        .enumerate()
+        .map(|(index, line)| format!("{:>width$}  {line}", index + 1))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// `Name <email>` from the repository's Git config, for Preferences ›
+/// Commit; `None` when Git has no identity.
+fn git_identity(repo: &Path) -> Option<String> {
+    let read = |key: &str| {
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["config", "--get", key])
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+            .filter(|value| !value.is_empty())
+    };
+    match (read("user.name"), read("user.email")) {
+        (Some(name), Some(email)) => Some(format!("{name} <{email}>")),
+        (Some(name), None) => Some(name),
+        (None, Some(email)) => Some(format!("<{email}>")),
+        (None, None) => None,
+    }
+}
+
+/// The `Ctrl+K` chip at the right end of the empty toolbar search field.
+fn search_key_chip(ui: &egui::Ui, field: egui::Rect) {
+    let visuals = ui.visuals();
+    let galley = ui.painter().layout_no_wrap(
+        "Ctrl+K".into(),
+        egui::FontId::proportional(11.0),
+        visuals.weak_text_color(),
+    );
+    let chip = egui::Rect::from_min_size(
+        egui::pos2(
+            field.right() - galley.size().x - 14.0,
+            field.center().y - galley.size().y / 2.0 - 2.0,
+        ),
+        galley.size() + egui::vec2(8.0, 4.0),
+    );
+    ui.painter().rect_stroke(
+        chip,
+        3.0,
+        visuals.widgets.noninteractive.bg_stroke,
+        egui::StrokeKind::Inside,
+    );
+    ui.painter().galley(
+        chip.min + egui::vec2(4.0, 2.0),
+        galley,
+        visuals.weak_text_color(),
+    );
+}
+
+/// One icon button in the window toolbar; returns whether it was clicked.
+fn toolbar_button(
+    ui: &mut egui::Ui,
+    glyph: &str,
+    badge: Option<u64>,
+    tooltip: &str,
+    disabled: Option<&str>,
+) -> bool {
+    let button = egui::Button::new(crate::phosphor::icon(glyph).size(17.0))
+        .min_size(egui::vec2(28.0, 26.0))
+        .frame_when_inactive(false);
+    let response = ui.add_enabled(disabled.is_none(), button);
+    paint_badge(ui, response.rect, badge.unwrap_or(0));
+    let response = response.on_hover_text(tooltip);
+    let response = match disabled {
+        Some(reason) => response.on_disabled_hover_text(format!("{tooltip}\n{reason}")),
+        None => response,
+    };
+    response.clicked()
+}
+
 struct MergeDialog {
     reference: String,
     no_ff: bool,
@@ -470,19 +967,6 @@ struct MergeDialog {
 
 struct RebaseDialog {
     reference: String,
-    autostash: bool,
-    error: Option<String>,
-}
-
-struct RewriteRow {
-    id: String,
-    subject: String,
-    action: gg_engine::rewrite::Action,
-}
-
-struct RewriteDialog {
-    from: String,
-    rows: Vec<RewriteRow>,
     autostash: bool,
     error: Option<String>,
 }
@@ -545,6 +1029,7 @@ enum ConflictUpdate {
     Content {
         content: Box<gg_engine::conflict::Content>,
         snapshot: Box<gg_engine::conflict::Snapshot>,
+        blocks: Result<Vec<gg_engine::conflict::Segment>, String>,
     },
 }
 
@@ -568,7 +1053,14 @@ struct ConflictView {
     snapshot: Option<gg_engine::conflict::Snapshot>,
     preview: gg_engine::conflict::Resolution,
     tab: ConflictTab,
-    placed: bool,
+    /// Per-block choices for a text conflict.
+    blocks: Option<conflict_blocks::Blocks>,
+    /// Why this file has no text blocks.
+    blocks_note: Option<String>,
+    /// Resolve the whole file from one source instead of block by block.
+    whole_file: bool,
+    /// Files resolved and staged while the workspace was open.
+    resolved: Vec<String>,
 }
 
 fn next_conflict_selection(paths: &[String], keep: Option<&str>, previous: usize) -> usize {
@@ -583,7 +1075,7 @@ fn conflict_side_hint(operation: Option<gg_engine::mutation::Operation>) -> &'st
             "Ours is the current branch. Theirs is the branch being merged."
         }
         Some(gg_engine::mutation::Operation::Rebase) => {
-            "Ours is the base being rebased onto. Theirs is the commit being replayed."
+            "Ours is the rewritten branch so far. Theirs is the commit being replayed."
         }
         Some(gg_engine::mutation::Operation::CherryPick) => {
             "Ours is the current branch. Theirs is the cherry-picked commit."
@@ -660,7 +1152,7 @@ fn conflict_side_label(
     match (operation, side) {
         (_, ConflictSide::Base) => "Base",
         (Some(gg_engine::mutation::Operation::Rebase), ConflictSide::Ours) => {
-            "Ours · base being rebased onto (stage 2)"
+            "Ours · rewritten branch (stage 2)"
         }
         (Some(gg_engine::mutation::Operation::Rebase), ConflictSide::Theirs) => {
             "Theirs · replayed commit (stage 3)"
@@ -734,8 +1226,8 @@ enum CommitAction {
 }
 
 enum CommitCommand {
-    Action(CommitAction),
-    CopyHash,
+    /// An item of the Commit menu, mirrored in the Commit actions popup.
+    Menu(FrameCommand),
     CopySubject,
     OpenRecovery,
     OpenSignature,
@@ -758,6 +1250,8 @@ enum RecoveryAction {
     RetrySwitch,
     StashAndSwitch,
     PullRebase,
+    /// Push the rewritten branch with force-with-lease.
+    ForcePush,
 }
 
 struct Outcome {
@@ -776,82 +1270,27 @@ fn recovery_label(action: RecoveryAction) -> &'static str {
         RecoveryAction::ManageStashes => "Stashes…",
         RecoveryAction::RetrySwitch => "Retry switch",
         RecoveryAction::StashAndSwitch => "Stash and switch…",
-        RecoveryAction::PullRebase => "Pull --rebase",
+        RecoveryAction::PullRebase => "Pull",
+        RecoveryAction::ForcePush => "Push with force-with-lease…",
     }
 }
 
+/// The Commit actions popup: the Commit menu's own entries (one command
+/// table), then the popup-only extras.
 fn commit_action_menu(
     ui: &mut egui::Ui,
-    id: &str,
-    can_mutate: bool,
-    mutate_reason: Option<&str>,
+    menu: &[menus::Entry<FrameCommand>],
 ) -> Option<CommitCommand> {
-    let short: String = id.chars().take(7).collect();
-    let mut command = None;
-    ui.label(egui::RichText::new("Inspect").weak());
-    if ui.button(format!("Review {short}")).clicked() {
-        command = Some(CommitCommand::Action(CommitAction::Review));
-    }
-    if ui
-        .button(format!("Compare {short} with current HEAD"))
-        .clicked()
-    {
-        command = Some(CommitCommand::Action(CommitAction::Compare));
-    }
-    if ui.button("Copy hash").clicked() {
-        command = Some(CommitCommand::CopyHash);
-    }
+    let mut chosen = None;
+    menus::entries(ui, menu, &mut chosen);
+    let mut command = chosen.map(CommitCommand::Menu);
+    ui.separator();
     if ui.button("Copy subject").clicked() {
         command = Some(CommitCommand::CopySubject);
     }
     if ui.button("Signature details…").clicked() {
         command = Some(CommitCommand::OpenSignature);
     }
-    ui.separator();
-    ui.label(egui::RichText::new("Integrate").weak());
-    if ui
-        .add_enabled(
-            can_mutate,
-            egui::Button::new(format!("Cherry-pick {short}")),
-        )
-        .on_hover_text(mutate_reason.unwrap_or("Apply this commit to the current branch"))
-        .clicked()
-    {
-        command = Some(CommitCommand::Action(CommitAction::CherryPick));
-    }
-    if ui
-        .add_enabled(can_mutate, egui::Button::new(format!("Revert {short}")))
-        .on_hover_text(mutate_reason.unwrap_or("Invert this commit on the current branch"))
-        .clicked()
-    {
-        command = Some(CommitCommand::Action(CommitAction::Revert));
-    }
-    ui.separator();
-    ui.label(egui::RichText::new("Rewrite and destructive").weak());
-    ui.menu_button(format!("Reset {short} here"), |ui| {
-        for (label, mode) in [
-            ("Soft", gg_engine::reset::Mode::Soft),
-            ("Mixed", gg_engine::reset::Mode::Mixed),
-            ("Hard", gg_engine::reset::Mode::Hard),
-        ] {
-            if ui
-                .add_enabled(can_mutate, egui::Button::new(label))
-                .on_hover_text(mutate_reason.unwrap_or("Reset the current branch here"))
-                .clicked()
-            {
-                command = Some(CommitCommand::Action(CommitAction::Reset(mode)));
-            }
-        }
-    });
-    if ui
-        .add_enabled(can_mutate, egui::Button::new("Reorder and squash to HEAD…"))
-        .on_hover_text(mutate_reason.unwrap_or("Rewrite commits from this commit through HEAD"))
-        .clicked()
-    {
-        command = Some(CommitCommand::Action(CommitAction::Rewrite));
-    }
-    ui.separator();
-    ui.label(egui::RichText::new("Recovery").weak());
     if ui.button("Recovery…").clicked() {
         command = Some(CommitCommand::OpenRecovery);
     }
@@ -951,6 +1390,8 @@ struct Browser {
     pending_commit: Option<String>,
     branch: Option<std::sync::mpsc::Receiver<Result<gg_git::branch::Receipt, String>>>,
     branch_label: Option<String>,
+    /// The OS window title last sent, so it is only sent on change.
+    window_title: String,
     branch_error: Option<String>,
     branch_warning: Option<String>,
     branch_target: Option<(String, bool)>,
@@ -965,6 +1406,20 @@ struct Browser {
     /// Parent folder chosen in the clone dialog for this session only.
     clone_folder: Option<PathBuf>,
     folders: folders::Roots,
+    prefs: settings::Prefs,
+    /// Text in the toolbar search field.
+    search_text: String,
+    /// Content width of the last frame, for menu readiness.
+    ctx_width: f32,
+    /// Repositories opened before, newest first.
+    recent: Vec<PathBuf>,
+    about_open: bool,
+    /// The larger logo drawn in About gg.
+    about_logo: Option<egui::TextureHandle>,
+    discard_confirm: bool,
+    rename_dialog: Option<RenameDialog>,
+    upstream_dialog: Option<UpstreamDialog>,
+    delete_pick: Option<DeletePick>,
     folders_dialog: Option<FoldersDialog>,
     force_push: Option<ForcePushDialog>,
     force_push_pending: bool,
@@ -983,6 +1438,12 @@ struct Browser {
     screenshot_requested: bool,
     #[cfg(debug_assertions)]
     open_local: bool,
+    /// Debug: `GG_REBASE=<commit>` opens the interactive rebase from there.
+    open_rebase: Option<String>,
+    /// Debug: `GG_REVIEW=<commit>` opens that commit in Review.
+    open_review: Option<String>,
+    /// The reopened commit Local Changes was last opened for.
+    reopen_seen: Option<String>,
     operation_worker: Option<std::sync::mpsc::Receiver<Result<OperationOutcome, String>>>,
     operation_repo: Option<PathBuf>,
     operation_restore_row: Option<usize>,
@@ -991,10 +1452,16 @@ struct Browser {
     rebase_target: Option<String>,
     stash_switch: Option<StashSwitchDialog>,
     pull_rebase: Option<PullRebase>,
-    rewrite_dialog: Option<RewriteDialog>,
+    rewrite_dialog: Option<rebase_dialog::Dialog>,
     rewrite_job: Option<RewriteJob>,
     rewrite_refresh: Option<u64>,
     commit_actions: bool,
+    local_summary: Option<LocalSummary>,
+    local_summary_job: Option<std::sync::mpsc::Receiver<LocalSummary>>,
+    window_focused: bool,
+    stash_picker: StashPicker,
+    search: Option<SearchPalette>,
+    branch_filter: String,
     help_shortcuts: bool,
     conflict_view: Option<ConflictView>,
     reset_confirm: Option<(String, gg_engine::reset::Mode)>,
@@ -1021,6 +1488,13 @@ struct Browser {
     refs_width: f32,
     state: state::State,
     pending: Option<stream::Worker>,
+    /// The private backup the last rewrite saved; Abort restores it.
+    rewrite_backup: Option<String>,
+    /// Watches the open repository; settled changes refresh what they touch.
+    watcher: Option<watcher::Watcher>,
+    /// When the history last started loading, so a ref change it already
+    /// saw does not load it again.
+    last_load: Option<std::time::Instant>,
     pending_filter_edit: bool,
     worker: Option<stream::Worker>,
     staged: Option<stream::Update>,
@@ -1052,6 +1526,7 @@ impl Browser {
             pending_commit: None,
             branch: None,
             branch_label: None,
+            window_title: String::new(),
             branch_error: None,
             branch_warning: None,
             branch_target: None,
@@ -1065,7 +1540,38 @@ impl Browser {
             clone_dialog: None,
             clone_folder: None,
             folders: folders::Roots::load(),
-            folders_dialog: None,
+            // Tests keep the defaults instead of reading the user's settings.
+            search_text: String::new(),
+            ctx_width: 1120.0,
+            recent: if cfg!(test) {
+                Vec::new()
+            } else {
+                settings::recent()
+            },
+            // Debug builds open About gg with `GG_ABOUT=1` for native review.
+            about_open: cfg!(debug_assertions) && std::env::var_os("GG_ABOUT").is_some(),
+            about_logo: None,
+            discard_confirm: false,
+            rename_dialog: None,
+            upstream_dialog: None,
+            delete_pick: None,
+            prefs: if cfg!(test) {
+                settings::Prefs::default()
+            } else {
+                settings::Prefs::load()
+            },
+            // Debug builds open Preferences with `GG_PREFS=<section>` for
+            // native review (general, appearance, diff, commit, rebase, keyboard).
+            folders_dialog: if cfg!(debug_assertions) {
+                std::env::var("GG_PREFS").ok().and_then(|name| {
+                    PrefSection::ALL
+                        .into_iter()
+                        .find(|section| section.label().to_lowercase().starts_with(&name))
+                        .map(FoldersDialog::new)
+                })
+            } else {
+                None
+            },
             force_push: None,
             force_push_pending: false,
             track_dialog: None,
@@ -1083,6 +1589,17 @@ impl Browser {
             screenshot_requested: false,
             #[cfg(debug_assertions)]
             open_local: std::env::var_os("GG_LOCAL_CHANGES").is_some(),
+            reopen_seen: None,
+            open_rebase: if cfg!(debug_assertions) {
+                std::env::var("GG_REBASE").ok()
+            } else {
+                None
+            },
+            open_review: if cfg!(debug_assertions) {
+                std::env::var("GG_REVIEW").ok()
+            } else {
+                None
+            },
             operation_worker: None,
             operation_repo: None,
             operation_restore_row: None,
@@ -1095,6 +1612,20 @@ impl Browser {
             rewrite_job: None,
             rewrite_refresh: None,
             commit_actions: false,
+            local_summary: None,
+            local_summary_job: None,
+            window_focused: true,
+            stash_picker: StashPicker::default(),
+            // Debug builds open search with `GG_SEARCH=<query>` for native review.
+            branch_filter: String::new(),
+            search: if cfg!(debug_assertions) {
+                std::env::var("GG_SEARCH").ok().map(|query| SearchPalette {
+                    query,
+                    ..Default::default()
+                })
+            } else {
+                None
+            },
             help_shortcuts: false,
             conflict_view: None,
             reset_confirm: None,
@@ -1121,6 +1652,9 @@ impl Browser {
             refs_width: 0.0,
             state: state::State::default(),
             pending: None,
+            watcher: None,
+            last_load: None,
+            rewrite_backup: None,
             pending_filter_edit: false,
             worker: None,
             staged: None,
@@ -1262,7 +1796,7 @@ impl Browser {
         };
         let remote = target.remote.clone();
         self.pull_rebase = Some(target);
-        self.start_fetch(ctx, Some(remote), false);
+        self.start_fetch(ctx, Some(remote), self.prefs.fetch_prune);
         if self.network.is_none() {
             self.pull_rebase = None;
         }
@@ -1415,7 +1949,7 @@ impl Browser {
         let mut submit = false;
         let mut cancel = false;
         egui::Window::new("Force push with lease")
-            .id(egui::Id::unique("force-push-lease"))
+            .id(egui::Id::unique("force-push-lease")).modal(ctx, egui::Id::unique("force-push-lease"))
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
@@ -1457,108 +1991,651 @@ impl Browser {
         }
     }
 
+    /// Apply the saved theme, density, and avatar source.
+    fn apply_prefs(&self, ctx: &egui::Context) {
+        ctx.set_theme(match self.prefs.effective_theme() {
+            settings::Theme::System => egui::ThemePreference::System,
+            settings::Theme::Light => egui::ThemePreference::Light,
+            settings::Theme::Dark => egui::ThemePreference::Dark,
+        });
+        density::set(self.prefs.density);
+        avatars::set_network(self.prefs.effective_network_avatars());
+        settings::set_reader_mode(ctx, self.prefs.reader_mode);
+        settings::set_image_layout(ctx, self.prefs.image_layout);
+        settings::set_diff_layout(ctx, self.prefs.diff_layout);
+        settings::set_diff_options(ctx, self.prefs.diff_options());
+        settings::set_diff_invisibles(ctx, self.prefs.show_invisibles);
+        settings::set_diff_wrap(ctx, self.prefs.wrap_lines);
+        settings::set_subject_guide(ctx, self.prefs.subject_guide);
+        settings::set_run_hooks(ctx, self.prefs.run_hooks);
+        ctx.set_zoom_factor(f32::from(self.prefs.zoom) / 100.0);
+        density::set_code_font(self.prefs.code_font);
+        density::set_history(
+            self.prefs.history_avatars,
+            self.prefs.history_tags,
+            self.prefs.relative_dates,
+        );
+    }
+
+    /// Save a remembered starting value when it changes. A save failure only
+    /// loses the memory for the next launch, so it is not reported.
+    fn remember(&mut self, change: impl FnOnce(&mut settings::Prefs)) {
+        let before = self.prefs.clone();
+        change(&mut self.prefs);
+        if self.prefs != before {
+            let _ = self.prefs.save();
+        }
+    }
+
+    /// Keep layout choices made outside Preferences: the details pane and
+    /// the image comparison layout chosen in the reader.
+    fn remember_layout(&mut self, ctx: &egui::Context) {
+        let details = self.details_visible;
+        let layout = settings::image_layout(ctx);
+        let diff_layout = settings::diff_layout(ctx);
+        self.remember(|prefs| {
+            prefs.details_visible = details;
+            prefs.image_layout = layout;
+            prefs.diff_layout = diff_layout;
+        });
+    }
+
+    fn open_preferences(&mut self, section: PrefSection) {
+        match &mut self.folders_dialog {
+            Some(dialog) => dialog.section = section,
+            None => {
+                let mut dialog = FoldersDialog::new(section);
+                dialog.identity = git_identity(Path::new(&self.path));
+                self.folders_dialog = Some(dialog);
+            }
+        }
+    }
+
+    /// Repository › Preferences…: a modal window whose changes apply and
+    /// save immediately.
     fn draw_folders_dialog(&mut self, ctx: &egui::Context) {
+        if self.folders_dialog.is_none() {
+            return;
+        }
+        let shortcuts = {
+            let ready = self.frame_readiness();
+            let mut list = menus::flatten(&self.menu_table(&ready))
+                .into_iter()
+                .filter(|(_, item)| !item.key.is_empty())
+                .map(|(path, item)| (format!("{path} › {}", item.label), item.key.to_string()))
+                .collect::<Vec<_>>();
+            list.extend(
+                [
+                    ("Search", "Ctrl+K"),
+                    ("Search, starting from the History filter", "Ctrl+F"),
+                    ("Commit actions", "Alt+A"),
+                    ("History: move · page", "j k / Up Down · PgUp PgDn"),
+                    ("Local Changes: stage · unstage the selected file", "S · U"),
+                    (
+                        "Reader: change · file · history · blame",
+                        "[ ] · Alt+Up/Down · H · B",
+                    ),
+                    ("Conflict blocks: choose · move", "1–4 · [ ]"),
+                    ("Close a view or popup", "Esc"),
+                ]
+                .map(|(action, key)| (action.to_string(), key.to_string())),
+            );
+            list
+        };
         let Some(dialog) = &mut self.folders_dialog else {
             return;
         };
+        // Count repositories once per folder list change, not every frame.
+        if dialog.counts.len() != self.folders.entries().len()
+            || dialog
+                .counts
+                .iter()
+                .zip(self.folders.entries())
+                .any(|((counted, _), folder)| counted != folder)
+        {
+            dialog.counts = self
+                .folders
+                .entries()
+                .iter()
+                .map(|folder| (folder.clone(), folders::repository_count(folder)))
+                .collect();
+        }
         let mut open = true;
         let mut add = None;
         let mut remove = None;
         let mut prefer = None;
+        let mut moved = None;
         let mut add_current = false;
+        let mut prefs = self.prefs.clone();
+        let mut show_shortcuts = false;
         let default_folder = self.folders.default_folder();
-        egui::Window::new("Development base folders")
-            .id(egui::Id::unique("clone-folders"))
-            .open(&mut open)
-            .collapsible(false)
-            .resizable([false, true])
-            .default_width(460.0)
-            .min_width(460.0)
-            .max_width(460.0)
-            .default_pos(ctx.content_rect().center() - egui::vec2(230.0, 160.0))
-            .show(ctx, |ui| {
-                ui.label(
-                    "Folders where you keep repositories. Clone offers them in this order, then the launch folder. The selected folder is the default.",
-                );
-                ui.add_space(4.0);
-                egui::ScrollArea::vertical()
-                    .id_salt("clone-folders-list")
-                    .max_height(180.0)
-                    .min_scrolled_height(180.0)
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        if self.folders.entries().is_empty() {
-                            ui.weak("No saved folders. Add the current folder or type one below.");
+        let offline_override = std::env::var_os("GG_OFFLINE").is_some();
+        // Modal, as in the mockup: a fixed size keeps it in place while
+        // folders come and go; Esc, a click outside, × or Close dismiss it.
+        let modal = egui::Modal::new(egui::Id::unique("preferences")).show(ctx, |ui| {
+                ui.set_width(620.0);
+                // A fixed header row: title, search, and ×.
+                ui.allocate_ui_with_layout(
+                    egui::vec2(620.0, 30.0),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                    ui.set_min_size(egui::vec2(620.0, 30.0));
+                    ui.heading("Preferences");
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("×").on_hover_text("Close (Esc)").clicked() {
+                            open = false;
                         }
-                        for (index, root) in self.folders.entries().iter().enumerate() {
-                            ui.horizontal(|ui| {
-                                let label = root.to_string_lossy().into_owned();
-                                ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
-                                    |ui| {
-                                        if ui.small_button("Remove").clicked() {
-                                            remove = Some(index);
-                                        }
-                                        if ui
-                                            .radio(root == &default_folder, "Default")
-                                            .on_hover_text(
-                                                "Start new clones in this folder at every launch",
-                                            )
-                                            .clicked()
-                                        {
-                                            prefer = Some(index);
-                                        }
-                                        let width = ui.available_width().max(0.0);
-                                        let (rect, _) = ui.allocate_exact_size(
-                                            egui::vec2(width, 18.0),
-                                            egui::Sense::hover(),
-                                        );
-                                        bounded_text::paint(
-                                            ui,
-                                            rect,
-                                            &label,
-                                            egui::FontId::proportional(12.0),
-                                            ui.visuals().text_color(),
-                                        );
-                                    },
-                                );
-                            });
+                        ui.add(
+                            egui::TextEdit::singleline(&mut dialog.search)
+                                .hint_text("Search preferences")
+                                .desired_width(220.0),
+                        );
+                    });
+                    },
+                );
+                let visible = PrefSection::ALL
+                    .into_iter()
+                    .filter(|section| section.matches(&dialog.search))
+                    .collect::<Vec<_>>();
+                if let Some(first) = visible.first()
+                    && !visible.contains(&dialog.section)
+                {
+                    dialog.section = *first;
+                }
+                ui.separator();
+                // The body has one fixed size, so adding folders or switching
+                // sections never resizes or moves the window.
+                ui.allocate_ui_with_layout(
+                    egui::vec2(620.0, 430.0),
+                    egui::Layout::left_to_right(egui::Align::Min),
+                    |ui| {
+                    ui.set_min_size(egui::vec2(620.0, 430.0));
+                    ui.set_max_height(430.0);
+                    ui.vertical(|ui| {
+                        ui.set_width(130.0);
+                        for section in PrefSection::ALL {
+                            // Sections without a match keep their slot, empty.
+                            let shown = visible.contains(&section);
+                            let response = ui.add_visible(
+                                shown,
+                                egui::Button::selectable(dialog.section == section, section.label()),
+                            );
+                            if shown && response.clicked() {
+                                dialog.section = section;
+                            }
+                        }
+                        if visible.is_empty() {
+                            ui.weak("No matching settings");
                         }
                     });
+                    ui.separator();
+                    egui::ScrollArea::vertical()
+                        .id_salt("preferences-section")
+                        .max_height(370.0)
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| ui.vertical(|ui| match dialog.section {
+                        PrefSection::General => {
+                            ui.strong("Clone folders");
+                            ui.weak(
+                                "Folders where you keep repositories. Clone starts in the preferred one and offers the others in this order, then the launch folder.",
+                            );
+                            ui.add_space(4.0);
+                            egui::ScrollArea::vertical()
+                                .id_salt("clone-folders-list")
+                                .max_height(170.0)
+                                .min_scrolled_height(170.0)
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| {
+                                    let count = self.folders.entries().len();
+                                    if count == 0 {
+                                        ui.weak("No saved folders. Add the current folder or type one below.");
+                                    }
+                                    for (index, root) in self.folders.entries().iter().enumerate() {
+                                        ui.horizontal(|ui| {
+                                            if ui
+                                                .radio(root == &default_folder, "")
+                                                .on_hover_text("Preferred: Clone starts here")
+                                                .clicked()
+                                            {
+                                                prefer = Some(index);
+                                            }
+                                            ui.with_layout(
+                                                egui::Layout::right_to_left(egui::Align::Center),
+                                                |ui| {
+                                                    if ui.small_button("Remove").clicked() {
+                                                        remove = Some(index);
+                                                    }
+                                                    if ui
+                                                        .add_enabled(
+                                                            index + 1 < count,
+                                                            egui::Button::new(
+                                                                phosphor::icon(phosphor::ARROW_DOWN).size(11.0),
+                                                            )
+                                                            .frame_when_inactive(false),
+                                                        )
+                                                        .on_hover_text("Move down")
+                                                        .clicked()
+                                                    {
+                                                        moved = Some((index, false));
+                                                    }
+                                                    if ui
+                                                        .add_enabled(
+                                                            index > 0,
+                                                            egui::Button::new(
+                                                                phosphor::icon(phosphor::ARROW_UP).size(11.0),
+                                                            )
+                                                            .frame_when_inactive(false),
+                                                        )
+                                                        .on_hover_text("Move up")
+                                                        .clicked()
+                                                    {
+                                                        moved = Some((index, true));
+                                                    }
+                                                    match dialog.counts.get(index).and_then(|(_, n)| *n) {
+                                                        Some(n) => {
+                                                            ui.weak(format!(
+                                                                "{n} repositor{}",
+                                                                if n == 1 { "y" } else { "ies" }
+                                                            ));
+                                                        }
+                                                        None => {
+                                                            ui.colored_label(
+                                                                ui.visuals().warn_fg_color,
+                                                                "missing",
+                                                            )
+                                                            .on_hover_text("This folder does not exist.");
+                                                        }
+                                                    }
+                                                    let width = ui.available_width().max(0.0);
+                                                    let (rect, response) = ui.allocate_exact_size(
+                                                        egui::vec2(width, 18.0),
+                                                        egui::Sense::hover(),
+                                                    );
+                                                    let label = root.to_string_lossy().into_owned();
+                                                    bounded_text::paint(
+                                                        ui,
+                                                        rect,
+                                                        &label,
+                                                        egui::FontId::proportional(12.0),
+                                                        ui.visuals().text_color(),
+                                                    );
+                                                    response.on_hover_text(label);
+                                                },
+                                            );
+                                        });
+                                    }
+                                });
+                            ui.add_space(4.0);
+                            ui.horizontal(|ui| {
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut dialog.new_root)
+                                        .hint_text("Absolute folder")
+                                        .desired_width((ui.available_width() - 84.0).max(120.0)),
+                                );
+                                if ui
+                                    .button("Browse…")
+                                    .on_hover_text("Choose a folder with the desktop dialog")
+                                    .clicked()
+                                    && let Some(path) = folder_picker::pick_folder(
+                                        "Clone folder",
+                                        Some(Path::new(dialog.new_root.trim())),
+                                    )
+                                {
+                                    dialog.new_root = path.to_string_lossy().into_owned();
+                                }
+                            });
+                            ui.horizontal(|ui| {
+                                if ui.button("Add folder").clicked() {
+                                    add = Some(dialog.new_root.clone());
+                                }
+                                if ui.button("Add current").clicked() {
+                                    add_current = true;
+                                }
+                            });
+                            if let Some(error) = &dialog.error {
+                                ui.colored_label(ui.visuals().error_fg_color, error);
+                            }
+                            ui.checkbox(
+                                &mut prefs.clone_named_after_repo,
+                                "Name the clone after the repository (e.g. ~/dev/gg)",
+                            );
+                            ui.separator();
+                            ui.strong("Launch");
+                            ui.checkbox(
+                                &mut prefs.reopen_last,
+                                "Reopen the last repository when launched outside one",
+                            );
+                            ui.weak("Without a path gg opens the current folder; when that is not a repository, the most recent one opens instead.");
+                            ui.separator();
+                            ui.strong("Fetch");
+                            ui.checkbox(
+                                &mut prefs.fetch_prune,
+                                "Remove remote-tracking branches deleted on the remote",
+                            );
+                            ui.separator();
+                            ui.strong("Editor");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut prefs.editor)
+                                    .hint_text("System default app")
+                                    .desired_width(320.0),
+                            );
+                            ui.weak(
+                                "Command for Open in editor; {file} is the file's path (added at the end when absent). Empty opens the file with the system's default app.",
+                            );
+                            ui.separator();
+                            ui.strong("Dialog defaults");
+                            ui.weak(
+                                "Forms start with these choices and remember the last one you submitted; each still asks.",
+                            );
+                            ui.checkbox(
+                                &mut prefs.stash_include_untracked,
+                                "Stash: include untracked files",
+                            );
+                            ui.checkbox(
+                                &mut prefs.stash_keep_index,
+                                "Stash: keep staged changes in the index",
+                            );
+                            ui.checkbox(&mut prefs.merge_no_ff, "Merge: always create a merge commit");
+                            ui.checkbox(
+                                &mut prefs.branch_switch,
+                                "New branch: switch after creation",
+                            );
+                        }
+                        PrefSection::Appearance => {
+                            egui::Grid::new("prefs-appearance")
+                                .num_columns(2)
+                                .spacing([16.0, 10.0])
+                                .show(ui, |ui| {
+                                    ui.label("Theme");
+                                    ui.horizontal(|ui| {
+                                        for theme in settings::Theme::ALL {
+                                            ui.selectable_value(&mut prefs.theme, theme, theme.label());
+                                        }
+                                    });
+                                    ui.end_row();
+                                    ui.label("Density");
+                                    ui.horizontal(|ui| {
+                                        ui.selectable_value(&mut prefs.density, settings::Density::Compact, "Compact")
+                                            .on_hover_text("22 px rows");
+                                        ui.selectable_value(&mut prefs.density, settings::Density::Comfortable, "Comfortable")
+                                            .on_hover_text("28 px rows");
+                                    });
+                                    ui.end_row();
+                                    ui.label("Interface zoom");
+                                    egui::ComboBox::from_id_salt("prefs-zoom")
+                                        .selected_text(format!("{}%", prefs.zoom))
+                                        .show_ui(ui, |ui| {
+                                            for zoom in settings::ZOOMS {
+                                                ui.selectable_value(&mut prefs.zoom, zoom, format!("{zoom}%"));
+                                            }
+                                        });
+                                    ui.end_row();
+                                    ui.label("History");
+                                    ui.vertical(|ui| {
+                                        ui.checkbox(&mut prefs.history_avatars, "Show avatars");
+                                        ui.add_enabled(
+                                            !offline_override && prefs.history_avatars,
+                                            egui::Checkbox::new(
+                                                &mut prefs.network_avatars,
+                                                "Load avatars from the network",
+                                            ),
+                                        )
+                                        .on_hover_text("Off: cached avatars and initials only.")
+                                        .on_disabled_hover_text(if offline_override {
+                                            "GG_OFFLINE is set for this launch."
+                                        } else {
+                                            "Avatars are hidden."
+                                        });
+                                        ui.checkbox(&mut prefs.history_tags, "Show tags in rows");
+                                        ui.checkbox(&mut prefs.relative_dates, "Relative dates");
+                                    });
+                                    ui.end_row();
+                                    ui.label("Code font size");
+                                    let px = |tenths: u16| format!("{} px", f32::from(tenths) / 10.0);
+                                    egui::ComboBox::from_id_salt("prefs-code-font")
+                                        .selected_text(px(prefs.code_font))
+                                        .show_ui(ui, |ui| {
+                                            for size in settings::CODE_FONTS {
+                                                ui.selectable_value(&mut prefs.code_font, size, px(size));
+                                            }
+                                        });
+                                    ui.end_row();
+                                });
+                        }
+                        PrefSection::Diff => {
+                            egui::Grid::new("prefs-diff")
+                                .num_columns(2)
+                                .spacing([16.0, 10.0])
+                                .show(ui, |ui| {
+                                    ui.label("Default layout");
+                                    ui.horizontal(|ui| {
+                                        ui.selectable_value(&mut prefs.diff_layout, settings::DiffLayout::Inline, "Inline");
+                                        ui.selectable_value(
+                                            &mut prefs.diff_layout,
+                                            settings::DiffLayout::SideBySide,
+                                            "Side by side",
+                                        );
+                                    })
+                                    .response
+                                    .on_hover_text("Also View › Inline diff / Side-by-side diff and the reader's toggle.");
+                                    ui.end_row();
+                                    ui.label("Context lines");
+                                    ui.horizontal(|ui| {
+                                        for lines in settings::DIFF_CONTEXTS {
+                                            ui.selectable_value(&mut prefs.diff_context, lines, lines.to_string());
+                                        }
+                                    })
+                                    .response
+                                    .on_hover_text("Unchanged lines around each change in Review and Local Changes.");
+                                    ui.end_row();
+                                    ui.label("Whitespace");
+                                    egui::ComboBox::from_id_salt("prefs-diff-whitespace")
+                                        .selected_text(
+                                            settings::WHITESPACE
+                                                .iter()
+                                                .find(|(choice, _)| *choice == prefs.diff_whitespace)
+                                                .map_or("", |(_, label)| *label),
+                                        )
+                                        .show_ui(ui, |ui| {
+                                            for (choice, label) in settings::WHITESPACE {
+                                                ui.selectable_value(&mut prefs.diff_whitespace, choice, label);
+                                            }
+                                        })
+                                        .response
+                                        .on_hover_text("Hunk and line staging needs Show all changes; whole files still stage.");
+                                    ui.end_row();
+                                    ui.label("Display");
+                                    ui.vertical(|ui| {
+                                        ui.checkbox(&mut prefs.wrap_lines, "Wrap long lines")
+                                            .on_hover_text("Long lines continue on the next rows instead of scrolling sideways.");
+                                        ui.checkbox(&mut prefs.show_invisibles, "Show invisible characters on changed lines")
+                                            .on_hover_text("Tabs as → and trailing spaces as ·, dimmed, on added and removed lines.");
+                                    });
+                                    ui.end_row();
+                                });
+                            ui.separator();
+                            ui.strong("Open files in");
+                            ui.horizontal(|ui| {
+                                ui.radio_value(
+                                    &mut prefs.reader_mode,
+                                    settings::ReaderMode::Diff,
+                                    "Diff",
+                                );
+                                ui.radio_value(
+                                    &mut prefs.reader_mode,
+                                    settings::ReaderMode::Full,
+                                    "Full file",
+                                );
+                            });
+                            ui.weak("Each newly opened reader starts here; D and F still switch.");
+                            ui.separator();
+                            ui.strong("Compare images");
+                            ui.horizontal(|ui| {
+                                for layout in settings::ImageLayout::ALL {
+                                    ui.radio_value(&mut prefs.image_layout, layout, layout.label());
+                                }
+                            });
+                            ui.weak("Also remembered from the last choice in the reader.");
+                        }
+                        PrefSection::Commit => {
+                            ui.strong("Identity");
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    dialog
+                                        .identity
+                                        .as_deref()
+                                        .map_or("No user.name or user.email in Git config".to_string(), |identity| {
+                                            format!("From Git config: {identity}")
+                                        }),
+                                );
+                            });
+                            ui.weak("Set with git config user.name and user.email.");
+                            ui.separator();
+                            ui.strong("Subject length guide");
+                            ui.horizontal(|ui| {
+                                for guide in settings::SUBJECT_GUIDES {
+                                    let label = if guide == 0 {
+                                        "Off".to_string()
+                                    } else {
+                                        format!("{guide} characters")
+                                    };
+                                    ui.selectable_value(&mut prefs.subject_guide, guide, label);
+                                }
+                            });
+                            ui.weak("The commit box counts the subject and warns past the guide.");
+                            ui.separator();
+                            ui.strong("Hooks");
+                            ui.checkbox(
+                                &mut prefs.run_hooks,
+                                "Run commit hooks; keep the draft if a hook fails",
+                            );
+                            ui.weak("Off skips the pre-commit and commit-msg hooks, like git commit --no-verify.");
+                            ui.separator();
+                            ui.strong("Sign tags");
+                            ui.checkbox(&mut prefs.sign_tags, "Create tag starts with Sign checked");
+                            ui.separator();
+                            ui.strong("Sign commits");
+                            for sign in settings::SignCommits::ALL {
+                                ui.radio_value(&mut prefs.sign_commits, sign, sign.label());
+                            }
+                            ui.weak(
+                                "Sets the Sign checkbox when Local Changes opens; it can still be changed per commit.",
+                            );
+                        }
+                        PrefSection::Rebase => {
+                            ui.strong("Rebase");
+                            ui.checkbox(
+                                &mut prefs.rebase_autostash,
+                                "Stash working changes first",
+                            );
+                            ui.weak(
+                                "Rebase and interactive rebase dialogs start with this choice; each rebase still asks.",
+                            );
+                            ui.checkbox(&mut prefs.confirm_destructive, "Confirm before Drop and Reset");
+                            ui.weak("Off: Commit › Drop… runs without the plan, and Reset current branch to here… resets Mixed (never Hard). Both still save a backup.");
+                            ui.separator();
+                            ui.strong("Pull strategy");
+                            ui.horizontal(|ui| {
+                                for strategy in settings::PullStrategy::ALL {
+                                    ui.selectable_value(&mut prefs.pull_strategy, strategy, strategy.label());
+                                }
+                            });
+                            ui.weak("Pull fetches the upstream, then rebases onto it, merges it, or only fast-forwards.");
+                            ui.separator();
+                            ui.strong("Push");
+                            ui.checkbox(
+                                &mut prefs.offer_force_lease,
+                                "Offer force-with-lease after a rewrite",
+                            );
+                            ui.weak("After rewriting a published branch, the status line offers Push with force-with-lease….");
+                            ui.separator();
+                            ui.strong("Keep private backups");
+                            ui.horizontal(|ui| {
+                                for days in settings::BACKUP_DAYS {
+                                    let label = if days == 0 {
+                                        "Forever".to_string()
+                                    } else {
+                                        format!("{days} days")
+                                    };
+                                    ui.selectable_value(&mut prefs.backup_days, days, label);
+                                }
+                            });
+                            ui.weak("Older backups are deleted when a repository opens.");
+                            ui.separator();
+                            ui.strong("Recovery");
+                            ui.weak(
+                                "Every rewrite creates a private backup ref first. Repository › Recovery… lists them with the reflog.",
+                            );
+                        }
+                        PrefSection::Keyboard => {
+                            ui.weak(
+                                "Single letters act on the focused list and never fire while typing; Ctrl chords are global.",
+                            );
+                            egui::Grid::new("prefs-keyboard")
+                                .num_columns(2)
+                                .striped(true)
+                                .spacing([16.0, 4.0])
+                                .show(ui, |ui| {
+                                    for (action, key) in &shortcuts {
+                                        ui.label(action);
+                                        ui.monospace(key);
+                                        ui.end_row();
+                                    }
+                                });
+                            if ui.button("Show keyboard shortcuts window…").clicked() {
+                                show_shortcuts = true;
+                            }
+                        }
+                    }));
+                    },
+                );
                 ui.add_space(4.0);
+                ui.separator();
                 ui.horizontal(|ui| {
+                    let saved = settings::path()
+                        .map(|path| path.display().to_string())
+                        .unwrap_or_else(|| "no configuration folder".into());
                     ui.add(
-                        egui::TextEdit::singleline(&mut dialog.new_root)
-                            .hint_text("Absolute folder")
-                            .desired_width((ui.available_width() - 84.0).max(120.0)),
-                    );
-                    if ui
-                        .button("Browse…")
-                        .on_hover_text("Choose a folder with the desktop dialog")
-                        .clicked()
-                        && let Some(path) = folder_picker::pick_folder(
-                            "Development base folder",
-                            Some(Path::new(dialog.new_root.trim())),
+                        egui::Label::new(
+                            egui::RichText::new(format!("Changes apply now · saved to {saved}"))
+                                .small()
+                                .weak(),
                         )
-                    {
-                        dialog.new_root = path.to_string_lossy().into_owned();
-                    }
+                        .truncate(),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("Close").clicked() {
+                            open = false;
+                        }
+                    });
                 });
-                ui.horizontal(|ui| {
-                    if ui.button("Add folder").clicked() {
-                        add = Some(dialog.new_root.clone());
-                    }
-                    if ui.button("Add current").clicked() {
-                        add_current = true;
-                    }
-                });
-                if let Some(error) = &dialog.error {
-                    ui.colored_label(ui.visuals().error_fg_color, error);
-                }
-                ui.weak("Changes are saved for the next launch.");
             });
+        if modal.should_close() {
+            open = false;
+        }
+        if show_shortcuts {
+            // The shortcuts window would sit under the modal: close it first.
+            open = false;
+            self.help_shortcuts = true;
+        }
+        if prefs != self.prefs {
+            self.prefs = prefs;
+            self.apply_prefs(ctx);
+            let error = self.prefs.save().err();
+            if let Some(dialog) = &mut self.folders_dialog {
+                dialog.error = error;
+            }
+        }
         if let Some(index) = prefer {
             let error = self.prefer_clone_folder(index);
+            if let Some(dialog) = &mut self.folders_dialog {
+                dialog.error = error;
+            }
+        }
+        if let Some((index, up)) = moved
+            && self.folders.move_entry(index, up)
+        {
+            let error = self.folders.save().err();
             if let Some(dialog) = &mut self.folders_dialog {
                 dialog.error = error;
             }
@@ -1573,15 +2650,15 @@ impl Browser {
                     .unwrap_or_else(|| folders::starting_folder().to_string_lossy().into_owned());
                 match self.folders.add(&value) {
                     Ok(true) => self.folders.save().err(),
-                    Ok(false) => Some("That folder is already in the list.".into()),
+                    Ok(false) => Some("Already in the list.".into()),
                     Err(error) => Some(error),
                 }
             };
             if let Some(dialog) = &mut self.folders_dialog {
-                dialog.error = error;
-                if adding {
+                if adding && error.is_none() {
                     dialog.new_root.clear();
                 }
+                dialog.error = error;
             }
         }
         if !open {
@@ -1597,7 +2674,7 @@ impl Browser {
         let mut submit = false;
         let mut cancel = false;
         egui::Window::new("Stash changes and switch")
-            .id(egui::Id::unique("stash-switch"))
+            .id(egui::Id::unique("stash-switch")).modal(ctx, egui::Id::unique("stash-switch"))
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
@@ -1631,6 +2708,7 @@ impl Browser {
         if submit {
             let target = dialog.target.clone();
             let include_untracked = dialog.include_untracked;
+            self.remember(|prefs| prefs.stash_include_untracked = include_untracked);
             self.stash_switch = None;
             self.pending_switch = Some(target.clone());
             self.start_branch_stashing(ctx, target, include_untracked);
@@ -1716,7 +2794,18 @@ impl Browser {
                 self.load(ctx);
                 if let Some(pull) = pull {
                     self.network_notice = None;
-                    if let Err(error) = self.start_rebase(ctx, &pull.upstream, false) {
+                    let started = match self.prefs.pull_strategy {
+                        settings::PullStrategy::Rebase => {
+                            self.start_rebase(ctx, &pull.upstream, false)
+                        }
+                        settings::PullStrategy::Merge => {
+                            self.start_merge(ctx, &pull.upstream, false)
+                        }
+                        settings::PullStrategy::FastForward => {
+                            self.start_fast_forward(ctx, &pull.upstream)
+                        }
+                    };
+                    if let Err(error) = started {
                         self.set_outcome(OutcomeSeverity::Error, error, None, None);
                     }
                 }
@@ -1923,6 +3012,1855 @@ impl Browser {
         if let Some(working) = &mut self.working {
             working.refresh(ctx);
         }
+        self.refresh_local_summary(ctx);
+    }
+
+    /// Runs a toolbar or search command. Readiness is checked by the caller,
+    /// which shows the same disabled reason as the menus.
+    fn run_frame_command(
+        &mut self,
+        ctx: &egui::Context,
+        command: FrameCommand,
+        go_local: &mut bool,
+        go_history: &mut bool,
+    ) {
+        self.refresh_before_command(ctx);
+        match command {
+            FrameCommand::Fetch => self.start_fetch(ctx, None, self.prefs.fetch_prune),
+            FrameCommand::Pull => self.start_pull_rebase(ctx),
+            FrameCommand::Push => self.start_push(ctx),
+            FrameCommand::ForcePush => {
+                if let Some(target) = self.force_push_target() {
+                    self.force_push = Some(target);
+                }
+            }
+            FrameCommand::NewBranch => self.open_new_branch(),
+            FrameCommand::NewTag => self.open_new_tag(),
+            FrameCommand::TrackBranch => self.track_dialog = Some(self.default_track_branch()),
+            FrameCommand::Merge => self.open_merge_dialog(),
+            FrameCommand::RebaseOnto => {
+                self.rebase_dialog = Some(RebaseDialog {
+                    reference: String::new(),
+                    autostash: self.prefs.rebase_autostash,
+                    error: None,
+                });
+            }
+            FrameCommand::Stash => self.open_stash_dialog(),
+            FrameCommand::Stashes => self.open_stash_window(),
+            FrameCommand::Rewrite => {
+                let start = self
+                    .local_summary
+                    .as_ref()
+                    .and_then(|summary| summary.branch_start.clone());
+                if let Some((start, _)) = start
+                    && let Err(error) = self.open_rewrite_dialog(&start)
+                {
+                    self.mutation_error = Some(error);
+                }
+            }
+            FrameCommand::RewriteSelected => {
+                if let Some(id) = self.state.selected.clone() {
+                    self.run_commit_action(ctx, id, CommitAction::Rewrite);
+                }
+            }
+            FrameCommand::Recovery => self.open_recovery_window(),
+            FrameCommand::Worktrees => self.open_worktrees(ctx),
+            FrameCommand::Open => self.edit_path = true,
+            FrameCommand::Clone => {
+                let mut dialog =
+                    CloneDialog::from_url(clipboard::repository_url(), self.clone_start_folder());
+                if !self.prefs.clone_named_after_repo {
+                    dialog.name_from_url = false;
+                    dialog.name.clear();
+                }
+                self.clone_dialog = Some(dialog);
+            }
+            FrameCommand::Preferences => {
+                let section = self
+                    .folders_dialog
+                    .as_ref()
+                    .map_or(PrefSection::General, |dialog| dialog.section);
+                self.open_preferences(section);
+            }
+            FrameCommand::Shortcuts => self.help_shortcuts = true,
+            FrameCommand::LocalChanges => *go_local = true,
+            FrameCommand::History => *go_history = true,
+            FrameCommand::ToggleRefs => self.refs_visible = !self.refs_visible,
+            FrameCommand::Filter(query) => {
+                self.state.query = query;
+                self.filter_changed();
+                *go_history = true;
+            }
+            FrameCommand::Inspect(commit) => {
+                self.jump_to_ref(commit);
+                *go_history = true;
+            }
+            FrameCommand::OpenFile(file) => self.open_file(ctx, file),
+            FrameCommand::OpenRecent(path) => {
+                self.path = path.to_string_lossy().into_owned();
+                self.load(ctx);
+            }
+            FrameCommand::Backups => {
+                self.open_recovery(ctx, return_location::RecoverySource::Backups)
+            }
+            FrameCommand::Reflog => {
+                self.open_recovery(ctx, return_location::RecoverySource::Reflog)
+            }
+            FrameCommand::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+            FrameCommand::SwitchTo => egui::Popup::open_id(ctx, branch_switcher_popup_id()),
+            FrameCommand::SetUpstream => {
+                if let Some(branch) = self.current_branch() {
+                    let upstream = self
+                        .state
+                        .refs
+                        .current_tracking()
+                        .map(|tracking| tracking.upstream.clone())
+                        .unwrap_or_default();
+                    self.upstream_dialog = Some(UpstreamDialog {
+                        branch,
+                        upstream,
+                        error: None,
+                    });
+                }
+            }
+            FrameCommand::RenameBranch => {
+                if let Some(branch) = self.current_branch() {
+                    self.rename_dialog = Some(RenameDialog {
+                        new: branch.clone(),
+                        old: branch,
+                        error: None,
+                    });
+                }
+            }
+            FrameCommand::DeleteBranch => {
+                let current = self.current_branch();
+                if let Some(name) = self.state.refs.items.iter().find_map(|item| {
+                    (item.kind == gg_engine::refs::RefKind::Branch
+                        && Some(&item.name) != current.as_ref())
+                    .then(|| item.name.clone())
+                }) {
+                    self.delete_pick = Some(DeletePick { name });
+                }
+            }
+            FrameCommand::ReviewSelected => self.on_selected(ctx, CommitAction::Review),
+            FrameCommand::CompareHead => self.on_selected(ctx, CommitAction::Compare),
+            FrameCommand::CherryPick => self.on_selected(ctx, CommitAction::CherryPick),
+            FrameCommand::Revert => self.on_selected(ctx, CommitAction::Revert),
+            FrameCommand::ResetHere => {
+                self.on_selected(ctx, CommitAction::Reset(gg_engine::reset::Mode::Mixed));
+            }
+            FrameCommand::CopyId => {
+                if let Some(id) = &self.state.selected {
+                    ctx.copy_text(id.clone());
+                }
+            }
+            FrameCommand::RebasePreset(action) => self.rebase_preset(ctx, action),
+            FrameCommand::StageAll => self.change_all(ctx, gg_git::worktree_changes::stage_all),
+            FrameCommand::UnstageAll => {
+                self.change_all(ctx, gg_git::worktree_changes::unstage_all);
+            }
+            FrameCommand::DiscardAll => self.discard_confirm = true,
+            FrameCommand::CommitNow => {
+                *go_local = false;
+                self.open_working(ctx);
+                if let Some(working) = &mut self.working {
+                    working.commit_now(ctx);
+                }
+            }
+            FrameCommand::AmendHead => {
+                self.open_working(ctx);
+                if let Some(working) = &mut self.working
+                    && let Err(error) = working.start_amend(ctx)
+                {
+                    self.mutation_error = Some(error);
+                }
+            }
+            FrameCommand::ResolveConflicts => self.open_conflict_view(ctx),
+            FrameCommand::ToggleDetails => {
+                if self.narrow_details_mode() {
+                    self.narrow_details = !self.narrow_details;
+                } else {
+                    self.details_visible = !self.details_visible;
+                }
+            }
+            FrameCommand::SetDensity(density) => {
+                self.prefs.density = density;
+                self.save_prefs(ctx);
+            }
+            FrameCommand::SetDiffLayout(layout) => {
+                settings::set_diff_layout(ctx, layout);
+                self.remember(|prefs| prefs.diff_layout = layout);
+            }
+            FrameCommand::SetTheme(theme) => {
+                self.prefs.theme = theme;
+                self.save_prefs(ctx);
+            }
+            FrameCommand::Documentation => {
+                ctx.open_url(egui::OpenUrl::new_tab("https://github.com/baol/gg#readme"));
+            }
+            FrameCommand::About => self.about_open = true,
+            FrameCommand::Unavailable => {}
+        }
+    }
+
+    /// Menu shortcuts, read before any view so Ctrl+Shift chords win over
+    /// their Ctrl twins (Ctrl+Shift+F over the filter's Ctrl+F). Each runs
+    /// only when its menu item is enabled.
+    fn menu_shortcuts(&mut self, ctx: &egui::Context) {
+        if !crate::navigation::available(ctx) {
+            return;
+        }
+        let shift = egui::Modifiers::COMMAND | egui::Modifiers::SHIFT;
+        let typing = ctx.text_edit_focused();
+        let chords = [
+            (shift, egui::Key::F, FrameCommand::Fetch),
+            (shift, egui::Key::L, FrameCommand::Pull),
+            (shift, egui::Key::P, FrameCommand::Push),
+            (shift, egui::Key::B, FrameCommand::SwitchTo),
+            (shift, egui::Key::Z, FrameCommand::Stash),
+            (shift, egui::Key::S, FrameCommand::StageAll),
+            (shift, egui::Key::U, FrameCommand::UnstageAll),
+            (egui::Modifiers::COMMAND, egui::Key::O, FrameCommand::Open),
+            (
+                egui::Modifiers::COMMAND,
+                egui::Key::B,
+                FrameCommand::NewBranch,
+            ),
+            (egui::Modifiers::COMMAND, egui::Key::Q, FrameCommand::Quit),
+            (
+                egui::Modifiers::COMMAND,
+                egui::Key::R,
+                FrameCommand::RebasePreset(gg_engine::rewrite::Action::Reword),
+            ),
+        ];
+        let mut chosen = None;
+        for (modifiers, key, command) in chords {
+            if chosen.is_none() && ctx.input_mut(|i| i.consume_key(modifiers, key)) {
+                chosen = Some(command);
+            }
+        }
+        if chosen.is_none() && !typing {
+            if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::F2)) {
+                chosen = Some(FrameCommand::RenameBranch);
+            } else if !egui::Popup::is_any_open(ctx)
+                && self.working.is_none()
+                && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Delete))
+            {
+                // Del deletes a branch from History; popups and Local Changes
+                // keep the key for their own lists.
+                chosen = Some(FrameCommand::DeleteBranch);
+            } else if ctx
+                .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Questionmark))
+            {
+                chosen = Some(FrameCommand::Shortcuts);
+            }
+        }
+        let Some(command) = chosen else {
+            return;
+        };
+        let ready = self.frame_readiness();
+        let enabled = menus::flatten(&self.menu_table(&ready))
+            .into_iter()
+            .any(|(_, item)| item.command == command && item.disabled.is_none());
+        if enabled {
+            let (mut local, mut history) = (false, false);
+            self.run_frame_command(ctx, command, &mut local, &mut history);
+            if local {
+                self.open_working(ctx);
+            }
+        }
+    }
+
+    /// Dialogs opened from the Branch, Changes, and Help menus.
+    fn draw_menu_dialogs(&mut self, ctx: &egui::Context) {
+        let path = self.stash_path();
+        let mut reload = false;
+        if let Some(dialog) = &mut self.rename_dialog {
+            let mut open = true;
+            let mut cancel = false;
+            let mut submit = false;
+            egui::Window::new("Rename branch")
+                .id(egui::Id::unique("rename-branch"))
+                .modal(ctx, egui::Id::unique("rename-branch"))
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(false)
+                .default_pos(ctx.content_rect().center())
+                .pivot(egui::Align2::CENTER_CENTER)
+                .show(ctx, |ui| {
+                    ui.label(format!("Rename {} to:", dialog.old));
+                    let field =
+                        ui.add(egui::TextEdit::singleline(&mut dialog.new).desired_width(320.0));
+                    submit |= field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    ui.weak("The upstream setting moves with the branch.");
+                    if let Some(error) = &dialog.error {
+                        ui.colored_label(ui.visuals().error_fg_color, error);
+                    }
+                    ui.horizontal(|ui| {
+                        submit |= ui
+                            .add_enabled(
+                                !dialog.new.trim().is_empty() && dialog.new.trim() != dialog.old,
+                                egui::Button::new("Rename"),
+                            )
+                            .clicked();
+                        cancel |= ui.button("Cancel").clicked();
+                    });
+                });
+            if cancel {
+                open = false;
+            }
+            if submit && let Some(path) = &path {
+                match gg_git::branch::rename(path, &dialog.old, dialog.new.trim()) {
+                    Ok(_) => {
+                        open = false;
+                        reload = true;
+                    }
+                    Err(error) => dialog.error = Some(error),
+                }
+            }
+            if !open {
+                self.rename_dialog = None;
+            }
+        }
+        if let Some(dialog) = &mut self.upstream_dialog {
+            let mut open = true;
+            let mut cancel = false;
+            let mut submit = false;
+            let remotes = self
+                .state
+                .refs
+                .items
+                .iter()
+                .filter(|item| item.kind == gg_engine::refs::RefKind::Remote)
+                .map(|item| item.name.clone())
+                .collect::<Vec<_>>();
+            egui::Window::new("Set upstream")
+                .id(egui::Id::unique("set-upstream"))
+                .modal(ctx, egui::Id::unique("set-upstream"))
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(false)
+                .default_pos(ctx.content_rect().center())
+                .pivot(egui::Align2::CENTER_CENTER)
+                .show(ctx, |ui| {
+                    ui.label(format!("Upstream for {}:", dialog.branch));
+                    egui::ComboBox::from_id_salt("upstream-choice")
+                        .width(320.0)
+                        .selected_text(if dialog.upstream.is_empty() {
+                            "None".to_string()
+                        } else {
+                            dialog.upstream.clone()
+                        })
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut dialog.upstream, String::new(), "None");
+                            for name in &remotes {
+                                ui.selectable_value(&mut dialog.upstream, name.clone(), name);
+                            }
+                        });
+                    ui.weak("Pull, push, and the ahead/behind counts follow the upstream.");
+                    if let Some(error) = &dialog.error {
+                        ui.colored_label(ui.visuals().error_fg_color, error);
+                    }
+                    ui.horizontal(|ui| {
+                        submit |= ui.button("Set upstream").clicked();
+                        cancel |= ui.button("Cancel").clicked();
+                    });
+                });
+            if cancel {
+                open = false;
+            }
+            if submit && let Some(path) = &path {
+                let result = if dialog.upstream.is_empty() {
+                    gg_git::branch::unset_upstream(path, &dialog.branch)
+                } else {
+                    gg_git::branch::set_upstream(path, &dialog.branch, &dialog.upstream)
+                };
+                match result {
+                    Ok(_) => {
+                        open = false;
+                        reload = true;
+                    }
+                    Err(error) => dialog.error = Some(error),
+                }
+            }
+            if !open {
+                self.upstream_dialog = None;
+            }
+        }
+        if let Some(pick) = &mut self.delete_pick {
+            let mut open = true;
+            let mut cancel = false;
+            let mut next = false;
+            let current = self
+                .state
+                .refs
+                .head
+                .as_ref()
+                .and_then(|head| head.name.as_deref())
+                .map(|name| name.strip_prefix("refs/heads/").unwrap_or(name).to_string());
+            let branches = self
+                .state
+                .refs
+                .items
+                .iter()
+                .filter(|item| {
+                    item.kind == gg_engine::refs::RefKind::Branch
+                        && Some(&item.name) != current.as_ref()
+                })
+                .map(|item| item.name.clone())
+                .collect::<Vec<_>>();
+            egui::Window::new("Delete branch")
+                .id(egui::Id::unique("delete-branch-pick"))
+                .modal(ctx, egui::Id::unique("delete-branch-pick"))
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(false)
+                .default_pos(ctx.content_rect().center())
+                .pivot(egui::Align2::CENTER_CENTER)
+                .show(ctx, |ui| {
+                    ui.label("Local branch to delete:");
+                    egui::ComboBox::from_id_salt("delete-branch-choice")
+                        .width(320.0)
+                        .selected_text(pick.name.clone())
+                        .show_ui(ui, |ui| {
+                            for name in &branches {
+                                ui.selectable_value(&mut pick.name, name.clone(), name);
+                            }
+                        });
+                    ui.weak("The current branch cannot be deleted. The next step confirms.");
+                    ui.horizontal(|ui| {
+                        next |= ui.button("Delete…").clicked();
+                        cancel |= ui.button("Cancel").clicked();
+                    });
+                });
+            if cancel {
+                open = false;
+            }
+            if next {
+                self.branch_delete = Some(BranchDeleteDialog {
+                    name: pick.name.clone(),
+                    error: None,
+                });
+                open = false;
+            }
+            if !open {
+                self.delete_pick = None;
+            }
+        }
+        if self.discard_confirm {
+            let mut open = true;
+            let mut cancel = false;
+            let mut confirm = false;
+            egui::Window::new("Discard all changes")
+                .id(egui::Id::unique("discard-all"))
+                .modal(ctx, egui::Id::unique("discard-all"))
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(false)
+                .default_pos(ctx.content_rect().center())
+                .pivot(egui::Align2::CENTER_CENTER)
+                .show(ctx, |ui| {
+                    ui.label("Restore every tracked file, staged and unstaged, to HEAD?");
+                    ui.colored_label(
+                        ui.visuals().warn_fg_color,
+                        "This cannot be undone. Untracked files are kept.",
+                    );
+                    ui.horizontal(|ui| {
+                        confirm |= ui
+                            .button(
+                                egui::RichText::new("Discard all")
+                                    .color(ui.visuals().error_fg_color),
+                            )
+                            .clicked();
+                        cancel |= ui.button("Cancel").clicked();
+                    });
+                });
+            if cancel {
+                open = false;
+            }
+            if confirm {
+                self.discard_confirm = false;
+                self.change_all(ctx, gg_git::worktree_changes::discard_all);
+            } else if !open {
+                self.discard_confirm = false;
+            }
+        }
+        if self.about_open {
+            let mut open = true;
+            egui::Window::new("About gg")
+                .id(egui::Id::unique("about-gg"))
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(false)
+                .default_pos(ctx.content_rect().center())
+                .pivot(egui::Align2::CENTER_CENTER)
+                .show(ctx, |ui| {
+                    let about = branding::about();
+                    ui.set_max_width(320.0);
+                    ui.vertical_centered(|ui| {
+                        branding::logo(ui, &mut self.about_logo, 96.0);
+                        ui.heading("gg · good git");
+                        ui.weak(format!("Version {}", about.version));
+                    });
+                    ui.add_space(8.0);
+                    egui::Grid::new("about-gg-facts")
+                        .num_columns(2)
+                        .spacing([12.0, 4.0])
+                        .show(ui, |ui| {
+                            ui.weak("Author");
+                            ui.label(about.authors.join(", "));
+                            ui.end_row();
+                            ui.weak("License");
+                            ui.hyperlink_to(
+                                about.license,
+                                "https://www.apache.org/licenses/LICENSE-2.0",
+                            );
+                            ui.end_row();
+                            ui.weak("Source");
+                            ui.hyperlink_to("github.com/baol/gg", "https://github.com/baol/gg");
+                            ui.end_row();
+                        });
+                    ui.add_space(8.0);
+                    ui.add(egui::Label::new(egui::RichText::new(about.note).weak()).wrap());
+                });
+            self.about_open = open;
+        }
+        if reload {
+            self.load(ctx);
+        }
+    }
+
+    /// Refresh what changed on disk: the history and refs when HEAD, a ref,
+    /// or an operation changed (unless a load already started after the
+    /// change), otherwise the worktree status and the frame summary.
+    fn apply_changes(
+        &mut self,
+        ctx: &egui::Context,
+        changes: watcher::Changes,
+        first: std::time::Instant,
+    ) {
+        if changes.refs && self.last_load.is_none_or(|load| load < first) {
+            self.load(ctx);
+            self.refresh_working(ctx);
+        } else if changes.any() {
+            self.refresh_mutation();
+            self.refresh_working(ctx);
+        }
+    }
+
+    /// Before a command runs, apply changes the watcher has seen but not yet
+    /// settled, and re-read the operation state, so the command acts on the
+    /// repository as it is now.
+    fn refresh_before_command(&mut self, ctx: &egui::Context) {
+        if let Some((changes, first)) = self.watcher.as_mut().and_then(|watcher| watcher.flush()) {
+            self.apply_changes(ctx, changes, first);
+        }
+        self.refresh_mutation();
+    }
+
+    /// Delete old private backups in the background, by Preferences ›
+    /// Rebase & recovery › Keep private backups; off by default.
+    fn prune_backups(&self, path: &Path) {
+        if self.prefs.backup_days == 0 || cfg!(test) {
+            return;
+        }
+        let path = path.to_path_buf();
+        let age = std::time::Duration::from_secs(u64::from(self.prefs.backup_days) * 86_400);
+        let _ = std::thread::Builder::new()
+            .name("gg-prune-backups".into())
+            .spawn(move || {
+                let _ = gg_git::backup::prune(&path, age);
+            });
+    }
+
+    /// Open a repository-relative path's working file in the editor from
+    /// Preferences; a failure goes to the status line.
+    fn open_in_editor(&mut self, path: &str) {
+        let Some(workdir) = self.stash_path() else {
+            return;
+        };
+        let file = workdir.join(path);
+        let result = if file.exists() {
+            editor::open(&self.prefs.editor, &file)
+        } else {
+            Err(format!("{path} is not in the working tree."))
+        };
+        if let Err(error) = result {
+            self.set_outcome(OutcomeSeverity::Error, error, None, None);
+        }
+    }
+
+    /// The Commit menu's entries, which the Commit actions popup mirrors.
+    fn commit_menu_entries(&self) -> Vec<menus::Entry<FrameCommand>> {
+        let ready = self.frame_readiness();
+        self.menu_table(&ready)
+            .into_iter()
+            .find(|menu| menu.title == "Commit")
+            .map(|menu| menu.entries)
+            .unwrap_or_default()
+    }
+
+    /// The checked-out branch, unless HEAD is detached.
+    fn current_branch(&self) -> Option<String> {
+        self.state
+            .refs
+            .head
+            .as_ref()
+            .filter(|head| !head.detached)
+            .and_then(|head| head.name.as_deref())
+            .map(|name| name.strip_prefix("refs/heads/").unwrap_or(name).to_string())
+    }
+
+    fn on_selected(&mut self, ctx: &egui::Context, action: CommitAction) {
+        if let Some(id) = self.state.selected.clone() {
+            self.run_commit_action(ctx, id, action);
+        }
+    }
+
+    /// Apply and save a preference changed from a menu.
+    fn save_prefs(&mut self, ctx: &egui::Context) {
+        self.apply_prefs(ctx);
+        if let Err(error) = self.prefs.save() {
+            self.mutation_error = Some(error);
+        }
+    }
+
+    /// Commit › Reword / Reopen / Fixup / Drop: the interactive rebase dialog
+    /// with the selected commit preset, so the plan stays reviewable.
+    fn rebase_preset(&mut self, ctx: &egui::Context, action: gg_engine::rewrite::Action) {
+        let Some(id) = self.state.selected.clone() else {
+            return;
+        };
+        // Fixup needs the commit below in the range.
+        let from = if action == gg_engine::rewrite::Action::Fixup {
+            match self
+                .state
+                .displayed_details()
+                .and_then(|commit| commit.parents.first().cloned())
+            {
+                Some(parent) => parent,
+                None => return,
+            }
+        } else {
+            id.clone()
+        };
+        if let Err(error) = self.open_rewrite_dialog(&from) {
+            self.mutation_error = Some(error);
+            return;
+        }
+        if let Some(dialog) = &mut self.rewrite_dialog {
+            dialog.preset(&id, action);
+        }
+        // Confirm before Drop off: run the drop without showing the plan.
+        if action == gg_engine::rewrite::Action::Drop
+            && !self.prefs.confirm_destructive
+            && let Some(rebase_dialog::Outcome::Start {
+                from,
+                steps,
+                autostash,
+            }) = self
+                .rewrite_dialog
+                .as_ref()
+                .and_then(|dialog| dialog.start_now())
+        {
+            match self.begin_rewrite(ctx, from, steps, autostash) {
+                Ok(()) => self.rewrite_dialog = None,
+                Err(error) => {
+                    if let Some(dialog) = &mut self.rewrite_dialog {
+                        dialog.error = Some(error);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Stage or unstage every change, then refresh what shows them.
+    fn change_all(&mut self, ctx: &egui::Context, change: fn(&Path) -> Result<(), String>) {
+        let Some(path) = self.stash_path() else {
+            return;
+        };
+        match change(&path) {
+            Ok(()) => {
+                self.refresh_working(ctx);
+                self.refresh_local_summary(ctx);
+            }
+            Err(error) => self.mutation_error = Some(error),
+        }
+    }
+
+    /// Open the latest commit that changed `file` in Review, on that file.
+    fn open_file(&mut self, ctx: &egui::Context, file: String) {
+        let Some(path) = self.stash_path() else {
+            return;
+        };
+        match gg_git::files::last_change(&path, &file) {
+            Ok(Some((commit, subject))) => {
+                if self.working.is_some() {
+                    self.close_to_history(ctx);
+                }
+                let location = self.capture_return_location();
+                self.open_review_at(ctx, commit, subject, Some(location));
+                if let Some(review) = self.review.take() {
+                    self.review = Some(review.select_path(file));
+                }
+            }
+            Ok(None) => {
+                self.mutation_error = Some(format!("No commit in this history changes {file}."))
+            }
+            Err(error) => self.mutation_error = Some(error),
+        }
+    }
+
+    /// Applies an edited history filter, as typing in the filter field does.
+    fn filter_changed(&mut self) {
+        if self.worker.is_some() || self.pending.is_some() {
+            self.state.start_filter();
+            self.pending_filter_edit = self.pending.is_some();
+            self.staged = None;
+            self.viewport = 0..64;
+        } else {
+            self.state.reconcile_selection();
+        }
+        self.scroll_to_selection = true;
+    }
+
+    /// Search items: every frame command with its menu home and readiness,
+    /// then branches, remotes, and tags.
+    /// The menu bar as one table: titles, items, shortcuts, and disabled
+    /// reasons, shared with search (final design, action map).
+    fn narrow_details_mode(&self) -> bool {
+        self.ctx_width < 1040.0
+    }
+
+    fn menu_table(&self, ready: &FrameReadiness) -> Vec<menus::Menu<FrameCommand>> {
+        use menus::{Entry, Menu, item};
+        let busy = "Wait for the current operation to finish";
+        let no_repo = "Open a repository first";
+        let idle = |ok: bool| -> Option<&'static str> {
+            if ok {
+                None
+            } else if ready.has_repo {
+                Some(busy)
+            } else {
+                Some(no_repo)
+            }
+        };
+        let selected = if self.state.selected.is_some() {
+            idle(ready.has_repo)
+        } else {
+            Some("Select a commit in History first")
+        };
+        let mutate = |ok: bool| if ok { selected } else { Some(busy) };
+        let head = self.state.refs.head.as_ref();
+        let current = head
+            .filter(|head| !head.detached)
+            .and_then(|head| head.name.as_deref())
+            .map(|name| name.strip_prefix("refs/heads/").unwrap_or(name).to_string());
+        let on_branch = match current {
+            Some(_) => idle(ready.branch_idle),
+            None if ready.has_repo => Some("Switch to a local branch first"),
+            None => Some(no_repo),
+        };
+        let other_branches = self.state.refs.items.iter().any(|item| {
+            item.kind == gg_engine::refs::RefKind::Branch && Some(&item.name) != current.as_ref()
+        });
+        let delete = if other_branches {
+            idle(ready.branch_idle)
+        } else {
+            Some("No other local branch to delete")
+        };
+        let force = if self.force_push_target().is_some() {
+            idle(ready.network_idle)
+        } else {
+            Some("Force with lease requires an upstream remote-tracking ref; track and fetch first")
+        };
+        let changes = if ready.changes > 0 {
+            idle(ready.has_repo && !self.working_mutation_pending())
+        } else if ready.has_repo {
+            Some("No local changes")
+        } else {
+            Some(no_repo)
+        };
+        let conflicts = self
+            .mutation
+            .as_ref()
+            .is_some_and(|state| !state.conflicts.is_empty());
+        let selected_parent = self
+            .state
+            .displayed_details()
+            .and_then(|commit| commit.parents.first().cloned());
+        let fixup = match (selected, &selected_parent) {
+            (Some(reason), _) => Some(reason),
+            (None, None) => Some("The first commit has nothing below it to combine into"),
+            (None, Some(_)) => ready.rewrite_reason,
+        };
+        let rewrite = selected.or(ready.rewrite_reason);
+        let recent = if self.recent.is_empty() {
+            vec![
+                item("No recent repositories", "", FrameCommand::Unavailable)
+                    .unless(Some("Repositories you open are listed here"))
+                    .entry(),
+            ]
+        } else {
+            self.recent
+                .iter()
+                .map(|path| {
+                    item(
+                        path.display().to_string(),
+                        "",
+                        FrameCommand::OpenRecent(path.clone()),
+                    )
+                    .unless(self.repository_switch_pending().then_some(busy))
+                    .entry()
+                })
+                .collect()
+        };
+        let quit = if cfg!(target_os = "macos") {
+            "Cmd+Q"
+        } else {
+            "Ctrl+Q"
+        };
+        let mut repository = vec![
+            item("Open…", "Ctrl+O", FrameCommand::Open)
+                .unless(self.repository_switch_pending().then_some(busy))
+                .entry(),
+            item("Clone…", "", FrameCommand::Clone)
+                .unless(
+                    (self.network.is_some() || self.branch.is_some() || self.operation_busy())
+                        .then_some(busy),
+                )
+                .hint("Clone a repository and open it; a URL on the clipboard pre-fills the form")
+                .entry(),
+            Entry::Submenu("Open recent".into(), recent),
+            Entry::Separator,
+            item("Fetch", "Ctrl+Shift+F", FrameCommand::Fetch)
+                .unless(idle(ready.network_idle))
+                .hint("Fetch the default remote without changing local branches")
+                .entry(),
+            item(
+                if ready.behind > 0 {
+                    format!(
+                        "Pull {} ({})",
+                        ready.behind,
+                        self.prefs.pull_strategy.menu_label()
+                    )
+                } else {
+                    format!("Pull ({})", self.prefs.pull_strategy.menu_label())
+                },
+                "Ctrl+Shift+L",
+                FrameCommand::Pull,
+            )
+            .unless(ready.pull_reason)
+            .hint("Fetch the upstream and rebase the current branch onto it")
+            .entry(),
+            item("Push", "Ctrl+Shift+P", FrameCommand::Push)
+                .unless(idle(ready.network_idle))
+                .hint("Push the current branch without force; set upstream when absent")
+                .entry(),
+            item("Push with force-with-lease…", "", FrameCommand::ForcePush)
+                .unless(force)
+                .entry(),
+            Entry::Separator,
+            item("Worktrees…", "", FrameCommand::Worktrees)
+                .unless(idle(ready.has_repo))
+                .entry(),
+            item("Submodules…", "", FrameCommand::Unavailable)
+                .unless(Some(
+                    "Not built yet: open a submodule from a changed file in Local Changes or Review",
+                ))
+                .entry(),
+            item("LFS…", "", FrameCommand::Unavailable)
+                .unless(Some(
+                    "Not built yet: inspect an LFS file from Local Changes or Review",
+                ))
+                .entry(),
+            Entry::Separator,
+            item("Backups…", "", FrameCommand::Backups)
+                .unless(idle(ready.has_repo))
+                .hint("Private backups taken before every rewrite")
+                .entry(),
+            item("Reflog…", "", FrameCommand::Reflog)
+                .unless(idle(ready.has_repo))
+                .entry(),
+        ];
+        if !cfg!(target_os = "macos") {
+            repository.extend([
+                Entry::Separator,
+                item("Preferences…", "Ctrl+,", FrameCommand::Preferences).entry(),
+                item("Quit", quit, FrameCommand::Quit).entry(),
+            ]);
+        }
+        let mut table = Vec::new();
+        if cfg!(target_os = "macos") {
+            table.push(Menu {
+                title: "gg",
+                entries: vec![
+                    item("Settings…", "Cmd+,", FrameCommand::Preferences).entry(),
+                    Entry::Separator,
+                    item("Quit", quit, FrameCommand::Quit).entry(),
+                ],
+            });
+        }
+        table.push(Menu {
+            title: "Repository",
+            entries: repository,
+        });
+        table.push(Menu {
+            title: "Branch",
+            entries: vec![
+                item("New branch…", "Ctrl+B", FrameCommand::NewBranch)
+                    .unless(idle(ready.branch_idle))
+                    .entry(),
+                item("New tag…", "", FrameCommand::NewTag)
+                    .unless(idle(ready.branch_idle))
+                    .entry(),
+                // Same readiness as the toolbar's branch button it opens.
+                item("Switch to…", "Ctrl+Shift+B", FrameCommand::SwitchTo)
+                    .unless(idle(ready.has_repo))
+                    .entry(),
+                Entry::Separator,
+                item("Merge into current…", "", FrameCommand::Merge)
+                    .unless(on_branch)
+                    .entry(),
+                item("Rebase current onto…", "", FrameCommand::RebaseOnto)
+                    .unless(on_branch)
+                    .entry(),
+                item("Set upstream…", "", FrameCommand::SetUpstream)
+                    .unless(on_branch)
+                    .entry(),
+                item("Track remote branch…", "", FrameCommand::TrackBranch)
+                    .unless(idle(ready.branch_idle))
+                    .entry(),
+                Entry::Separator,
+                item("Rename…", "F2", FrameCommand::RenameBranch)
+                    .unless(on_branch)
+                    .entry(),
+                item("Delete…", "Del", FrameCommand::DeleteBranch)
+                    .unless(delete)
+                    .danger()
+                    .entry(),
+            ],
+        });
+        table.push(Menu {
+            title: "Commit",
+            entries: vec![
+                item("Review changes", "Enter", FrameCommand::ReviewSelected)
+                    .unless(selected)
+                    .entry(),
+                item("Compare with HEAD", "", FrameCommand::CompareHead)
+                    .unless(selected)
+                    .entry(),
+                item("Copy ID", "Ctrl+C", FrameCommand::CopyId)
+                    .unless(selected)
+                    .entry(),
+                Entry::Separator,
+                item("Cherry-pick onto HEAD", "", FrameCommand::CherryPick)
+                    .unless(mutate(self.mutation.is_none()))
+                    .entry(),
+                item("Revert", "", FrameCommand::Revert)
+                    .unless(mutate(self.mutation.is_none()))
+                    .entry(),
+                Entry::Separator,
+                item(
+                    "Interactive rebase from here…",
+                    "R",
+                    FrameCommand::RewriteSelected,
+                )
+                .unless(rewrite)
+                .entry(),
+                item(
+                    "Reword…",
+                    "Ctrl+R",
+                    FrameCommand::RebasePreset(gg_engine::rewrite::Action::Reword),
+                )
+                .unless(rewrite)
+                .entry(),
+                item(
+                    "Reopen for editing…",
+                    "E",
+                    FrameCommand::RebasePreset(gg_engine::rewrite::Action::Edit),
+                )
+                .unless(rewrite)
+                .entry(),
+                item(
+                    "Fixup into…",
+                    "F",
+                    FrameCommand::RebasePreset(gg_engine::rewrite::Action::Fixup),
+                )
+                .unless(fixup)
+                .entry(),
+                item(
+                    "Drop…",
+                    "D",
+                    FrameCommand::RebasePreset(gg_engine::rewrite::Action::Drop),
+                )
+                .unless(rewrite)
+                .danger()
+                .entry(),
+                Entry::Separator,
+                item("Reset current branch to here…", "", FrameCommand::ResetHere)
+                    .unless(mutate(self.mutation.is_none()))
+                    .danger()
+                    .entry(),
+            ],
+        });
+        table.push(Menu {
+            title: "Changes",
+            entries: vec![
+                item("Stage all", "Ctrl+Shift+S", FrameCommand::StageAll)
+                    .unless(changes)
+                    .entry(),
+                item("Unstage all", "Ctrl+Shift+U", FrameCommand::UnstageAll)
+                    .unless(changes.or_else(|| {
+                        self.working
+                            .as_ref()
+                            .filter(|working| working.amending())
+                            .map(|_| status_view::UNSTAGE_ALL_AMENDING)
+                    }))
+                    .entry(),
+                item("Discard all…", "", FrameCommand::DiscardAll)
+                    .unless(changes)
+                    .hint("Restore tracked files to HEAD; untracked files are kept")
+                    .danger()
+                    .entry(),
+                Entry::Separator,
+                item("Commit", "Ctrl+Enter", FrameCommand::CommitNow)
+                    .unless(idle(ready.has_repo))
+                    .hint("Commit the staged changes with the message in Local Changes")
+                    .entry(),
+                item("Amend HEAD", "Ctrl+Shift+Enter", FrameCommand::AmendHead)
+                    .unless(idle(ready.has_repo))
+                    .entry(),
+                Entry::Separator,
+                item("Stash changes", "Ctrl+Shift+Z", FrameCommand::Stash)
+                    .unless(ready.stash_reason)
+                    .entry(),
+                item("Stashes…", "", FrameCommand::Stashes)
+                    .unless((!ready.stash_idle).then_some(busy))
+                    .entry(),
+                Entry::Separator,
+                item("Resolve conflicts…", "", FrameCommand::ResolveConflicts)
+                    .unless((!conflicts).then_some("No conflicts to resolve"))
+                    .entry(),
+            ],
+        });
+        let details = if self.narrow_details_mode() {
+            self.narrow_details
+        } else {
+            self.details_visible
+        };
+        let sidebar = self.ctx_width >= 1120.0;
+        table.push(Menu {
+            title: "View",
+            entries: vec![
+                item("Local Changes", "Ctrl+1", FrameCommand::LocalChanges)
+                    .unless(idle(ready.has_repo))
+                    .checked(self.working.is_some())
+                    .entry(),
+                item("History", "Ctrl+2", FrameCommand::History)
+                    .checked(self.working.is_none() && self.review.is_none())
+                    .entry(),
+                Entry::Separator,
+                item("Refs sidebar", "Ctrl+\\", FrameCommand::ToggleRefs)
+                    .unless(
+                        (!sidebar)
+                            .then_some("Resize the window to at least 1120 px to show the sidebar"),
+                    )
+                    .checked(self.refs_visible && sidebar)
+                    .entry(),
+                item("Commit inspector", "Space", FrameCommand::ToggleDetails)
+                    .checked(details)
+                    .entry(),
+                Entry::Separator,
+                item(
+                    "Inline diff",
+                    "",
+                    FrameCommand::SetDiffLayout(settings::DiffLayout::Inline),
+                )
+                .checked(self.prefs.diff_layout == settings::DiffLayout::Inline)
+                .entry(),
+                item(
+                    "Side-by-side diff",
+                    "",
+                    FrameCommand::SetDiffLayout(settings::DiffLayout::SideBySide),
+                )
+                .checked(self.prefs.diff_layout == settings::DiffLayout::SideBySide)
+                .entry(),
+                Entry::Separator,
+                item(
+                    "Compact density",
+                    "",
+                    FrameCommand::SetDensity(match self.prefs.density {
+                        settings::Density::Compact => settings::Density::Comfortable,
+                        settings::Density::Comfortable => settings::Density::Compact,
+                    }),
+                )
+                .checked(self.prefs.density == settings::Density::Compact)
+                .entry(),
+                Entry::Submenu(
+                    format!("Theme: {}", self.prefs.theme.label()),
+                    settings::Theme::ALL
+                        .into_iter()
+                        .map(|theme| {
+                            item(theme.label(), "", FrameCommand::SetTheme(theme))
+                                .checked(self.prefs.theme == theme)
+                                .entry()
+                        })
+                        .collect(),
+                ),
+            ],
+        });
+        table.push(Menu {
+            title: "Help",
+            entries: vec![
+                item("Keyboard shortcuts", "?", FrameCommand::Shortcuts).entry(),
+                item("Documentation", "", FrameCommand::Documentation)
+                    .hint("Open the gg README in the browser")
+                    .entry(),
+                item("About gg", "", FrameCommand::About).entry(),
+            ],
+        });
+        table
+    }
+
+    fn search_items(&self, ready: &FrameReadiness) -> Vec<search::Item<FrameCommand>> {
+        use search::Group;
+        // Every menu item, named with its menu, plus the toolbar's own rebase.
+        let mut items = menus::flatten(&self.menu_table(ready))
+            .into_iter()
+            .filter(|(_, item)| item.command != FrameCommand::Unavailable)
+            .map(|(path, item)| search::Item {
+                group: Group::Actions,
+                label: item.label,
+                context: format!("{path} menu"),
+                key: item.key,
+                disabled: item.disabled,
+                command: item.command,
+            })
+            .collect::<Vec<_>>();
+        items.push(search::Item {
+            group: Group::Actions,
+            label: "Interactive rebase of this branch".into(),
+            context: "toolbar · the branch's own commits".into(),
+            key: "",
+            disabled: ready.branch_rewrite_reason.map(str::to_string),
+            command: FrameCommand::Rewrite,
+        });
+        let head = self
+            .state
+            .refs
+            .head
+            .as_ref()
+            .and_then(|head| head.name.as_deref());
+        for item in &self.state.refs.items {
+            let (group, kind) = match item.kind {
+                gg_engine::refs::RefKind::Branch => (Group::Branches, "branch"),
+                gg_engine::refs::RefKind::Remote => (Group::Remotes, "remote"),
+                gg_engine::refs::RefKind::Tag => (Group::Tags, "tag"),
+            };
+            let current = Some(item.full_name.as_str()) == head;
+            items.push(search::Item {
+                group,
+                label: item.name.clone(),
+                context: format!(
+                    "{kind}{} · {}",
+                    if current { " · current" } else { "" },
+                    item.commit.chars().take(8).collect::<String>()
+                ),
+                key: "",
+                disabled: None,
+                command: FrameCommand::Inspect(item.commit.clone()),
+            });
+        }
+        items
+    }
+
+    /// Draws the `Ctrl+K` search popup and returns the command to run.
+    fn close_search(&mut self, ctx: &egui::Context) {
+        self.search = None;
+        self.search_text.clear();
+        ctx.memory_mut(|m| m.surrender_focus(search_field_id()));
+    }
+
+    fn draw_search(&mut self, ctx: &egui::Context, ready: &FrameReadiness) -> Option<FrameCommand> {
+        let palette = self.search.as_mut()?;
+        let query = palette.query.clone();
+        if palette.files_query != query {
+            palette.files_query = query.clone();
+            palette.file_items = search::files(
+                &query,
+                self.local_summary
+                    .as_ref()
+                    .map(|summary| summary.files.as_slice())
+                    .unwrap_or_default(),
+                |path| FrameCommand::OpenFile(path.to_string()),
+            );
+        }
+        let file_items = palette.file_items.clone();
+        let mut items = {
+            let base = self.search_items(ready);
+            search::results(&query, &base, FrameCommand::Filter(query.trim().to_owned()))
+        };
+        items.extend(file_items);
+        let palette = self.search.as_mut()?;
+        if palette.selected >= items.len() {
+            palette.selected = items.len().saturating_sub(1);
+        }
+        let (down, up, enter, escape) = ctx.input_mut(|i| {
+            (
+                i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown),
+                i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp),
+                i.consume_key(egui::Modifiers::NONE, egui::Key::Enter),
+                i.key_pressed(egui::Key::Escape),
+            )
+        });
+        if down && palette.selected + 1 < items.len() {
+            palette.selected += 1;
+        }
+        if up {
+            palette.selected = palette.selected.saturating_sub(1);
+        }
+        let mut chosen = enter.then_some(palette.selected);
+        let width = 520.0_f32.min(ctx.content_rect().width() - 32.0);
+        // Results keep one fixed height however many match.
+        let results =
+            |ui: &mut egui::Ui, palette: &mut SearchPalette, chosen: &mut Option<usize>| {
+                let mut group = None;
+                egui::ScrollArea::vertical()
+                    .id_salt("search-results")
+                    .min_scrolled_height(SEARCH_RESULTS_HEIGHT)
+                    .max_height(SEARCH_RESULTS_HEIGHT)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        if items.is_empty() {
+                            ui.weak("No matching commands, refs, or files");
+                        }
+                        for (index, item) in items.iter().enumerate() {
+                            if group != Some(item.group) {
+                                group = Some(item.group);
+                                ui.add_space(4.0);
+                                ui.label(egui::RichText::new(item.group.title()).small().weak());
+                            }
+                            let text = if item.context.is_empty() {
+                                item.label.clone()
+                            } else {
+                                format!("{}   ·   {}", item.label, item.context)
+                            };
+                            let response = ui.add_enabled(
+                                item.disabled.is_none(),
+                                egui::Button::selectable(palette.selected == index, text)
+                                    .truncate()
+                                    .right_text(item.key)
+                                    .min_size(egui::vec2(ui.available_width(), 24.0)),
+                            );
+                            let response = match &item.disabled {
+                                Some(reason) => response.on_disabled_hover_text(reason),
+                                None => response,
+                            };
+                            if response.clicked() {
+                                *chosen = Some(index);
+                            }
+                            if palette.selected == index && (down || up) {
+                                response.scroll_to_me(None);
+                            }
+                        }
+                    });
+                ui.add_space(4.0);
+                ui.weak(
+                    "Enter: run · Up/Down: choose · Esc: close · every action also lives in a menu",
+                );
+            };
+        let mut close = escape;
+        if palette.in_field {
+            let anchor = palette.anchor;
+            let left = (anchor.right() - width).max(ctx.content_rect().left() + 8.0);
+            let area = egui::Area::new(egui::Id::unique("frame-search"))
+                .order(egui::Order::Foreground)
+                .fixed_pos(egui::pos2(left, anchor.bottom() + 4.0))
+                .show(ctx, |ui| {
+                    egui::Frame::popup(ui.style()).show(ui, |ui| {
+                        ui.set_width(width);
+                        results(ui, palette, &mut chosen);
+                    });
+                });
+            let outside = ctx.input(|i| {
+                i.pointer.any_pressed()
+                    && i.pointer.interact_pos().is_some_and(|pos| {
+                        !area.response.rect.contains(pos) && !anchor.contains(pos)
+                    })
+            });
+            close |= outside;
+        } else {
+            let id = egui::Id::unique("frame-search");
+            let area = egui::Modal::default_area(id).anchor(
+                egui::Align2::RIGHT_TOP,
+                egui::vec2(-8.0, MENU_BAR_HEIGHT + 34.0),
+            );
+            let modal = egui::Modal::new(id)
+                .area(area)
+                .backdrop_color(egui::Color32::from_black_alpha(40))
+                .show(ctx, |ui| {
+                    ui.set_width(width);
+                    let edit = ui.add(
+                        egui::TextEdit::singleline(&mut palette.query)
+                            .hint_text("Search commands, branches, remotes, tags, and files")
+                            .desired_width(f32::INFINITY),
+                    );
+                    if !palette.focused {
+                        edit.request_focus();
+                        palette.focused = true;
+                    }
+                    if edit.changed() {
+                        palette.selected = 0;
+                    }
+                    ui.add_space(4.0);
+                    results(ui, palette, &mut chosen);
+                });
+            close |= modal.should_close();
+        }
+        let command = chosen
+            .and_then(|index| items.get(index))
+            .filter(|item| item.disabled.is_none())
+            .map(|item| item.command.clone());
+        if close || command.is_some() {
+            self.close_search(ctx);
+        }
+        command
+    }
+
+    /// The interactive rebase in progress, when the summary has read one.
+    fn rebase_progress(&self) -> Option<&gg_engine::mutation::RebaseProgress> {
+        self.mutation
+            .as_ref()
+            .filter(|state| state.operation == gg_engine::mutation::Operation::Rebase)?;
+        self.local_summary.as_ref()?.rebase.as_ref()
+    }
+
+    /// Open Local Changes once for each newly reopened commit, with its
+    /// message in the commit box; a root commit opens in amend mode.
+    fn open_reopened_commit(&mut self, ctx: &egui::Context) {
+        let Some(gg_engine::mutation::RebaseStop::Reopened {
+            base,
+            commit,
+            message,
+            ..
+        }) = self.rebase_progress().map(|progress| progress.stop.clone())
+        else {
+            return;
+        };
+        if self.reopen_seen.as_deref() == Some(commit.as_str()) || self.rewrite_dialog.is_some() {
+            return;
+        }
+        self.reopen_seen = Some(commit);
+        self.open_working(ctx);
+        if let Some(working) = &mut self.working {
+            if base.is_some() {
+                working.prefill_message(&message);
+            } else if let Err(error) = working.start_amend(ctx) {
+                self.mutation_error = Some(error);
+            }
+        }
+    }
+
+    /// What the operation area shows when nothing runs: the branch, its
+    /// tracking state, local changes, and stashes.
+    fn idle_summary(&self) -> String {
+        if self.state.history.is_none() {
+            return String::new();
+        }
+        let mut parts = Vec::new();
+        let head = self.state.refs.head.as_ref();
+        parts.push(match head.and_then(|head| head.name.as_deref()) {
+            Some(full) => format!("On {}", full.strip_prefix("refs/heads/").unwrap_or(full)),
+            None => "Detached HEAD".into(),
+        });
+        if let Some(tracking) = self.state.refs.current_tracking() {
+            parts.push(format!("tracking {}", refs_view::tracking_label(tracking)));
+        }
+        if let Some(summary) = &self.local_summary {
+            if let Some(changes) = summary.changes {
+                parts.push(match changes {
+                    0 => "no local changes".into(),
+                    1 => "1 changed file".into(),
+                    n => format!("{n} changed files"),
+                });
+            }
+            match summary.stashes.len() {
+                0 => {}
+                1 => parts.push("1 stash".into()),
+                n => parts.push(format!("{n} stashes")),
+            }
+        }
+        parts.join(" · ")
+    }
+
+    /// `feature · rebase 3/6` while an interactive rebase is stopped.
+    fn rebase_step_label(&self) -> Option<String> {
+        let progress = self.rebase_progress()?;
+        let (step, total) = progress.position();
+        Some(format!(
+            "{} · rebase {step}/{total}",
+            progress.branch.as_deref().unwrap_or("detached HEAD")
+        ))
+    }
+
+    /// The toolbar current-branch button and its filterable switcher popup.
+    fn branch_switcher_button(
+        &mut self,
+        ui: &mut egui::Ui,
+        ready: &FrameReadiness,
+        compact: bool,
+    ) -> Option<BranchPick> {
+        let head = self.state.refs.head.as_ref();
+        // During a rebase the button keeps the branch's name, as in the
+        // mockup; the step is in the operation area and the window title.
+        let rebasing = self.rebase_progress().map(|progress| {
+            progress
+                .branch
+                .clone()
+                .unwrap_or_else(|| "detached HEAD".into())
+        });
+        let name = match (rebasing, head.and_then(|head| head.name.as_deref())) {
+            (Some(branch), _) => branch,
+            (None, Some(full)) => full.strip_prefix("refs/heads/").unwrap_or(full).to_string(),
+            (None, None) if head.is_some_and(|head| head.detached) => "detached HEAD".into(),
+            (None, None) => "no branch".into(),
+        };
+        let tracking = self
+            .state
+            .refs
+            .current_tracking()
+            .map(|tracking| {
+                format!(
+                    "{}{} {}{}",
+                    crate::phosphor::ARROW_UP,
+                    tracking.ahead.unwrap_or(0),
+                    crate::phosphor::ARROW_DOWN,
+                    tracking.behind.unwrap_or(0)
+                )
+            })
+            .unwrap_or_default();
+        let icon = crate::phosphor::icon(crate::phosphor::GIT_BRANCH).size(15.0);
+        let caret = crate::phosphor::icon(crate::phosphor::CARET_DOWN).size(10.0);
+        let button = if compact {
+            egui::Button::new((icon, caret))
+        } else {
+            egui::Button::new((
+                icon,
+                egui::RichText::new(&name),
+                egui::RichText::new(&tracking).small().weak(),
+                caret,
+            ))
+            .truncate()
+        }
+        .min_size(egui::vec2(28.0, 24.0));
+        let response = ui
+            .add_enabled(ready.has_repo, button)
+            .on_hover_text(format!("{name} {tracking}\nSwitch branch"));
+        if response.clicked() {
+            self.branch_filter.clear();
+        }
+        let branches = switcher_branches(&self.state.refs, &self.branch_filter);
+        let filter = &mut self.branch_filter;
+        let mut pick = None;
+        egui::Popup::from_toggle_button_response(&response)
+            .id(branch_switcher_popup_id())
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+            .show(|ui| {
+                ui.set_width(320.0);
+                let edit = ui.add(
+                    egui::TextEdit::singleline(filter)
+                        .hint_text("Switch to branch…")
+                        .desired_width(f32::INFINITY),
+                );
+                if !edit.has_focus() && filter.is_empty() {
+                    edit.request_focus();
+                }
+                let switch_reason = if ready.branch_idle {
+                    None
+                } else {
+                    Some("Wait for the current operation to finish")
+                };
+                egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
+                    if branches.is_empty() {
+                        ui.weak("No matching branches");
+                    }
+                    for (branch, current) in &branches {
+                        let reason = if *current {
+                            Some("Already on this branch")
+                        } else {
+                            switch_reason
+                        };
+                        let label = if *current {
+                            format!("{branch}  ·  current")
+                        } else {
+                            branch.clone()
+                        };
+                        let response = ui.add_enabled(
+                            reason.is_none(),
+                            egui::Button::selectable(*current, label)
+                                .truncate()
+                                .min_size(egui::vec2(ui.available_width(), 24.0)),
+                        );
+                        let response = match reason {
+                            Some(reason) => response.on_disabled_hover_text(reason),
+                            None => response.on_hover_text(
+                                "Switch after the clean-worktree check; local changes are never discarded",
+                            ),
+                        };
+                        if response.clicked() {
+                            pick = Some(BranchPick::Switch(branch.clone()));
+                        }
+                    }
+                });
+                ui.separator();
+                if ui
+                    .add_enabled(
+                        ready.branch_idle,
+                        egui::Button::new("New branch from HEAD…")
+                            .min_size(egui::vec2(ui.available_width(), 24.0)),
+                    )
+                    .clicked()
+                {
+                    pick = Some(BranchPick::New);
+                }
+            });
+        if pick.is_some() {
+            egui::Popup::close_all(ui.ctx());
+        }
+        pick
+    }
+
+    /// The toolbar **Stashes** button and its picker popup.
+    fn stash_picker_button(
+        &mut self,
+        ui: &mut egui::Ui,
+        ready: &FrameReadiness,
+    ) -> Option<StashPick> {
+        let reason = if !ready.stash_idle {
+            Some(if ready.has_repo {
+                "Wait for the current operation to finish"
+            } else {
+                "Open a repository first"
+            })
+        } else if ready.stashes == 0 {
+            Some("No stashes")
+        } else {
+            None
+        };
+        let button = egui::Button::new((
+            crate::phosphor::icon(crate::phosphor::BOX_ARROW_UP).size(17.0),
+            egui::RichText::new(ready.stashes.to_string()).size(11.0),
+            crate::phosphor::icon(crate::phosphor::CARET_DOWN).size(10.0),
+        ))
+        .min_size(egui::vec2(28.0, 26.0))
+        .frame_when_inactive(false);
+        let response = ui.add_enabled(reason.is_none(), button);
+        let tip = format!("Stashes ({}) · apply, pop, show, or drop", ready.stashes);
+        let response = match reason {
+            Some(reason) => response.on_disabled_hover_text(format!("{tip}\n{reason}")),
+            None => response.on_hover_text(tip),
+        };
+        if response.clicked() {
+            self.stash_picker.confirm_drop = false;
+            self.stash_picker.error = None;
+        }
+        let entries = self
+            .local_summary
+            .as_ref()
+            .map(|summary| summary.stashes.clone())
+            .unwrap_or_default();
+        let picker = &mut self.stash_picker;
+        let mut pick = None;
+        egui::Popup::from_toggle_button_response(&response)
+            .id(stash_picker_popup_id())
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+            .show(|ui| {
+                ui.set_width(STASH_PICKER_WIDTH);
+                if let Some(entry) = stash_picker_keys(ui.ctx(), picker, entries.len())
+                    .and_then(|apply| apply.then(|| entries.get(picker.selected)).flatten())
+                {
+                    pick = Some(if picker.confirm_drop {
+                        picker.confirm_drop = false;
+                        StashPick::Drop(entry.reference.clone())
+                    } else {
+                        StashPick::Apply(entry.reference.clone())
+                    });
+                }
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("STASHES").small().weak());
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(
+                            egui::RichText::new("Up/Down choose · Enter apply · Del drop")
+                                .small()
+                                .weak(),
+                        );
+                    });
+                });
+                // A fixed-height list with fixed column slots, so the popup
+                // never changes size as entries or counts arrive.
+                egui::ScrollArea::vertical()
+                    .id_salt("stash-picker-list")
+                    .max_height(STASH_PICKER_LIST)
+                    .min_scrolled_height(STASH_PICKER_LIST)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing.y = 0.0;
+                        for (index, entry) in entries.iter().enumerate() {
+                            if stash_picker_row(ui, entry, picker.selected == index).clicked() {
+                                picker.selected = index;
+                                picker.confirm_drop = false;
+                            }
+                        }
+                    });
+                ui.separator();
+                ui.allocate_ui_with_layout(
+                    egui::vec2(STASH_PICKER_WIDTH, STASH_PICKER_ACTIONS),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        ui.set_min_size(egui::vec2(STASH_PICKER_WIDTH, STASH_PICKER_ACTIONS));
+                        ui.set_max_height(STASH_PICKER_ACTIONS);
+                        let Some(entry) = entries.get(picker.selected) else {
+                            return;
+                        };
+                        stash_picker_actions(ui, entry, picker, &mut pick);
+                    },
+                );
+            });
+        if pick.is_some() {
+            egui::Popup::close_all(ui.ctx());
+        }
+        pick
+    }
+}
+
+/// Width of the Stashes picker popup.
+const STASH_PICKER_WIDTH: f32 = 440.0;
+/// Height of one two-line picker row.
+const STASH_PICKER_ROW: f32 = 40.0;
+/// Height of the picker's entry list: six rows.
+const STASH_PICKER_LIST: f32 = 5.0 * STASH_PICKER_ROW;
+/// Height reserved for the picker's actions, its drop confirmation, and an error.
+const STASH_PICKER_ACTIONS: f32 = 64.0;
+
+/// Display message without the `WIP on <branch>: ` or `On <branch>: ` prefix
+/// that the branch column already shows.
+fn stash_display_message(entry: &gg_engine::stash::StashEntry) -> &str {
+    match &entry.branch {
+        Some(_) => entry
+            .message
+            .split_once(": ")
+            .map_or(entry.message.as_str(), |(_, rest)| rest),
+        None => entry.message.as_str(),
+    }
+}
+
+/// One picker row: ref, message, branch, age, and file count in fixed slots.
+fn stash_picker_row(
+    ui: &mut egui::Ui,
+    entry: &gg_engine::stash::StashEntry,
+    selected: bool,
+) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), STASH_PICKER_ROW),
+        egui::Sense::click(),
+    );
+    if selected {
+        ui.painter()
+            .rect_filled(rect, 3.0, colors::selection(ui.visuals()));
+    } else if response.hovered() {
+        ui.painter()
+            .rect_filled(rect, 3.0, ui.visuals().widgets.hovered.weak_bg_fill);
+    }
+    // Two lines, as in the mockup: the ref on the left; the message over
+    // `on <branch> · <age> · <files>`.
+    let weak = ui.visuals().weak_text_color();
+    let strong = ui.visuals().strong_text_color();
+    let inner = rect.shrink2(egui::vec2(8.0, 3.0));
+    let reference =
+        egui::Rect::from_min_max(inner.min, egui::pos2(inner.left() + 64.0, inner.bottom()));
+    let text =
+        egui::Rect::from_min_max(egui::pos2(reference.right() + 8.0, inner.top()), inner.max);
+    let (top, bottom) = text.split_top_bottom_at_fraction(0.55);
+    bounded_text::paint(
+        ui,
+        reference,
+        entry.reference.as_str(),
+        egui::FontId::monospace(11.0),
+        weak,
+    );
+    bounded_text::paint(
+        ui,
+        top,
+        stash_display_message(entry),
+        egui::FontId::proportional(12.5),
+        strong,
+    );
+    let count = match entry.files {
+        Some(1) => "1 file".to_string(),
+        Some(count) => format!("{count} files"),
+        None => String::new(),
+    };
+    let mut details = format!(
+        "on {} · {}",
+        entry.branch.as_deref().unwrap_or("detached"),
+        entry.age
+    );
+    if !count.is_empty() {
+        details.push_str(&format!(" · {count}"));
+    }
+    bounded_text::paint(ui, bottom, &details, egui::FontId::proportional(11.0), weak);
+    response.on_hover_text(format!(
+        "{} · {}\n{}{}",
+        entry.reference,
+        entry.message,
+        entry.age,
+        if count.is_empty() {
+            String::new()
+        } else {
+            format!(" · {count}")
+        }
+    ))
+}
+
+/// Apply, Pop, Show changes, and Drop… for the selected stash, or the drop
+/// confirmation, in the picker's fixed action area.
+/// Keys in the open Stashes picker: Up/Down select, Del asks to drop, Esc
+/// cancels the drop question. Returns `Some(true)` when Enter runs the
+/// default action (Apply, or Drop while the drop question shows).
+fn stash_picker_keys(ctx: &egui::Context, picker: &mut StashPicker, count: usize) -> Option<bool> {
+    if count == 0 || ctx.text_edit_focused() {
+        return None;
+    }
+    let presses = |key| ctx.input_mut(|i| i.count_and_consume_key(egui::Modifiers::NONE, key));
+    let pressed = |key| presses(key) > 0;
+    let down = presses(egui::Key::ArrowDown);
+    let up = presses(egui::Key::ArrowUp);
+    if down + up > 0 {
+        picker.selected = (picker.selected + down).saturating_sub(up).min(count - 1);
+        picker.confirm_drop = false;
+    }
+    if pressed(egui::Key::Delete) {
+        picker.confirm_drop = true;
+    }
+    if picker.confirm_drop && pressed(egui::Key::Escape) {
+        picker.confirm_drop = false;
+    }
+    pressed(egui::Key::Enter).then_some(true)
+}
+
+fn stash_picker_actions(
+    ui: &mut egui::Ui,
+    entry: &gg_engine::stash::StashEntry,
+    picker: &mut StashPicker,
+    pick: &mut Option<StashPick>,
+) {
+    if picker.confirm_drop {
+        ui.label(format!(
+            "Drop {}? This removes the stash entry, not working files.",
+            entry.reference
+        ));
+        ui.horizontal(|ui| {
+            if ui.button("Drop").clicked() {
+                *pick = Some(StashPick::Drop(entry.reference.clone()));
+                picker.confirm_drop = false;
+            }
+            if ui.button("Cancel").clicked() {
+                picker.confirm_drop = false;
+            }
+        });
+    } else {
+        ui.horizontal(|ui| {
+            if ui
+                .button(format!("Apply {}", entry.reference))
+                .on_hover_text("Restore the changes and keep the stash entry")
+                .clicked()
+            {
+                *pick = Some(StashPick::Apply(entry.reference.clone()));
+            }
+            if ui
+                .button("Pop")
+                .on_hover_text("Restore the changes, then remove the stash entry")
+                .clicked()
+            {
+                *pick = Some(StashPick::Pop(entry.reference.clone()));
+            }
+            if ui.button("Show changes").clicked() {
+                *pick = Some(StashPick::Show {
+                    commit: entry.commit.clone(),
+                    message: entry.message.clone(),
+                });
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .button(egui::RichText::new("Drop…").color(ui.visuals().error_fg_color))
+                    .clicked()
+                {
+                    picker.confirm_drop = true;
+                }
+            });
+        });
+    }
+    if let Some(error) = &picker.error {
+        ui.colored_label(ui.visuals().error_fg_color, error);
+    }
+}
+
+impl Browser {
+    fn apply_stash_pick(&mut self, ctx: &egui::Context, pick: StashPick) {
+        let result = match pick {
+            StashPick::Apply(reference) => self.restore_stash_inner(ctx, &reference, false, false),
+            StashPick::Pop(reference) => self.restore_stash_inner(ctx, &reference, true, false),
+            StashPick::Drop(reference) => self.drop_stash(ctx, &reference),
+            StashPick::Show { commit, message } => {
+                let return_location = self.capture_return_location();
+                self.open_review_at(ctx, commit, message, Some(return_location));
+                Ok(())
+            }
+        };
+        if let Err(error) = result {
+            self.stash_picker.error = Some(error.clone());
+            self.set_outcome(OutcomeSeverity::Error, error, None, None);
+        }
+        self.refresh_local_summary(ctx);
+    }
+
+    /// Re-read the worktree, stash, and branch facts shown in the window frame.
+    fn refresh_local_summary(&mut self, ctx: &egui::Context) {
+        let path = self
+            .stash_path()
+            .unwrap_or_else(|| PathBuf::from(&self.path));
+        if path.as_os_str().is_empty() {
+            self.local_summary = None;
+            self.local_summary_job = None;
+            return;
+        }
+        // Replacing the receiver drops any older, now stale result.
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let _ = sender.send(LocalSummary::read(path));
+            ctx.request_repaint();
+        });
+        self.local_summary_job = Some(receiver);
+    }
+
+    fn poll_local_summary(&mut self) {
+        let Some(receiver) = &self.local_summary_job else {
+            return;
+        };
+        match receiver.try_recv() {
+            Ok(summary) => {
+                self.local_summary_job = None;
+                let count = summary.stashes.len();
+                self.local_summary = Some(summary);
+                if self.stash_picker.selected >= count {
+                    self.stash_picker.selected = count.saturating_sub(1);
+                }
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => self.local_summary_job = None,
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+        }
     }
 
     fn open_working(&mut self, ctx: &egui::Context) {
@@ -1934,6 +4872,7 @@ impl Browser {
         };
         self.review = None;
         let mut working = status_view::StatusView::new(history.path.clone(), ctx);
+        working.apply_sign_default(self.prefs.sign_commits);
         if let Some(draft) = self.working_drafts.get(&working.repository_key()).cloned() {
             working.restore_draft(draft, ctx);
         }
@@ -2025,6 +4964,12 @@ impl Browser {
         }
         if self.mutation_path.is_some() {
             self.clear_operation_state();
+        }
+        if let Some(path) = &path {
+            settings::push_recent(&mut self.recent, path.clone());
+            if let Err(error) = settings::save_recent(&self.recent) {
+                self.mutation_error = Some(error);
+            }
         }
         self.mutation_path = path;
         if self.mutation.is_none() {
@@ -2261,7 +5206,7 @@ impl Browser {
                 }
             }
             RecoveryAction::ResolveConflicts => self.open_conflict_view(ctx),
-            RecoveryAction::RetryFetch => self.start_fetch(ctx, None, false),
+            RecoveryAction::RetryFetch => self.start_fetch(ctx, None, self.prefs.fetch_prune),
             RecoveryAction::RetryPush => self.start_push(ctx),
             RecoveryAction::RetrySwitch => {
                 if let Some(target) = self.pending_switch.clone() {
@@ -2281,20 +5226,18 @@ impl Browser {
                 if let Some(target) = self.pending_switch.clone() {
                     self.stash_switch = Some(StashSwitchDialog {
                         target,
-                        include_untracked: false,
+                        include_untracked: self.prefs.stash_include_untracked,
                         error: None,
                     });
                 }
             }
             RecoveryAction::PullRebase => self.start_pull_rebase(ctx),
+            RecoveryAction::ForcePush => {
+                if let Some(target) = self.force_push_target() {
+                    self.force_push = Some(target);
+                }
+            }
         }
-    }
-
-    fn mutation_ready(&self) -> bool {
-        self.mutation.is_none()
-            && !self.operation_busy()
-            && self.branch.is_none()
-            && self.network.is_none()
     }
 
     fn mutation_reason(&self) -> Option<&'static str> {
@@ -2328,7 +5271,15 @@ impl Browser {
                     self.mutation_error = Some(error);
                 }
             }
-            CommitAction::Reset(mode) => self.reset_confirm = Some((id, mode)),
+            CommitAction::Reset(mode) => {
+                if self.prefs.confirm_destructive {
+                    self.reset_confirm = Some((id, mode));
+                } else if let Err(error) = self.start_reset(ctx, &id, gg_engine::reset::Mode::Mixed)
+                {
+                    // Without the question, never Hard: working files stay.
+                    self.mutation_error = Some(error);
+                }
+            }
             CommitAction::Rewrite => {
                 if let Err(error) = self.open_rewrite_dialog(&id) {
                     self.mutation_error = Some(error);
@@ -2346,8 +5297,13 @@ impl Browser {
         command: CommitCommand,
     ) {
         match command {
-            CommitCommand::Action(action) => self.run_commit_action(ctx, id.to_string(), action),
-            CommitCommand::CopyHash => ctx.copy_text(id.to_string()),
+            CommitCommand::Menu(command) => {
+                let (mut local, mut history) = (false, false);
+                self.run_frame_command(ctx, command, &mut local, &mut history);
+                if local {
+                    self.open_working(ctx);
+                }
+            }
             CommitCommand::CopySubject => ctx.copy_text(subject.to_string()),
             CommitCommand::OpenRecovery => {
                 if let Some(history) = &self.state.history {
@@ -2433,6 +5389,7 @@ impl Browser {
 
     fn finish_operation(&mut self, ctx: &egui::Context, outcome: OperationOutcome) {
         let restore_row = self.operation_restore_row.take();
+        self.refresh_local_summary(ctx);
         match outcome {
             OperationOutcome::Merge(receipt) => {
                 let summary = match receipt.kind {
@@ -2513,6 +5470,11 @@ impl Browser {
                 self.mutation_notice = Some(summary.clone());
                 self.set_outcome(OutcomeSeverity::Info, summary, None, None);
                 self.refresh_mutation();
+                if let Some(view) = &mut self.conflict_view
+                    && !view.resolved.contains(&file)
+                {
+                    view.resolved.push(file.clone());
+                }
                 self.refresh_conflict_view(ctx, Some(&file));
                 self.load(ctx);
                 self.refresh_working(ctx);
@@ -2602,6 +5564,19 @@ impl Browser {
         })
     }
 
+    /// Pull with the fast-forward-only strategy: move the branch to the
+    /// upstream, or refuse when they have diverged.
+    fn start_fast_forward(&mut self, ctx: &egui::Context, reference: &str) -> Result<(), String> {
+        let path = self
+            .stash_path()
+            .ok_or("Open a repository before pulling.")?;
+        let reference = reference.to_string();
+        let label = format!("Fast-forwarding to {reference}…");
+        self.start_operation(ctx, label, move || {
+            gg_git::merge::fast_forward(&path, &reference).map(OperationOutcome::Merge)
+        })
+    }
+
     fn start_rebase(
         &mut self,
         ctx: &egui::Context,
@@ -2630,25 +5605,10 @@ impl Browser {
         if self.mutation.is_some() {
             return Err("Recover the operation in progress before rewriting history.".into());
         }
-        let commits = gg_git::rewrite::commits(&path, from)?;
-        let first = commits
-            .first()
-            .ok_or("The rewrite range is empty.")?
-            .id
-            .clone();
-        self.rewrite_dialog = Some(RewriteDialog {
-            from: first,
-            rows: commits
-                .into_iter()
-                .map(|commit| RewriteRow {
-                    id: commit.id,
-                    subject: commit.subject,
-                    action: gg_engine::rewrite::Action::Pick,
-                })
-                .collect(),
-            autostash: false,
-            error: None,
-        });
+        let (commits, base) = gg_git::rewrite::plan_range(&path, from)?;
+        let mut dialog = rebase_dialog::Dialog::new(path, commits, base, &self.state.refs)?;
+        dialog.autostash = self.prefs.rebase_autostash;
+        self.rewrite_dialog = Some(dialog);
         Ok(())
     }
 
@@ -2698,6 +5658,7 @@ impl Browser {
         receipt: gg_engine::rewrite::Receipt,
         restore_row: Option<usize>,
     ) -> u64 {
+        self.refresh_local_summary(ctx);
         self.mutation_error = None;
         let conflicts = receipt.in_progress || !receipt.conflicts.is_empty();
         let summary = if receipt.in_progress {
@@ -2718,6 +5679,7 @@ impl Browser {
         if let Some(backup) = &receipt.backup {
             details.push(format!("Backup: {backup}"));
         }
+        self.rewrite_backup = receipt.backup.clone();
         if !receipt.conflicts.is_empty() {
             details.push(format!("Conflicts: {}", receipt.conflicts.join(", ")));
         }
@@ -2731,6 +5693,9 @@ impl Browser {
             (!details.is_empty()).then(|| details.join("\n")),
             Some(if conflicts {
                 RecoveryAction::ResolveConflicts
+            } else if self.prefs.offer_force_lease && self.state.refs.current_tracking().is_some() {
+                // The branch was published: the rewrite needs a forced push.
+                RecoveryAction::ForcePush
             } else {
                 RecoveryAction::Backups
             }),
@@ -2743,6 +5708,109 @@ impl Browser {
         self.refresh_backups();
         self.refresh_working(ctx);
         self.state.generation
+    }
+
+    fn open_stash_dialog(&mut self) {
+        self.stash_dialog = Some(StashDialog {
+            message: String::new(),
+            include_untracked: self.prefs.stash_include_untracked,
+            keep_index: self.prefs.stash_keep_index,
+            error: None,
+        });
+    }
+
+    fn open_stash_window(&mut self) {
+        self.stash_window = Some(StashWindow {
+            entries: Vec::new(),
+            error: None,
+            notice: None,
+            confirm_drop: None,
+        });
+        self.refresh_stashes();
+    }
+
+    fn open_merge_dialog(&mut self) {
+        self.merge_dialog = Some(MergeDialog {
+            reference: String::new(),
+            no_ff: self.prefs.merge_no_ff,
+            error: None,
+        });
+    }
+
+    fn open_recovery_window(&mut self) {
+        if let Some(history) = &self.state.history {
+            self.recovery = Some(RecoveryView::new(history.path.clone()));
+        }
+    }
+
+    /// Readiness shared by the window menus and toolbar.
+    fn frame_readiness(&self) -> FrameReadiness {
+        let has_repo = self.state.history.is_some();
+        let network_idle = self.network.is_none()
+            && self.branch.is_none()
+            && self.mutation.is_none()
+            && !self.operation_busy();
+        let branch_idle = self.branch.is_none()
+            && self.network.is_none()
+            && self.mutation.is_none()
+            && !self.operation_busy();
+        let tracking = self.state.refs.current_tracking();
+        let behind = tracking.and_then(|tracking| tracking.behind).unwrap_or(0);
+        let pull_reason = if !has_repo {
+            Some("Open a repository first")
+        } else if !network_idle {
+            Some("Wait for the current operation to finish")
+        } else if tracking.is_none() {
+            Some("The current branch has no upstream to pull from")
+        } else if behind == 0 {
+            Some("Up to date with the upstream; fetch to check again")
+        } else {
+            None
+        };
+        let stash_idle =
+            has_repo && self.branch.is_none() && self.network.is_none() && !self.operation_busy();
+        let summary = self.local_summary.as_ref();
+        let stash_reason = if !has_repo {
+            Some("Open a repository first")
+        } else if !stash_idle {
+            Some("Wait for the current operation to finish")
+        } else if summary.and_then(|summary| summary.changes) == Some(0) {
+            Some("No local changes to stash")
+        } else {
+            None
+        };
+        let branch_rewrite = summary.and_then(|summary| summary.branch_start.as_ref());
+        let branch_rewrite_reason = if !has_repo {
+            Some("Open a repository first")
+        } else if let Some(reason) = self.mutation_reason() {
+            Some(reason)
+        } else if summary.is_none() {
+            Some("Reading the current branch…")
+        } else if branch_rewrite.is_none() {
+            Some(
+                "The current branch has no commits beyond its upstream or the default branch; use Commit › Interactive rebase from here… on a selected commit",
+            )
+        } else {
+            None
+        };
+        FrameReadiness {
+            has_repo,
+            network_idle: has_repo && network_idle,
+            branch_idle: has_repo && branch_idle && self.state.refs.head.is_some(),
+            stash_idle,
+            stash_reason,
+            stashes: summary.map_or(0, |summary| summary.stashes.len()),
+            changes: summary.and_then(|summary| summary.changes).unwrap_or(0),
+            branch_rewrite_count: branch_rewrite.map_or(0, |(_, count)| *count),
+            branch_rewrite_reason,
+            behind,
+            pull_reason,
+            rewrite_reason: if self.state.selected.is_none() {
+                Some("Select a commit in History first")
+            } else {
+                self.mutation_reason()
+            },
+        }
     }
 
     fn open_new_tag(&mut self) {
@@ -2771,7 +5839,7 @@ impl Browser {
             name: String::new(),
             target,
             message: String::new(),
-            sign: config.tag_signing,
+            sign: config.tag_signing || self.prefs.sign_tags,
             signing_ready: ready,
             signing_note: if ready {
                 None
@@ -2885,7 +5953,7 @@ impl Browser {
                 return;
             };
             egui::Window::new("Create tag")
-                .id(egui::Id::unique("create-tag"))
+                .id(egui::Id::unique("create-tag")).modal(ctx, egui::Id::unique("create-tag"))
                 .open(&mut open)
                 .collapsible(false)
                 .resizable(false)
@@ -3015,10 +6083,413 @@ impl Browser {
             name: String::new(),
             commit,
             selector: "current HEAD".into(),
-            switch: true,
+            switch: self.prefs.branch_switch,
             recovery_source: None,
             error: None,
         });
+    }
+
+    /// Resolve conflicts in the main workspace, under the operation area.
+    /// The workspace fills the content area at a fixed size; only a window
+    /// resize changes it.
+    fn draw_conflict_workspace(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
+        let ctx = &ctx;
+        let conflict_mutation = self.mutation.clone();
+        let conflict_pending =
+            self.operation_busy() || self.network.is_some() || self.branch.is_some();
+        let mut conflict_select = None;
+        let mut stage_resolution = false;
+        let mut refresh_content = false;
+        let mut conflict_open = true;
+        let workdir = self.stash_path();
+        let editor_command = self.prefs.editor.clone();
+        if let Some(view) = &mut self.conflict_view
+            && !view.whole_file
+            && let Some(blocks) = &mut view.blocks
+            && crate::navigation::available(ctx)
+            && !ctx.text_edit_focused()
+        {
+            blocks.keys(ctx);
+        }
+        if let Some(view) = &mut self.conflict_view {
+            let operation = conflict_mutation.as_ref().map(|state| state.operation);
+            let unresolved = conflict_mutation
+                .as_ref()
+                .map(|state| state.conflicts.len())
+                .unwrap_or(view.paths.len());
+            ui.scope(|ui| {
+                    ui.horizontal(|ui| {
+                        ui.strong(
+                            operation
+                                .map(gg_engine::mutation::Operation::as_str)
+                                .unwrap_or("operation"),
+                        );
+                        ui.label(format!("· {unresolved} unresolved"));
+                        if let Some(commit) = conflict_mutation
+                            .as_ref()
+                            .and_then(|state| state.commit.as_deref())
+                        {
+                            ui.label(format!("· {}", commit.chars().take(8).collect::<String>()));
+                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui
+                                .button("Close")
+                                .on_hover_text("Return to the previous view (Esc)")
+                                .clicked()
+                            {
+                                conflict_open = false;
+                            }
+                        });
+                    });
+                    ui.label(conflict_side_hint(operation));
+                    // One fixed line for the error or the empty state.
+                    let note = match (&view.error, view.paths.is_empty() && !view.loading) {
+                        (Some(error), _) => (error.clone(), ui.visuals().error_fg_color),
+                        (None, true) => ("No unmerged paths.".into(), ui.visuals().text_color()),
+                        (None, false) => (String::new(), ui.visuals().text_color()),
+                    };
+                    let (rect, _) = ui.allocate_exact_size(
+                        egui::vec2(ui.available_width(), 20.0),
+                        egui::Sense::hover(),
+                    );
+                    bounded_text::paint(ui, rect, &note.0, egui::FontId::proportional(13.0), note.1);
+                    ui.separator();
+                    ui.horizontal_top(|ui| {
+                        ui.vertical(|ui| {
+                            ui.set_width(CONFLICT_PATHS_WIDTH);
+                            // Files, as in the conflict mockup: what is left,
+                            // then what was resolved and staged here.
+                            let left = view
+                                .blocks
+                                .as_ref()
+                                .filter(|_| !view.whole_file)
+                                .map(conflict_blocks::Blocks::left);
+                            let height = ui.available_height();
+                            egui::ScrollArea::vertical()
+                                .id_salt("conflict-paths")
+                                .max_height(height)
+                                .min_scrolled_height(height)
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| {
+                                    ui.label(
+                                        egui::RichText::new(format!("CONFLICTED  {}", view.paths.len()))
+                                            .small()
+                                            .weak(),
+                                    );
+                                    for (index, path) in view.paths.iter().enumerate() {
+                                        let mut text = egui::text::LayoutJob::default();
+                                        text.append(
+                                            "!  ",
+                                            0.0,
+                                            egui::TextFormat {
+                                                color: ui.visuals().error_fg_color,
+                                                ..Default::default()
+                                            },
+                                        );
+                                        text.append(path, 0.0, egui::TextFormat::default());
+                                        if index == view.selected
+                                            && let Some(left) = left
+                                        {
+                                            text.append(
+                                                &format!("  {left} left"),
+                                                0.0,
+                                                egui::TextFormat {
+                                                    color: ui.visuals().weak_text_color(),
+                                                    ..Default::default()
+                                                },
+                                            );
+                                        }
+                                        if ui
+                                            .add(
+                                                egui::Button::selectable(index == view.selected, text)
+                                                    .truncate(),
+                                            )
+                                            .on_hover_text(path)
+                                            .clicked()
+                                        {
+                                            conflict_select = Some(index);
+                                        }
+                                    }
+                                    if view.paths.is_empty() && !view.loading {
+                                        ui.weak("All conflicts resolved.");
+                                    }
+                                    ui.add_space(6.0);
+                                    ui.label(
+                                        egui::RichText::new(format!(
+                                            "RESOLVED, STAGED  {}",
+                                            view.resolved.len()
+                                        ))
+                                        .small()
+                                        .weak(),
+                                    );
+                                    for path in &view.resolved {
+                                        ui.add(
+                                            egui::Label::new(
+                                                egui::RichText::new(format!("✓  {path}")).weak(),
+                                            )
+                                            .truncate(),
+                                        )
+                                        .on_hover_text(path);
+                                    }
+                                });
+                        });
+                        ui.separator();
+                        ui.vertical(|ui| {
+                            let Some(content) = &view.content else {
+                                if view.loading {
+                                    ui.spinner();
+                                }
+                                return;
+                            };
+                            ui.horizontal(|ui| {
+                                ui.weak("Resolve");
+                                let blocks = view.blocks.is_some();
+                                if ui
+                                    .add_enabled(
+                                        blocks,
+                                        egui::Button::selectable(
+                                            !view.whole_file && blocks,
+                                            "Block by block",
+                                        ),
+                                    )
+                                    .on_disabled_hover_text(
+                                        view.blocks_note.as_deref().unwrap_or("No text blocks."),
+                                    )
+                                    .clicked()
+                                {
+                                    view.whole_file = false;
+                                }
+                                if ui
+                                    .add(egui::Button::selectable(
+                                        view.whole_file || !blocks,
+                                        "Whole file",
+                                    ))
+                                    .clicked()
+                                {
+                                    view.whole_file = true;
+                                }
+                                if let Some(note) = &view.blocks_note {
+                                    ui.weak(note);
+                                }
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        let file = workdir.as_ref().zip(view.paths.get(view.selected));
+                                        if ui
+                                            .add_enabled(file.is_some(), egui::Button::new("Open in editor"))
+                                            .on_hover_text(if editor_command.trim().is_empty() {
+                                                "Open the working file with the system's default app (set an editor in Preferences)"
+                                            } else {
+                                                "Open the working file with the editor from Preferences"
+                                            })
+                                            .clicked()
+                                            && let Some((workdir, path)) = file
+                                        {
+                                            view.error = editor::open(&editor_command, &workdir.join(path)).err();
+                                        }
+                                    },
+                                );
+                            });
+                            if !view.whole_file
+                                && let Some(blocks) = &mut view.blocks
+                            {
+                                let labels = conflict_blocks::Labels {
+                                    base: conflict_side_label(operation, ConflictSide::Base),
+                                    ours: conflict_side_label(operation, ConflictSide::Ours),
+                                    theirs: conflict_side_label(operation, ConflictSide::Theirs),
+                                };
+                                blocks.show(ui, &labels);
+                                ui.separator();
+                                ui.horizontal(|ui| {
+                                    ui.strong(format!(
+                                        "Result · {}/{} blocks chosen · preview, not staged",
+                                        blocks.chosen(),
+                                        blocks.count()
+                                    ));
+                                    let enabled = !conflict_pending && blocks.complete();
+                                    let response = ui.add_enabled(
+                                        enabled,
+                                        egui::Button::new("Stage resolution"),
+                                    );
+                                    let response = if conflict_pending {
+                                        response.on_disabled_hover_text(
+                                            "Wait for the current operation to finish.",
+                                        )
+                                    } else {
+                                        response.on_disabled_hover_text(
+                                            "Choose a resolution for every block first.",
+                                        )
+                                    };
+                                    if response.clicked() {
+                                        stage_resolution = true;
+                                    }
+                                });
+                                let text = blocks.text();
+                                egui::ScrollArea::both()
+                                    .id_salt("conflict-block-result")
+                                    .max_height(150.0)
+                                    .min_scrolled_height(150.0)
+                                    .auto_shrink([false, false])
+                                    .show(ui, |ui| {
+                                        ui.monospace(numbered(&text));
+                                    });
+                                return;
+                            }
+                            let snapshot = view.snapshot.clone();
+                            let preview_text = snapshot
+                                .as_ref()
+                                .map(|snapshot| conflict_preview_text(content, snapshot, view.preview))
+                                .unwrap_or_default();
+                            ui.horizontal_wrapped(|ui| {
+                                ui.weak("Preview source");
+                                for (resolution, label) in [
+                                    (gg_engine::conflict::Resolution::Base, "Base"),
+                                    (gg_engine::conflict::Resolution::Ours, "Ours"),
+                                    (gg_engine::conflict::Resolution::Theirs, "Theirs"),
+                                    (gg_engine::conflict::Resolution::Working, "Working file"),
+                                ] {
+                                    if ui
+                                        .selectable_label(view.preview == resolution, label)
+                                        .clicked()
+                                    {
+                                        view.preview = resolution;
+                                        view.tab = ConflictTab::Result;
+                                    }
+                                }
+                                if ui.button("Refresh external edits").clicked() {
+                                    refresh_content = true;
+                                }
+                            });
+                            ui.weak(
+                                "Choosing a source only changes this preview. Stage resolution publishes it once.",
+                            );
+                            if content.binary {
+                                ui.colored_label(ui.visuals().warn_fg_color, "Binary content");
+                            }
+                            if content.truncated {
+                                ui.colored_label(ui.visuals().warn_fg_color, "Content truncated");
+                            }
+                            if ui.available_width() >= 720.0 {
+                                ui.columns(3, |columns| {
+                                    for (column, (title, text)) in columns.iter_mut().zip([
+                                        (conflict_side_label(operation, ConflictSide::Base), &content.base),
+                                        (conflict_side_label(operation, ConflictSide::Ours), &content.ours),
+                                        (conflict_side_label(operation, ConflictSide::Theirs), &content.theirs),
+                                    ]) {
+                                        column.label(title);
+                                        egui::ScrollArea::both()
+                                            .id_salt(title)
+                                            .max_height(240.0)
+                                            .min_scrolled_height(240.0)
+                                            .auto_shrink([false, false])
+                                    .min_scrolled_height(240.0)
+                                    .auto_shrink([false, false])
+                                            .show(column, |ui| {
+                                                ui.monospace(text.as_deref().unwrap_or("(absent)"));
+                                            });
+                                    }
+                                });
+                                ui.separator();
+                                ui.horizontal(|ui| {
+                                    ui.strong(format!(
+                                        "Result · {} · preview, not staged",
+                                        conflict_resolution_label(view.preview)
+                                    ));
+                                    let enabled = !conflict_pending && conflict_preview_available(view);
+                                    let response = ui.add_enabled(
+                                        enabled,
+                                        egui::Button::new("Stage resolution"),
+                                    );
+                                    let response = if enabled {
+                                        response
+                                    } else {
+                                        response.on_disabled_hover_text(conflict_preview_reason(view))
+                                    };
+                                    if response.clicked() {
+                                        stage_resolution = true;
+                                    }
+                                });
+                                egui::ScrollArea::both()
+                                    .id_salt("conflict-result")
+                                    .max_height(150.0)
+                                    .min_scrolled_height(150.0)
+                                    .auto_shrink([false, false])
+                                    .show(ui, |ui| {
+                                        ui.monospace(&preview_text);
+                                    });
+                            } else {
+                                ui.horizontal(|ui| {
+                                    ui.selectable_value(&mut view.tab, ConflictTab::Base, "Base");
+                                    ui.selectable_value(&mut view.tab, ConflictTab::Ours, "Ours");
+                                    ui.selectable_value(
+                                        &mut view.tab,
+                                        ConflictTab::Theirs,
+                                        "Theirs",
+                                    );
+                                    ui.selectable_value(
+                                        &mut view.tab,
+                                        ConflictTab::Result,
+                                        "Result",
+                                    );
+                                });
+                                let text = match view.tab {
+                                    ConflictTab::Base => content.base.as_deref().unwrap_or("(absent)"),
+                                    ConflictTab::Ours => content.ours.as_deref().unwrap_or("(absent)"),
+                                    ConflictTab::Theirs => {
+                                        content.theirs.as_deref().unwrap_or("(absent)")
+                                    }
+                                    ConflictTab::Result => &preview_text,
+                                };
+                                egui::ScrollArea::both()
+                                    .id_salt("conflict-side")
+                                    .max_height(280.0)
+                                    .min_scrolled_height(280.0)
+                                    .auto_shrink([false, false])
+                                    .show(ui, |ui| {
+                                        ui.monospace(text);
+                                    });
+                                ui.horizontal(|ui| {
+                                    ui.weak(format!(
+                                        "Result · {} · preview, not staged",
+                                        conflict_resolution_label(view.preview)
+                                    ));
+                                    let enabled = !conflict_pending && conflict_preview_available(view);
+                                    let response = ui.add_enabled(
+                                        enabled,
+                                        egui::Button::new("Stage resolution"),
+                                    );
+                                    let response = if enabled {
+                                        response
+                                    } else {
+                                        response.on_disabled_hover_text(conflict_preview_reason(view))
+                                    };
+                                    if response.clicked() {
+                                        stage_resolution = true;
+                                    }
+                                });
+                            }
+                        });
+                    });
+                });
+        }
+        if let Some(index) = conflict_select
+            && let Some(view) = &mut self.conflict_view
+        {
+            view.selected = index;
+        }
+        if conflict_select.is_some() || refresh_content {
+            self.load_conflict_content(ctx);
+        }
+        if stage_resolution
+            && let Err(error) = self.stage_conflict_resolution(ctx)
+            && let Some(view) = &mut self.conflict_view
+        {
+            view.error = Some(error);
+        }
+        if self.conflict_view.is_some() && !conflict_open {
+            self.conflict_view = None;
+        }
     }
 
     fn open_conflict_view(&mut self, ctx: &egui::Context) {
@@ -3041,7 +6512,10 @@ impl Browser {
             snapshot: None,
             preview: gg_engine::conflict::Resolution::Working,
             tab: ConflictTab::Ours,
-            placed: false,
+            blocks: None,
+            blocks_note: None,
+            whole_file: false,
+            resolved: Vec::new(),
         });
         view.keep = keep.map(str::to_string);
         view.previous_selected = view.selected;
@@ -3090,12 +6564,28 @@ impl Browser {
                     view.paths = paths;
                     view.content = None;
                     view.snapshot = None;
+                    view.blocks = None;
+                    view.blocks_note = None;
                     view.error = None;
                     load_content = !view.paths.is_empty();
                 }
-                Ok(ConflictUpdate::Content { content, snapshot }) => {
+                Ok(ConflictUpdate::Content {
+                    content,
+                    snapshot,
+                    blocks,
+                }) => {
                     view.content = Some(*content);
                     view.snapshot = Some(*snapshot);
+                    match blocks {
+                        Ok(segments) => {
+                            view.blocks = Some(conflict_blocks::Blocks::new(segments));
+                            view.blocks_note = None;
+                        }
+                        Err(note) => {
+                            view.blocks = None;
+                            view.blocks_note = Some(note);
+                        }
+                    }
                     view.preview = gg_engine::conflict::Resolution::Working;
                     view.tab = ConflictTab::Result;
                     view.error = None;
@@ -3126,6 +6616,8 @@ impl Browser {
         };
         view.content = None;
         view.snapshot = None;
+        view.blocks = None;
+        view.blocks_note = None;
         view.preview = gg_engine::conflict::Resolution::Working;
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         let repaint = ctx.clone();
@@ -3135,9 +6627,15 @@ impl Browser {
                 let result = (|| {
                     let content = gg_git::conflict::read(&path, &file)?;
                     let snapshot = gg_git::conflict::snapshot(&path, &file)?;
+                    let blocks = if content.binary {
+                        Err("This file is binary. Choose a whole side.".into())
+                    } else {
+                        gg_git::conflict::blocks(&path, &file)
+                    };
                     Ok(ConflictUpdate::Content {
                         content: Box::new(content),
                         snapshot: Box::new(snapshot),
+                        blocks,
                     })
                 })();
                 let _ = tx.send(result);
@@ -3174,9 +6672,20 @@ impl Browser {
             .as_ref()
             .map(|view| view.preview)
             .unwrap_or(gg_engine::conflict::Resolution::Working);
+        let composed = match self.conflict_view.as_ref() {
+            Some(view) if !view.whole_file => match &view.blocks {
+                Some(blocks) if blocks.complete() => Some(blocks.text()),
+                Some(_) => return Err("Choose a resolution for every block first.".into()),
+                None => None,
+            },
+            _ => None,
+        };
         let label = format!("Staging {file}…");
         self.start_operation(ctx, label, move || {
-            gg_git::conflict::publish(&path, &file, &snapshot, resolution)?;
+            match composed {
+                Some(text) => gg_git::conflict::publish_text(&path, &file, &snapshot, &text)?,
+                None => gg_git::conflict::publish(&path, &file, &snapshot, resolution)?,
+            }
             Ok(OperationOutcome::Conflict { file })
         })
     }
@@ -3197,6 +6706,25 @@ impl Browser {
             self.refresh_mutation();
         }
         self.state.begin(path.clone());
+        if switching {
+            self.local_summary = None;
+        }
+        self.refresh_local_summary(ctx);
+        self.last_load = Some(std::time::Instant::now());
+        if switching || self.watcher.is_none() {
+            self.prune_backups(&path);
+        }
+        if self
+            .watcher
+            .as_ref()
+            .is_none_or(|watcher| watcher.workdir != path)
+        {
+            let repaint = ctx.clone();
+            self.watcher = watcher::Watcher::start(&path, move || {
+                repaint.request_repaint_after(std::time::Duration::from_millis(350));
+            })
+            .ok();
+        }
         let request = stream::Request {
             revision: self.state.filter_revision,
             query: self.state.query.clone(),
@@ -3205,7 +6733,7 @@ impl Browser {
             anchor_id: self
                 .state
                 .rows
-                .get(&((self.scroll_offset / history_view::ROW_HEIGHT) as usize))
+                .get(&((self.scroll_offset / crate::density::row()) as usize))
                 .map(|c| c.id.clone()),
             ..Default::default()
         };
@@ -3351,7 +6879,8 @@ impl Browser {
         self.worktree_generation += 1;
         let generation = self.worktree_generation;
         let label = match &action {
-            worktree_worker::Action::List => "Reading worktrees…",
+            // Reads keep the window busy without announcing it.
+            worktree_worker::Action::List => "",
             worktree_worker::Action::Add(_) => "Adding worktree…",
             worktree_worker::Action::Remove(_) => "Removing worktree…",
         };
@@ -3517,7 +7046,7 @@ impl Browser {
                     {
                         create_open = true;
                     }
-                    if let Some(busy) = &window.busy {
+                    if let Some(busy) = window.busy.as_deref().filter(|busy| !busy.is_empty()) {
                         ui.spinner();
                         ui.weak(busy);
                     }
@@ -3530,11 +7059,10 @@ impl Browser {
                 }
                 ui.separator();
                 let Some(snapshot) = &window.snapshot else {
-                    ui.weak(if window.busy.is_some() {
-                        "Reading worktrees…"
-                    } else {
-                        "Worktrees unavailable."
-                    });
+                    // Until the first list arrives the window stays empty.
+                    if window.busy.is_none() {
+                        ui.weak("Worktrees unavailable.");
+                    }
                     return;
                 };
                 for (index, worktree) in snapshot.worktrees.iter().enumerate() {
@@ -3599,6 +7127,7 @@ impl Browser {
             let mut dialog_open = true;
             egui::Window::new("Create worktree")
                 .id(egui::Id::unique("create-worktree"))
+                .modal(ctx, egui::Id::unique("create-worktree"))
                 .open(&mut dialog_open)
                 .collapsible(false)
                 .resizable(false)
@@ -3677,7 +7206,7 @@ impl Browser {
         {
             let mut confirm = true;
             egui::Window::new("Remove worktree")
-                .id(egui::Id::unique("remove-worktree"))
+                .id(egui::Id::unique("remove-worktree")).modal(ctx, egui::Id::unique("remove-worktree"))
                 .open(&mut confirm)
                 .collapsible(false)
                 .resizable(false)
@@ -3800,7 +7329,8 @@ impl Browser {
         self.submodule_generation += 1;
         let generation = self.submodule_generation;
         let label = match action {
-            submodule_worker::Action::Read { .. } => "Reading submodule…",
+            // Reads keep the window busy without announcing it.
+            submodule_worker::Action::Read { .. } => "",
             submodule_worker::Action::Update => "Updating submodule…",
         };
         if let Some(window) = &mut self.submodule_window {
@@ -3945,11 +7475,6 @@ impl Browser {
                                 ask_update = true;
                             }
                         });
-                    } else if window.busy.is_some() {
-                        ui.horizontal(|ui| {
-                            ui.spinner();
-                            ui.weak("Reading submodule…");
-                        });
                     }
                     if let Some(error) = &window.error {
                         ui.colored_label(ui.visuals().error_fg_color, error);
@@ -3964,6 +7489,7 @@ impl Browser {
                 let mut confirm = true;
                 egui::Window::new("Update submodule")
                     .id(egui::Id::unique("update-submodule"))
+                    .modal(ctx, egui::Id::unique("update-submodule"))
                     .open(&mut confirm)
                     .collapsible(false)
                     .resizable(false)
@@ -4249,7 +7775,8 @@ impl Browser {
         self.lfs_generation += 1;
         let generation = self.lfs_generation;
         let label = match action {
-            lfs_worker::Action::Read(_) => "Reading LFS pointer…",
+            // Reads keep the window busy without announcing it.
+            lfs_worker::Action::Read(_) => "",
             lfs_worker::Action::Fetch(_) => "Fetching LFS object…",
         };
         if let Some(window) = &mut self.lfs_window {
@@ -4383,11 +7910,6 @@ impl Browser {
                             ask_fetch = true;
                         }
                         ui.weak("Fetching does not change or smudge working files.");
-                    } else if window.busy.is_some() {
-                        ui.horizontal(|ui| {
-                            ui.spinner();
-                            ui.weak("Reading LFS pointer…");
-                        });
                     }
                     if let Some(error) = &window.error {
                         ui.colored_label(ui.visuals().error_fg_color, error);
@@ -4403,6 +7925,7 @@ impl Browser {
                 let mut confirm = true;
                 egui::Window::new("Fetch LFS object")
                     .id(egui::Id::unique("fetch-lfs"))
+                    .modal(ctx, egui::Id::unique("fetch-lfs"))
                     .open(&mut confirm)
                     .collapsible(false)
                     .resizable(false)
@@ -4536,9 +8059,43 @@ impl Browser {
     }
 
     fn draw_ui(&mut self, ui: &mut egui::Ui) {
+        let title = window_title(
+            &self.path,
+            std::env::var("HOME").ok().as_deref(),
+            self.rebase_progress(),
+        );
+        if title != self.window_title {
+            ui.ctx()
+                .send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
+            self.window_title = title;
+        }
         self.sync_mutation();
         let ctx = ui.ctx().clone();
         let ctx = &ctx;
+        // Esc closes search before any view can take the key.
+        if self.search.is_some()
+            && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+        {
+            self.close_search(ctx);
+        } else if self.conflict_view.is_some()
+            && crate::navigation::available(ctx)
+            && !ctx.text_edit_focused()
+            && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+        {
+            // Esc leaves the conflict workspace before any view can take it.
+            self.conflict_view = None;
+        }
+        self.ctx_width = ctx.content_rect().width();
+        if let Some((changes, first)) = self.watcher.as_mut().and_then(|watcher| watcher.poll()) {
+            self.apply_changes(ctx, changes, first);
+        }
+        self.menu_shortcuts(ctx);
+        self.poll_local_summary();
+        let focused = ctx.input(|i| i.focused);
+        if focused && !self.window_focused {
+            self.refresh_local_summary(ctx);
+        }
+        self.window_focused = focused;
         colors::apply(ctx);
         #[cfg(debug_assertions)]
         if self.open_local
@@ -4548,6 +8105,21 @@ impl Browser {
         {
             self.open_local = false;
             self.open_working(ctx);
+        }
+        self.open_reopened_commit(ctx);
+        self.remember_layout(ctx);
+        #[cfg(debug_assertions)]
+        if self.state.history.is_some()
+            && let Some(revision) = self.open_review.take()
+        {
+            self.open_review_at(ctx, revision, String::new(), None);
+        }
+        #[cfg(debug_assertions)]
+        if self.state.history.is_some()
+            && let Some(from) = self.open_rebase.take()
+            && let Err(error) = self.open_rewrite_dialog(&from)
+        {
+            self.mutation_error = Some(error);
         }
         if let Some(result) = self.branch.as_ref().and_then(|rx| match rx.try_recv() {
             Ok(result) => Some(result),
@@ -4722,7 +8294,6 @@ impl Browser {
         self.poll_conflict_view(ctx);
         let narrow = ctx.content_rect().width() < 1040.0;
         let wide_refs = !narrow && self.refs_visible && ctx.content_rect().width() >= 1120.0;
-        let filter_id = egui::Id::unique("history-filter");
         if self.working.is_none() && self.review.is_none() {
             self.state.viewport = self.viewport.clone();
             let (hovering_history, interacting, now) = ctx.input(|i| {
@@ -4777,8 +8348,8 @@ impl Browser {
                     update
                         .anchor_row
                         .map(|row| {
-                            row as f32 * history_view::ROW_HEIGHT
-                                + self.scroll_offset % history_view::ROW_HEIGHT
+                            row as f32 * crate::density::row()
+                                + self.scroll_offset % crate::density::row()
                         })
                         .unwrap_or(0.0),
                 );
@@ -4832,15 +8403,6 @@ impl Browser {
                 ctx,
                 !hovering_history && !interacting && now - self.last_scroll > 0.2,
             );
-            let focus_filter =
-                ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::F));
-            if focus_filter {
-                self.narrow_details = false;
-                ctx.memory_mut(|m| m.request_focus(filter_id));
-            }
-            if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::R)) {
-                self.load(ctx);
-            }
             if crate::navigation::available(ctx) {
                 if ctx.input_mut(|i| {
                     i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)
@@ -4869,6 +8431,25 @@ impl Browser {
                 }
                 if ctx.input_mut(|i| i.consume_key(egui::Modifiers::ALT, egui::Key::A)) {
                     self.commit_actions = true;
+                }
+                if crate::navigation::activation_available(ctx)
+                    && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::R))
+                    && self.frame_readiness().rewrite_reason.is_none()
+                    && let Some(id) = self.state.selected.clone()
+                {
+                    self.run_commit_action(ctx, id, CommitAction::Rewrite);
+                }
+                for (key, action) in [
+                    (egui::Key::E, gg_engine::rewrite::Action::Edit),
+                    (egui::Key::F, gg_engine::rewrite::Action::Fixup),
+                    (egui::Key::D, gg_engine::rewrite::Action::Drop),
+                ] {
+                    if crate::navigation::activation_available(ctx)
+                        && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, key))
+                        && self.frame_readiness().rewrite_reason.is_none()
+                    {
+                        self.rebase_preset(ctx, action);
+                    }
                 }
                 let page = self.page_rows.saturating_sub(1).max(1) as i32;
                 for (modifiers, key, distance) in [
@@ -4920,418 +8501,129 @@ impl Browser {
         let mut go_local = false;
         let mut go_history = false;
         let working_mutation_pending = self.working_mutation_pending();
-        egui::Panel::top("toolbar").exact_size(42.0).show(ui, |ui| {
-            ui.add_space(5.0);
-            ui.horizontal(|ui| {
-                branding::toolbar(ui, &mut self.logo);
-                ui.menu_button("Repository", |ui| {
-                    if ui
-                        .add_enabled(
-                            !self.repository_switch_pending(),
-                            egui::Button::new("Open…"),
-                        )
-                        .clicked()
-                    {
-                        self.edit_path = true;
-                        ui.close();
-                    }
-                    if ui
-                        .add_enabled(
-                            self.pending.is_none(),
-                            egui::Button::new("Refresh").shortcut_text("Ctrl/Cmd+R"),
-                        )
-                        .clicked()
-                    {
-                        self.load(ctx);
-                        ui.close();
-                    }
-                    if ui
-                        .add_enabled(self.state.history.is_some(), egui::Button::new("Recovery…"))
-                        .on_hover_text(
-                            "Recover rewrite backups or reflog entries from one source selector",
-                        )
-                        .clicked()
-                    {
-                        if let Some(history) = &self.state.history {
-                            self.recovery = Some(RecoveryView::new(history.path.clone()));
-                        }
-                        ui.close();
-                    }
-                    if ui
-                        .add_enabled(
-                            self.state.history.is_some(),
-                            egui::Button::new("Worktrees…"),
-                        )
-                        .on_hover_text("List, create, open, or remove linked worktrees")
-                        .clicked()
-                    {
-                        self.open_worktrees(ctx);
-                        ui.close();
-                    }
-                    ui.separator();
-                    let stash_busy =
-                        self.branch.is_some() || self.network.is_some() || self.operation_busy();
-                    if ui
-                        .add_enabled(
-                            self.state.history.is_some() && !stash_busy,
-                            egui::Button::new("Stash changes…"),
-                        )
-                        .on_hover_text("Record working changes in a new stash entry")
-                        .clicked()
-                    {
-                        self.stash_dialog = Some(StashDialog {
-                            message: String::new(),
-                            include_untracked: false,
-                            keep_index: false,
-                            error: None,
-                        });
-                        ui.close();
-                    }
-                    if ui
-                        .add_enabled(
-                            self.state.history.is_some() && !stash_busy,
-                            egui::Button::new("Stashes…"),
-                        )
-                        .on_hover_text("List, restore, or drop stash entries")
-                        .clicked()
-                    {
-                        self.stash_window = Some(StashWindow {
-                            entries: Vec::new(),
-                            error: None,
-                            notice: None,
-                            confirm_drop: None,
-                        });
-                        self.refresh_stashes();
-                        ui.close();
-                    }
-                    ui.separator();
-                    let network_idle = self.network.is_none()
-                        && self.branch.is_none()
-                        && self.mutation.is_none()
-                        && !self.operation_busy();
-                    let has_repo = self.state.history.is_some();
-                    if ui
-                        .add_enabled(network_idle && has_repo, egui::Button::new("Fetch"))
-                        .on_hover_text("Fetch the default remote without changing local branches")
-                        .clicked()
-                    {
-                        self.start_fetch(ctx, None, false);
-                        ui.close();
-                    }
-                    if ui
-                        .add_enabled(network_idle && has_repo, egui::Button::new("Push"))
-                        .on_hover_text(
-                            "Push the current branch without force; set upstream when absent",
-                        )
-                        .clicked()
-                    {
-                        self.start_push(ctx);
-                        ui.close();
-                    }
-                    let force_target = self.force_push_target();
-                    if ui
-                        .add_enabled(
-                            network_idle && force_target.is_some(),
-                            egui::Button::new("Force push with lease…"),
-                        )
-                        .on_hover_text(
-                            "Rewrite the upstream branch only if it still matches the fetched lease",
-                        )
-                        .on_disabled_hover_text(
-                            "Force with lease requires an upstream remote-tracking ref; track and fetch first",
-                        )
-                        .clicked()
-                        && let Some(target) = force_target
-                    {
-                        self.force_push = Some(target);
-                        ui.close();
-                    }
-                    if ui
-                        .add_enabled(network_idle, egui::Button::new("Clone…"))
-                        .on_hover_text(
-                            "Clone a repository and open it after success; a repository URL on the clipboard pre-fills the form",
-                        )
-                        .clicked()
-                    {
-                        self.clone_dialog = Some(CloneDialog::from_url(
-                            clipboard::repository_url(),
-                            self.clone_start_folder(),
-                        ));
-                        ui.close();
-                    }
-                    if ui
-                        .button("Development base folders…")
-                        .on_hover_text(
-                            "Choose the folders where you keep repositories and the default clone folder",
-                        )
-                        .clicked()
-                    {
-                        self.folders_dialog = Some(FoldersDialog {
-                            new_root: String::new(),
-                            error: None,
-                        });
-                        ui.close();
-                    }
-                });
-                let refs = self.state.refs.clone();
-                let branch_pending = self.branch.is_some()
-                    || self.network.is_some()
-                    || self.mutation.is_some()
-                    || self.operation_busy();
-                let mut jump = None;
-                let mut switch = None;
-                let mut new_branch = false;
-                let mut new_tag = false;
-                let mut track_branch = false;
-                let mut merge = false;
-                let mut rebase = false;
-                ui.menu_button("Refs", |ui| {
-                    let head_name = refs.head.as_ref().and_then(|head| head.name.as_deref());
-                    if ui
-                        .add_enabled(
-                            !branch_pending && refs.head.is_some() && self.network.is_none(),
-                            egui::Button::new("New branch…"),
-                        )
-                        .clicked()
-                    {
-                        new_branch = true;
-                        ui.close();
-                    }
-                    if ui
-                        .add_enabled(
-                            !branch_pending && refs.head.is_some() && self.network.is_none(),
-                            egui::Button::new("New tag…"),
-                        )
-                        .on_hover_text("Create an annotated or signed tag at an explicit target")
-                        .clicked()
-                    {
-                        new_tag = true;
-                        ui.close();
-                    }
-                    if ui
-                        .add_enabled(
-                            !branch_pending
-                                && self.network.is_none()
-                                && refs
-                                    .items
-                                    .iter()
-                                    .any(|item| item.kind == gg_engine::refs::RefKind::Remote),
-                            egui::Button::new("Track remote branch…"),
-                        )
-                        .clicked()
-                    {
-                        track_branch = true;
-                        ui.close();
-                    }
-                    if ui
-                        .add_enabled(
-                            !branch_pending
-                                && self.mutation.is_none()
-                                && self.network.is_none()
-                                && !self.operation_busy(),
-                            egui::Button::new("Merge branch…"),
-                        )
-                        .on_hover_text("Merge a local branch, remote-tracking ref, or tag")
-                        .clicked()
-                    {
-                        merge = true;
-                        ui.close();
-                    }
-                    if ui
-                        .add_enabled(
-                            !branch_pending
-                                && self.mutation.is_none()
-                                && self.network.is_none()
-                                && !self.operation_busy(),
-                            egui::Button::new("Rebase branch…"),
-                        )
-                        .on_hover_text("Rebase the current branch onto a branch, remote, or tag")
-                        .clicked()
-                    {
-                        rebase = true;
-                        ui.close();
-                    }
-                    let branches = refs
-                        .items
-                        .iter()
-                        .filter(|item| item.kind == gg_engine::refs::RefKind::Branch)
-                        .collect::<Vec<_>>();
-                    if !branches.is_empty() {
-                        ui.menu_button("Branches", |ui| {
-                            for item in &branches {
-                                let current = Some(item.full_name.as_str()) == head_name;
-                                let label = if current {
-                                    format!("{}  ·  HEAD", item.name)
-                                } else {
-                                    item.name.clone()
-                                };
-                                if ui.button(label).clicked() {
-                                    jump = Some(item.commit.clone());
-                                    ui.close();
-                                }
-                            }
-                        });
-                        ui.menu_button("Switch to branch", |ui| {
-                            for item in &branches {
-                                let current = Some(item.full_name.as_str()) == head_name;
-                                if ui
-                                    .add_enabled(
-                                        !current && !branch_pending,
-                                        egui::Button::new(format!("Switch to {}", item.name)),
-                                    )
-                                    .on_hover_text(if current {
-                                        "Already on this branch"
-                                    } else {
-                                        "Switch the worktree after a clean-worktree check"
-                                    })
-                                    .clicked()
-                                {
-                                    switch = Some(item.name.clone());
-                                    ui.close();
-                                }
-                            }
-                        });
-                    }
-                    for (title, kind) in [
-                        ("Remotes", gg_engine::refs::RefKind::Remote),
-                        ("Tags", gg_engine::refs::RefKind::Tag),
-                    ] {
-                        let filtered = refs
-                            .items
-                            .iter()
-                            .filter(|item| item.kind == kind)
-                            .collect::<Vec<_>>();
-                        if filtered.is_empty() {
-                            continue;
-                        }
-                        ui.menu_button(title, |ui| {
-                            for item in filtered {
-                                if ui.button(item.name.clone()).clicked() {
-                                    jump = Some(item.commit.clone());
-                                    ui.close();
-                                }
-                            }
-                        });
-                    }
-                    if refs.items.is_empty() {
-                        ui.weak("No branches or tags");
-                    }
-                });
-                if let Some(name) = switch {
-                    self.start_branch(ctx, name, false);
-                }
-                if new_branch {
-                    self.open_new_branch();
-                }
-                if new_tag {
-                    self.open_new_tag();
-                }
-                if track_branch {
-                    self.track_dialog = Some(self.default_track_branch());
-                }
-                if merge {
-                    self.merge_dialog = Some(MergeDialog {
-                        reference: String::new(),
-                        no_ff: false,
-                        error: None,
-                    });
-                }
-                if rebase {
-                    self.rebase_dialog = Some(RebaseDialog {
-                        reference: String::new(),
-                        autostash: false,
-                        error: None,
-                    });
-                }
-                if let Some(id) = jump {
-                    self.jump_to_ref(id);
-                }
-                ui.menu_button("View", |ui| {
-                    let shown = if narrow {
-                        &mut self.narrow_details
-                    } else {
-                        &mut self.details_visible
-                    };
-                    if ui.checkbox(shown, "Commit details · Space").clicked() {
-                        ui.close();
-                    }
-                    ui.separator();
-                    let sidebar_available = ctx.content_rect().width() >= 1120.0;
-                    ui.add_enabled(
-                        sidebar_available,
-                        egui::Checkbox::new(&mut self.refs_visible, "Refs sidebar"),
-                    )
-                    .on_hover_text(if sidebar_available {
-                        "Show branches, remotes, and tags on the left"
-                    } else {
-                        "Resize the window to at least 1120 px to show the sidebar"
-                    });
-                });
-                ui.menu_button("Help", |ui| {
-                    if ui.button("Keyboard shortcuts…").clicked() {
-                        self.help_shortcuts = true;
-                        ui.close();
-                    }
-                });
-                ui.separator();
-                let identity_width = ui.available_width().max(80.0);
-                let (identity, path) = if let Some(history) = &self.state.history {
-                    let tracking = self
-                        .state
-                        .refs
-                        .current_tracking()
-                        .map(|tracking| format!("  ·  {}", refs_view::tracking_label(tracking)))
-                        .unwrap_or_default();
-                    (
-                        format!(
-                            "{}  ·  {}{}",
-                            history
-                                .path
-                                .file_name()
-                                .unwrap_or_default()
-                                .to_string_lossy(),
-                            if history.shallow {
-                                format!("{} · shallow", history.head)
-                            } else {
-                                history.head.clone()
-                            },
-                            tracking
-                        ),
-                        history.path.display().to_string(),
-                    )
-                } else {
-                    ("Open a repository".into(), self.path.clone())
-                };
-                ui.allocate_ui_with_layout(
-                    egui::vec2(identity_width, 26.0),
-                    egui::Layout::left_to_right(egui::Align::Center),
-                    |ui| {
-                        ui.set_min_width(identity_width);
-                        bounded_text::field(
-                            ui,
-                            &format!("{identity}  ·  {path}"),
-                            egui::FontId::proportional(13.0),
-                            26.0,
-                        );
-                    },
-                );
-            });
-        });
-        egui::Panel::top("navigation")
-            .exact_size(32.0)
+        let ready = self.frame_readiness();
+        let shortcuts = crate::navigation::available(ctx);
+        let open_preferences = shortcuts
+            && ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::Comma));
+        if shortcuts && ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::Num1))
+        {
+            go_local = self.state.history.is_some();
+        }
+        if shortcuts && ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::Num2))
+        {
+            go_history = true;
+        }
+        if shortcuts
+            && ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::Backslash))
+            && ctx.content_rect().width() >= 1120.0
+        {
+            self.refs_visible = !self.refs_visible;
+        }
+        let table = self.menu_table(&ready);
+        let mut menu_command = None;
+        // egui's in-window menu bar: frameless titles, hover moves between open menus.
+        egui::Panel::top("menu-bar")
+            .exact_size(MENU_BAR_HEIGHT)
             .show(ui, |ui| {
-                ui.horizontal(|ui| {
+                egui::MenuBar::new().ui(ui, |ui| {
+                    menu_command = menus::show(ui, &table);
+                    ui.separator();
+                    let identity_width = ui.available_width().max(80.0);
+                    let (identity, path) = if let Some(history) = &self.state.history {
+                        let tracking = match self.rebase_step_label() {
+                            Some(step) => format!("  ·  {step}"),
+                            None => self
+                                .state
+                                .refs
+                                .current_tracking()
+                                .map(|tracking| {
+                                    format!("  ·  {}", refs_view::tracking_label(tracking))
+                                })
+                                .unwrap_or_default(),
+                        };
+                        (
+                            format!(
+                                "{}  ·  {}{}",
+                                history
+                                    .path
+                                    .file_name()
+                                    .unwrap_or_default()
+                                    .to_string_lossy(),
+                                if history.shallow {
+                                    format!("{} · shallow", history.head)
+                                } else {
+                                    history.head.clone()
+                                },
+                                tracking
+                            ),
+                            history.path.display().to_string(),
+                        )
+                    } else {
+                        ("Open a repository".into(), self.path.clone())
+                    };
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(identity_width, 26.0),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            ui.set_min_width(identity_width);
+                            bounded_text::field(
+                                ui,
+                                &format!("{identity}  ·  {path}"),
+                                egui::FontId::proportional(13.0),
+                                26.0,
+                            );
+                        },
+                    );
+                });
+            });
+        let mut tool = menu_command;
+        let mut stash_pick = None;
+        let mut open_search = false;
+        let mut search_field: Option<(egui::Rect, bool)> = None;
+        let mut branch_pick = None;
+        egui::Panel::top("navigation")
+            .exact_size(34.0)
+            .show(ui, |ui| {
+                ui.horizontal_centered(|ui| {
+                    ui.spacing_mut().item_spacing.x = 2.0;
+                    // Narrow windows give the logo's slot to the tools.
+                    if ctx.content_rect().width() >= 900.0 {
+                        branding::toolbar(ui, &mut self.logo);
+                        ui.add_space(4.0);
+                    }
                     let has_repo = self.state.history.is_some();
                     let local_selected = self.working.is_some();
-                    if ui
+                    let sidebar_available = ctx.content_rect().width() >= 1120.0;
+                    let sidebar = ui
+                        .add_enabled(
+                            sidebar_available,
+                            egui::Button::selectable(
+                                self.refs_visible && sidebar_available,
+                                crate::phosphor::icon(crate::phosphor::SIDEBAR_SIMPLE).size(17.0),
+                            )
+                            .min_size(egui::vec2(28.0, 26.0)),
+                        )
+                        .on_hover_text("Refs sidebar")
+                        .on_disabled_hover_text(
+                            "Refs sidebar\nResize the window to at least 1120 px to show the sidebar",
+                        );
+                    if sidebar.clicked() {
+                        self.refs_visible = !self.refs_visible;
+                    }
+                    ui.add_space(6.0);
+                    let changes = ui
                         .add_enabled(
                             has_repo,
-                            egui::Button::selectable(local_selected, "Local Changes")
-                                .min_size(egui::vec2(112.0, 24.0)),
+                            egui::Button::selectable(local_selected, "Changes")
+                                .min_size(egui::vec2(96.0, 24.0)),
                         )
-                        .on_hover_text("Stage, unstage, commit, and amend in one view")
-                        .clicked()
-                    {
+                        .on_hover_text(match ready.changes {
+                            0 => "Local Changes: stage, unstage, commit, and amend".to_string(),
+                            1 => "Local Changes: 1 changed file".to_string(),
+                            count => format!("Local Changes: {count} changed files"),
+                        });
+                    paint_badge(ui, changes.rect, ready.changes as u64);
+                    if changes.clicked() {
                         go_local = true;
                     }
                     if ui
@@ -5349,8 +8641,226 @@ impl Browser {
                     {
                         go_history = true;
                     }
+                    ui.add_space(8.0);
+                    let busy = Some("Wait for the current operation to finish");
+                    let no_repo = Some("Open a repository first");
+                    let idle = |ok: bool| {
+                        if ok {
+                            None
+                        } else if has_repo {
+                            busy
+                        } else {
+                            no_repo
+                        }
+                    };
+                    let separator = |ui: &mut egui::Ui| {
+                        ui.add_space(4.0);
+                        ui.separator();
+                        ui.add_space(4.0);
+                    };
+                    use crate::phosphor as icon;
+                    if toolbar_button(ui, icon::DOWNLOAD_SIMPLE, None, "Fetch  Ctrl+Shift+F", idle(ready.network_idle)) {
+                        tool = Some(FrameCommand::Fetch);
+                    }
+                    let strategy = self.prefs.pull_strategy.menu_label();
+                    let pull_tip = if ready.behind > 0 {
+                        format!("Pull {} ({strategy})  Ctrl+Shift+L", ready.behind)
+                    } else {
+                        format!("Pull ({strategy})  Ctrl+Shift+L")
+                    };
+                    if toolbar_button(
+                        ui,
+                        icon::ARROW_LINE_DOWN,
+                        Some(ready.behind),
+                        &pull_tip,
+                        ready.pull_reason,
+                    ) {
+                        tool = Some(FrameCommand::Pull);
+                    }
+                    if toolbar_button(ui, icon::ARROW_LINE_UP, None, "Push  Ctrl+Shift+P", idle(ready.network_idle)) {
+                        tool = Some(FrameCommand::Push);
+                    }
+                    separator(ui);
+                    if toolbar_button(ui, icon::GIT_BRANCH, None, "New branch…  Ctrl+B", idle(ready.branch_idle)) {
+                        tool = Some(FrameCommand::NewBranch);
+                    }
+                    if toolbar_button(ui, icon::TAG, None, "New tag…", idle(ready.branch_idle)) {
+                        tool = Some(FrameCommand::NewTag);
+                    }
+                    if toolbar_button(
+                        ui,
+                        icon::GIT_MERGE,
+                        None,
+                        "Merge into current…",
+                        idle(ready.branch_idle),
+                    ) {
+                        tool = Some(FrameCommand::Merge);
+                    }
+                    separator(ui);
+                    if toolbar_button(ui, icon::ARCHIVE, None, "Stash changes…  Ctrl+Shift+Z", ready.stash_reason) {
+                        tool = Some(FrameCommand::Stash);
+                    }
+                    if let Some(pick) = self.stash_picker_button(ui, &ready) {
+                        stash_pick = Some(pick);
+                    }
+                    separator(ui);
+                    let rewrite_tip = if ready.branch_rewrite_count > 0 {
+                        format!(
+                            "Interactive rebase of this branch · {} commit{} not on the upstream or default branch",
+                            ready.branch_rewrite_count,
+                            if ready.branch_rewrite_count == 1 { "" } else { "s" }
+                        )
+                    } else {
+                        "Interactive rebase of this branch".into()
+                    };
+                    if toolbar_button(
+                        ui,
+                        icon::LIST_NUMBERS,
+                        None,
+                        &rewrite_tip,
+                        ready.branch_rewrite_reason,
+                    ) {
+                        tool = Some(FrameCommand::Rewrite);
+                    }
+                    if toolbar_button(
+                        ui,
+                        icon::CLOCK_COUNTER_CLOCKWISE,
+                        None,
+                        "Recovery…",
+                        idle(ready.has_repo),
+                    ) {
+                        tool = Some(FrameCommand::Recovery);
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let icon = crate::phosphor::icon(crate::phosphor::MAGNIFYING_GLASS);
+                        // A search field when there is room; narrow windows keep
+                        // an icon that opens the same search with its own field.
+                        let wide = ui.available_width() >= 150.0;
+                        if wide {
+                            let roomy = ui.available_width() >= 560.0;
+                            let width = if roomy {
+                                330.0
+                            } else if ui.available_width() >= 420.0 {
+                                220.0
+                            } else {
+                                140.0
+                            };
+                            let hint = if roomy {
+                                "Search commits, branches, files, actions"
+                            } else {
+                                "Search"
+                            };
+                            let field = ui
+                                .add(
+                                    egui::TextEdit::singleline(&mut self.search_text)
+                                        .id(search_field_id())
+                                        .hint_text(format!(
+                                            "{}  {hint}",
+                                            crate::phosphor::MAGNIFYING_GLASS
+                                        ))
+                                        .desired_width(width),
+                                )
+                                .on_hover_text(
+                                    "Search commands, branches, remotes, tags, and files (Ctrl+K)",
+                                );
+                            if self.search_text.is_empty() && !field.has_focus() {
+                                search_key_chip(ui, field.rect);
+                            }
+                            search_field = Some((
+                                field.rect,
+                                field.has_focus() || field.changed(),
+                            ));
+                        } else {
+                            let search = ui
+                                .add(
+                                    egui::Button::new(icon.size(17.0))
+                                        .min_size(egui::vec2(28.0, 26.0))
+                                        .frame_when_inactive(false),
+                                )
+                                .on_hover_text(
+                                    "Search commands, branches, remotes, tags, and files (Ctrl+K)",
+                                );
+                            if search.clicked() {
+                                open_search = true;
+                            }
+                        }
+                        let compact = !wide || ui.available_width() < 230.0;
+                        if let Some(pick) = self.branch_switcher_button(ui, &ready, compact) {
+                            branch_pick = Some(pick);
+                        }
+                    });
                 });
             });
+        if let Some(pick) = stash_pick {
+            self.apply_stash_pick(ctx, pick);
+        }
+        match branch_pick {
+            Some(BranchPick::Switch(name)) => self.start_branch(ctx, name, false),
+            Some(BranchPick::New) => self.open_new_branch(),
+            None => {}
+        }
+        if open_preferences {
+            let section = self
+                .folders_dialog
+                .as_ref()
+                .map_or(PrefSection::General, |dialog| dialog.section);
+            self.open_preferences(section);
+        }
+        // Ctrl+F opens search with the History filter, whose first result
+        // filters History (there is no separate filter row).
+        let filter = ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::F))
+            && self.search.is_none();
+        if filter {
+            self.narrow_details = false;
+            self.search_text = self.state.query.clone();
+        }
+        let toggle =
+            filter || ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::K));
+        match search_field {
+            // Wide: Ctrl+K focuses the toolbar field; typing there opens results.
+            Some((rect, active)) => {
+                if toggle && self.search.is_some() {
+                    self.close_search(ctx);
+                } else if toggle || active {
+                    if toggle {
+                        ctx.memory_mut(|m| m.request_focus(search_field_id()));
+                    }
+                    let palette = self.search.get_or_insert_with(SearchPalette::default);
+                    palette.in_field = true;
+                    palette.anchor = rect;
+                    if palette.query != self.search_text {
+                        palette.query = self.search_text.clone();
+                        palette.selected = 0;
+                    }
+                } else if let Some(palette) = &mut self.search {
+                    palette.anchor = rect;
+                }
+            }
+            None => {
+                if open_search || toggle {
+                    if self.search.is_some() && !open_search {
+                        self.close_search(ctx);
+                    } else {
+                        self.search = Some(SearchPalette {
+                            query: if filter {
+                                self.state.query.clone()
+                            } else {
+                                String::new()
+                            },
+                            ..Default::default()
+                        });
+                    }
+                }
+            }
+        }
+        if self.search.is_some()
+            && let Some(command) = self.draw_search(ctx, &ready)
+        {
+            tool = Some(command);
+        }
+        if let Some(command) = tool {
+            self.run_frame_command(ctx, command, &mut go_local, &mut go_history);
+        }
         if let Some(generation) = self.rewrite_refresh {
             if self.state.loaded_generation >= generation {
                 self.rewrite_refresh = None;
@@ -5371,9 +8881,63 @@ impl Browser {
         let mut mutation_action = None;
         let mut resolve_conflicts = false;
         let mut cancel_network = false;
-        if let Some(area) = self.operation_area() {
-            egui::Panel::top("operation-area").show(ui, |ui| {
-                ui.horizontal_wrapped(|ui| {
+        let rebase_progress = self.rebase_progress().cloned();
+        // The operation area is always present at a fixed height, so starting
+        // or finishing an operation never moves the panes below it.
+        let idle_summary = self.idle_summary();
+        {
+            let area = self.operation_area();
+            egui::Panel::top("operation-area").exact_size(OPERATION_AREA_HEIGHT).show(ui, |ui| {
+                let Some(area) = area else {
+                    ui.horizontal(|ui| {
+                        ui.add(
+                            egui::Label::new(egui::RichText::new(&idle_summary).weak())
+                                .truncate(),
+                        );
+                    });
+                    return;
+                };
+                ui.set_clip_rect(ui.max_rect());
+                if let (
+                    OperationArea::Mutation {
+                        operation: gg_engine::mutation::Operation::Rebase,
+                        conflicts,
+                        pending,
+                        ..
+                    },
+                    Some(progress),
+                ) = (&area, &rebase_progress)
+                {
+                    let keyed = !pending
+                        && rebase_stop::continue_reason(progress, *conflicts).is_none()
+                        && crate::navigation::available(ui.ctx())
+                        && !ui.ctx().text_edit_focused()
+                        && ui.ctx().input_mut(|i| {
+                            i.consume_key(egui::Modifiers::COMMAND, egui::Key::Enter)
+                        });
+                    match rebase_stop::show(
+                        ui,
+                        progress,
+                        *conflicts,
+                        *pending,
+                        self.rewrite_backup.as_deref(),
+                    ) {
+                        Some(rebase_stop::Command::Continue) => {
+                            mutation_action = Some(MutationAction::Continue);
+                        }
+                        Some(rebase_stop::Command::Skip) => {
+                            mutation_action = Some(MutationAction::Skip);
+                        }
+                        Some(rebase_stop::Command::Abort) => {
+                            mutation_action = Some(MutationAction::Abort);
+                        }
+                        Some(rebase_stop::Command::ResolveConflicts) => resolve_conflicts = true,
+                        None if keyed => mutation_action = Some(MutationAction::Continue),
+                        None => {}
+                    }
+                    return;
+                }
+                ui.horizontal(|ui| {
                     match &area {
                         OperationArea::Mutation {
                             operation,
@@ -5561,9 +9125,21 @@ impl Browser {
                     child.set_clip_rect(rect.intersect(ui.clip_rect()));
                     let ui = &mut child;
                     ui.add_enabled_ui(has_repo, |ui| {
+                        let stashes = self
+                            .local_summary
+                            .as_ref()
+                            .map(|summary| summary.stashes.clone())
+                            .unwrap_or_default();
+                        let worktrees = self
+                            .local_summary
+                            .as_ref()
+                            .map(|summary| summary.worktrees.clone())
+                            .unwrap_or_default();
                         action = refs_view::show(
                             ui,
                             &refs,
+                            &stashes,
+                            &worktrees,
                             &mut self.refs_query,
                             busy,
                             &self.state.ref_lanes,
@@ -5572,25 +9148,38 @@ impl Browser {
                 });
             self.refs_width = refs_panel.response.rect.width();
             match action {
+                Some(refs_view::Action::OpenWorktree(path)) => {
+                    let (mut local, mut history) = (false, false);
+                    self.run_frame_command(
+                        ctx,
+                        FrameCommand::OpenRecent(PathBuf::from(path)),
+                        &mut local,
+                        &mut history,
+                    );
+                }
                 Some(refs_view::Action::Switch(name)) => self.start_branch(ctx, name, false),
                 Some(refs_view::Action::Jump(id)) => self.jump_to_ref(id),
-                Some(refs_view::Action::NewBranch) => self.open_new_branch(),
-                Some(refs_view::Action::NewTag) => self.open_new_tag(),
                 Some(refs_view::Action::Track(name)) => {
                     self.track_dialog = Some(name);
                 }
                 Some(refs_view::Action::PullRebase) => self.start_pull_rebase(ctx),
+                Some(refs_view::Action::OpenStash(index)) => {
+                    self.stash_picker.selected = index;
+                    self.stash_picker.confirm_drop = false;
+                    self.stash_picker.error = None;
+                    egui::Popup::open_id(ctx, stash_picker_popup_id());
+                }
                 Some(refs_view::Action::Merge(name)) => {
                     self.merge_dialog = Some(MergeDialog {
                         reference: name,
-                        no_ff: false,
+                        no_ff: self.prefs.merge_no_ff,
                         error: None,
                     });
                 }
                 Some(refs_view::Action::Rebase(name)) => {
                     self.rebase_dialog = Some(RebaseDialog {
                         reference: name,
-                        autostash: false,
+                        autostash: self.prefs.rebase_autostash,
                         error: None,
                     });
                 }
@@ -5612,6 +9201,7 @@ impl Browser {
             self.narrow_details = false;
         }
         self.draw_folders_dialog(ctx);
+        self.draw_menu_dialogs(ctx);
         self.draw_stash_switch(ctx);
         let mut chosen_clone_folder = None;
         if let Some(dialog) = &mut self.clone_dialog {
@@ -5624,7 +9214,7 @@ impl Browser {
             let default_folder = self.folders.default_folder();
             let candidates = self.folders.candidates();
             egui::Window::new("Clone repository")
-                .id(egui::Id::unique("clone-repository"))
+                .id(egui::Id::unique("clone-repository")).modal(ctx, egui::Id::unique("clone-repository"))
                 .open(&mut open)
                 .collapsible(false)
                 .resizable(false)
@@ -5753,10 +9343,9 @@ impl Browser {
                 open = false;
             }
             if open_folders {
-                self.folders_dialog = Some(FoldersDialog {
-                    new_root: dialog.folder.trim().to_owned(),
-                    error: None,
-                });
+                let mut preferences = FoldersDialog::new(PrefSection::General);
+                preferences.new_root = dialog.folder.trim().to_owned();
+                self.folders_dialog = Some(preferences);
             }
             if let Some((url, destination)) = submit {
                 self.clone_dialog = None;
@@ -5776,7 +9365,7 @@ impl Browser {
                 !ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
             let busy = track_busy;
             egui::Window::new("Track remote branch")
-                .id(egui::Id::unique("track-remote-branch"))
+                .id(egui::Id::unique("track-remote-branch")).modal(ctx, egui::Id::unique("track-remote-branch"))
                 .open(&mut open)
                 .collapsible(false)
                 .resizable(false)
@@ -5902,6 +9491,7 @@ impl Browser {
         if let Some(dialog) = &mut self.create_branch {
             egui::Window::new(dialog.title())
                 .id(egui::Id::unique("create-branch-dialog"))
+                .modal(ctx, egui::Id::unique("create-branch-dialog"))
                 .collapsible(false)
                 .resizable(false)
                 .default_pos(ctx.content_rect().center())
@@ -5944,6 +9534,11 @@ impl Browser {
         if let Some((name, switch)) = create_branch_submit
             && let Some(dialog) = self.create_branch.clone()
         {
+            // Recovery branches always start with switching off; remember
+            // only the ordinary new-branch choice.
+            if dialog.recovery_source.is_none() {
+                self.remember(|prefs| prefs.branch_switch = switch);
+            }
             match self.stash_path() {
                 Some(path) => match gg_git::branch::create_at(&path, &name, &dialog.commit) {
                     Ok(receipt) => {
@@ -6003,6 +9598,7 @@ impl Browser {
             let mut cancelled = false;
             egui::Window::new("Delete branch")
                 .id(egui::Id::unique("delete-branch"))
+                .modal(ctx, egui::Id::unique("delete-branch"))
                 .open(&mut branch_delete_open)
                 .collapsible(false)
                 .resizable(false)
@@ -6045,6 +9641,7 @@ impl Browser {
             let mut cancelled = false;
             egui::Window::new("Delete tag")
                 .id(egui::Id::unique("delete-tag"))
+                .modal(ctx, egui::Id::unique("delete-tag"))
                 .open(&mut tag_delete_open)
                 .collapsible(false)
                 .resizable(false)
@@ -6080,9 +9677,11 @@ impl Browser {
 
         let mut reset_submit = None;
         let mut reset_cancel = false;
+        let mut reset_mode = None;
         if let Some((commit, mode)) = self.reset_confirm.clone() {
             egui::Window::new("Reset here")
                 .id(egui::Id::unique("reset-here"))
+                .modal(ctx, egui::Id::unique("reset-here"))
                 .collapsible(false)
                 .resizable(false)
                 .default_pos(ctx.content_rect().center())
@@ -6093,6 +9692,33 @@ impl Browser {
                         commit.chars().take(8).collect::<String>(),
                         mode.as_str()
                     ));
+                    ui.horizontal(|ui| {
+                        for (choice, label, hint) in [
+                            (
+                                gg_engine::reset::Mode::Soft,
+                                "Soft",
+                                "Move the branch; keep the index and working files",
+                            ),
+                            (
+                                gg_engine::reset::Mode::Mixed,
+                                "Mixed",
+                                "Move the branch and reset the index; keep working files",
+                            ),
+                            (
+                                gg_engine::reset::Mode::Hard,
+                                "Hard",
+                                "Move the branch and discard staged and working changes",
+                            ),
+                        ] {
+                            if ui
+                                .radio(mode == choice, label)
+                                .on_hover_text(hint)
+                                .clicked()
+                            {
+                                reset_mode = Some(choice);
+                            }
+                        }
+                    });
                     if mode == gg_engine::reset::Mode::Hard {
                         ui.colored_label(
                             ui.visuals().warn_fg_color,
@@ -6109,6 +9735,9 @@ impl Browser {
                     });
                 });
         }
+        if let (Some(mode), Some((_, current))) = (reset_mode, &mut self.reset_confirm) {
+            *current = mode;
+        }
         if reset_cancel {
             self.reset_confirm = None;
         }
@@ -6119,227 +9748,6 @@ impl Browser {
             }
         }
 
-        let conflict_mutation = self.mutation.clone();
-        let conflict_pending =
-            self.operation_busy() || self.network.is_some() || self.branch.is_some();
-        let mut conflict_select = None;
-        let mut stage_resolution = false;
-        let mut refresh_content = false;
-        let mut conflict_open = true;
-        if let Some(view) = &mut self.conflict_view {
-            let operation = conflict_mutation.as_ref().map(|state| state.operation);
-            let unresolved = conflict_mutation
-                .as_ref()
-                .map(|state| state.conflicts.len())
-                .unwrap_or(view.paths.len());
-            let mut window = egui::Window::new("Resolve conflicts")
-                .id(egui::Id::unique("resolve-conflicts"))
-                .open(&mut conflict_open)
-                .collapsible(false)
-                .resizable(true)
-                .default_width((ctx.content_rect().width() - 32.0).clamp(360.0, 900.0))
-                .max_height((ctx.content_rect().height() - 120.0).max(240.0));
-            if !view.placed {
-                window = window.current_pos(egui::pos2(ctx.content_rect().left() + 16.0, 116.0));
-                view.placed = true;
-            }
-            window.show(ctx, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.strong(
-                            operation
-                                .map(gg_engine::mutation::Operation::as_str)
-                                .unwrap_or("operation"),
-                        );
-                        ui.label(format!("· {unresolved} unresolved"));
-                        if let Some(commit) = conflict_mutation
-                            .as_ref()
-                            .and_then(|state| state.commit.as_deref())
-                        {
-                            ui.label(format!("· {}", commit.chars().take(8).collect::<String>()));
-                        }
-                        if view.loading {
-                            ui.spinner();
-                        }
-                    });
-                    ui.label(conflict_side_hint(operation));
-                    if let Some(error) = &view.error {
-                        ui.colored_label(ui.visuals().error_fg_color, error);
-                    }
-                    if view.paths.is_empty() && !view.loading {
-                        ui.label("No unmerged paths.");
-                    }
-                    ui.separator();
-                    ui.horizontal_top(|ui| {
-                        ui.vertical(|ui| {
-                            ui.label("Paths");
-                            egui::ScrollArea::vertical()
-                                .id_salt("conflict-paths")
-                                .max_height(360.0)
-                                .show(ui, |ui| {
-                                    for (index, path) in view.paths.iter().enumerate() {
-                                        if ui
-                                            .selectable_label(index == view.selected, path)
-                                            .clicked()
-                                        {
-                                            conflict_select = Some(index);
-                                        }
-                                    }
-                                });
-                        });
-                        ui.separator();
-                        ui.vertical(|ui| {
-                            let Some(content) = &view.content else {
-                                if view.loading {
-                                    ui.spinner();
-                                }
-                                return;
-                            };
-                            let snapshot = view.snapshot.clone();
-                            let preview_text = snapshot
-                                .as_ref()
-                                .map(|snapshot| conflict_preview_text(content, snapshot, view.preview))
-                                .unwrap_or_default();
-                            ui.horizontal_wrapped(|ui| {
-                                ui.weak("Preview source");
-                                for (resolution, label) in [
-                                    (gg_engine::conflict::Resolution::Base, "Base"),
-                                    (gg_engine::conflict::Resolution::Ours, "Ours"),
-                                    (gg_engine::conflict::Resolution::Theirs, "Theirs"),
-                                    (gg_engine::conflict::Resolution::Working, "Working file"),
-                                ] {
-                                    if ui
-                                        .selectable_label(view.preview == resolution, label)
-                                        .clicked()
-                                    {
-                                        view.preview = resolution;
-                                        view.tab = ConflictTab::Result;
-                                    }
-                                }
-                                if ui.button("Refresh external edits").clicked() {
-                                    refresh_content = true;
-                                }
-                            });
-                            ui.weak(
-                                "Choosing a source only changes this preview. Stage resolution publishes it once.",
-                            );
-                            if content.binary {
-                                ui.colored_label(ui.visuals().warn_fg_color, "Binary content");
-                            }
-                            if content.truncated {
-                                ui.colored_label(ui.visuals().warn_fg_color, "Content truncated");
-                            }
-                            if ui.available_width() >= 720.0 {
-                                ui.columns(3, |columns| {
-                                    for (column, (title, text)) in columns.iter_mut().zip([
-                                        (conflict_side_label(operation, ConflictSide::Base), &content.base),
-                                        (conflict_side_label(operation, ConflictSide::Ours), &content.ours),
-                                        (conflict_side_label(operation, ConflictSide::Theirs), &content.theirs),
-                                    ]) {
-                                        column.label(title);
-                                        egui::ScrollArea::both()
-                                            .id_salt(title)
-                                            .max_height(240.0)
-                                            .show(column, |ui| {
-                                                ui.monospace(text.as_deref().unwrap_or("(absent)"));
-                                            });
-                                    }
-                                });
-                                ui.separator();
-                                ui.horizontal(|ui| {
-                                    ui.strong(format!(
-                                        "Result · {} · preview, not staged",
-                                        conflict_resolution_label(view.preview)
-                                    ));
-                                    let enabled = !conflict_pending && conflict_preview_available(view);
-                                    let response = ui.add_enabled(
-                                        enabled,
-                                        egui::Button::new("Stage resolution"),
-                                    );
-                                    let response = if enabled {
-                                        response
-                                    } else {
-                                        response.on_disabled_hover_text(conflict_preview_reason(view))
-                                    };
-                                    if response.clicked() {
-                                        stage_resolution = true;
-                                    }
-                                });
-                                egui::ScrollArea::both()
-                                    .id_salt("conflict-result")
-                                    .max_height(150.0)
-                                    .show(ui, |ui| {
-                                        ui.monospace(&preview_text);
-                                    });
-                            } else {
-                                ui.horizontal(|ui| {
-                                    ui.selectable_value(&mut view.tab, ConflictTab::Base, "Base");
-                                    ui.selectable_value(&mut view.tab, ConflictTab::Ours, "Ours");
-                                    ui.selectable_value(
-                                        &mut view.tab,
-                                        ConflictTab::Theirs,
-                                        "Theirs",
-                                    );
-                                    ui.selectable_value(
-                                        &mut view.tab,
-                                        ConflictTab::Result,
-                                        "Result",
-                                    );
-                                });
-                                let text = match view.tab {
-                                    ConflictTab::Base => content.base.as_deref().unwrap_or("(absent)"),
-                                    ConflictTab::Ours => content.ours.as_deref().unwrap_or("(absent)"),
-                                    ConflictTab::Theirs => {
-                                        content.theirs.as_deref().unwrap_or("(absent)")
-                                    }
-                                    ConflictTab::Result => &preview_text,
-                                };
-                                egui::ScrollArea::both()
-                                    .id_salt("conflict-side")
-                                    .max_height(280.0)
-                                    .show(ui, |ui| {
-                                        ui.monospace(text);
-                                    });
-                                ui.horizontal(|ui| {
-                                    ui.weak(format!(
-                                        "Result · {} · preview, not staged",
-                                        conflict_resolution_label(view.preview)
-                                    ));
-                                    let enabled = !conflict_pending && conflict_preview_available(view);
-                                    let response = ui.add_enabled(
-                                        enabled,
-                                        egui::Button::new("Stage resolution"),
-                                    );
-                                    let response = if enabled {
-                                        response
-                                    } else {
-                                        response.on_disabled_hover_text(conflict_preview_reason(view))
-                                    };
-                                    if response.clicked() {
-                                        stage_resolution = true;
-                                    }
-                                });
-                            }
-                        });
-                    });
-                });
-        }
-        if let Some(index) = conflict_select
-            && let Some(view) = &mut self.conflict_view
-        {
-            view.selected = index;
-        }
-        if conflict_select.is_some() || refresh_content {
-            self.load_conflict_content(ctx);
-        }
-        if stage_resolution
-            && let Err(error) = self.stage_conflict_resolution(ctx)
-            && let Some(view) = &mut self.conflict_view
-        {
-            view.error = Some(error);
-        }
-        if self.conflict_view.is_some() && !conflict_open {
-            self.conflict_view = None;
-        }
         if self.help_shortcuts {
             let mut open = true;
             egui::Window::new("Keyboard shortcuts")
@@ -6358,11 +9766,11 @@ impl Browser {
                         ),
                         (
                             "Repository",
-                            "Ctrl/Cmd+R: refresh · Ctrl/Cmd+F: filter · Ctrl/Cmd+C: copy ID",
+                            "Ctrl/Cmd+K: search · Ctrl/Cmd+R: refresh · Ctrl/Cmd+F: filter · Ctrl/Cmd+C: copy ID",
                         ),
                         (
                             "Commit actions",
-                            "Alt+A: actions for the selected commit · menus: Repository, Refs, View, Help",
+                            "Alt+A: actions for the selected commit · R: interactive rebase · menus: Repository, Branch, Commit, Changes, View, Help",
                         ),
                     ] {
                         ui.strong(group);
@@ -6380,7 +9788,7 @@ impl Browser {
         if let Some(dialog) = &mut self.merge_dialog {
             let mut cancelled = false;
             egui::Window::new("Merge branch")
-                .id(egui::Id::unique("merge-branch"))
+                .id(egui::Id::unique("merge-branch")).modal(ctx, egui::Id::unique("merge-branch"))
                 .open(&mut merge_open)
                 .collapsible(false)
                 .resizable(false)
@@ -6418,6 +9826,7 @@ impl Browser {
             }
         }
         if let Some((reference, no_ff)) = merge_submit {
+            self.remember(|prefs| prefs.merge_no_ff = no_ff);
             match self.start_merge(ctx, &reference, no_ff) {
                 Ok(()) => self.merge_dialog = None,
                 Err(error) => {
@@ -6435,7 +9844,7 @@ impl Browser {
         if let Some(dialog) = &mut self.rebase_dialog {
             let mut cancelled = false;
             egui::Window::new("Rebase branch")
-                .id(egui::Id::unique("rebase-branch"))
+                .id(egui::Id::unique("rebase-branch")).modal(ctx, egui::Id::unique("rebase-branch"))
                 .open(&mut rebase_open)
                 .collapsible(false)
                 .resizable(false)
@@ -6499,130 +9908,42 @@ impl Browser {
         let rewrite_refreshing = self.rewrite_refresh.is_some();
         let mut rewrite_submit = None;
         let mut rewrite_cancel = false;
+        let mut rewrite_review = None;
+        if self.review.is_none()
+            && let Some(dialog) = &mut self.rewrite_dialog
+        {
+            // Review closed by any route returns to the held plan.
+            dialog.held = false;
+        }
         if let Some(dialog) = &mut self.rewrite_dialog {
-            let mut move_up = None;
-            let mut move_down = None;
-            let modal = egui::Modal::new(egui::Id::unique("reorder-squash")).show(ctx, |ui| {
-                let width = (ctx.content_rect().width() - 64.0).clamp(360.0, 620.0);
-                ui.set_width(width);
-                ui.heading("Reorder and squash");
-                ui.add_space(4.0);
-                ui.add_enabled_ui(!(rewrite_busy || rewrite_refreshing), |ui| {
-                    ui.label(
-                        "Reorder commits from the selected commit through HEAD. Squash combines a commit into the row above. Merge commits are not supported.",
-                    );
-                    ui.add_space(4.0);
-                    egui::ScrollArea::vertical()
-                        .max_height(300.0)
-                        .show(ui, |ui| {
-                            for index in 0..dialog.rows.len() {
-                                let id = dialog.rows[index].id.clone();
-                                let subject = dialog.rows[index].subject.clone();
-                                let mut action = dialog.rows[index].action;
-                                ui.horizontal(|ui| {
-                                    ui.add_sized(
-                                        [22.0, 24.0],
-                                        egui::Label::new(
-                                            egui::RichText::new(format!("{}", index + 1))
-                                                .monospace()
-                                                .weak(),
-                                        ),
-                                    );
-                                    let up = egui::Button::new(
-                                        phosphor::icon(phosphor::ARROW_UP).size(12.0),
-                                    )
-                                    .min_size(egui::vec2(24.0, 24.0));
-                                    if ui
-                                        .add_enabled(index > 0, up)
-                                        .on_hover_text("Move up")
-                                        .clicked()
-                                    {
-                                        move_up = Some(index);
-                                    }
-                                    let down = egui::Button::new(
-                                        phosphor::icon(phosphor::ARROW_DOWN).size(12.0),
-                                    )
-                                    .min_size(egui::vec2(24.0, 24.0));
-                                    if ui
-                                        .add_enabled(index + 1 < dialog.rows.len(), down)
-                                        .on_hover_text("Move down")
-                                        .clicked()
-                                    {
-                                        move_down = Some(index);
-                                    }
-                                    let mut squash =
-                                        action == gg_engine::rewrite::Action::Squash;
-                                    if ui
-                                        .add_enabled(
-                                            index > 0,
-                                            egui::Checkbox::new(&mut squash, "Squash"),
-                                        )
-                                        .on_hover_text("Combine this commit into the row above")
-                                        .changed()
-                                    {
-                                        action = if squash {
-                                            gg_engine::rewrite::Action::Squash
-                                        } else {
-                                            gg_engine::rewrite::Action::Pick
-                                        };
-                                    }
-                                    let short = id.chars().take(7).collect::<String>();
-                                    ui.label(egui::RichText::new(short).monospace().weak());
-                                    let remaining = ui.available_width().max(80.0);
-                                    ui.add_sized(
-                                        [remaining, 24.0],
-                                        egui::Label::new(subject.clone()).truncate(),
-                                    )
-                                    .on_hover_text(subject);
-                                });
-                                dialog.rows[index].action = action;
-                            }
-                        });
-                    if let Some(index) = move_up {
-                        dialog.rows.swap(index, index - 1);
-                    }
-                    if let Some(index) = move_down {
-                        dialog.rows.swap(index, index + 1);
-                    }
-                    if let Some(first) = dialog.rows.first_mut() {
-                        first.action = gg_engine::rewrite::Action::Pick;
-                    }
-                    ui.add_space(4.0);
-                    ui.checkbox(
-                        &mut dialog.autostash,
-                        "Automatically stash working changes",
-                    );
-                    ui.colored_label(
-                        ui.visuals().warn_fg_color,
-                        "Reordering rewrites commits. A private backup ref is created before Git starts.",
-                    );
-                    if let Some(error) = &dialog.error {
-                        ui.colored_label(ui.visuals().error_fg_color, error);
-                    }
-                    ui.horizontal(|ui| {
-                        if ui.button("Rewrite commits").clicked() {
-                            rewrite_submit = Some((
-                                dialog.from.clone(),
-                                dialog
-                                    .rows
-                                    .iter()
-                                    .map(|row| gg_engine::rewrite::Step {
-                                        action: row.action,
-                                        commit: row.id.clone(),
-                                    })
-                                    .collect::<Vec<_>>(),
-                                dialog.autostash,
-                            ));
-                        }
-                        if ui.button("Cancel").clicked() {
-                            rewrite_cancel = true;
-                        }
-                    });
-                });
-            });
-            if modal.should_close() {
-                rewrite_cancel = true;
+            let blocked = if rewrite_busy {
+                Some("A rewrite is already running.")
+            } else if rewrite_refreshing {
+                Some("Wait for history to refresh after the last rewrite.")
+            } else {
+                None
+            };
+            match dialog.show(ctx, blocked) {
+                Some(rebase_dialog::Outcome::Start {
+                    from,
+                    steps,
+                    autostash,
+                }) => rewrite_submit = Some((from, steps, autostash)),
+                Some(rebase_dialog::Outcome::Cancel) => rewrite_cancel = true,
+                Some(rebase_dialog::Outcome::OpenReview { commit, subject }) => {
+                    dialog.held = true;
+                    rewrite_review = Some((commit, subject));
+                }
+                None => {}
             }
+        }
+        if let Some((commit, subject)) = rewrite_review {
+            self.open_review_at(
+                ctx,
+                commit,
+                subject,
+                Some(return_location::ReturnLocation::Rebase),
+            );
         }
         if let Some((from, steps, autostash)) = rewrite_submit {
             match self.begin_rewrite(ctx, from, steps, autostash) {
@@ -6644,6 +9965,7 @@ impl Browser {
             let mut cancelled = false;
             egui::Window::new("Stash changes")
                 .id(egui::Id::unique("stash-changes"))
+                .modal(ctx, egui::Id::unique("stash-changes"))
                 .open(&mut stash_open)
                 .collapsible(false)
                 .resizable(false)
@@ -6680,6 +10002,10 @@ impl Browser {
             }
         }
         if let Some((message, include_untracked, keep_index)) = stash_submit {
+            self.remember(|prefs| {
+                prefs.stash_include_untracked = include_untracked;
+                prefs.stash_keep_index = keep_index;
+            });
             match self.push_stash(ctx, &message, include_untracked, keep_index) {
                 Ok(()) => self.stash_dialog = None,
                 Err(error) => {
@@ -6741,6 +10067,7 @@ impl Browser {
                 let reference = window.confirm_drop.clone().unwrap_or_default();
                 egui::Window::new("Drop stash")
                     .id(egui::Id::unique("drop-stash"))
+                    .modal(ctx, egui::Id::unique("drop-stash"))
                     .collapsible(false)
                     .resizable(false)
                     .default_pos(ctx.content_rect().center())
@@ -6775,6 +10102,7 @@ impl Browser {
             let mut cancelled = false;
             egui::Window::new("Restore stash")
                 .id(egui::Id::unique("restore-stash"))
+                .modal(ctx, egui::Id::unique("restore-stash"))
                 .open(&mut open)
                 .collapsible(false)
                 .resizable(false)
@@ -6845,8 +10173,22 @@ impl Browser {
         self.draw_signature(ctx);
         self.draw_tag_create(ctx);
         self.draw_force_push(ctx);
+        if self.conflict_view.is_some() {
+            egui::CentralPanel::default().show(ui, |ui| self.draw_conflict_workspace(ui));
+            return;
+        }
         if self.working.is_some() {
             let external = self.external_operation_reason();
+            let made = match self.rebase_progress().map(|progress| &progress.stop) {
+                Some(gg_engine::mutation::RebaseStop::Reopened { made, .. }) => made
+                    .iter()
+                    .map(|step| (step.commit.clone(), step.subject.clone()))
+                    .collect(),
+                _ => Vec::new(),
+            };
+            if let Some(working) = &mut self.working {
+                working.set_stop_commits(made);
+            }
             let close = self.working.as_mut().is_some_and(|working| {
                 working.set_external_busy(external);
                 working.draw_ui(ui)
@@ -6865,12 +10207,33 @@ impl Browser {
             {
                 self.open_lfs(ctx, request);
             }
+            if let Some(path) = self
+                .working
+                .as_mut()
+                .and_then(|working| working.take_editor_request())
+            {
+                self.open_in_editor(&path);
+            }
+            if let Some(stage) = self
+                .working
+                .as_mut()
+                .and_then(|working| working.take_group_request())
+            {
+                if stage {
+                    self.change_all(ctx, gg_git::worktree_changes::stage_all);
+                } else {
+                    self.change_all(ctx, gg_git::worktree_changes::unstage_all);
+                }
+            }
             let committed = self
                 .working
                 .as_mut()
                 .and_then(|working| working.take_commit());
             if let Some(id) = committed {
                 self.pending_commit = Some(id);
+                // A commit at a rebase stop changes what remains to continue.
+                self.refresh_local_summary(ctx);
+                self.refresh_mutation();
             }
             if close {
                 self.close_to_history(ctx);
@@ -6895,6 +10258,13 @@ impl Browser {
                 .and_then(|review| review.take_lfs_request())
             {
                 self.open_lfs(ctx, change);
+            }
+            if let Some(path) = self
+                .review
+                .as_mut()
+                .and_then(|review| review.take_editor_request())
+            {
+                self.open_in_editor(&path);
             }
             if close {
                 let location = self
@@ -6993,7 +10363,7 @@ impl Browser {
                 let hints = if narrow {
                     "j/k: select · Enter: review · Space: details · Esc: history · Ctrl/Cmd+F: filter"
                 } else {
-                    "Up/Down / j k: select   ·   PgUp/PgDn: page   ·   Enter: review   ·   Space: details   ·   Esc: history   ·   Ctrl/Cmd+F: filter   ·   Ctrl/Cmd+C: copy ID"
+                    "j k: select   ·   Enter: review   ·   Space: details   ·   R: rebase from here   ·   Ctrl+K: search   ·   Ctrl/Cmd+F: filter   ·   Ctrl/Cmd+C: copy ID"
                 };
                 (format!("{tracking}{hints}"), ui.visuals().weak_text_color())
             };
@@ -7080,89 +10450,20 @@ impl Browser {
                 self.outcome_details_open = false;
             }
         }
-        if !narrow || !self.narrow_details {
-            egui::Panel::top("filter").exact_size(40.0).show(ui, |ui| {
-                ui.add_space(5.0);
-                ui.horizontal(|ui| {
-                    ui.strong("History");
-                    if self.rewrite_refresh.is_some() {
-                        ui.weak("Refreshing · showing previous history");
-                    }
-                    let count = format!(
-                        "{}{}",
-                        self.state.count,
-                        if self.state.finished { "" } else { "+" }
-                    );
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(90.0, 20.0),
-                        egui::Layout::left_to_right(egui::Align::Center),
-                        |ui| {
-                            ui.set_min_width(90.0);
-                            bounded_text::field(ui, &count, egui::FontId::proportional(12.0), 20.0);
-                        },
-                    )
-                    .response
-                    .on_hover_text(
-                        "Discovered matches; + means counting or searching is in progress.",
-                    );
-                    let response = ui.add(
-                        egui::TextEdit::singleline(&mut self.state.query)
-                            .id(filter_id)
-                            .hint_text("Filter by message, author, or ID")
-                            .desired_width(ui.available_width()),
-                    );
-                    if response.changed() {
-                        if self.worker.is_some() || self.pending.is_some() {
-                            self.state.start_filter();
-                            self.pending_filter_edit = self.pending.is_some();
-                            self.staged = None;
-                            self.viewport = 0..64;
-                        } else {
-                            self.state.reconcile_selection();
-                        }
-                        self.scroll_to_selection = true;
-                    }
-                    if response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                        response.surrender_focus();
-                    }
-                });
-            });
-        }
         self.details_rect = egui::Rect::NOTHING;
         if !narrow && self.details_visible {
-            let reserved_refs = if wide_refs { self.refs_width } else { 0.0 };
-            let available =
-                (ctx.content_rect().width() - reserved_refs - history_view::MIN_WIDTH - 16.0)
-                    .max(240.0);
-            let details_default = available.min(320.0);
-            let details = egui::Panel::right("details")
-                .default_size(details_default)
-                .size_range(240.0..=available)
-                .resizable(true)
-                .show_separator_line(false)
-                .frame(
-                    egui::Frame::side_top_panel(ui.style().as_ref())
-                        .inner_margin(12.0)
-                        .stroke(egui::Stroke::NONE),
-                )
+            // The commit inspector sits under the history list, as in the
+            // History mockup; the refs sidebar keeps the full height.
+            let details = egui::Panel::bottom("details")
+                .exact_size(details_view::INSPECTOR_HEIGHT)
+                .resizable(false)
                 .show(ui, |ui| {
-                    let rect = ui.available_rect_before_wrap();
-                    ui.allocate_rect(rect, egui::Sense::hover());
-                    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
-                    child.set_clip_rect(rect.intersect(ui.clip_rect()));
-                    let ui = &mut child;
-                    ui.weak("DETAILS");
-                    ui.add_space(8.0);
+                    ui.add_space(4.0);
                     let commit = self.state.displayed_details();
-                    let loading = self.state.details.is_none();
-                    let ready = self.mutation_ready();
-                    let reason = self.mutation_reason();
-                    let command =
-                        details_view::show(ui, commit, loading, &mut self.avatars, |ui| {
-                            commit.and_then(|commit| {
-                                commit_action_menu(ui, &commit.id, ready, reason)
-                            })
-                        });
+                    let menu = self.commit_menu_entries();
+                    let command = details_view::inspector(ui, commit, &mut self.avatars, |ui| {
+                        commit.and_then(|_| commit_action_menu(ui, &menu))
+                    });
                     if let Some(command) = command
                         && let Some(commit) = commit
                     {
@@ -7174,6 +10475,7 @@ impl Browser {
             self.details_rect = details.response.rect;
         }
         let mut pending_commit_command: Option<(String, String, CommitCommand)> = None;
+        let mut right_clicked_row: Option<usize> = None;
         egui::CentralPanel::default().show(ui, |ui| {
             if narrow && self.narrow_details {
                 self.history_rect = egui::Rect::NOTHING;
@@ -7184,10 +10486,9 @@ impl Browser {
                 ui.add_space(8.0);
                 let commit = self.state.displayed_details();
                 let loading = self.state.details.is_none();
-                let ready = self.mutation_ready();
-                let reason = self.mutation_reason();
+                let menu = self.commit_menu_entries();
                 let command = details_view::show(ui, commit, loading, &mut self.avatars, |ui| {
-                    commit.and_then(|commit| commit_action_menu(ui, &commit.id, ready, reason))
+                    commit.and_then(|_| commit_action_menu(ui, &menu))
                 });
                 if let Some(command) = command
                     && let Some(commit) = commit
@@ -7209,18 +10510,32 @@ impl Browser {
                     });
                 }
                 self.history_rect = ui.available_rect_before_wrap();
+                let row_menu = self.commit_menu_entries();
                 egui::ScrollArea::horizontal()
                     .id_salt("history-columns")
                     .show(ui, |ui| {
                         ui.set_min_width(history_view::MIN_WIDTH);
-                        history_view::header(ui);
+                        let count = format!(
+                            "{}{}{}",
+                            self.state.count,
+                            if self.state.finished { "" } else { "+" },
+                            if self.rewrite_refresh.is_some() {
+                                " · refreshing, showing previous history"
+                            } else {
+                                ""
+                            }
+                        );
+                        if history_view::header(ui, &count, &self.state.query) {
+                            self.state.query.clear();
+                            self.filter_changed();
+                        }
                         let mut scroll = egui::ScrollArea::vertical().id_salt("history-rows");
                         if self.scroll_to_selection
                             && let Some(index) = self.state.selected_row
                         {
                             let height = ui.available_height();
-                            let top = index as f32 * history_view::ROW_HEIGHT;
-                            let bottom = top + history_view::ROW_HEIGHT;
+                            let top = index as f32 * crate::density::row();
+                            let bottom = top + crate::density::row();
                             let offset = self.scroll_offset;
                             let reveal = if top < offset {
                                 top
@@ -7229,9 +10544,8 @@ impl Browser {
                             } else {
                                 offset
                             };
-                            let maximum = (self.state.count as f32 * history_view::ROW_HEIGHT
-                                - height)
-                                .max(0.0);
+                            let maximum =
+                                (self.state.count as f32 * crate::density::row() - height).max(0.0);
                             scroll = scroll.vertical_scroll_offset(reveal.clamp(0.0, maximum));
                         }
                         if let Some(offset) = self.restore_offset.take() {
@@ -7241,7 +10555,7 @@ impl Browser {
                         ui.spacing_mut().item_spacing.y = 0.0;
                         let scroll_output = scroll.show_rows(
                             ui,
-                            history_view::ROW_HEIGHT,
+                            crate::density::row(),
                             self.state.count,
                             |ui, rows| {
                                 self.viewport =
@@ -7278,14 +10592,15 @@ impl Browser {
                                             })
                                             .inner;
                                         self.row_rects.push((row, response.rect));
+                                        // The menu's commands act on the selected
+                                        // commit, so a right-click selects the row.
+                                        if response.secondary_clicked() {
+                                            right_clicked_row = Some(row);
+                                        }
                                         response.context_menu(|ui| {
                                             let id = commit.id.clone();
-                                            if let Some(command) = commit_action_menu(
-                                                ui,
-                                                &id,
-                                                self.mutation_ready(),
-                                                self.mutation_reason(),
-                                            ) {
+                                            if let Some(command) = commit_action_menu(ui, &row_menu)
+                                            {
                                                 pending_commit_command = Some((
                                                     id.clone(),
                                                     commit.subject().to_owned(),
@@ -7319,37 +10634,33 @@ impl Browser {
                                         }
                                     } else {
                                         let (rect, _) = ui.allocate_exact_size(
-                                            egui::vec2(
-                                                ui.available_width(),
-                                                history_view::ROW_HEIGHT,
-                                            ),
+                                            egui::vec2(ui.available_width(), crate::density::row()),
                                             egui::Sense::hover(),
                                         );
+                                        // A row not read yet keeps its slot, empty.
                                         self.row_rects.push((row, rect));
-                                        ui.painter().text(
-                                            rect.left_center() + egui::vec2(30.0, 0.0),
-                                            egui::Align2::LEFT_CENTER,
-                                            "Loading...",
-                                            egui::FontId::proportional(12.0),
-                                            ui.visuals().weak_text_color(),
-                                        );
                                     }
                                 }
                             },
                         );
                         self.scroll_offset = scroll_output.state.clamped_offset().y;
-                        self.page_rows = (scroll_output.inner_rect.height()
-                            / history_view::ROW_HEIGHT)
+                        self.page_rows = (scroll_output.inner_rect.height() / crate::density::row())
                             .floor()
                             .max(1.0) as usize;
                         ui.spacing_mut().item_spacing.y = previous_spacing;
                     });
             } else if self.pending.is_some() {
-                ui.label("Reading repository history…");
+                // The status line reports the read; the pane stays empty.
             } else {
                 ui.label("Choose Open… to enter a repository path.");
             }
         });
+        if let Some(row) = right_clicked_row {
+            self.state.select_row(row);
+            if self.worker.is_none() {
+                self.state.details = self.state.rows.get(&row).cloned();
+            }
+        }
         if let Some((id, subject, command)) = pending_commit_command {
             self.apply_commit_command(ctx, &id, &subject, command);
         }
@@ -7545,10 +10856,7 @@ mod tests {
         ));
         assert!(rendered(&mut app).iter().any(|line| line == "Browse…"));
         app.clone_dialog = None;
-        app.folders_dialog = Some(FoldersDialog {
-            new_root: String::new(),
-            error: None,
-        });
+        app.folders_dialog = Some(FoldersDialog::new(PrefSection::General));
         assert!(rendered(&mut app).iter().any(|line| line == "Browse…"));
         app.folders_dialog = None;
         app.edit_path = true;
@@ -7733,7 +11041,7 @@ mod tests {
                 })
                 .collect::<Vec<_>>();
             assert_eq!(
-                text.iter().any(|line| line.contains("Branches  0")),
+                text.iter().any(|line| line.contains("BRANCHES  0")),
                 visible,
                 "width={width}: {text:?}"
             );
@@ -7815,15 +11123,15 @@ mod tests {
         });
         assert!(app.refs_width > 0.0, "the refs pane did not render");
         let button = output.shapes.iter().find_map(|shape| match &shape.shape {
-            egui::epaint::Shape::Text(text) if text.galley.job.text == "Pull --rebase" => {
+            egui::epaint::Shape::Text(text) if text.galley.job.text == "Pull" => {
                 Some(egui::Rect::from_min_size(text.pos, text.galley.size()))
             }
             _ => None,
         });
-        assert!(button.is_some(), "the Pull --rebase button is missing");
+        assert!(button.is_some(), "the Pull button is missing");
         assert!(
             button.is_some_and(|rect| rect.max.x <= app.refs_width + 0.5),
-            "the Pull --rebase button is clipped by the {} point pane: {button:?}",
+            "the Pull button is clipped by the {} point pane: {button:?}",
             app.refs_width
         );
     }
@@ -7853,7 +11161,8 @@ mod tests {
                     assert!(hint.contains("j/k: select"), "{hint}");
                     assert!(!hint.contains("copy ID"), "{hint}");
                 } else {
-                    assert!(hint.contains("Up/Down / j k: select"), "{hint}");
+                    assert!(hint.contains("j k: select"), "{hint}");
+                    assert!(hint.contains("R: rebase from here"), "{hint}");
                     assert!(hint.contains("copy ID"), "{hint}");
                 }
             }
@@ -7900,15 +11209,207 @@ mod tests {
     }
 
     #[test]
+    fn preferences_list_sections_folders_and_save_changes_at_once()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let settings_file = dir.path().join("settings.json");
+        for width in [720.0, 1120.0] {
+            let ctx = egui::Context::default();
+            crate::phosphor::install(&ctx);
+            let mut app = layout_fixture();
+            app.prefs = settings::Prefs::load_from(&settings_file);
+            app.folders = folders::Roots::load_from(&settings_file);
+            let repos = dir.path().join("projects");
+            std::fs::create_dir_all(repos.join("gg/.git"))?;
+            app.folders.add(&repos.to_string_lossy())?;
+            app.folders
+                .add(&dir.path().join("gone").to_string_lossy())?;
+            app.open_preferences(PrefSection::General);
+            let frame = |app: &mut Browser, events| {
+                crate::tests::run_ui(&ctx, frame_input(width, 740.0, events), |ctx| {
+                    app.draw_ui(ctx)
+                })
+            };
+            let _ = frame(&mut app, vec![]);
+            let text = shown_text(&frame(&mut app, vec![]));
+            for expected in [
+                "Preferences",
+                "General",
+                "Appearance",
+                "Rebase & recovery",
+                "Keyboard",
+                "Clone folders",
+                "1 repository",
+                "missing",
+                "Reopen the last repository when launched outside one",
+            ] {
+                assert!(
+                    text.iter().any(|line| line.contains(expected)),
+                    "width {width}: missing {expected:?} in {text:?}"
+                );
+            }
+            // Adding a folder already in the list names the reason.
+            if let Some(dialog) = &mut app.folders_dialog {
+                dialog.new_root = repos.to_string_lossy().into_owned();
+            }
+            let add = frame(&mut app, vec![])
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) if text.galley.job.text == "Add folder" => {
+                        Some(text.visual_bounding_rect().center())
+                    }
+                    _ => None,
+                })
+                .ok_or("Add folder button missing")?;
+            let _ = frame(&mut app, click_at(add));
+            let _ = frame(&mut app, vec![]);
+            assert_eq!(
+                app.folders_dialog
+                    .as_ref()
+                    .and_then(|dialog| dialog.error.as_deref()),
+                Some("Already in the list.")
+            );
+
+            // Appearance: choosing Light applies and saves immediately.
+            app.open_preferences(PrefSection::Appearance);
+            let light = frame(&mut app, vec![])
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) if text.galley.job.text == "Light" => {
+                        Some(text.visual_bounding_rect().center())
+                    }
+                    _ => None,
+                })
+                .ok_or("Light theme option missing")?;
+            let _ = frame(&mut app, click_at(light));
+            assert_eq!(app.prefs.theme, settings::Theme::Light);
+            assert_eq!(
+                settings::Prefs::load_from(&settings_file).theme,
+                settings::Theme::Light
+            );
+            assert!(app.folders_dialog.is_some(), "the window stays open");
+            app.prefs.theme = settings::Theme::Dark;
+            app.prefs.save()?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn dialogs_open_with_remembered_choices_and_save_them_on_submission()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let settings_file = dir.path().join("settings.json");
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        app.prefs = settings::Prefs::load_from(&settings_file);
+        app.prefs.stash_include_untracked = true;
+        app.prefs.stash_keep_index = true;
+        app.prefs.merge_no_ff = true;
+        app.prefs.branch_switch = false;
+
+        app.open_stash_dialog();
+        let stash = app.stash_dialog.as_ref().ok_or("stash dialog missing")?;
+        assert!(stash.include_untracked && stash.keep_index);
+        app.stash_dialog = None;
+        app.open_new_branch();
+        let branch = app.create_branch.as_ref().ok_or("branch dialog missing")?;
+        assert!(
+            !branch.switch,
+            "switch after creation starts from the memory"
+        );
+        app.create_branch = None;
+
+        // Opening alone saves nothing; submitting a changed choice does.
+        app.open_merge_dialog();
+        assert!(app.merge_dialog.as_ref().is_some_and(|dialog| dialog.no_ff));
+        let frame = |app: &mut Browser, events| {
+            crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, events), |ctx| {
+                app.draw_ui(ctx)
+            })
+        };
+        let _ = frame(&mut app, vec![]);
+        assert_eq!(settings::read::<bool>(&settings_file, "merge_no_ff"), None);
+        if let Some(dialog) = &mut app.merge_dialog {
+            dialog.reference = "main".into();
+            dialog.no_ff = false;
+        }
+        let output = frame(&mut app, vec![]);
+        let merge = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) if text.galley.job.text == "Merge" => {
+                    Some(text.visual_bounding_rect().center())
+                }
+                _ => None,
+            })
+            .ok_or("Merge button missing")?;
+        let _ = frame(&mut app, click_at(merge));
+        assert!(!app.prefs.merge_no_ff);
+        assert_eq!(
+            settings::read::<bool>(&settings_file, "merge_no_ff"),
+            Some(false),
+            "the submitted choice is saved"
+        );
+        assert!(
+            settings::Prefs::load_from(&settings_file).stash_keep_index,
+            "the other remembered values are saved with it"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn preferences_show_diff_and_commit_sections() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let settings_file = dir.path().join("settings.json");
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        app.prefs = settings::Prefs::load_from(&settings_file);
+        let frame = |app: &mut Browser| {
+            crate::tests::run_ui(&ctx, frame_input(720.0, 520.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            })
+        };
+        app.open_preferences(PrefSection::Diff);
+        let _ = frame(&mut app);
+        let text = shown_text(&frame(&mut app));
+        for expected in [
+            "Diff",
+            "Commit",
+            "Open files in",
+            "Full file",
+            "Compare images",
+            "Onion skin",
+        ] {
+            assert!(
+                text.iter().any(|line| line == expected),
+                "missing {expected:?} in {text:?}"
+            );
+        }
+        app.open_preferences(PrefSection::Commit);
+        let text = shown_text(&frame(&mut app));
+        for expected in [
+            "Sign commits",
+            "Follow Git config (commit.gpgSign)",
+            "Never",
+        ] {
+            assert!(
+                text.iter().any(|line| line == expected),
+                "missing {expected:?} in {text:?}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn adding_a_clone_folder_does_not_move_the_dialog() {
         let ctx = egui::Context::default();
         let mut app = layout_fixture();
-        app.folders_dialog = Some(FoldersDialog {
-            new_root: String::new(),
-            error: None,
-        });
+        app.folders_dialog = Some(FoldersDialog::new(PrefSection::General));
         app.folders = folders::Roots::default();
-        let id = egui::Id::unique("clone-folders");
+        let id = egui::Id::unique("preferences");
         let rect = |app: &mut Browser| {
             for _ in 0..3 {
                 crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
@@ -7919,19 +11420,25 @@ mod tests {
         };
         rect(&mut app);
         let empty = rect(&mut app);
-        assert!(empty.is_some(), "the clone folders window did not render");
+        assert!(empty.is_some(), "the Preferences window did not render");
         let root = folders::starting_folder();
         assert!(app.folders.add(&root.to_string_lossy()).unwrap_or(false));
         let one = rect(&mut app);
         assert_eq!(one, empty, "the window moved after the first folder");
         assert!(
             app.folders
-                .add("/tmp/another-clone-folder")
+                .add(
+                    &std::env::temp_dir()
+                        .join("another-clone-folder")
+                        .to_string_lossy()
+                )
                 .unwrap_or(false)
         );
         let two = rect(&mut app);
         assert_eq!(two, empty, "the window moved after the second folder");
-        assert!(app.folders.add("/tmp/third-clone-folder").unwrap_or(false));
+        // Absolute on every platform: `/tmp/…` has no drive on Windows.
+        let third = std::env::temp_dir().join("third-clone-folder");
+        assert!(app.folders.add(&third.to_string_lossy()).unwrap_or(false));
         let three = rect(&mut app);
         assert_eq!(three, empty, "the window moved after the third folder");
     }
@@ -7974,6 +11481,7 @@ mod tests {
                     reference: "stash@{0}".into(),
                     commit: "abc123".into(),
                     message: "On main: work in progress".into(),
+                    ..Default::default()
                 }],
                 error: None,
                 notice: None,
@@ -8275,7 +11783,10 @@ mod tests {
                 }),
                 preview: gg_engine::conflict::Resolution::Working,
                 tab: ConflictTab::Ours,
-                placed: false,
+                blocks: None,
+                blocks_note: None,
+                whole_file: false,
+                resolved: Vec::new(),
             });
             let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
                 app.draw_ui(ctx)
@@ -8291,8 +11802,8 @@ mod tests {
                     _ => None,
                 })
                 .collect::<Vec<_>>();
-            assert!(text.iter().any(|line| line.contains("Resolve conflicts")));
-            assert!(text.iter().any(|line| line.contains("Paths")));
+            assert!(text.iter().any(|line| line.contains("CONFLICTED")));
+            assert!(text.iter().any(|line| line.contains("RESOLVED, STAGED")));
             assert!(text.iter().any(|line| line.contains("Base")));
             assert!(text.iter().any(|line| line.contains("Ours")));
             assert!(text.iter().any(|line| line.contains("Theirs")));
@@ -8419,49 +11930,461 @@ mod tests {
         }
     }
 
+    fn rebase_fixture(app: &Browser) -> Result<rebase_dialog::Dialog, String> {
+        let commit = |id: &str, subject: &str| gg_engine::rewrite::RangeCommit {
+            id: id.repeat(40),
+            subject: subject.into(),
+            author: "Test".into(),
+            date: "2 days ago".into(),
+            message: subject.into(),
+        };
+        rebase_dialog::Dialog::new(
+            "/missing-rebase-fixture".into(),
+            vec![commit("a", "first change"), commit("b", "second change")],
+            Some("c".repeat(40)),
+            &app.state.refs,
+        )
+    }
+
     #[test]
-    fn rewrite_dialog_renders_at_supported_widths() {
+    fn rebase_dialog_names_the_branch_and_the_refs_left_behind() -> Result<(), String> {
+        let mut app = layout_fixture();
+        let item = |name: &str, kind, commit: &str| gg_engine::refs::RefItem {
+            name: name.into(),
+            full_name: name.into(),
+            kind,
+            commit: commit.repeat(40),
+        };
+        app.state.refs = gg_engine::refs::Snapshot {
+            head: Some(gg_engine::refs::Head {
+                name: Some("refs/heads/feature".into()),
+                detached: false,
+                commit: Some("b".repeat(40)),
+            }),
+            items: vec![
+                item("feature", gg_engine::refs::RefKind::Branch, "b"),
+                item("keep", gg_engine::refs::RefKind::Branch, "a"),
+                item("v1", gg_engine::refs::RefKind::Tag, "a"),
+                item("origin/feature", gg_engine::refs::RefKind::Remote, "a"),
+            ],
+            ..Default::default()
+        };
+        let dialog = rebase_fixture(&app)?;
+        assert_eq!(dialog.branch, "feature");
+        assert_eq!(dialog.stay, ["keep", "v1"]);
+        assert_eq!(dialog.plan.rows[0].refs, ["feature"]);
+        assert_eq!(dialog.plan.rows[1].refs, ["keep", "v1"]);
+        Ok(())
+    }
+
+    fn click_at(pos: egui::Pos2) -> Vec<egui::Event> {
+        vec![
+            egui::Event::PointerMoved(pos),
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ]
+    }
+
+    fn shown_text(output: &egui::FullOutput) -> Vec<String> {
+        output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) => Some(text.galley.job.text.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn reopened_stop(made: usize, tracked_changes: usize) -> gg_engine::mutation::RebaseProgress {
+        let step = |action: &str, id: char, subject: &str| gg_engine::mutation::RebaseStep {
+            action: action.into(),
+            commit: id.to_string().repeat(40),
+            subject: subject.into(),
+        };
+        gg_engine::mutation::RebaseProgress {
+            branch: Some("feature".into()),
+            done: vec![
+                step("pick", 'a', "first change"),
+                step("pick", 'b', "second change"),
+            ],
+            todo: vec![step("pick", 'c', "third change")],
+            stop: gg_engine::mutation::RebaseStop::Reopened {
+                base: Some("a".repeat(40)),
+                commit: "b".repeat(40),
+                subject: "second change".into(),
+                message: "second change\n\nwith a body".into(),
+                made: (0..made)
+                    .map(|index| step("commit", 'd', &format!("part {index}")))
+                    .collect(),
+            },
+            tracked_changes,
+        }
+    }
+
+    fn stopped_app(progress: gg_engine::mutation::RebaseProgress) -> Browser {
+        let mut app = layout_fixture();
+        app.mutation = Some(gg_engine::mutation::OperationState {
+            operation: gg_engine::mutation::Operation::Rebase,
+            commit: None,
+            conflicts: Vec::new(),
+        });
+        app.local_summary = Some(LocalSummary {
+            worktrees: Vec::new(),
+            rebase: Some(progress),
+            ..Default::default()
+        });
+        app
+    }
+
+    #[test]
+    fn reopened_commit_opens_local_changes_with_its_message_and_waits_to_continue() {
         for width in [720.0, 1120.0] {
             let ctx = egui::Context::default();
-            let mut app = layout_fixture();
-            app.rewrite_dialog = Some(RewriteDialog {
-                from: "a".repeat(40),
-                rows: vec![
-                    RewriteRow {
-                        id: "a".repeat(40),
-                        subject: "first change".into(),
-                        action: gg_engine::rewrite::Action::Pick,
-                    },
-                    RewriteRow {
-                        id: "b".repeat(40),
-                        subject: "second change".into(),
-                        action: gg_engine::rewrite::Action::Squash,
-                    },
-                ],
-                autostash: true,
-                error: None,
-            });
+            crate::phosphor::install(&ctx);
+            let mut app = stopped_app(reopened_stop(0, 2));
             let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
                 app.draw_ui(ctx)
             });
             let output = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
                 app.draw_ui(ctx)
             });
-            let text = output
-                .shapes
+            let working = app.working.as_ref();
+            assert!(working.is_some(), "Local Changes opens at the stop");
+            assert_eq!(
+                working.map(|working| working.draft()),
+                Some("second change\n\nwith a body"),
+                "the commit box holds the reopened commit's message"
+            );
+            let text = shown_text(&output);
+            for expected in [
+                "Rebase stopped · step 2 of 3 · reopened bbbbbbbb",
+                "second change",
+                "Continue",
+                "Skip commit",
+                "Abort and restore",
+                "Commit or stash the 2 remaining changed files first.",
+                "cccccccc pick",
+            ] {
+                assert!(
+                    text.iter().any(|line| line.contains(expected)),
+                    "width {width}: missing {expected:?} in {text:?}"
+                );
+            }
+            assert!(
+                text.iter()
+                    .any(|line| line.contains("feature · rebase 2/3")),
+                "the window identity names the rebase step: {text:?}"
+            );
+            // Ctrl+Enter does nothing while changes remain.
+            let _ = crate::tests::run_ui(
+                &ctx,
+                frame_input(
+                    width,
+                    740.0,
+                    vec![key(egui::Key::Enter, egui::Modifiers::COMMAND)],
+                ),
+                |ctx| app.draw_ui(ctx),
+            );
+            assert!(app.operation_worker.is_none());
+        }
+    }
+
+    #[test]
+    fn panes_hold_still_when_an_operation_starts_grows_and_ends() {
+        let ctx = egui::Context::default();
+        crate::phosphor::install(&ctx);
+        let top = |app: &mut Browser| {
+            for _ in 0..2 {
+                let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+                    app.draw_ui(ctx)
+                });
+            }
+            app.history_rect.top()
+        };
+        let mut idle = layout_fixture();
+        let mut stopped = stopped_app(reopened_stop(0, 2));
+        stopped.reopen_seen = Some("b".repeat(40));
+        let mut committed = stopped_app(reopened_stop(3, 0));
+        committed.reopen_seen = Some("b".repeat(40));
+        let idle = top(&mut idle);
+        assert_eq!(
+            top(&mut stopped),
+            idle,
+            "a rebase stop does not push History down"
+        );
+        assert_eq!(
+            top(&mut committed),
+            idle,
+            "commits made at the stop do not add a line"
+        );
+    }
+
+    #[test]
+    fn commits_made_at_a_stop_are_listed_and_continue_is_ready() {
+        let ctx = egui::Context::default();
+        crate::phosphor::install(&ctx);
+        let mut app = stopped_app(reopened_stop(2, 0));
+        app.reopen_seen = Some("b".repeat(40));
+        let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        assert!(
+            app.working.is_none(),
+            "a stop already seen does not reopen Local Changes"
+        );
+        let text = shown_text(&output);
+        assert!(
+            text.iter()
+                .any(|line| line.starts_with("Commits made at this stop:")
+                    && line.contains("part 0")
+                    && line.contains("part 1")),
+            "{text:?}"
+        );
+        assert!(!text.iter().any(|line| line.contains("remaining changed")));
+    }
+
+    #[test]
+    fn rewrite_dialog_renders_at_supported_widths() -> Result<(), String> {
+        for width in [720.0, 1120.0] {
+            let ctx = egui::Context::default();
+            let mut app = layout_fixture();
+            app.rewrite_dialog = Some(rebase_fixture(&app)?);
+            let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let output = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let text = shown_text(&output);
+            for expected in [
+                "Interactive rebase",
+                "Start rebase",
+                "Cancel",
+                "aaaaaaa…HEAD onto ccccccc",
+                "2 commits",
+                "PLAN · NEWEST FIRST",
+                "first change",
+                "second change",
+                "Pick",
+                "Open in Review",
+                "Stash working changes first",
+                "private backup ref",
+            ] {
+                assert!(
+                    text.iter().any(|line| line.contains(expected)),
+                    "width {width}: missing {expected:?} in {text:?}"
+                );
+            }
+            let newest = text
                 .iter()
-                .filter_map(|shape| match &shape.shape {
-                    egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                .position(|line| line == "second change")
+                .ok_or("newest row missing")?;
+            let oldest = text
+                .iter()
+                .position(|line| line == "first change")
+                .ok_or("oldest row missing")?;
+            assert!(newest < oldest, "the plan lists the newest commit first");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn rebase_dialog_keys_choose_actions_and_start_only_when_valid() -> Result<(), String> {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        app.rewrite_dialog = Some(rebase_fixture(&app)?);
+        let frame = |app: &mut Browser, events| {
+            crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, events), |ctx| {
+                app.draw_ui(ctx)
+            })
+        };
+        let _ = frame(&mut app, vec![]);
+        // The oldest commit has nothing below to combine into.
+        let _ = frame(
+            &mut app,
+            vec![
+                key(egui::Key::ArrowDown, egui::Modifiers::NONE),
+                key(egui::Key::F, egui::Modifiers::NONE),
+            ],
+        );
+        let dialog = app.rewrite_dialog.as_ref().ok_or("dialog closed")?;
+        assert_eq!(dialog.selected, 1);
+        assert_eq!(dialog.plan.rows[1].action, gg_engine::rewrite::Action::Pick);
+        assert!(
+            dialog
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("No kept commit below")),
+            "{:?}",
+            dialog.error
+        );
+        // The newest squashes into the oldest; Alt+Up then moves the oldest up.
+        let _ = frame(
+            &mut app,
+            vec![
+                key(egui::Key::K, egui::Modifiers::NONE),
+                key(egui::Key::S, egui::Modifiers::NONE),
+            ],
+        );
+        let dialog = app.rewrite_dialog.as_ref().ok_or("dialog closed")?;
+        assert_eq!(
+            dialog.plan.rows[0].action,
+            gg_engine::rewrite::Action::Squash
+        );
+        assert_eq!(dialog.error, None);
+        let output = frame(&mut app, vec![]);
+        let text = shown_text(&output);
+        assert!(
+            text.iter().any(|line| line.contains("squash into aaaaaaa")),
+            "{text:?}"
+        );
+        assert!(text.iter().any(|line| line.contains("absorbs bbbbbbb")));
+        // Esc cancels without starting anything.
+        let _ = frame(
+            &mut app,
+            vec![key(egui::Key::Escape, egui::Modifiers::NONE)],
+        );
+        assert!(app.rewrite_dialog.is_none());
+        assert!(app.rewrite_job.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn rebase_dialog_layout_holds_still_when_actions_change() -> Result<(), String> {
+        let ctx = egui::Context::default();
+        crate::phosphor::install(&ctx);
+        let mut app = layout_fixture();
+        app.rewrite_dialog = Some(rebase_fixture(&app)?);
+        let place = |app: &mut Browser, events: Vec<egui::Event>| {
+            let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, events), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let find = |wanted: &str| {
+                output.shapes.iter().find_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) if text.galley.job.text.contains(wanted) => {
+                        Some(text.pos)
+                    }
                     _ => None,
                 })
-                .collect::<Vec<_>>();
-            assert!(text.iter().any(|line| line.contains("Reorder and squash")));
-            assert!(text.iter().any(|line| line.contains("Squash")));
-            assert!(text.iter().any(|line| line.contains("Rewrite commits")));
-            assert!(text.iter().any(|line| line.contains("private backup ref")));
-            assert!(text.iter().any(|line| line.contains("first change")));
-            assert!(text.iter().any(|line| line.contains("second change")));
-        }
+            };
+            (find("Changed files").or(find("FILES ")), find("…HEAD onto"))
+        };
+        let (reader, range) = place(&mut app, vec![]);
+        assert!(reader.is_some() && range.is_some(), "{reader:?} {range:?}");
+        // Drop changes the result count; Reword swaps the message for a field.
+        let (after_drop, range_after_drop) =
+            place(&mut app, vec![key(egui::Key::D, egui::Modifiers::NONE)]);
+        assert_eq!(
+            range_after_drop, range,
+            "the range does not move with the count"
+        );
+        assert_eq!(after_drop, reader);
+        let (after_reword, _) = place(&mut app, vec![key(egui::Key::R, egui::Modifiers::NONE)]);
+        assert_eq!(
+            after_reword, reader,
+            "the reader does not move for the reword field"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn commit_menu_presets_select_the_commit_in_the_rebase_plan() -> Result<(), String> {
+        let app = layout_fixture();
+        let mut dialog = rebase_fixture(&app)?;
+        dialog.preset(&"a".repeat(40), gg_engine::rewrite::Action::Drop);
+        assert_eq!(dialog.selected, 1, "the oldest row is selected");
+        assert_eq!(dialog.plan.rows[1].action, gg_engine::rewrite::Action::Drop);
+        dialog.preset(&"b".repeat(40), gg_engine::rewrite::Action::Fixup);
+        assert_eq!(dialog.plan.rows[0].action, gg_engine::rewrite::Action::Pick);
+        assert!(
+            dialog
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("No kept commit below")),
+            "a fixup with only a dropped commit below is refused: {:?}",
+            dialog.error
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn rebase_dialog_keys_still_work_after_a_button_took_focus() -> Result<(), String> {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        app.rewrite_dialog = Some(rebase_fixture(&app)?);
+        let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        // Clicking a button gives it keyboard focus; only text fields should block keys.
+        ctx.memory_mut(|m| m.request_focus(egui::Id::unique("a-clicked-button")));
+        let _ = crate::tests::run_ui(
+            &ctx,
+            frame_input(
+                1120.0,
+                740.0,
+                vec![key(egui::Key::D, egui::Modifiers::NONE)],
+            ),
+            |ctx| app.draw_ui(ctx),
+        );
+        let dialog = app.rewrite_dialog.as_ref().ok_or("dialog closed")?;
+        assert_eq!(dialog.plan.rows[0].action, gg_engine::rewrite::Action::Drop);
+        Ok(())
+    }
+
+    #[test]
+    fn rebase_dialog_opens_review_and_returns_to_the_same_plan() -> Result<(), String> {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        app.rewrite_dialog = Some(rebase_fixture(&app)?);
+        let frame = |app: &mut Browser, events| {
+            crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, events), |ctx| {
+                app.draw_ui(ctx)
+            })
+        };
+        let _ = frame(&mut app, vec![]);
+        let _ = frame(&mut app, vec![key(egui::Key::D, egui::Modifiers::NONE)]);
+        let _ = frame(&mut app, vec![key(egui::Key::Enter, egui::Modifiers::NONE)]);
+        assert!(
+            app.rewrite_dialog
+                .as_ref()
+                .is_some_and(|dialog| dialog.held)
+        );
+        assert!(
+            app.review.is_some(),
+            "Enter opens the selected commit in Review"
+        );
+        let output = frame(&mut app, vec![]);
+        let text = shown_text(&output);
+        assert!(text.iter().any(|line| line == "‹ Rebase"), "{text:?}");
+        assert!(!text.iter().any(|line| line == "Start rebase"));
+        // Esc in Review returns to the plan with the choice kept.
+        let _ = frame(
+            &mut app,
+            vec![key(egui::Key::Escape, egui::Modifiers::NONE)],
+        );
+        let _ = frame(&mut app, vec![]);
+        assert!(app.review.is_none());
+        let dialog = app.rewrite_dialog.as_ref().ok_or("dialog closed")?;
+        assert!(!dialog.held);
+        assert_eq!(dialog.plan.rows[0].action, gg_engine::rewrite::Action::Drop);
+        Ok(())
     }
 
     #[test]
@@ -8499,7 +12422,7 @@ mod tests {
             text.iter()
                 .any(|line| line.contains("Browsing stays available"))
         );
-        assert!(!text.iter().any(|line| line.contains("Reorder and squash")));
+        assert!(!text.iter().any(|line| line.contains("Start rebase")));
     }
 
     #[test]
@@ -8848,7 +12771,10 @@ mod tests {
             snapshot: None,
             preview: gg_engine::conflict::Resolution::Working,
             tab: ConflictTab::Ours,
-            placed: false,
+            blocks: None,
+            blocks_note: None,
+            whole_file: false,
+            resolved: Vec::new(),
         });
         let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
             app.draw_ui(ctx)
@@ -8872,6 +12798,7 @@ mod tests {
                     working_hash: None,
                     working_note: None,
                 }),
+                blocks: Err("whole file only".into()),
             }))
             .is_ok()
         );
@@ -8974,8 +12901,50 @@ mod tests {
         assert!(working_text.contains("<<<<<<<"));
         assert_eq!(std::fs::read(path.join("a"))?, original);
 
+        // Block by block is the default for text; key 2 chooses Theirs.
+        let _ = crate::tests::run_ui(
+            &ctx,
+            frame_input(
+                1120.0,
+                740.0,
+                vec![key(egui::Key::Num2, egui::Modifiers::NONE)],
+            ),
+            |ctx| app.draw_ui(ctx),
+        );
+        let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        {
+            let view = app.conflict_view.as_ref().ok_or("missing conflict view")?;
+            let blocks = view.blocks.as_ref().ok_or("missing blocks")?;
+            assert_eq!(blocks.count(), 1);
+            assert_eq!(
+                blocks.choices[0],
+                Some(gg_engine::conflict::BlockChoice::Theirs)
+            );
+            assert_eq!(blocks.text(), "feature\n");
+        }
+        let text = shown_text(&output);
+        for expected in [
+            "Block by block",
+            "Conflict 1 of 1",
+            "4 Theirs + ours",
+            "Result · 1/1 blocks chosen · preview, not staged",
+        ] {
+            assert!(
+                text.iter().any(|line| line.contains(expected)),
+                "missing {expected:?} in {text:?}"
+            );
+        }
+        assert_eq!(
+            std::fs::read(path.join("a"))?,
+            original,
+            "choosing is read-only"
+        );
+
         {
             let view = app.conflict_view.as_mut().ok_or("missing conflict view")?;
+            view.whole_file = true;
             view.preview = gg_engine::conflict::Resolution::Ours;
         }
         let ours = {
@@ -9007,6 +12976,89 @@ mod tests {
     }
 
     #[test]
+    fn conflicts_open_in_the_main_workspace_and_hold_still() -> Result<(), String> {
+        let ctx = egui::Context::default();
+        crate::phosphor::install(&ctx);
+        let mut app = layout_fixture();
+        let block = |n: &str| gg_engine::conflict::Segment::Block {
+            ours: format!("ours {n}\n"),
+            base: format!("base {n}\n"),
+            theirs: format!("theirs {n}\n"),
+        };
+        app.conflict_view = Some(ConflictView {
+            paths: vec!["a".into()],
+            selected: 0,
+            previous_selected: 0,
+            keep: None,
+            content: Some(gg_engine::conflict::Content {
+                path: "a".into(),
+                base: Some("base\n".into()),
+                ours: Some("ours\n".into()),
+                theirs: Some("theirs\n".into()),
+                binary: false,
+                truncated: false,
+            }),
+            error: None,
+            loading: false,
+            worker: None,
+            blocks: Some(conflict_blocks::Blocks::new(vec![block("1"), block("2")])),
+            blocks_note: None,
+            whole_file: false,
+            resolved: Vec::new(),
+            snapshot: None,
+            preview: gg_engine::conflict::Resolution::Working,
+            tab: ConflictTab::Ours,
+        });
+        let result_y = |app: &mut Browser, events: Vec<egui::Event>| {
+            let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, events), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let text = shown_text(&output);
+            assert!(
+                !text
+                    .iter()
+                    .any(|line| line.starts_with("Filter by message")),
+                "the workspace replaces History: {text:?}"
+            );
+            output.shapes.iter().find_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) if text.galley.job.text.starts_with("Result ·") => {
+                    Some(text.pos.y)
+                }
+                _ => None,
+            })
+        };
+        let before = result_y(&mut app, vec![]).ok_or("no result line")?;
+        let chosen = result_y(&mut app, vec![key(egui::Key::Num1, egui::Modifiers::NONE)]);
+        assert_eq!(
+            chosen,
+            Some(before),
+            "choosing a block does not move the result"
+        );
+        if let Some(view) = &mut app.conflict_view {
+            view.error = Some("The conflict changed. Refresh external edits and retry.".into());
+        }
+        assert_eq!(
+            result_y(&mut app, vec![]),
+            Some(before),
+            "an error has its own line"
+        );
+        let _ = crate::tests::run_ui(
+            &ctx,
+            frame_input(
+                1120.0,
+                740.0,
+                vec![key(egui::Key::Escape, egui::Modifiers::NONE)],
+            ),
+            |ctx| app.draw_ui(ctx),
+        );
+        assert!(app.conflict_view.is_none(), "Esc closes the workspace");
+        Ok(())
+    }
+
+    #[test]
     fn conflict_staging_uses_the_operation_worker() {
         let ctx = egui::Context::default();
         let mut app = layout_fixture();
@@ -9026,7 +13078,10 @@ mod tests {
             error: None,
             loading: false,
             worker: None,
-            placed: false,
+            blocks: None,
+            blocks_note: None,
+            whole_file: false,
+            resolved: Vec::new(),
             snapshot: Some(gg_engine::conflict::Snapshot {
                 base: Some("1".repeat(40)),
                 ours: Some("2".repeat(40)),
@@ -9090,25 +13145,29 @@ mod tests {
                     _ => None,
                 })
                 .collect::<Vec<_>>();
+            // The popup mirrors the Commit menu, then its own extras.
             for label in [
-                "Inspect",
-                "Integrate",
-                "Rewrite and destructive",
-                "Recovery",
+                "Review changes",
+                "Compare with HEAD",
+                "Copy ID",
+                "Cherry-pick onto HEAD",
+                "Revert",
+                "Interactive rebase from here…",
+                "Reword…",
+                "Reopen for editing…",
+                "Fixup into…",
+                "Drop…",
+                "Reset current branch to here…",
+                "Copy subject",
+                "Signature details…",
                 "Recovery…",
             ] {
                 assert!(text.contains(&label), "missing {label} at {width}");
             }
-            assert!(
-                text.iter().any(|line| line.starts_with("Cherry-pick ")),
-                "missing target-aware cherry-pick at {width}"
-            );
             assert_eq!(
-                text.iter()
-                    .filter(|line| **line == "Commit actions")
-                    .count(),
-                1,
-                "the scoped menu replaces the separate window at {width}"
+                text.iter().filter(|line| **line == "Actions").count(),
+                usize::from(width >= 1040.0),
+                "the inspector's Actions button opens the menu at {width}"
             );
             assert!(!text.contains(&"Selected commit actions…"));
         }
@@ -9131,64 +13190,44 @@ mod tests {
         });
         assert!(output.shapes.iter().any(|shape| matches!(
             &shape.shape,
-            egui::epaint::Shape::Text(text) if text.galley.job.text == "Integrate"
+            egui::epaint::Shape::Text(text) if text.galley.job.text == "Cherry-pick onto HEAD"
         )));
     }
 
     #[test]
     fn commit_action_menu_returns_the_clicked_command() {
         let ctx = egui::Context::default();
-        let id = "a".repeat(40);
+        let app = layout_fixture();
+        let menu = app.commit_menu_entries();
         let command = std::cell::RefCell::new(None);
-        let first = crate::tests::run_ui(&ctx, frame_input(360.0, 600.0, vec![]), |ui| {
-            command
-                .borrow_mut()
-                .replace(commit_action_menu(ui, &id, true, None));
-        });
-        let compare = first.shapes.iter().find_map(|shape| match &shape.shape {
-            egui::epaint::Shape::Text(text)
-                if text.galley.job.text == "Compare aaaaaaa with current HEAD" =>
-            {
-                Some(text.pos)
-            }
-            _ => None,
-        });
-        let Some(compare) = compare else {
-            return;
+        let draw = |events: Vec<egui::Event>| {
+            crate::tests::run_ui(&ctx, frame_input(360.0, 600.0, events), |ui| {
+                command.borrow_mut().replace(commit_action_menu(ui, &menu));
+            })
         };
-        let press = egui::Event::PointerButton {
-            pos: compare + egui::vec2(5.0, 0.0),
+        let first = draw(vec![]);
+        let copy = first
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) if text.galley.job.text == "Copy subject" => {
+                    Some(text.pos)
+                }
+                _ => None,
+            })
+            .unwrap_or_default()
+            + egui::vec2(5.0, 4.0);
+        let button = |pressed| egui::Event::PointerButton {
+            pos: copy,
             button: egui::PointerButton::Primary,
-            pressed: true,
+            pressed,
             modifiers: egui::Modifiers::NONE,
         };
-        let release = egui::Event::PointerButton {
-            pos: compare + egui::vec2(5.0, 0.0),
-            button: egui::PointerButton::Primary,
-            pressed: false,
-            modifiers: egui::Modifiers::NONE,
-        };
-        let _ = crate::tests::run_ui(
-            &ctx,
-            frame_input(
-                360.0,
-                600.0,
-                vec![egui::Event::PointerMoved(compare), press],
-            ),
-            |ui| {
-                command
-                    .borrow_mut()
-                    .replace(commit_action_menu(ui, &id, true, None));
-            },
-        );
-        let _ = crate::tests::run_ui(&ctx, frame_input(360.0, 600.0, vec![release]), |ui| {
-            command
-                .borrow_mut()
-                .replace(commit_action_menu(ui, &id, true, None));
-        });
+        draw(vec![egui::Event::PointerMoved(copy), button(true)]);
+        draw(vec![button(false)]);
         assert!(matches!(
             command.borrow().as_ref(),
-            Some(Some(CommitCommand::Action(CommitAction::Compare)))
+            Some(Some(CommitCommand::CopySubject))
         ));
     }
 
@@ -9197,6 +13236,10 @@ mod tests {
         let ctx = egui::Context::default();
         let mut app = layout_fixture();
         app.help_shortcuts = true;
+        // A new window is sized invisibly on its first frame.
+        let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
         let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
             app.draw_ui(ctx)
         });
@@ -9210,7 +13253,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(text.contains(&"Keyboard shortcuts"));
         assert!(text.contains(&"Navigation"));
-        assert!(text.contains(&"Commit actions"));
+        assert!(text.contains(&"Actions"));
         assert!(text.iter().any(|line| line.contains("Alt+A")));
         assert!(
             text.iter().all(|line| !line.contains("View, Stash, Help")),
@@ -9267,6 +13310,10 @@ mod tests {
             recovery: Some(RecoveryAction::Backups),
         });
         app.outcome_details_open = true;
+        // A new window is sized invisibly on its first frame.
+        let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
         let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
             app.draw_ui(ctx)
         });
@@ -9433,7 +13480,10 @@ mod tests {
             snapshot: None,
             preview: gg_engine::conflict::Resolution::Working,
             tab: ConflictTab::Base,
-            placed: false,
+            blocks: None,
+            blocks_note: None,
+            whole_file: false,
+            resolved: Vec::new(),
         });
         let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
             app.draw_ui(ctx)
@@ -10383,28 +14433,25 @@ mod tests {
     }
 
     #[test]
-    fn filter_focus_keeps_arrow_keys_in_the_editor() {
+    fn ctrl_f_opens_search_with_the_history_filter() {
         let ctx = egui::Context::default();
         let mut app = Browser::new(".".into());
-        let _ = crate::tests::run_ui(&ctx, egui::RawInput::default(), |ctx| app.draw_ui(ctx));
+        app.state.query = "alpha".into();
+        let input = |events| frame_input(1120.0, 740.0, events);
+        let _ = crate::tests::run_ui(&ctx, input(vec![]), |ctx| app.draw_ui(ctx));
         let _ = crate::tests::run_ui(
             &ctx,
-            egui::RawInput {
-                events: vec![key(egui::Key::F, egui::Modifiers::COMMAND)],
-                ..Default::default()
-            },
+            input(vec![key(egui::Key::F, egui::Modifiers::COMMAND)]),
             |ctx| app.draw_ui(ctx),
         );
-        assert!(ctx.memory(|m| m.has_focus(egui::Id::unique("history-filter"))));
+        assert!(ctx.memory(|m| m.has_focus(search_field_id())));
+        assert_eq!(app.search_text, "alpha", "search starts from the filter");
         let _ = crate::tests::run_ui(
             &ctx,
-            egui::RawInput {
-                events: vec![key(egui::Key::Escape, egui::Modifiers::NONE)],
-                ..Default::default()
-            },
+            input(vec![key(egui::Key::Escape, egui::Modifiers::NONE)]),
             |ctx| app.draw_ui(ctx),
         );
-        assert!(!ctx.memory(|m| m.has_focus(egui::Id::unique("history-filter"))));
+        assert!(app.search.is_none());
     }
 
     #[test]
@@ -10485,7 +14532,10 @@ mod tests {
                     app.history_rect,
                     app.details_rect
                 );
-                assert!(app.history_rect.top() <= 130.0);
+                // Menu bar, toolbar, the fixed operation area, and the filter row.
+                assert!(
+                    app.history_rect.top() <= MENU_BAR_HEIGHT + 34.0 + OPERATION_AREA_HEIGHT + 50.0
+                );
                 assert!(app.history_rect.bottom() <= height - 20.0);
                 if width >= 1040.0 {
                     assert!(!app.history_rect.intersects(app.details_rect));
@@ -10493,7 +14543,7 @@ mod tests {
                 } else {
                     assert_eq!(app.details_rect, egui::Rect::NOTHING);
                 }
-                for label in ["Repository", "View", "Local Changes"] {
+                for label in ["Repository", "View", "Changes"] {
                     let shape = output.shapes.iter().find_map(|shape| match &shape.shape {
                         egui::epaint::Shape::Text(text) if text.galley.job.text == label => {
                             Some(text)
@@ -10573,6 +14623,325 @@ mod tests {
     }
 
     #[test]
+    fn result_lines_are_numbered_and_aligned() {
+        assert_eq!(numbered("a\nb"), "1  a\n2  b");
+        let ten = (0..10)
+            .map(|n| n.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(numbered(&ten).starts_with(" 1  0\n"));
+        assert!(numbered(&ten).ends_with("10  9"));
+    }
+
+    #[test]
+    fn reset_asks_first_unless_confirmation_is_off() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        let id = "a".repeat(40);
+        app.run_commit_action(
+            &ctx,
+            id.clone(),
+            CommitAction::Reset(gg_engine::reset::Mode::Hard),
+        );
+        assert_eq!(
+            app.reset_confirm,
+            Some((id.clone(), gg_engine::reset::Mode::Hard)),
+            "the question comes first by default"
+        );
+        app.reset_confirm = None;
+        app.prefs.confirm_destructive = false;
+        app.run_commit_action(&ctx, id, CommitAction::Reset(gg_engine::reset::Mode::Hard));
+        assert_eq!(
+            app.reset_confirm, None,
+            "no question when confirmation is off"
+        );
+    }
+
+    #[test]
+    fn launch_opens_the_working_folder_or_the_last_repository() {
+        let repos = [PathBuf::from("/gone"), PathBuf::from("/repo")];
+        let is_repo = |path: &Path| path == Path::new("/repo") || path == Path::new("/here");
+        assert_eq!(
+            launch_folder("/here".into(), true, &repos, is_repo),
+            PathBuf::from("/here"),
+            "a repository working folder wins"
+        );
+        assert_eq!(
+            launch_folder("/tmp".into(), true, &repos, is_repo),
+            PathBuf::from("/repo"),
+            "outside a repository the last one that still is one opens"
+        );
+        assert_eq!(
+            launch_folder("/tmp".into(), false, &repos, is_repo),
+            PathBuf::from("/tmp")
+        );
+    }
+
+    #[test]
+    fn preferences_search_keeps_sections_with_a_match() {
+        let shown = |query: &str| {
+            PrefSection::ALL
+                .into_iter()
+                .filter(|section| section.matches(query))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(shown(""), PrefSection::ALL.to_vec());
+        assert_eq!(shown("zoom"), [PrefSection::Appearance]);
+        assert_eq!(shown("SIGN"), [PrefSection::Commit]);
+        assert_eq!(shown("side by"), [PrefSection::Diff]);
+        assert!(shown("nothing like this").is_empty());
+    }
+
+    #[test]
+    fn window_title_names_the_folder_and_a_stopped_rebase() {
+        assert_eq!(
+            window_title("/home/me/src/gg", Some("/home/me"), None),
+            "gg — ~/src/gg"
+        );
+        assert_eq!(
+            window_title("/home/meow/gg", Some("/home/me"), None),
+            "gg — /home/meow/gg"
+        );
+        let step = |id: char| gg_engine::mutation::RebaseStep {
+            action: "pick".into(),
+            commit: id.to_string().repeat(40),
+            subject: "s".into(),
+        };
+        let mut progress = gg_engine::mutation::RebaseProgress {
+            branch: Some("feature".into()),
+            done: vec![step('a'), step('b')],
+            todo: vec![step('c'), step('d')],
+            stop: gg_engine::mutation::RebaseStop::Other,
+            tracked_changes: 0,
+        };
+        assert_eq!(
+            window_title("/r", None, Some(&progress)),
+            "gg — /r — rebasing feature · step 2 of 4"
+        );
+        progress.stop = gg_engine::mutation::RebaseStop::Conflict;
+        assert_eq!(
+            window_title("/r", None, Some(&progress)),
+            "gg — /r — rebase conflict · step 2 of 4"
+        );
+    }
+
+    #[test]
+    fn menus_follow_the_final_design_mockup() {
+        let app = layout_fixture();
+        let ready = app.frame_readiness();
+        let table = app.menu_table(&ready);
+        let labels = |title: &str| {
+            table
+                .iter()
+                .find(|menu| menu.title == title)
+                .map(|menu| {
+                    menu.entries
+                        .iter()
+                        .map(|entry| match entry {
+                            menus::Entry::Item(item) => item.label.clone(),
+                            menus::Entry::Separator => "-".into(),
+                            menus::Entry::Submenu(title, _) => format!("{title} ▸"),
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+        };
+        let titles = table.iter().map(|menu| menu.title).collect::<Vec<_>>();
+        if cfg!(target_os = "macos") {
+            assert_eq!(
+                titles,
+                [
+                    "gg",
+                    "Repository",
+                    "Branch",
+                    "Commit",
+                    "Changes",
+                    "View",
+                    "Help"
+                ]
+            );
+        } else {
+            assert_eq!(
+                titles,
+                ["Repository", "Branch", "Commit", "Changes", "View", "Help"]
+            );
+            // No Refresh: the window refreshes on file changes and before commands.
+            assert_eq!(
+                labels("Repository"),
+                [
+                    "Open…",
+                    "Clone…",
+                    "Open recent ▸",
+                    "-",
+                    "Fetch",
+                    "Pull (rebase)",
+                    "Push",
+                    "Push with force-with-lease…",
+                    "-",
+                    "Worktrees…",
+                    "Submodules…",
+                    "LFS…",
+                    "-",
+                    "Backups…",
+                    "Reflog…",
+                    "-",
+                    "Preferences…",
+                    "Quit"
+                ]
+            );
+        }
+        // Track remote branch… is kept from before the mockup; see the review board.
+        assert_eq!(
+            labels("Branch"),
+            [
+                "New branch…",
+                "New tag…",
+                "Switch to…",
+                "-",
+                "Merge into current…",
+                "Rebase current onto…",
+                "Set upstream…",
+                "Track remote branch…",
+                "-",
+                "Rename…",
+                "Delete…"
+            ]
+        );
+        assert_eq!(
+            labels("Commit"),
+            [
+                "Review changes",
+                "Compare with HEAD",
+                "Copy ID",
+                "-",
+                "Cherry-pick onto HEAD",
+                "Revert",
+                "-",
+                "Interactive rebase from here…",
+                "Reword…",
+                "Reopen for editing…",
+                "Fixup into…",
+                "Drop…",
+                "-",
+                "Reset current branch to here…"
+            ]
+        );
+        assert_eq!(
+            labels("Changes"),
+            [
+                "Stage all",
+                "Unstage all",
+                "Discard all…",
+                "-",
+                "Commit",
+                "Amend HEAD",
+                "-",
+                "Stash changes",
+                "Stashes…",
+                "-",
+                "Resolve conflicts…"
+            ]
+        );
+        assert_eq!(
+            labels("View"),
+            [
+                "Local Changes",
+                "History",
+                "-",
+                "Refs sidebar",
+                "Commit inspector",
+                "-",
+                "Inline diff",
+                "Side-by-side diff",
+                "-",
+                "Compact density",
+                "Theme: Dark ▸"
+            ]
+        );
+        assert_eq!(
+            labels("Help"),
+            ["Keyboard shortcuts", "Documentation", "About gg"]
+        );
+    }
+
+    #[test]
+    fn ctrl_shift_b_opens_the_branch_switcher_before_other_keys() {
+        let ctx = egui::Context::default();
+        crate::phosphor::install(&ctx);
+        let mut app = layout_fixture();
+        let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        let _ = crate::tests::run_ui(
+            &ctx,
+            frame_input(
+                1120.0,
+                740.0,
+                vec![key(
+                    egui::Key::B,
+                    egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                )],
+            ),
+            |ctx| app.draw_ui(ctx),
+        );
+        let ready = app.frame_readiness();
+        let switch = menus::flatten(&app.menu_table(&ready))
+            .into_iter()
+            .find(|(_, item)| item.command == FrameCommand::SwitchTo)
+            .and_then(|(_, item)| item.disabled);
+        assert_eq!(switch, None, "Switch to… is enabled");
+        assert!(egui::Popup::is_id_open(&ctx, branch_switcher_popup_id()));
+        assert!(app.create_branch.is_none(), "Ctrl+Shift+B is not Ctrl+B");
+    }
+
+    #[test]
+    fn menu_bar_is_one_row_and_view_shortcuts_switch_views() -> Result<(), String> {
+        let ctx = egui::Context::default();
+        crate::phosphor::install(&ctx);
+        let mut app = layout_fixture();
+        let frame = |app: &mut Browser, events| {
+            crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, events), |ctx| {
+                app.draw_ui(ctx)
+            })
+        };
+        let _ = frame(&mut app, vec![]);
+        let output = frame(&mut app, vec![]);
+        for title in ["Repository", "Branch", "Commit", "Changes", "View", "Help"] {
+            let y = output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) if text.galley.job.text == title => {
+                        Some(text.visual_bounding_rect().center().y)
+                    }
+                    _ => None,
+                })
+                .ok_or(format!("menu {title} missing"))?;
+            assert!(
+                y < MENU_BAR_HEIGHT,
+                "{title} sits in the 26 px menu bar: {y}"
+            );
+        }
+        let _ = frame(
+            &mut app,
+            vec![key(egui::Key::Num1, egui::Modifiers::COMMAND)],
+        );
+        assert!(app.working.is_some(), "Ctrl+1 opens Local Changes");
+        let _ = frame(
+            &mut app,
+            vec![key(egui::Key::Num2, egui::Modifiers::COMMAND)],
+        );
+        assert!(app.working.is_none(), "Ctrl+2 returns to History");
+        let shown = app.refs_visible;
+        let _ = frame(
+            &mut app,
+            vec![key(egui::Key::Backslash, egui::Modifiers::COMMAND)],
+        );
+        assert_eq!(app.refs_visible, !shown, "Ctrl+\\ toggles the refs sidebar");
+        Ok(())
+    }
+
+    #[test]
     fn local_changes_and_history_share_one_navigation_strip_at_every_width()
     -> Result<(), Box<dyn std::error::Error>> {
         for width in [720.0, 1120.0] {
@@ -10596,14 +14965,15 @@ mod tests {
             let nav = |label: &str| {
                 output.shapes.iter().find_map(|shape| match &shape.shape {
                     egui::epaint::Shape::Text(text)
-                        if text.galley.job.text == label && text.pos.y < 80.0 =>
+                        if text.galley.job.text == label
+                            && (MENU_BAR_HEIGHT..MENU_BAR_HEIGHT + 34.0).contains(&text.pos.y) =>
                     {
                         Some(text.pos)
                     }
                     _ => None,
                 })
             };
-            let local = nav("Local Changes").ok_or("missing Local Changes")?;
+            let local = nav("Changes").ok_or("missing Local Changes")?;
             let history = nav("History").ok_or("missing History")?;
             assert!(
                 local.x < history.x,
@@ -10616,7 +14986,7 @@ mod tests {
             assert!(
                 output.shapes.iter().any(|shape| matches!(
                     &shape.shape,
-                    egui::epaint::Shape::Text(text) if text.galley.job.text == "Refs"
+                    egui::epaint::Shape::Text(text) if text.galley.job.text == "Branch"
                 )),
                 "ref browsing stays reachable at {width}"
             );
@@ -10647,7 +15017,7 @@ mod tests {
             let output = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
                 app.draw_ui(ctx)
             });
-            for label in ["Repository", "Local Changes", "Commit", "Amend"] {
+            for label in ["Repository", "Changes", "Commit", "Amend HEAD"] {
                 assert!(
                     output.shapes.iter().any(|shape| matches!(
                         &shape.shape,
@@ -10662,7 +15032,8 @@ mod tests {
                     .iter()
                     .filter_map(|shape| match &shape.shape {
                         egui::epaint::Shape::Text(text)
-                            if text.galley.job.text == "Local Changes" =>
+                            if text.galley.job.text == "Changes"
+                                && text.pos.y > MENU_BAR_HEIGHT =>
                         {
                             Some(text.pos.x)
                         }
@@ -10789,6 +15160,745 @@ mod tests {
     }
 
     #[test]
+    fn window_toolbar_keeps_its_icons_in_place_across_views_and_widths()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let order = [
+            crate::phosphor::SIDEBAR_SIMPLE,
+            crate::phosphor::DOWNLOAD_SIMPLE,
+            crate::phosphor::ARROW_LINE_DOWN,
+            crate::phosphor::ARROW_LINE_UP,
+            crate::phosphor::GIT_BRANCH,
+            crate::phosphor::TAG,
+            crate::phosphor::GIT_MERGE,
+            crate::phosphor::ARCHIVE,
+            crate::phosphor::BOX_ARROW_UP,
+            crate::phosphor::LIST_NUMBERS,
+            crate::phosphor::CLOCK_COUNTER_CLOCKWISE,
+            crate::phosphor::MAGNIFYING_GLASS,
+        ];
+        for width in [720.0, 1120.0] {
+            let ctx = egui::Context::default();
+            crate::phosphor::install(&ctx);
+            let mut app = layout_fixture();
+            let mut positions = Vec::new();
+            for local in [false, true] {
+                if local {
+                    app.open_working(&ctx);
+                }
+                let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                    app.draw_ui(ctx)
+                });
+                let output = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                    app.draw_ui(ctx)
+                });
+                let xs = order
+                    .iter()
+                    .map(|glyph| {
+                        output
+                            .shapes
+                            .iter()
+                            .find_map(|shape| match &shape.shape {
+                                // The search field's hint starts with its glyph.
+                                egui::epaint::Shape::Text(text)
+                                    if (text.galley.job.text == *glyph
+                                        || text
+                                            .galley
+                                            .job
+                                            .text
+                                            .starts_with(&format!("{glyph} ")))
+                                        && text.pos.y < 90.0 =>
+                                {
+                                    Some(text.pos.x)
+                                }
+                                _ => None,
+                            })
+                            .ok_or(format!("missing toolbar glyph {glyph:?} at {width}"))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                assert!(
+                    xs.windows(2).all(|pair| pair[0] + 17.0 <= pair[1]),
+                    "toolbar icons keep their order without overlapping at {width}: {xs:?}"
+                );
+                assert!(xs.iter().all(|x| *x + 17.0 <= width), "{xs:?} at {width}");
+                positions.push(xs);
+            }
+            assert_eq!(
+                positions[0], positions[1],
+                "History and Local Changes keep one toolbar at {width}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn toolbar_rewrite_covers_the_branch_and_keeps_the_selection()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let git = |path: &std::path::Path, args: &[&str]| -> Result<String, String> {
+            let output = std::process::Command::new("git")
+                .arg("-C")
+                .arg(path)
+                .args(args)
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env(
+                    "GIT_CONFIG_GLOBAL",
+                    if cfg!(windows) { "NUL" } else { "/dev/null" },
+                )
+                .env("GIT_AUTHOR_NAME", "Test")
+                .env("GIT_AUTHOR_EMAIL", "test@example.org")
+                .env("GIT_COMMITTER_NAME", "Test")
+                .env("GIT_COMMITTER_EMAIL", "test@example.org")
+                .output()
+                .map_err(|error| error.to_string())?;
+            if output.status.success() {
+                Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+            } else {
+                Err(String::from_utf8_lossy(&output.stderr).into_owned())
+            }
+        };
+        let dir = tempfile::tempdir()?;
+        let path = dir.path();
+        git(path, &["init", "-q", "-b", "main"])?;
+        for i in 0..4 {
+            if i == 2 {
+                git(path, &["switch", "-q", "-c", "feature"])?;
+            }
+            std::fs::write(path.join("a"), format!("{i}\n"))?;
+            git(path, &["add", "a"])?;
+            git(path, &["commit", "-qm", &format!("change {i}")])?;
+        }
+        let ids = git(path, &["rev-list", "HEAD"])?
+            .lines()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        let ctx = egui::Context::default();
+        crate::phosphor::install(&ctx);
+        let mut app = Browser::new(path.to_path_buf());
+        app.state.complete(
+            0,
+            Ok(gg_engine::History {
+                path: path.to_path_buf(),
+                head: "main".into(),
+                commits: ids
+                    .iter()
+                    .enumerate()
+                    .map(|(i, id)| gg_engine::Commit {
+                        id: id.clone(),
+                        parents: ids.get(i + 1).cloned().into_iter().collect(),
+                        author: "Test".into(),
+                        email: "test@example.org".into(),
+                        time: "2026-10-30 12:00:00 +0000".into(),
+                        message: format!("change {}", 3 - i),
+                    })
+                    .collect(),
+                truncated: false,
+                shallow: false,
+            }),
+        );
+        // Select an older commit on main: the toolbar must not depend on it.
+        let selected = ids[3].clone();
+        app.state.selected = Some(selected.clone());
+        app.state.reconcile_selection();
+        app.local_summary = Some(LocalSummary::read(path.to_path_buf()));
+        let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        let pos = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text)
+                    if text.galley.job.text == crate::phosphor::LIST_NUMBERS =>
+                {
+                    Some(text.pos + text.galley.size() / 2.0)
+                }
+                _ => None,
+            })
+            .ok_or("missing rewrite toolbar button")?;
+        let events = vec![
+            egui::Event::PointerMoved(pos),
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ];
+        let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, events), |ctx| {
+            app.draw_ui(ctx)
+        });
+        let dialog = app
+            .rewrite_dialog
+            .as_ref()
+            .ok_or("rewrite dialog did not open")?;
+        assert_eq!(
+            app.state.selected.as_deref(),
+            Some(selected.as_str()),
+            "the toolbar leaves the history selection alone"
+        );
+        assert_eq!(
+            dialog.from, ids[1],
+            "starts at the branch's first own commit"
+        );
+        assert_eq!(
+            dialog.plan.rows.len(),
+            2,
+            "the branch's own commits through HEAD"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn stash_picker_keys_select_ask_to_drop_and_apply() {
+        let ctx = egui::Context::default();
+        let key = |key| egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let mut picker = StashPicker::default();
+        let press = |picker: &mut StashPicker, keys: Vec<egui::Key>| {
+            let mut result = None;
+            let input = egui::RawInput {
+                events: keys.into_iter().map(key).collect(),
+                ..Default::default()
+            };
+            let _ = crate::tests::run_ui(&ctx, input, |ui| {
+                result = stash_picker_keys(ui.ctx(), picker, 3);
+            });
+            result
+        };
+        assert_eq!(
+            press(
+                &mut picker,
+                vec![
+                    egui::Key::ArrowDown,
+                    egui::Key::ArrowDown,
+                    egui::Key::ArrowDown
+                ]
+            ),
+            None
+        );
+        assert_eq!(picker.selected, 2, "stops at the last entry");
+        press(&mut picker, vec![egui::Key::ArrowUp, egui::Key::Delete]);
+        assert_eq!(picker.selected, 1);
+        assert!(picker.confirm_drop);
+        press(&mut picker, vec![egui::Key::Escape]);
+        assert!(!picker.confirm_drop);
+        assert_eq!(press(&mut picker, vec![egui::Key::Enter]), Some(true));
+    }
+
+    #[test]
+    fn stash_picker_lists_entries_with_restore_show_and_drop()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        crate::phosphor::install(&ctx);
+        let mut app = layout_fixture();
+        app.local_summary = Some(LocalSummary {
+            worktrees: Vec::new(),
+            changes: Some(2),
+            stashes: (0..2)
+                .map(|index| gg_engine::stash::StashEntry {
+                    index,
+                    reference: format!("stash@{{{index}}}"),
+                    commit: format!("{index:040x}"),
+                    message: format!("WIP on main: abc123 work {index}"),
+                    branch: (index == 0).then(|| "main".to_string()),
+                    age: format!("{} hours ago", index + 2),
+                    files: Some(index as usize * 2 + 1),
+                })
+                .collect(),
+            branch_start: None,
+            rebase: None,
+            files: Vec::new(),
+        });
+        let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        let pos = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text)
+                    if text.galley.job.text == crate::phosphor::BOX_ARROW_UP =>
+                {
+                    Some(text.pos + text.galley.size() / 2.0)
+                }
+                _ => None,
+            })
+            .ok_or("missing stash picker button")?;
+        let click = vec![
+            egui::Event::PointerMoved(pos),
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ];
+        let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, click), |ctx| {
+            app.draw_ui(ctx)
+        });
+        let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        let texts = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) => Some(text.galley.job.text.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        for expected in [
+            "2",
+            "Apply stash@{0}",
+            "Pop",
+            "Show changes",
+            "Drop…",
+            // Ref, message without the branch prefix, then branch, age, and
+            // file count on the second line.
+            "stash@{0}",
+            "abc123 work 0",
+            "on main · 2 hours ago · 1 file",
+            "on detached · 3 hours ago · 3 files",
+        ] {
+            assert!(
+                texts.iter().any(|text| text == expected),
+                "missing {expected:?} in {texts:?}"
+            );
+        }
+        assert!(
+            texts.iter().any(|text| text.contains("stash@{1}")),
+            "both entries are listed"
+        );
+
+        // The popup keeps its size when Drop… swaps in the confirmation.
+        let before = ctx
+            .memory(|memory| memory.area_rect(stash_picker_popup_id()))
+            .ok_or("the picker popup has no area")?;
+        let drop = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) if text.galley.job.text == "Drop…" => {
+                    Some(text.pos + text.galley.size() / 2.0)
+                }
+                _ => None,
+            })
+            .ok_or("missing Drop…")?;
+        let click = |pos| {
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]
+        };
+        let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, click(drop)), |ctx| {
+            app.draw_ui(ctx)
+        });
+        let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        assert!(app.stash_picker.confirm_drop, "Drop… asks for confirmation");
+        assert!(
+            output.shapes.iter().any(|shape| matches!(
+                &shape.shape,
+                egui::epaint::Shape::Text(text) if text.galley.job.text.starts_with("Drop stash@{0}?")
+            )),
+            "the confirmation names the entry"
+        );
+        let after = ctx
+            .memory(|memory| memory.area_rect(stash_picker_popup_id()))
+            .ok_or("the picker popup closed")?;
+        assert_eq!(before, after, "the popup does not resize");
+        Ok(())
+    }
+
+    #[test]
+    fn decision_dialogs_block_the_window_behind_them() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        let frame = |app: &mut Browser, events: Vec<egui::Event>| {
+            let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, events), |ctx| {
+                app.draw_ui(ctx)
+            });
+        };
+        let click = |pos: egui::Pos2| {
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]
+        };
+        frame(&mut app, vec![]);
+        let selected = app.state.selected.clone();
+        let row = app
+            .row_rects
+            .iter()
+            .find(|(row, _)| *row == 3)
+            .map(|(_, rect)| rect.left_center() + egui::vec2(40.0, 0.0));
+        let Some(row) = row else {
+            unreachable!("row 3 is not painted");
+        };
+        app.open_merge_dialog();
+        frame(&mut app, vec![]);
+        frame(&mut app, vec![]);
+        frame(&mut app, click(row));
+        assert_eq!(
+            app.state.selected, selected,
+            "clicks behind a modal dialog are ignored"
+        );
+        frame(
+            &mut app,
+            vec![key(egui::Key::ArrowDown, egui::Modifiers::NONE)],
+        );
+        assert_eq!(
+            app.state.selected, selected,
+            "navigation keys behind a modal dialog are ignored"
+        );
+        app.merge_dialog = None;
+        frame(&mut app, vec![]);
+        frame(&mut app, vec![]);
+        frame(&mut app, click(row));
+        assert_ne!(app.state.selected, selected, "the window responds again");
+    }
+
+    fn switcher_fixture(app: &mut Browser) {
+        let branch = |name: &str, kind| gg_engine::refs::RefItem {
+            name: name.into(),
+            full_name: match kind {
+                gg_engine::refs::RefKind::Branch => format!("refs/heads/{name}"),
+                gg_engine::refs::RefKind::Remote => format!("refs/remotes/{name}"),
+                gg_engine::refs::RefKind::Tag => format!("refs/tags/{name}"),
+            },
+            kind,
+            commit: "a".repeat(40),
+        };
+        app.state.refs = gg_engine::refs::Snapshot {
+            head: Some(gg_engine::refs::Head {
+                name: Some("refs/heads/main".into()),
+                detached: false,
+                commit: Some("a".repeat(40)),
+            }),
+            items: vec![
+                branch("feature/search", gg_engine::refs::RefKind::Branch),
+                branch("main", gg_engine::refs::RefKind::Branch),
+                branch("origin/main", gg_engine::refs::RefKind::Remote),
+                branch("v1", gg_engine::refs::RefKind::Tag),
+            ],
+            ..Default::default()
+        };
+    }
+
+    #[test]
+    fn switcher_lists_local_branches_current_first_and_filters() {
+        let mut app = layout_fixture();
+        switcher_fixture(&mut app);
+        assert_eq!(
+            switcher_branches(&app.state.refs, ""),
+            vec![
+                ("main".to_string(), true),
+                ("feature/search".to_string(), false)
+            ]
+        );
+        assert_eq!(
+            switcher_branches(&app.state.refs, "FEAT sea"),
+            vec![("feature/search".to_string(), false)]
+        );
+    }
+
+    #[test]
+    fn the_branch_button_opens_the_switcher_at_both_widths() {
+        for width in [720.0, 1120.0] {
+            let ctx = egui::Context::default();
+            crate::phosphor::install(&ctx);
+            let mut app = layout_fixture();
+            switcher_fixture(&mut app);
+            let output = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            // The switcher's branch glyph is the right-most one in the toolbar.
+            let glyph = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text)
+                        if text.galley.job.text == crate::phosphor::GIT_BRANCH
+                            && text.pos.y < 80.0 =>
+                    {
+                        Some(egui::Rect::from_min_size(text.pos, text.galley.size()))
+                    }
+                    _ => None,
+                })
+                .max_by(|a, b| a.left().total_cmp(&b.left()));
+            let Some(glyph) = glyph else {
+                unreachable!("branch button at {width}")
+            };
+            assert!(glyph.right() <= width, "{glyph:?} at {width}");
+            let pos = glyph.center();
+            let click = vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ];
+            let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, click), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let output = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let texts = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) => Some(text.galley.job.text.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            for expected in [
+                "main  ·  current",
+                "feature/search",
+                "New branch from HEAD…",
+            ] {
+                assert!(
+                    texts.iter().any(|text| text == expected),
+                    "missing {expected:?} at {width}"
+                );
+            }
+            assert!(!texts.iter().any(|text| text == "origin/main"));
+        }
+    }
+
+    #[test]
+    fn search_filters_history_or_runs_the_chosen_action() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        let frame = |app: &mut Browser, events: Vec<egui::Event>| {
+            let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, events), |ctx| {
+                app.draw_ui(ctx)
+            });
+        };
+        frame(&mut app, vec![]);
+        frame(&mut app, vec![key(egui::Key::K, egui::Modifiers::COMMAND)]);
+        assert!(app.search.is_some(), "Ctrl+K opens search");
+        frame(&mut app, vec![]);
+        frame(&mut app, vec![egui::Event::Text("Subject 7".into())]);
+        frame(&mut app, vec![key(egui::Key::Enter, egui::Modifiers::NONE)]);
+        assert!(app.search.is_none(), "running a result closes search");
+        assert_eq!(
+            app.state.query, "Subject 7",
+            "the first result filters history"
+        );
+
+        let sidebar = app.refs_visible;
+        frame(&mut app, vec![key(egui::Key::K, egui::Modifiers::COMMAND)]);
+        frame(&mut app, vec![]);
+        frame(&mut app, vec![egui::Event::Text("refs sidebar".into())]);
+        frame(
+            &mut app,
+            vec![key(egui::Key::ArrowDown, egui::Modifiers::NONE)],
+        );
+        frame(&mut app, vec![key(egui::Key::Enter, egui::Modifiers::NONE)]);
+        assert!(app.search.is_none());
+        assert_eq!(
+            app.refs_visible, !sidebar,
+            "Down then Enter runs the action"
+        );
+
+        frame(&mut app, vec![key(egui::Key::K, egui::Modifiers::COMMAND)]);
+        frame(&mut app, vec![key(egui::Key::K, egui::Modifiers::COMMAND)]);
+        assert!(app.search.is_none(), "Ctrl+K toggles search closed");
+    }
+
+    #[test]
+    fn search_field_lists_files_in_a_popup_of_one_height() -> Result<(), String> {
+        let ctx = egui::Context::default();
+        crate::phosphor::install(&ctx);
+        let mut app = layout_fixture();
+        app.local_summary = Some(LocalSummary {
+            worktrees: Vec::new(),
+            files: vec!["docs/plan.md".into(), "src/plan_view.rs".into()],
+            ..Default::default()
+        });
+        let frame = |app: &mut Browser, events: Vec<egui::Event>| {
+            crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, events), |ctx| {
+                app.draw_ui(ctx)
+            })
+        };
+        let _ = frame(&mut app, vec![]);
+        let _ = frame(&mut app, vec![key(egui::Key::K, egui::Modifiers::COMMAND)]);
+        assert!(
+            ctx.memory(|m| m.has_focus(search_field_id())),
+            "Ctrl+K focuses the toolbar field"
+        );
+        let _ = frame(&mut app, vec![egui::Event::Text("p".into())]);
+        let _ = frame(&mut app, vec![]);
+        let popup = egui::Id::unique("frame-search");
+        let many = ctx
+            .memory(|m| m.area_rect(popup))
+            .ok_or("no results popup")?;
+        let output = frame(&mut app, vec![egui::Event::Text("lan_view".into())]);
+        let _ = frame(&mut app, vec![]);
+        let few = ctx
+            .memory(|m| m.area_rect(popup))
+            .ok_or("no results popup")?;
+        assert_eq!(few, many, "the popup keeps its size as results change");
+        let text = shown_text(&output);
+        assert!(text.iter().any(|line| line == "FILES"), "{text:?}");
+        assert!(text.iter().any(|line| line.starts_with("src/plan_view.rs")));
+        let _ = frame(
+            &mut app,
+            vec![key(egui::Key::Escape, egui::Modifiers::NONE)],
+        );
+        assert!(app.search.is_none());
+        assert!(app.search_text.is_empty(), "Esc clears the field");
+        Ok(())
+    }
+
+    #[test]
+    fn search_offers_frame_actions_with_their_readiness_and_refs() {
+        let mut app = layout_fixture();
+        app.state.refs.items = vec![gg_engine::refs::RefItem {
+            name: "release".into(),
+            full_name: "refs/tags/release".into(),
+            kind: gg_engine::refs::RefKind::Tag,
+            commit: "c".repeat(40),
+        }];
+        let ready = app.frame_readiness();
+        let items = app.search_items(&ready);
+        let pull = items
+            .iter()
+            .find(|item| item.label == "Pull (rebase)")
+            .map(|item| item.disabled.clone());
+        assert_eq!(
+            pull,
+            Some(Some(
+                "The current branch has no upstream to pull from".to_string()
+            )),
+            "search shares the toolbar's readiness"
+        );
+        let results = search::results("release", &items, FrameCommand::Filter("release".into()));
+        assert_eq!(results[0].group, search::Group::Filter);
+        assert!(results.iter().any(|item| item.group == search::Group::Tags
+            && item.command == FrameCommand::Inspect("c".repeat(40))));
+    }
+
+    #[test]
+    fn stash_commands_follow_local_changes_and_entries() {
+        let mut app = layout_fixture();
+        app.local_summary = Some(LocalSummary {
+            worktrees: Vec::new(),
+            changes: Some(0),
+            stashes: Vec::new(),
+            branch_start: None,
+            rebase: None,
+            files: Vec::new(),
+        });
+        let ready = app.frame_readiness();
+        assert_eq!(ready.stash_reason, Some("No local changes to stash"));
+        assert_eq!(ready.stashes, 0);
+        assert!(ready.branch_rewrite_reason.is_some());
+        app.local_summary = Some(LocalSummary {
+            worktrees: Vec::new(),
+            changes: Some(2),
+            stashes: vec![gg_engine::stash::StashEntry {
+                index: 0,
+                reference: "stash@{0}".into(),
+                commit: "f".repeat(40),
+                message: "WIP on main".into(),
+                ..Default::default()
+            }],
+            branch_start: Some(("e".repeat(40), 2)),
+            rebase: None,
+            files: Vec::new(),
+        });
+        let ready = app.frame_readiness();
+        assert_eq!(ready.stash_reason, None);
+        assert_eq!(ready.stashes, 1);
+        assert_eq!(ready.branch_rewrite_count, 2);
+        assert_eq!(ready.branch_rewrite_reason, None);
+    }
+
+    #[test]
+    fn pull_is_ready_only_when_the_current_branch_is_behind() {
+        let mut app = layout_fixture();
+        assert_eq!(
+            app.frame_readiness().pull_reason,
+            Some("The current branch has no upstream to pull from")
+        );
+        app.state.refs.head = Some(gg_engine::refs::Head {
+            name: Some("refs/heads/feature".into()),
+            detached: false,
+            commit: Some("a".repeat(40)),
+        });
+        let tracking = |behind| gg_engine::refs::Tracking {
+            branch: "feature".into(),
+            full_name: "refs/heads/feature".into(),
+            upstream: "origin/feature".into(),
+            upstream_full_name: "refs/remotes/origin/feature".into(),
+            remote: "origin".into(),
+            remote_branch: "feature".into(),
+            ahead: Some(0),
+            behind: Some(behind),
+        };
+        app.state.refs.tracking = vec![tracking(0)];
+        let ready = app.frame_readiness();
+        assert_eq!(ready.behind, 0);
+        assert_eq!(
+            ready.pull_reason,
+            Some("Up to date with the upstream; fetch to check again")
+        );
+        app.state.refs.tracking = vec![tracking(3)];
+        let ready = app.frame_readiness();
+        assert_eq!(ready.behind, 3);
+        assert_eq!(ready.pull_reason, None);
+    }
+
+    #[test]
     fn history_strip_leaves_the_narrow_details_overlay() {
         let ctx = egui::Context::default();
         let mut app = layout_fixture();
@@ -10866,7 +15976,7 @@ mod tests {
             });
             let refs = output.shapes.iter().find_map(|shape| match &shape.shape {
                 egui::epaint::Shape::Text(text)
-                    if text.galley.job.text == "Refs" && text.pos.y < 42.0 =>
+                    if text.galley.job.text == "Branch" && text.pos.y < 42.0 =>
                 {
                     Some(text.pos + egui::vec2(8.0, text.galley.size().y / 2.0))
                 }
@@ -10907,18 +16017,15 @@ mod tests {
                         _ => None,
                     })
                     .collect();
-                if text.iter().any(|line| line == "Switch to branch") {
+                if text.iter().any(|line| line == "Switch to…") {
                     break;
                 }
             }
             assert!(
-                text.iter().any(|line| line == "Switch to branch"),
+                text.iter().any(|line| line == "Switch to…"),
                 "missing explicit switch route at {width}: {text:?}"
             );
-            assert!(
-                text.iter().any(|line| line == "Branches"),
-                "missing read-only branch browsing at {width}"
-            );
+            // Read-only browsing lives in the refs sidebar and search.
         }
     }
 

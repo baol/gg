@@ -1,16 +1,43 @@
 use std::{error::Error, path::Path, process::Command};
 type Result<T = ()> = std::result::Result<T, Box<dyn Error>>;
 
+const NO_CONFIG: &str = if cfg!(windows) { "NUL" } else { "/dev/null" };
+const ISOLATED: &str = "GG_SIGNATURE_TEST_ISOLATED";
+
+/// Runs `test` in a child test process whose Git sees no global or system
+/// configuration, including the `git` commands that `gg_git` spawns itself.
+/// A developer's global `gpg.format`, `user.signingkey`, or `*.gpgsign` would
+/// otherwise leak into the signing results under test. Returns `true` in the
+/// parent once the child passed, and `false` inside the child, which then runs
+/// the test body.
+fn in_isolated_child(test: &str) -> Result<bool> {
+    if std::env::var_os(ISOLATED).is_some() {
+        return Ok(false);
+    }
+    let output = Command::new(std::env::current_exe()?)
+        .args([test, "--exact", "--test-threads=1", "--nocapture"])
+        .env(ISOLATED, "1")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", NO_CONFIG)
+        .output()?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if !output.status.success() || !stdout.contains("1 passed") {
+        return Err(format!(
+            "isolated run of {test} failed:\n{stdout}\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        )
+        .into());
+    }
+    Ok(true)
+}
+
 fn git(path: &Path, args: &[&str]) -> Result {
     let output = Command::new("git")
         .arg("-C")
         .arg(path)
         .args(args)
         .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env(
-            "GIT_CONFIG_GLOBAL",
-            if cfg!(windows) { "NUL" } else { "/dev/null" },
-        )
+        .env("GIT_CONFIG_GLOBAL", NO_CONFIG)
         .env("GIT_AUTHOR_NAME", "Test")
         .env("GIT_AUTHOR_EMAIL", "test@example.org")
         .env("GIT_COMMITTER_NAME", "Test")
@@ -36,6 +63,9 @@ fn repo() -> Result<tempfile::TempDir> {
 
 #[test]
 fn unsigned_commit_and_tag_report_kind_without_claiming_validity() -> Result {
+    if in_isolated_child("unsigned_commit_and_tag_report_kind_without_claiming_validity")? {
+        return Ok(());
+    }
     let dir = repo()?;
     let commit = gg_git::signature::verify(dir.path(), "HEAD")?;
     assert_eq!(commit.kind.as_deref(), Some("commit"));
@@ -52,6 +82,9 @@ fn unsigned_commit_and_tag_report_kind_without_claiming_validity() -> Result {
 
 #[test]
 fn config_separates_signing_key_format_and_tool_readiness() -> Result {
+    if in_isolated_child("config_separates_signing_key_format_and_tool_readiness")? {
+        return Ok(());
+    }
     let dir = repo()?;
     let config = gg_git::signature::config(dir.path());
     assert_eq!(config.format, "openpgp");
@@ -77,6 +110,9 @@ fn config_separates_signing_key_format_and_tool_readiness() -> Result {
 
 #[test]
 fn non_commit_objects_and_invalid_references_are_rejected() -> Result {
+    if in_isolated_child("non_commit_objects_and_invalid_references_are_rejected")? {
+        return Ok(());
+    }
     let dir = repo()?;
     let blob = Command::new("git")
         .arg("-C")
