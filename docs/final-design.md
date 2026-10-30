@@ -32,15 +32,15 @@ Every command has exactly one menu home. The toolbar, shortcuts, context menus, 
 
 | Menu | Commands |
 | --- | --- |
-| gg (macOS only) | Settings… (`Cmd+,`) · Quit gg (`Cmd+Q`) |
-| Repository | Open… (`Ctrl+O`) · Clone… · Open recent ▸ · Refresh (`Ctrl+R`) · Fetch (`Ctrl+Shift+F`) · Pull (rebase) (`Ctrl+Shift+L`) · Push (`Ctrl+Shift+P`) · Push with force-with-lease… · Worktrees… · Submodules… · LFS… · Backups… · Reflog… · Preferences… (`Ctrl+,`) · Quit (`Ctrl+Q`) |
-| Branch | New branch… (`Ctrl+B`) · New tag… · Switch to… (`Ctrl+Shift+B`) · Merge into current… · Rebase current onto… · Set upstream… · Track remote branch… · Rename… (`F2`) · Delete… |
-| Commit | Review changes (`Enter`) · Compare with HEAD · Copy ID (`Ctrl+C`) · Cherry-pick onto HEAD · Revert · Interactive rebase from here… (`R`) · Reword… · Reopen for editing… (`E`) · Fixup into… (`F`) · Drop… (`D`) · Reset current branch to here… — acts on the selected commit |
+| gg (macOS only) | Settings… (`Cmd+,`) · Quit (`Cmd+Q`) |
+| Repository | Open… (`Ctrl+O`) · Clone… · Open recent ▸ · Fetch (`Ctrl+Shift+F`) · Pull (rebase) (`Ctrl+Shift+L`) · Push (`Ctrl+Shift+P`) · Push with force-with-lease… · Worktrees… · Submodules… · LFS… · Backups… · Reflog… · Preferences… (`Ctrl+,`) · Quit (`Ctrl+Q`) |
+| Branch | New branch… (`Ctrl+B`) · New tag… · Switch to… (`Ctrl+Shift+B`) · Merge into current… · Rebase current onto… · Set upstream… · Track remote branch… · Rename… (`F2`) · Delete… (`Del`) |
+| Commit | Review changes (`Enter`) · Compare with HEAD · Copy ID (`Ctrl+C`) · Cherry-pick onto HEAD · Revert · Interactive rebase from here… (`R`) · Reword… (`Ctrl+R`) · Reopen for editing… (`E`) · Fixup into… (`F`) · Drop… (`D`) · Reset current branch to here… — acts on the selected commit |
 | Changes | Stage all (`Ctrl+Shift+S`) · Unstage all (`Ctrl+Shift+U`) · Discard all… · Commit (`Ctrl+Enter`) · Amend HEAD (`Ctrl+Shift+Enter`) · Stash changes (`Ctrl+Shift+Z`) · Stashes… · Resolve conflicts… |
 | View | Local Changes (`Ctrl+1`) · History (`Ctrl+2`) · Refs sidebar (`Ctrl+\`) · Commit inspector (`Space`) · Inline diff · Side-by-side diff · Compact density · Theme ▸ |
 | Help | Keyboard shortcuts (`?`) · Documentation · About gg |
 
-The menus come from one command table that search also lists, so a command has one label, shortcut, and disabled reason everywhere. Reword, Reopen, Fixup, and Drop open the interactive rebase with the selected commit preset. Still to decide (see the canvas page **Review · as built**): Refresh and Track remote branch are kept from before the mockups; Reword has no `Ctrl+R` because that is Refresh; Delete has no `Del` key; Submodules…, LFS…, and Side-by-side diff are listed but not built; F10 menu focus is not available in egui.
+The menus come from one command table that search also lists, so a command has one label, shortcut, and disabled reason everywhere. Reword, Reopen, Fixup, and Drop open the interactive rebase with the selected commit preset. There is no Refresh command: the window refreshes when files change and before each command (see the architecture). Still to decide (see the canvas page **Review · as built**): Track remote branch is kept from before the mockups; Submodules…, LFS…, and Side-by-side diff are listed but not built; F10 menu focus is not available in egui.
 
 About gg shows the logo, version, author (people only, from the workspace `authors`), license with a link, source link, and a note that parts of gg were written with AI coding assistants and come with no warranty.
 

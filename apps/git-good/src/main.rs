@@ -65,6 +65,7 @@ mod submodule_worker;
 mod sync_cli;
 mod tag_cli;
 mod thumbnails;
+mod watcher;
 mod worktree_cli;
 mod worktree_worker;
 use crate::navigation::ModalWindow;
@@ -632,7 +633,6 @@ enum FrameCommand {
     Worktrees,
     Open,
     Clone,
-    Refresh,
     Preferences,
     Shortcuts,
     LocalChanges,
@@ -1367,6 +1367,11 @@ struct Browser {
     refs_width: f32,
     state: state::State,
     pending: Option<stream::Worker>,
+    /// Watches the open repository; settled changes refresh what they touch.
+    watcher: Option<watcher::Watcher>,
+    /// When the history last started loading, so a ref change it already
+    /// saw does not load it again.
+    last_load: Option<std::time::Instant>,
     pending_filter_edit: bool,
     worker: Option<stream::Worker>,
     staged: Option<stream::Update>,
@@ -1513,6 +1518,8 @@ impl Browser {
             refs_width: 0.0,
             state: state::State::default(),
             pending: None,
+            watcher: None,
+            last_load: None,
             pending_filter_edit: false,
             worker: None,
             staged: None,
@@ -2585,6 +2592,7 @@ impl Browser {
         go_local: &mut bool,
         go_history: &mut bool,
     ) {
+        self.refresh_before_command(ctx);
         match command {
             FrameCommand::Fetch => self.start_fetch(ctx, None, self.prefs.fetch_prune),
             FrameCommand::Pull => self.start_pull_rebase(ctx),
@@ -2632,7 +2640,6 @@ impl Browser {
                     self.clone_start_folder(),
                 ));
             }
-            FrameCommand::Refresh => self.load(ctx),
             FrameCommand::Preferences => {
                 let section = self
                     .folders_dialog
@@ -2781,6 +2788,11 @@ impl Browser {
                 FrameCommand::NewBranch,
             ),
             (egui::Modifiers::COMMAND, egui::Key::Q, FrameCommand::Quit),
+            (
+                egui::Modifiers::COMMAND,
+                egui::Key::R,
+                FrameCommand::RebasePreset(gg_engine::rewrite::Action::Reword),
+            ),
         ];
         let mut chosen = None;
         for (modifiers, key, command) in chords {
@@ -2791,6 +2803,13 @@ impl Browser {
         if chosen.is_none() && !typing {
             if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::F2)) {
                 chosen = Some(FrameCommand::RenameBranch);
+            } else if !egui::Popup::is_any_open(ctx)
+                && self.working.is_none()
+                && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Delete))
+            {
+                // Del deletes a branch from History; popups and Local Changes
+                // keep the key for their own lists.
+                chosen = Some(FrameCommand::DeleteBranch);
             } else if ctx
                 .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Questionmark))
             {
@@ -3072,6 +3091,34 @@ impl Browser {
         }
     }
 
+    /// Refresh what changed on disk: the history and refs when HEAD, a ref,
+    /// or an operation changed (unless a load already started after the
+    /// change), otherwise the worktree status and the frame summary.
+    fn apply_changes(
+        &mut self,
+        ctx: &egui::Context,
+        changes: watcher::Changes,
+        first: std::time::Instant,
+    ) {
+        if changes.refs && self.last_load.is_none_or(|load| load < first) {
+            self.load(ctx);
+            self.refresh_working(ctx);
+        } else if changes.any() {
+            self.refresh_mutation();
+            self.refresh_working(ctx);
+        }
+    }
+
+    /// Before a command runs, apply changes the watcher has seen but not yet
+    /// settled, and re-read the operation state, so the command acts on the
+    /// repository as it is now.
+    fn refresh_before_command(&mut self, ctx: &egui::Context) {
+        if let Some((changes, first)) = self.watcher.as_mut().and_then(|watcher| watcher.flush()) {
+            self.apply_changes(ctx, changes, first);
+        }
+        self.refresh_mutation();
+    }
+
     /// The Commit menu's entries, which the Commit actions popup mirrors.
     fn commit_menu_entries(&self) -> Vec<menus::Entry<FrameCommand>> {
         let ready = self.frame_readiness();
@@ -3293,9 +3340,6 @@ impl Browser {
                 .hint("Clone a repository and open it; a URL on the clipboard pre-fills the form")
                 .entry(),
             Entry::Submenu("Open recent".into(), recent),
-            item("Refresh", "Ctrl+R", FrameCommand::Refresh)
-                .unless(self.pending.is_some().then_some(busy))
-                .entry(),
             Entry::Separator,
             item("Fetch", "Ctrl+Shift+F", FrameCommand::Fetch)
                 .unless(idle(ready.network_idle))
@@ -3357,7 +3401,7 @@ impl Browser {
                 entries: vec![
                     item("Settings…", "Cmd+,", FrameCommand::Preferences).entry(),
                     Entry::Separator,
-                    item("Quit gg", quit, FrameCommand::Quit).entry(),
+                    item("Quit", quit, FrameCommand::Quit).entry(),
                 ],
             });
         }
@@ -3395,7 +3439,7 @@ impl Browser {
                 item("Rename…", "F2", FrameCommand::RenameBranch)
                     .unless(on_branch)
                     .entry(),
-                item("Delete…", "", FrameCommand::DeleteBranch)
+                item("Delete…", "Del", FrameCommand::DeleteBranch)
                     .unless(delete)
                     .danger()
                     .entry(),
@@ -3430,7 +3474,7 @@ impl Browser {
                 .entry(),
                 item(
                     "Reword…",
-                    "",
+                    "Ctrl+R",
                     FrameCommand::RebasePreset(gg_engine::rewrite::Action::Reword),
                 )
                 .unless(rewrite)
@@ -6044,8 +6088,22 @@ impl Browser {
             self.refresh_mutation();
         }
         self.state.begin(path.clone());
-        self.local_summary = None;
+        if switching {
+            self.local_summary = None;
+        }
         self.refresh_local_summary(ctx);
+        self.last_load = Some(std::time::Instant::now());
+        if self
+            .watcher
+            .as_ref()
+            .is_none_or(|watcher| watcher.workdir != path)
+        {
+            let repaint = ctx.clone();
+            self.watcher = watcher::Watcher::start(&path, move || {
+                repaint.request_repaint_after(std::time::Duration::from_millis(350));
+            })
+            .ok();
+        }
         let request = stream::Request {
             revision: self.state.filter_revision,
             query: self.state.query.clone(),
@@ -7407,6 +7465,9 @@ impl Browser {
             self.conflict_view = None;
         }
         self.ctx_width = ctx.content_rect().width();
+        if let Some((changes, first)) = self.watcher.as_mut().and_then(|watcher| watcher.poll()) {
+            self.apply_changes(ctx, changes, first);
+        }
         self.menu_shortcuts(ctx);
         self.poll_local_summary();
         let focused = ctx.input(|i| i.focused);
@@ -7727,9 +7788,6 @@ impl Browser {
             if focus_filter {
                 self.narrow_details = false;
                 ctx.memory_mut(|m| m.request_focus(filter_id));
-            }
-            if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::R)) {
-                self.load(ctx);
             }
             if crate::navigation::available(ctx) {
                 if ctx.input_mut(|i| {
@@ -13991,14 +14049,13 @@ mod tests {
                 titles,
                 ["Repository", "Branch", "Commit", "Changes", "View", "Help"]
             );
-            // Refresh is kept from before the mockup (Ctrl+R); see the review board.
+            // No Refresh: the window refreshes on file changes and before commands.
             assert_eq!(
                 labels("Repository"),
                 [
                     "Open…",
                     "Clone…",
                     "Open recent ▸",
-                    "Refresh",
                     "-",
                     "Fetch",
                     "Pull (rebase)",

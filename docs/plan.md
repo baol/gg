@@ -109,7 +109,7 @@ Differences between the [final design](final-design.md) and what shipped, plus p
 
 Design not yet implemented:
 
-1. **Shortcuts and menus · fixed.** A real 26 px menu bar; View lists Local Changes (`Ctrl+1`), History (`Ctrl+2`), Commit details (`Space`), and Refs sidebar (`Ctrl+\`), and the shortcuts work. Repository ends with Preferences and Quit; macOS has a gg menu with Settings… (`Cmd+,`) and Quit gg.
+1. **Shortcuts and menus · fixed.** A real 26 px menu bar; View lists Local Changes (`Ctrl+1`), History (`Ctrl+2`), Commit details (`Space`), and Refs sidebar (`Ctrl+\`), and the shortcuts work. Repository ends with Preferences and Quit; macOS has a gg menu with Settings… (`Cmd+,`) and Quit.
 2. **Stashes picker · fixed.** Rows show ref, message, branch, age, and file count in fixed slots; the picker keeps a fixed size.
 3. **Search · fixed.** A toolbar search field on wide windows (`Ctrl+K` focuses it), the icon on narrow ones, and a Files group that opens the latest commit changing the file in Review on that file.
 4. **Conflict stop · fixed.** Resolve conflicts opens in the main workspace under the operation area; Close or `Esc` returns.
@@ -147,7 +147,7 @@ Decisions for the review (see the canvas page **Review · as built**):
 - Side-by-side diff (large) and a bottom commit inspector instead of the right pane (large).
 - The mockup's Unstaged/Staged reader toggle against the shipped rule of one comparison per selected row.
 - History: drop the filter row and show `Commit · N` in the column header, with filtering moved to search?
-- Preferences modal or not; Reword on `Ctrl+R` (taken by Refresh); `Del` for Delete; `Alt+A` for commit actions; F10 menu focus (not available in egui).
+- Decided: follow the mockups. Refresh is automatic (file watcher and before commands), `Ctrl+R` is Reword, `Del` deletes, Preferences is modal, Open in editor uses an editor-command setting. F10 menu focus is not available in egui.
 
 ## Repository setup and branch integration · in review
 

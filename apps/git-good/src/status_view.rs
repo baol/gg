@@ -1607,7 +1607,6 @@ impl StatusView {
                 i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)
                     || i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft)
             });
-            refresh |= ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::R));
             // S stages the selected Unstaged file; U unstages the selected Staged file.
             for (key, list) in [(egui::Key::S, 0), (egui::Key::U, 1)] {
                 if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, key))
