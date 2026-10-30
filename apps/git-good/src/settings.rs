@@ -320,6 +320,20 @@ fn diff_invisibles_id() -> eframe::egui::Id {
     eframe::egui::Id::unique("gg-diff-invisibles")
 }
 
+/// Whether the reader wraps long lines instead of scrolling sideways.
+pub fn diff_wrap(ctx: &eframe::egui::Context) -> bool {
+    ctx.data(|data| data.get_temp(diff_wrap_id()))
+        .unwrap_or(false)
+}
+
+pub fn set_diff_wrap(ctx: &eframe::egui::Context, wrap: bool) {
+    ctx.data_mut(|data| data.insert_temp(diff_wrap_id(), wrap));
+}
+
+fn diff_wrap_id() -> eframe::egui::Id {
+    eframe::egui::Id::unique("gg-diff-wrap")
+}
+
 pub fn reader_mode(ctx: &eframe::egui::Context) -> ReaderMode {
     ctx.data(|data| data.get_temp(reader_mode_id()))
         .unwrap_or_default()
@@ -398,6 +412,8 @@ pub struct Prefs {
     pub diff_whitespace: Whitespace,
     /// Changed lines show tabs and trailing spaces.
     pub show_invisibles: bool,
+    /// The reader wraps long lines instead of scrolling sideways.
+    pub wrap_lines: bool,
     path: Option<PathBuf>,
 }
 
@@ -436,6 +452,7 @@ impl Default for Prefs {
             diff_context: 3,
             diff_whitespace: Whitespace::All,
             show_invisibles: true,
+            wrap_lines: false,
             path: None,
         }
     }
@@ -497,6 +514,7 @@ impl Prefs {
                 .unwrap_or(defaults.diff_context),
             diff_whitespace: read(path, "diff_whitespace").unwrap_or(defaults.diff_whitespace),
             show_invisibles: read(path, "show_invisibles").unwrap_or(defaults.show_invisibles),
+            wrap_lines: read(path, "wrap_lines").unwrap_or(defaults.wrap_lines),
             path: Some(path.to_path_buf()),
         }
     }
@@ -541,7 +559,8 @@ impl Prefs {
         write(path, "relative_dates", &self.relative_dates)?;
         write(path, "diff_context", &self.diff_context)?;
         write(path, "diff_whitespace", &self.diff_whitespace)?;
-        write(path, "show_invisibles", &self.show_invisibles)
+        write(path, "show_invisibles", &self.show_invisibles)?;
+        write(path, "wrap_lines", &self.wrap_lines)
     }
 
     /// The comparison options Diff mode reads with.
@@ -631,6 +650,7 @@ mod tests {
         prefs.diff_context = 10;
         prefs.diff_whitespace = Whitespace::IgnoreAtEol;
         prefs.show_invisibles = false;
+        prefs.wrap_lines = true;
         prefs.save()?;
         assert_eq!(Prefs::load_from(&path), prefs);
         assert_eq!(read::<u32>(&path, "future_option"), Some(7));

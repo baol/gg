@@ -138,7 +138,7 @@ Still to build (medium):
 2. Conflict workspace: done (files panel with resolved list and blocks left, line numbers, Open in editor with an editor setting).
 3. Rebase stop: done (**Commits made at this stop** in Local Changes).
 4. Stash picker: done (two-line rows and keys).
-5. Preferences: still to build from the Final page: Diff context lines, whitespace, wrap, and invisibles, (modal, footer, search, keyboard list, zoom, code font, History display options, pull strategy, force-with-lease offer, clone naming, reopen last repository, commit hooks, backup retention, confirm before Drop and Reset, identity, subject guide, and sign tags are done).
+5. Preferences: done (modal, footer, search, keyboard list, zoom, code font, History display options, pull strategy, force-with-lease offer, clone naming, reopen last repository, commit hooks, backup retention, confirm before Drop and Reset, identity, subject guide, sign tags, and Diff context lines, whitespace, wrap, and invisibles).
 6. Refs sidebar: done (Worktrees group and branch tracking counts).
 
 Decisions for the review (see the canvas page **Review · as built**):

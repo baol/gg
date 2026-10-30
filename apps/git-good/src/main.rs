@@ -70,6 +70,7 @@ mod thumbnails;
 mod watcher;
 mod worktree_cli;
 mod worktree_worker;
+mod wrap_rows;
 use crate::navigation::ModalWindow;
 use eframe::egui;
 #[cfg(test)]
@@ -357,7 +358,7 @@ impl PrefSection {
                 "appearance theme dark light system density compact comfortable zoom font size code"
             }
             Self::Diff => {
-                "diff open files full file layout inline side by side images compare context lines whitespace ignore line end display invisible characters tabs trailing spaces"
+                "diff open files full file layout inline side by side images compare context lines whitespace ignore line end display wrap long lines invisible characters tabs trailing spaces"
             }
             Self::Commit => {
                 "commit identity name email signing sign tags subject length guide hooks verify"
@@ -2004,6 +2005,7 @@ impl Browser {
         settings::set_diff_layout(ctx, self.prefs.diff_layout);
         settings::set_diff_options(ctx, self.prefs.diff_options());
         settings::set_diff_invisibles(ctx, self.prefs.show_invisibles);
+        settings::set_diff_wrap(ctx, self.prefs.wrap_lines);
         settings::set_subject_guide(ctx, self.prefs.subject_guide);
         settings::set_run_hooks(ctx, self.prefs.run_hooks);
         ctx.set_zoom_factor(f32::from(self.prefs.zoom) / 100.0);
@@ -2444,6 +2446,8 @@ impl Browser {
                                     ui.end_row();
                                     ui.label("Display");
                                     ui.vertical(|ui| {
+                                        ui.checkbox(&mut prefs.wrap_lines, "Wrap long lines")
+                                            .on_hover_text("Long lines continue on the next rows instead of scrolling sideways.");
                                         ui.checkbox(&mut prefs.show_invisibles, "Show invisible characters on changed lines")
                                             .on_hover_text("Tabs as → and trailing spaces as ·, dimmed, on added and removed lines.");
                                     });

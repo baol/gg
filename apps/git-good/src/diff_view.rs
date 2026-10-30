@@ -5,6 +5,7 @@ use crate::{
     reader,
     settings::DiffLayout,
     split_rows,
+    wrap_rows::{Wrap, char_range},
 };
 use eframe::egui;
 use gg_engine::{
@@ -18,6 +19,17 @@ use std::{collections::BTreeMap, ops::Range, path::PathBuf, sync::Arc};
 
 /// Diff and full-file row height (final design, compact density: 19 px).
 const HEIGHT: f32 = 19.0;
+
+/// What wrapped rows were measured for; any change measures again.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct WrapKey {
+    generation: u64,
+    mode: Mode,
+    side: ReadingSide,
+    split: bool,
+    count: usize,
+    columns: usize,
+}
 
 /// Scope of one staging command emitted by the reader.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -171,6 +183,11 @@ pub struct DiffView {
     details_open: bool,
     /// Context and whitespace of the requested comparison.
     options: gg_engine::diff::Options,
+    /// Displayed characters of every diff row, for wrapping unloaded rows.
+    widths: Arc<Vec<u32>>,
+    /// Continuation rows of wrapped long lines over the current base rows.
+    wrap: Option<Wrap>,
+    wrap_key: Option<WrapKey>,
 }
 
 impl Default for DiffView {
@@ -244,6 +261,9 @@ impl Default for DiffView {
             side_request: None,
             details_open: false,
             options: gg_engine::diff::Options::default(),
+            widths: Arc::default(),
+            wrap: None,
+            wrap_key: None,
         }
     }
 }
@@ -1152,6 +1172,7 @@ impl DiffView {
         }
         self.hunks = update.hunks;
         self.split = update.split;
+        self.widths = update.widths;
         self.displayed_side = update.side;
         if self.mode == Mode::Full {
             if self.displayed_mode != Mode::Full
@@ -1281,7 +1302,7 @@ impl DiffView {
         self.cursor = Some(target);
         self.anchor = Some(target);
         self.jump = Some(target);
-        self.offset = target as f32 * HEIGHT;
+        self.offset = self.display_row(target) as f32 * HEIGHT;
     }
 
     fn select_row(&mut self, index: usize) {
@@ -1297,8 +1318,9 @@ impl DiffView {
         self.mode == Mode::Diff && self.layout == DiffLayout::SideBySide
     }
 
-    /// Display rows of the current presentation.
-    fn display_count(&self) -> usize {
+    /// Rows of the current presentation before wrapping: side-by-side rows,
+    /// unified diff rows, or file lines.
+    fn base_count(&self) -> usize {
         if self.split_active() {
             self.split.count(self.count)
         } else {
@@ -1306,21 +1328,123 @@ impl DiffView {
         }
     }
 
-    /// The display row showing unified diff row `row`.
-    fn display_row(&self, row: usize) -> usize {
-        if self.split_active() {
-            self.split.display(row)
-        } else {
-            row
+    /// Display rows of the current presentation.
+    fn display_count(&self) -> usize {
+        match &self.wrap {
+            Some(wrap) => wrap.start(self.base_count()),
+            None => self.base_count(),
         }
     }
 
-    /// The first unified diff row shown in display row `display`.
-    fn shown_row(&self, display: usize) -> usize {
-        if self.split_active() {
-            self.split.pair(display).first().unwrap_or(display)
+    /// The first display row showing unified diff row (or file line) `row`.
+    fn display_row(&self, row: usize) -> usize {
+        let base = if self.split_active() {
+            self.split.display(row)
         } else {
-            display
+            row
+        };
+        self.wrap.as_ref().map_or(base, |wrap| wrap.start(base))
+    }
+
+    /// The base row shown in display row `display` and its wrapped segment.
+    fn base_row(&self, display: usize) -> (usize, usize) {
+        self.wrap
+            .as_ref()
+            .map_or((display, 0), |wrap| wrap.row(display))
+    }
+
+    /// The first unified diff row (or file line) shown in display row `display`.
+    fn shown_row(&self, display: usize) -> usize {
+        let base = self.base_row(display).0;
+        if self.split_active() {
+            self.split.pair(base).first().unwrap_or(base)
+        } else {
+            base
+        }
+    }
+
+    /// Measure wrapped rows for the reading area when **Wrap long lines** is
+    /// on, keeping the top row in view when the measurement changes. Text
+    /// wraps at whole monospace columns, so heights come from character
+    /// counts and every row of the document is known before it loads.
+    fn refresh_wrap(&mut self, ui: &egui::Ui) {
+        let enabled = crate::settings::diff_wrap(ui.ctx())
+            && self.preview.is_none()
+            && (self.mode == Mode::Full
+                || self
+                    .info
+                    .as_ref()
+                    .is_some_and(|info| info.kind == DiffKind::Text));
+        let key = enabled.then(|| WrapKey {
+            generation: self.displayed_generation,
+            mode: self.mode,
+            side: self.displayed_side,
+            split: self.split_active(),
+            count: self.count,
+            columns: self.wrap_columns(ui),
+        });
+        if key == self.wrap_key {
+            return;
+        }
+        let top = self.shown_row((self.offset / HEIGHT).floor().max(0.0) as usize);
+        self.wrap = key.as_ref().map(|key| self.measure_wrap(key.columns));
+        self.wrap_key = key;
+        if self.base_count() > 0 && self.jump.is_none() {
+            self.offset = self.display_row(top) as f32 * HEIGHT;
+            self.jump = Some(top);
+        }
+    }
+
+    /// Character columns of one wrapped text cell. A pick column is always
+    /// reserved for working comparisons, so picking never reflows text.
+    fn wrap_columns(&self, ui: &egui::Ui) -> usize {
+        let font = egui::FontId::monospace(crate::density::code_font());
+        let glyph = ui.fonts_mut(|fonts| fonts.glyph_width(&font, '0')).max(1.0);
+        let bar = ui.spacing().scroll.bar_width + ui.spacing().scroll.bar_inner_margin + 4.0;
+        let width = self.rect.width();
+        let text = match self.mode {
+            Mode::Full => {
+                let blame = if self.attribution { 156.0 } else { 0.0 };
+                width - 58.0 - blame - bar
+            }
+            Mode::Diff if self.split_active() => (width / 2.0).floor() - 58.0 - 2.0 - bar,
+            Mode::Diff => {
+                let pick = if self.stage.is_some() { 24.0 } else { 0.0 };
+                width - 116.0 - pick - bar
+            }
+        };
+        ((text / glyph).floor() as usize).max(8)
+    }
+
+    fn measure_wrap(&self, columns: usize) -> Wrap {
+        let width = |row: Option<usize>| -> usize {
+            row.and_then(|row| self.widths.get(row))
+                .map_or(0, |chars| *chars as usize)
+        };
+        let header = |row: usize| self.hunks.binary_search(&row).is_ok();
+        match self.mode {
+            Mode::Full => Wrap::new(self.full.iter().flat_map(|full| {
+                full.lines
+                    .iter()
+                    .map(|line| Wrap::segments(line.text.chars().count(), columns))
+            })),
+            Mode::Diff if self.split_active() => {
+                Wrap::new((0..self.split.count(self.count)).map(|display| {
+                    let pair = self.split.pair(display);
+                    if pair.shared() && pair.left.is_some_and(header) {
+                        return 1;
+                    }
+                    Wrap::segments(width(pair.left), columns)
+                        .max(Wrap::segments(width(pair.right), columns))
+                }))
+            }
+            Mode::Diff => Wrap::new((0..self.count).map(|row| {
+                if header(row) {
+                    1
+                } else {
+                    Wrap::segments(width(Some(row)), columns)
+                }
+            })),
         }
     }
 
@@ -1361,6 +1485,9 @@ impl DiffView {
         let top = self.shown_row((self.offset / HEIGHT).floor().max(0.0) as usize);
         self.layout = layout;
         self.restoring = None;
+        // Wrapped rows belong to the old layout; they are measured again.
+        self.wrap = None;
+        self.wrap_key = None;
         if self.mode == Mode::Diff && self.count > 0 {
             self.offset = self.display_row(top) as f32 * HEIGHT;
             self.jump = Some(top);
@@ -1422,6 +1549,9 @@ impl DiffView {
         }
         self.restoring = None;
         let line = self.current_line();
+        // Wrapped rows belong to the old presentation; they are measured again.
+        self.wrap = None;
+        self.wrap_key = None;
         self.mode = mode;
         if mode == Mode::Full {
             if !self.side_available(self.side) {
@@ -1462,6 +1592,8 @@ impl DiffView {
         }
         self.restoring = None;
         let line = self.current_line().unwrap_or(1);
+        self.wrap = None;
+        self.wrap_key = None;
         self.side = side;
         self.blame = None;
         self.blame_error = None;
@@ -1580,9 +1712,10 @@ impl DiffView {
         if count == 0 {
             return;
         }
-        let current = self
-            .cursor
-            .unwrap_or_else(|| ((self.offset / HEIGHT).floor() as usize).min(count - 1));
+        let current = self.cursor.unwrap_or_else(|| {
+            self.shown_row((self.offset / HEIGHT).floor() as usize)
+                .min(count - 1)
+        });
         let next = (current as isize + step).clamp(0, count as isize - 1) as usize;
         if shift {
             if self.anchor.is_none() {
@@ -1594,8 +1727,9 @@ impl DiffView {
         self.cursor = Some(next);
         let visible = (self.rect.height() / HEIGHT).floor().max(1.0) as usize;
         let top = (self.offset / HEIGHT).floor() as usize;
-        if next < top || next >= top + visible {
-            self.offset = next.saturating_sub(visible / 2) as f32 * HEIGHT;
+        let shown = self.display_row(next);
+        if shown < top || shown >= top + visible {
+            self.offset = shown.saturating_sub(visible / 2) as f32 * HEIGHT;
             self.jump = Some(next);
         }
     }
@@ -2160,6 +2294,7 @@ impl DiffView {
         }
         ui.separator();
         self.rect = ui.available_rect_before_wrap();
+        self.refresh_wrap(ui);
         if self.mode == Mode::Full {
             self.draw_full(ui, &ctx, keyboard);
             return;
@@ -2209,29 +2344,47 @@ impl DiffView {
         let can_discard = can_edit && staging.is_some_and(|stage| stage.can_discard);
         let pending = staging.is_some_and(|stage| stage.pending);
         let verb = staging.map_or("Stage", |stage| stage.verb);
+        let wrap = self.wrap_key.as_ref().map(|key| key.columns);
         // A 24 px checkbox column leads changed lines that can be picked.
-        let pick = if can_edit { 24.0 } else { 0.0 };
+        // Wrapped text keeps it reserved so picking never reflows lines.
+        let pick = if can_edit || (wrap.is_some() && staging.is_some()) {
+            24.0
+        } else {
+            0.0
+        };
         let mut cursor = self.cursor;
         let mut anchor = self.anchor;
         let mut hunk_toggle = None;
         let mut hunk_action: Option<(usize, bool)> = None;
         let invisibles = crate::settings::diff_invisibles(&ctx);
-        let result = scroll.show_rows(ui, HEIGHT, self.count, |ui, rows| {
-            self.range = rows.start.saturating_sub(24)..rows.end.saturating_add(24);
-            // A conservative monospace width keeps every source column reachable.
-            let width = (120.0 + pick + self.columns as f32 * 16.0).max(ui.available_width());
+        let count = self.display_count();
+        let result = scroll.show_rows(ui, HEIGHT, count, |ui, rows| {
+            let unified = self
+                .wrap
+                .as_ref()
+                .map_or(rows.clone(), |wrap| wrap.rows(rows.clone()));
+            self.range = unified.start.saturating_sub(24)..unified.end.saturating_add(24);
+            // A conservative monospace width keeps every source column
+            // reachable; wrapped text fits the reading area instead.
+            let width = if wrap.is_some() {
+                ui.available_width()
+            } else {
+                (120.0 + pick + self.columns as f32 * 16.0).max(ui.available_width())
+            };
             let (lo, hi) = match (cursor, anchor) {
                 (Some(a), Some(b)) => (a.min(b), a.max(b)),
                 (Some(a), None) => (a, a),
                 _ => (usize::MAX, 0),
             };
-            for index in rows {
+            for display in rows {
+                let (index, segment) = self.base_row(display);
                 let (rect, response) =
                     ui.allocate_exact_size(egui::vec2(width, HEIGHT), egui::Sense::click());
                 // A row not read yet keeps its slot, empty.
                 let Some(row) = self.rows.get(&index) else {
                     continue;
                 };
+                let chars = wrap.map(|columns| segment * columns..(segment + 1) * columns);
                 let (sign, color, fill) = crate::colors::diff(ui.visuals(), row.kind);
                 ui.painter().rect_filled(rect, 0.0, fill);
                 let selected = self.stage_selected.contains_key(&index);
@@ -2250,7 +2403,8 @@ impl DiffView {
                     ui.painter()
                         .rect_filled(rect, 0.0, crate::colors::selection(ui.visuals()));
                 }
-                if can_edit && matches!(row.kind, RowKind::Added | RowKind::Deleted) {
+                if can_edit && segment == 0 && matches!(row.kind, RowKind::Added | RowKind::Deleted)
+                {
                     pick_box(ui, rect, selected);
                 }
                 let (button_clicked, chosen) = if can_edit && row.kind == RowKind::Hunk {
@@ -2262,14 +2416,20 @@ impl DiffView {
                     hunk_action = Some((index, discard));
                 }
                 let font = egui::FontId::monospace(crate::density::code_font());
-                for (x, text) in [
-                    (0.0, row.old_line.map(|n| n.to_string()).unwrap_or_default()),
-                    (
-                        48.0,
-                        row.new_line.map(|n| n.to_string()).unwrap_or_default(),
-                    ),
-                    (96.0, sign.into()),
-                ] {
+                // Continuation rows leave the gutter empty.
+                let gutter = if segment == 0 {
+                    vec![
+                        (0.0, row.old_line.map(|n| n.to_string()).unwrap_or_default()),
+                        (
+                            48.0,
+                            row.new_line.map(|n| n.to_string()).unwrap_or_default(),
+                        ),
+                        (96.0, sign.into()),
+                    ]
+                } else {
+                    vec![]
+                };
+                for (x, text) in gutter {
                     ui.painter()
                         .with_clip_rect(
                             egui::Rect::from_min_size(
@@ -2298,7 +2458,7 @@ impl DiffView {
                 )
                 .intersect(ui.clip_rect());
                 // Shape only visible source characters, including at deep horizontal offsets.
-                paint_row_text(ui, clip, origin, row, &font, color, invisibles);
+                paint_row_text(ui, clip, origin, row, chars, &font, color, invisibles);
                 let hover = if can_edit {
                     match row.kind {
                         RowKind::Hunk => "Click to select all changed lines in this hunk",
@@ -2478,7 +2638,13 @@ impl DiffView {
             self.split_x -= sideways;
             ctx.input_mut(|input| input.smooth_scroll_delta.x = 0.0);
         }
-        self.split_x = self.split_x.clamp(0.0, max_x);
+        let wrap = self.wrap_key.as_ref().map(|key| key.columns);
+        // Wrapped text never scrolls sideways.
+        self.split_x = if wrap.is_some() {
+            0.0
+        } else {
+            self.split_x.clamp(0.0, max_x)
+        };
         let split_x = self.split_x;
         let shift = ctx.input(|input| input.modifiers.shift);
         let staging = self.stage;
@@ -2495,7 +2661,11 @@ impl DiffView {
         let split = self.split.clone();
         let invisibles = crate::settings::diff_invisibles(ctx);
         let result = scroll.show_rows(ui, HEIGHT, count, |ui, rows| {
-            let unified = split.rows(rows.clone());
+            let paired = self
+                .wrap
+                .as_ref()
+                .map_or(rows.clone(), |wrap| wrap.rows(rows.clone()));
+            let unified = split.rows(paired);
             self.range = unified.start.saturating_sub(24)..unified.end.saturating_add(24);
             let width = ui.available_width();
             let (lo, hi) = match (cursor, anchor) {
@@ -2512,7 +2682,9 @@ impl DiffView {
             for display in rows {
                 let (rect, response) =
                     ui.allocate_exact_size(egui::vec2(width, HEIGHT), egui::Sense::click());
-                let pair = split.pair(display);
+                let (paired, segment) = self.base_row(display);
+                let pair = split.pair(paired);
+                let chars = wrap.map(|columns| segment * columns..(segment + 1) * columns);
                 let clip = ui.clip_rect();
                 // A full-width row: hunk header or no-newline note.
                 if pair.shared()
@@ -2626,9 +2798,11 @@ impl DiffView {
                     } else if index >= lo && index <= hi {
                         ui.painter().rect_filled(cell, 0.0, selection);
                     }
-                    let line = match side {
-                        ReadingSide::Before => row.old_line,
-                        ReadingSide::After => row.new_line,
+                    // Continuation rows leave the gutter empty.
+                    let (line, sign) = match side {
+                        _ if segment > 0 => (None, ""),
+                        ReadingSide::Before => (row.old_line, sign),
+                        ReadingSide::After => (row.new_line, sign),
                     };
                     let number_clip =
                         egui::Rect::from_min_size(cell.min, egui::vec2(number - 4.0, HEIGHT))
@@ -2657,6 +2831,7 @@ impl DiffView {
                         text_clip,
                         egui::pos2(cell.left() + gutter - split_x, cell.center().y),
                         row,
+                        chars.clone(),
                         &font,
                         color,
                         invisibles,
@@ -2769,32 +2944,47 @@ impl DiffView {
             self.reset = false;
         }
         if let Some(jump) = self.jump.take() {
-            self.offset = (jump as f32 * HEIGHT).clamp(
+            self.offset = (self.display_row(jump) as f32 * HEIGHT).clamp(
                 0.0,
-                (self.count as f32 * HEIGHT - self.rect.height()).max(0.0),
+                (self.display_count() as f32 * HEIGHT - self.rect.height()).max(0.0),
             );
             scroll = scroll.vertical_scroll_offset(self.offset);
         }
         ui.spacing_mut().item_spacing.y = 0.0;
         let blame = self.attribution.then_some(self.blame.as_ref()).flatten();
         let gutter = if blame.is_some() { 156.0 } else { 0.0 };
-        let width = (70.0 + gutter + self.columns as f32 * 8.0).max(ui.available_width());
+        let wrap = self.wrap_key.as_ref().map(|key| key.columns);
+        let width = if wrap.is_some() {
+            ui.available_width()
+        } else {
+            (70.0 + gutter + self.columns as f32 * 8.0).max(ui.available_width())
+        };
+        let count = self.display_count();
+        let wrapped = self.wrap.as_ref();
         let shift = ctx.input(|input| input.modifiers.shift);
         let side = self.side;
         let (cursor, anchor) = (self.cursor, self.anchor);
         let mut new_cursor = cursor;
         let mut new_anchor = anchor;
-        let result = scroll.show_rows(ui, HEIGHT, self.count, |ui, rows| {
+        let result = scroll.show_rows(ui, HEIGHT, count, |ui, rows| {
             let (lo, hi) = match (cursor, anchor) {
                 (Some(a), Some(b)) => (a.min(b), a.max(b)),
                 (Some(a), None) => (a, a),
                 _ => (usize::MAX, 0),
             };
-            for index in rows {
+            for display in rows {
+                let (index, segment) = wrapped.map_or((display, 0), |wrapped| wrapped.row(display));
                 let (rect, response) =
                     ui.allocate_exact_size(egui::vec2(width, HEIGHT), egui::Sense::click());
                 let Some(line) = full.lines.get(index) else {
                     continue;
+                };
+                let text = match wrap {
+                    Some(columns) => {
+                        &line.text
+                            [char_range(&line.text, segment * columns..(segment + 1) * columns)]
+                    }
+                    None => line.text.as_str(),
                 };
                 let (_, color, fill) = if line.changed {
                     crate::colors::diff(
@@ -2817,7 +3007,11 @@ impl DiffView {
                 } else if line.changed {
                     ui.painter().rect_filled(rect, 0.0, fill);
                 }
-                if let Some(entry) = blame.and_then(|blame| blame.line(line.number)) {
+                let first = segment == 0;
+                if let Some(entry) = blame
+                    .filter(|_| first)
+                    .and_then(|blame| blame.line(line.number))
+                {
                     let clip = egui::Rect::from_min_max(
                         rect.min + egui::vec2(4.0, 0.0),
                         rect.min + egui::vec2(gutter - 6.0, HEIGHT),
@@ -2832,13 +3026,15 @@ impl DiffView {
                     );
                 }
                 let font = egui::FontId::monospace(crate::density::code_font());
-                ui.painter().text(
-                    rect.min + egui::vec2(40.0 + gutter, HEIGHT / 2.0),
-                    egui::Align2::RIGHT_CENTER,
-                    line.number.to_string(),
-                    egui::FontId::monospace(11.0),
-                    ui.visuals().weak_text_color(),
-                );
+                if first {
+                    ui.painter().text(
+                        rect.min + egui::vec2(40.0 + gutter, HEIGHT / 2.0),
+                        egui::Align2::RIGHT_CENTER,
+                        line.number.to_string(),
+                        egui::FontId::monospace(11.0),
+                        ui.visuals().weak_text_color(),
+                    );
+                }
                 if line.changed {
                     ui.painter().rect_filled(
                         egui::Rect::from_min_size(
@@ -2855,7 +3051,7 @@ impl DiffView {
                         .intersect(ui.clip_rect());
                 let (start, end, advance) = ui.fonts_mut(|fonts| {
                     visible_text(
-                        &line.text,
+                        text,
                         clip.left() - origin.x,
                         clip.right() - origin.x,
                         |ch| fonts.glyph_width(&font, ch),
@@ -2864,7 +3060,7 @@ impl DiffView {
                 ui.painter().with_clip_rect(clip).text(
                     origin + egui::vec2(advance, 0.0),
                     egui::Align2::LEFT_CENTER,
-                    &line.text[start..end],
+                    &text[start..end],
                     font,
                     color,
                 );
@@ -2976,11 +3172,14 @@ fn paint_code(
 /// Paint a diff row's source text. With `invisibles`, added and removed
 /// lines draw tabs as `→` and trailing spaces as `·` in the weak color; each
 /// marker replaces one displayed space, so columns do not move.
+/// `chars` limits the text to one wrapped segment.
+#[allow(clippy::too_many_arguments)]
 fn paint_row_text(
     ui: &egui::Ui,
     clip: egui::Rect,
     origin: egui::Pos2,
     row: &DiffRow,
+    chars: Option<Range<usize>>,
     font: &egui::FontId,
     color: egui::Color32,
     invisibles: bool,
@@ -2991,11 +3190,18 @@ fn paint_row_text(
     {
         let (text, marks) = gg_engine::diff::marked(&row.bytes);
         if !marks.is_empty() {
-            paint_marked(ui, clip, origin, &text, &marks, font, color);
+            let span = chars.map_or(0..text.len(), |chars| char_range(&text, chars));
+            let marks: Vec<Range<usize>> = marks
+                .into_iter()
+                .filter(|mark| span.contains(&mark.start))
+                .map(|mark| mark.start - span.start..mark.end - span.start)
+                .collect();
+            paint_marked(ui, clip, origin, &text[span], &marks, font, color);
             return;
         }
     }
-    paint_code(ui, clip, origin, &row.text, font, color);
+    let span = chars.map_or(0..row.text.len(), |chars| char_range(&row.text, chars));
+    paint_code(ui, clip, origin, &row.text[span], font, color);
 }
 
 fn paint_marked(
@@ -3116,6 +3322,12 @@ mod tests {
         let split = Arc::new(split_rows::Layout::from_kinds(
             doc.rows.iter().map(|row| row.kind),
         ));
+        let widths = Arc::new(
+            doc.rows
+                .iter()
+                .map(|row| row.text.chars().count() as u32)
+                .collect(),
+        );
         Update {
             generation,
             mode: Mode::Diff,
@@ -3128,6 +3340,7 @@ mod tests {
             full: None,
             hunks,
             split,
+            widths,
         }
     }
 
@@ -3144,6 +3357,7 @@ mod tests {
             full: Some(Ok(text)),
             hunks: vec![0],
             split: Arc::default(),
+            widths: Arc::default(),
         }
     }
 
@@ -4399,6 +4613,195 @@ mod tests {
             }
         }
         Ok(())
+    }
+
+    #[test]
+    fn wrapped_long_lines_fit_the_reader_in_every_layout() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let long = (0..60)
+            .map(|n| format!("word{n:02}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let row = |kind, old_line, new_line, text: &str| DiffRow {
+            kind,
+            old_line,
+            new_line,
+            text: text.into(),
+            bytes: format!("{text}\n").into_bytes(),
+        };
+        let mut doc = FileDiff::summary(DiffKind::Text, 1, 1, "");
+        doc.rows = vec![row(RowKind::Hunk, None, None, "@@ -1,3 +1,3 @@")];
+        doc.rows
+            .push(row(RowKind::Context, Some(1), Some(1), "short"));
+        doc.rows.push(row(RowKind::Deleted, Some(2), None, "old"));
+        doc.rows.push(row(RowKind::Added, None, Some(2), &long));
+        for n in 3..60 {
+            doc.rows.push(row(
+                RowKind::Context,
+                Some(n),
+                Some(n),
+                &format!("line {n}"),
+            ));
+        }
+        let text = FileText::from_bytes(
+            ReadingSide::After,
+            format!("short\n{long}\nend\n").as_bytes(),
+            &BTreeSet::from([2]),
+        );
+        for (mode, layout) in [
+            (Mode::Diff, DiffLayout::Inline),
+            (Mode::Diff, DiffLayout::SideBySide),
+            (Mode::Full, DiffLayout::Inline),
+        ] {
+            for width in [720.0, 1120.0] {
+                let case = format!("{mode:?} {layout:?} at {width}");
+                let ctx = egui::Context::default();
+                crate::settings::set_diff_layout(&ctx, layout);
+                crate::settings::set_diff_wrap(&ctx, true);
+                let mut view = DiffView {
+                    change: Some(file("a", true, true)),
+                    generation: 1,
+                    mode,
+                    mode_seeded: true,
+                    ..Default::default()
+                };
+                view.accept(
+                    match mode {
+                        Mode::Diff => diff_update(1, doc.clone()),
+                        Mode::Full => full_update(1, ReadingSide::After, text.clone()),
+                    },
+                    None,
+                );
+                view.change = None;
+                let mut output = None;
+                for _ in 0..3 {
+                    output = Some(crate::tests::run_ui(
+                        &ctx,
+                        crate::tests::frame_input(width, 480.0, vec![]),
+                        |ctx| {
+                            egui::CentralPanel::default().show(ctx, |ui| view.draw_reading(ui));
+                        },
+                    ));
+                }
+                let output = output.ok_or("no frame")?;
+                let wrap = view.wrap.as_ref().ok_or(format!("not wrapped: {case}"))?;
+                assert!(
+                    view.display_count() > view.base_count(),
+                    "the long line takes extra rows: {case}"
+                );
+                let texts: Vec<(String, egui::Rect)> = output
+                    .shapes
+                    .iter()
+                    .filter_map(|shape| match &shape.shape {
+                        egui::epaint::Shape::Text(text) => Some((
+                            text.galley.job.text.clone(),
+                            egui::Rect::from_min_size(text.pos, text.galley.size()),
+                        )),
+                        _ => None,
+                    })
+                    .collect();
+                let columns = view.wrap_key.as_ref().ok_or("no columns")?.columns;
+                let chars: Vec<char> = long.chars().collect();
+                let pieces: Vec<&(String, egui::Rect)> = chars
+                    .chunks(columns)
+                    .map(|chunk| {
+                        let chunk: String = chunk.iter().collect();
+                        texts
+                            .iter()
+                            .find(|(text, _)| *text == chunk)
+                            .ok_or(format!("missing segment {chunk:?}: {case}"))
+                    })
+                    .collect::<Result<_, _>>()?;
+                assert!(pieces.len() >= 2, "the line continues: {case}: {pieces:?}");
+                assert_eq!(
+                    pieces
+                        .iter()
+                        .map(|(text, _)| text.as_str())
+                        .collect::<String>(),
+                    long.as_str(),
+                    "segments rebuild the line in order: {case}"
+                );
+                let (first, rest) = pieces.split_first().ok_or("no pieces")?;
+                for (_, rect) in &pieces {
+                    assert!(rect.right() <= width, "{case}: {rect:?}");
+                    assert!((rect.left() - first.1.left()).abs() < 0.5, "{case}");
+                }
+                for (index, (_, rect)) in rest.iter().enumerate() {
+                    assert!(
+                        (rect.top() - first.1.top() - (index + 1) as f32 * HEIGHT).abs() < 0.5,
+                        "continuation rows keep the fixed height: {case}"
+                    );
+                }
+                // Rows after the long line move down by its extra rows.
+                let line = match mode {
+                    Mode::Diff => 3,
+                    Mode::Full => 1,
+                };
+                assert_eq!(
+                    view.display_row(line + 1),
+                    view.display_row(line) + pieces.len(),
+                    "{case}"
+                );
+                // A continuation row acts on its source row (side by side:
+                // the removed line paired beside it comes first).
+                let first = if view.split_active() { line - 1 } else { line };
+                assert_eq!(view.shown_row(view.display_row(line) + 1), first, "{case}");
+                assert!(wrap.count() >= view.base_count());
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn wrapping_keeps_the_top_row_and_turning_it_off_restores_scrolling() {
+        let ctx = egui::Context::default();
+        let long = "x".repeat(400);
+        let mut doc = FileDiff::summary(DiffKind::Text, 1, 1, "");
+        doc.rows = (0..200)
+            .map(|n| DiffRow {
+                kind: RowKind::Context,
+                old_line: Some(n + 1),
+                new_line: Some(n + 1),
+                text: if n % 2 == 0 {
+                    long.clone()
+                } else {
+                    n.to_string()
+                },
+                bytes: vec![],
+            })
+            .collect();
+        let mut view = DiffView {
+            change: Some(file("a", true, true)),
+            generation: 1,
+            mode_seeded: true,
+            ..Default::default()
+        };
+        view.accept(diff_update(1, doc), None);
+        view.change = None;
+        let draw = |view: &mut DiffView| {
+            for _ in 0..2 {
+                let _ = crate::tests::run_ui(
+                    &ctx,
+                    crate::tests::frame_input(1120.0, 480.0, vec![]),
+                    |ctx| {
+                        egui::CentralPanel::default().show(ctx, |ui| view.draw_reading(ui));
+                    },
+                );
+            }
+        };
+        draw(&mut view);
+        view.jump = Some(41);
+        draw(&mut view);
+        let top = |view: &DiffView| view.shown_row((view.offset / HEIGHT).round() as usize);
+        assert_eq!(top(&view), 41);
+        crate::settings::set_diff_wrap(&ctx, true);
+        draw(&mut view);
+        assert!(view.wrap.is_some());
+        assert_eq!(top(&view), 41, "wrapping keeps the top row");
+        crate::settings::set_diff_wrap(&ctx, false);
+        draw(&mut view);
+        assert!(view.wrap.is_none());
+        assert_eq!(top(&view), 41, "unwrapping keeps the top row");
     }
 
     #[test]

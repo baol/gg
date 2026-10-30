@@ -58,6 +58,8 @@ pub struct Update {
     pub hunks: Vec<usize>,
     /// Side-by-side pairing of the whole document's rows.
     pub split: Arc<crate::split_rows::Layout>,
+    /// Displayed characters of every document row, for wrapping unloaded rows.
+    pub widths: Arc<Vec<u32>>,
 }
 
 pub struct Worker {
@@ -125,6 +127,7 @@ impl Worker {
                 let mut max_columns = 0;
                 let mut hunks: Vec<usize> = vec![];
                 let mut split = Arc::new(crate::split_rows::Layout::default());
+                let mut widths: Arc<Vec<u32>> = Arc::default();
                 let mut preview = None;
                 let mut full: Option<(u64, ReadingSide, Result<FileText, String>)> = None;
                 while !s.load(Ordering::Relaxed) {
@@ -138,6 +141,7 @@ impl Worker {
                         full = None;
                         hunks.clear();
                         split = Arc::default();
+                        widths = Arc::default();
                         let cancelled = || {
                             s.load(Ordering::Relaxed)
                                 || g.load(Ordering::Relaxed) != request.generation
@@ -163,16 +167,21 @@ impl Worker {
                         if cancelled() {
                             continue;
                         }
-                        max_columns = result
-                            .as_ref()
-                            .map(|doc| {
-                                doc.rows
-                                    .iter()
-                                    .map(|r| r.text.chars().count())
-                                    .max()
-                                    .unwrap_or(0)
-                            })
-                            .unwrap_or(0);
+                        widths = Arc::new(
+                            result
+                                .as_ref()
+                                .map(|doc| {
+                                    doc.rows
+                                        .iter()
+                                        .map(|r| {
+                                            u32::try_from(r.text.chars().count())
+                                                .unwrap_or(u32::MAX)
+                                        })
+                                        .collect()
+                                })
+                                .unwrap_or_default(),
+                        );
+                        max_columns = widths.iter().max().copied().unwrap_or(0) as usize;
                         if let Ok(doc) = &result {
                             hunks = doc
                                 .rows
@@ -207,6 +216,7 @@ impl Worker {
                                 full: None,
                                 hunks: vec![],
                                 split: Arc::default(),
+                                widths: Arc::default(),
                             });
                             ctx.request_repaint();
                         }
@@ -267,6 +277,7 @@ impl Worker {
                             full: Some(body),
                             hunks: hunks.clone(),
                             split: split.clone(),
+                            widths: widths.clone(),
                         }
                     } else {
                         let start = match request.line {
@@ -311,6 +322,7 @@ impl Worker {
                             full: None,
                             hunks: hunks.clone(),
                             split: split.clone(),
+                            widths: widths.clone(),
                         }
                     };
                     if g.load(Ordering::Relaxed) != request.generation {
