@@ -1,15 +1,44 @@
 //! A review context keeps history input and viewport state untouched.
 use crate::{
     bounded_text,
-    review_worker::{Update, Worker},
+    review_worker::{StatsUpdate, Update, Worker},
 };
 use eframe::egui;
 use gg_engine::{file::ReadingSide, review::*};
 use std::{collections::BTreeMap, ops::Range};
 #[cfg(test)]
 const ROW: f32 = crate::density::COMPACT_ROW;
-/// Fixed slot for the "N files" count in the header.
-const FILE_COUNT_WIDTH: f32 = 72.0;
+/// Font of the per-file line counts.
+fn stat_font() -> egui::FontId {
+    egui::FontId::monospace(10.5)
+}
+
+/// Compact line count: exact below 10,000, then thousands (`12k`).
+fn stat_number(value: u64) -> String {
+    if value < 10_000 {
+        value.to_string()
+    } else {
+        format!("{}k", value / 1000)
+    }
+}
+
+/// `+18 −7` for a row; zero sides are left out, as in the Review mockup.
+fn stat_label(stat: &LineStat) -> String {
+    match *stat {
+        LineStat::Lines { added, deleted } => {
+            let mut parts = Vec::new();
+            if added > 0 {
+                parts.push(format!("+{}", stat_number(added.into())));
+            }
+            if deleted > 0 {
+                parts.push(format!("−{}", stat_number(deleted.into())));
+            }
+            parts.join(" ")
+        }
+        LineStat::Binary => "bin".into(),
+        LineStat::Skipped => String::new(),
+    }
+}
 
 /// Run `add` in a scope that keeps its space but draws nothing when hidden.
 fn visible_scope<R>(
@@ -47,6 +76,10 @@ pub struct Review {
     pub comparison: Option<Comparison>,
     pub rows: BTreeMap<usize, FileChange>,
     pub count: usize,
+    /// Line counts of cached rows, filled in behind the listing.
+    stats: BTreeMap<usize, LineStat>,
+    /// Running line totals; incomplete until every file is counted.
+    stat_total: StatsUpdate,
     pub selected: Option<usize>,
     complete: bool,
     error: Option<String>,
@@ -86,6 +119,8 @@ impl Review {
             comparison: None,
             rows: BTreeMap::new(),
             count: 0,
+            stats: BTreeMap::new(),
+            stat_total: StatsUpdate::default(),
             selected: None,
             complete: false,
             error: None,
@@ -397,6 +432,8 @@ impl Review {
             return;
         }
         self.rows.clear();
+        self.stats.clear();
+        self.stat_total = StatsUpdate::default();
         self.selected = None;
         self.count = 0;
         self.offset = 0.0;
@@ -404,6 +441,200 @@ impl Review {
         self.restore_files = true;
         self.diff = crate::diff_view::DiffView::default();
     }
+    /// Adopt line counts. A retried, immutable comparison keeps its finished
+    /// total while the new counter catches up.
+    fn apply_stats(&mut self, update: StatsUpdate) {
+        let StatsUpdate {
+            rows,
+            added,
+            deleted,
+            complete,
+        } = update;
+        self.stats.extend(rows);
+        if complete || !self.stat_total.complete {
+            self.stat_total = StatsUpdate {
+                rows: Vec::new(),
+                added,
+                deleted,
+                complete,
+            };
+        }
+    }
+
+    /// Paint the list header: `FILES n` at the left and the line totals,
+    /// with `+` while incomplete, at the right.
+    fn draw_list_header(&self, ui: &mut egui::Ui) {
+        let (rect, _) = ui.allocate_exact_size(
+            egui::vec2(ui.available_width(), crate::density::row()),
+            egui::Sense::hover(),
+        );
+        let rect = rect.shrink2(egui::vec2(6.0, 0.0));
+        let font = egui::FontId::proportional(11.0);
+        let weak = ui.visuals().weak_text_color();
+        let more = if self.complete { "" } else { "+" };
+        bounded_text::paint(
+            ui,
+            rect,
+            &format!("FILES {}{more}", self.count),
+            font.clone(),
+            weak,
+        );
+        let total = &self.stat_total;
+        if total.added == 0 && total.deleted == 0 {
+            return;
+        }
+        let more = if total.complete { "" } else { "+" };
+        let mut job = egui::text::LayoutJob::default();
+        let format = |color| egui::TextFormat::simple(font.clone(), color);
+        let added = crate::colors::diff(ui.visuals(), gg_engine::diff::RowKind::Added).1;
+        let deleted = crate::colors::diff(ui.visuals(), gg_engine::diff::RowKind::Deleted).1;
+        job.append(&format!("+{}{more}", total.added), 0.0, format(added));
+        job.append(&format!("−{}{more}", total.deleted), 6.0, format(deleted));
+        let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
+        let at = egui::pos2(
+            rect.right() - galley.size().x,
+            rect.center().y - galley.size().y / 2.0,
+        );
+        ui.painter()
+            .with_clip_rect(rect)
+            .galley(at, galley, ui.visuals().text_color());
+    }
+
+    /// The changed-file list: header, then virtualized rows.
+    fn draw_files(&mut self, ui: &mut egui::Ui, reveal: bool) {
+        self.draw_list_header(ui);
+        self.rect = ui.available_rect_before_wrap();
+        if self.count == 0 {
+            // An empty list stays empty until the first files arrive.
+            if self.complete {
+                ui.weak("This comparison has no changed files.");
+            }
+            return;
+        }
+        let mut scroll = egui::ScrollArea::vertical().id_salt("review-files");
+        if self.restore_files {
+            scroll = scroll.vertical_scroll_offset(self.offset);
+            self.restore_files = false;
+        }
+        if reveal && let Some(row) = self.selected {
+            let height = ui.available_height();
+            let top = row as f32 * crate::density::row();
+            let offset = if top < self.offset {
+                top
+            } else if top + crate::density::row() > self.offset + height {
+                top + crate::density::row() - height
+            } else {
+                self.offset
+            };
+            scroll = scroll.vertical_scroll_offset(offset.clamp(
+                0.0,
+                (self.count as f32 * crate::density::row() - height).max(0.0),
+            ));
+        }
+        ui.spacing_mut().item_spacing.y = 0.0;
+        // The count slot fits the widest compact count, so rows never move
+        // as counts arrive.
+        let stat_width = ui
+            .fonts_mut(|fonts| {
+                fonts.layout_no_wrap(
+                    "+9999 −9999".into(),
+                    stat_font(),
+                    egui::Color32::PLACEHOLDER,
+                )
+            })
+            .size()
+            .x;
+        let result = scroll.show_rows(ui, crate::density::row(), self.count, |ui, rows| {
+            self.viewport = rows.start.saturating_sub(24)..rows.end.saturating_add(24);
+            self.row_rects.clear();
+            for row in rows {
+                let change = self.rows.get(&row);
+                let response = ui.add_sized(
+                    [ui.available_width(), crate::density::row()],
+                    egui::Button::new("")
+                        .fill(if self.selected == Some(row) {
+                            crate::colors::selection(ui.visuals())
+                        } else {
+                            egui::Color32::TRANSPARENT
+                        })
+                        .stroke(egui::Stroke::NONE)
+                        .corner_radius(0.0)
+                        .selected(self.selected == Some(row))
+                        .sense(if change.is_some() {
+                            egui::Sense::click()
+                        } else {
+                            egui::Sense::hover()
+                        }),
+                );
+                self.row_rects.push((row, response.rect));
+                let rect = response.rect.shrink2(egui::vec2(6.0, 0.0));
+                let status = egui::Rect::from_min_max(
+                    rect.min,
+                    egui::pos2(rect.left() + 14.0, rect.bottom()),
+                );
+                let stat = egui::Rect::from_min_max(
+                    egui::pos2(rect.right() - stat_width, rect.top()),
+                    rect.max,
+                );
+                let path = egui::Rect::from_min_max(
+                    egui::pos2(status.right() + 8.0, rect.top()),
+                    egui::pos2(stat.left() - 6.0, rect.bottom()),
+                );
+                if let Some(change) = change {
+                    if let Some(label) = self.stats.get(&row).map(stat_label) {
+                        let galley = ui.fonts_mut(|fonts| {
+                            fonts.layout_no_wrap(label, stat_font(), egui::Color32::PLACEHOLDER)
+                        });
+                        let at = egui::pos2(
+                            stat.right() - galley.size().x,
+                            stat.center().y - galley.size().y / 2.0,
+                        );
+                        ui.painter().with_clip_rect(stat).galley(
+                            at,
+                            galley,
+                            ui.visuals().weak_text_color(),
+                        );
+                    }
+                    let (label, color) = crate::colors::change(ui.visuals(), &change.kind);
+                    // Long paths lose their start so the file name stays
+                    // visible; hovering the row names the full path.
+                    let elided = bounded_text::paint_path(
+                        ui,
+                        path,
+                        &change.path,
+                        egui::FontId::proportional(13.0),
+                        ui.visuals().strong_text_color(),
+                    );
+                    let response = response.clone().on_hover_text(if elided {
+                        format!("{} · {label}", change.path)
+                    } else {
+                        label.to_string()
+                    });
+                    bounded_text::paint(
+                        ui,
+                        status,
+                        crate::colors::change_symbol(&change.kind),
+                        egui::FontId::proportional(13.0),
+                        color,
+                    );
+                    if response.double_clicked() {
+                        response.surrender_focus();
+                        self.selected = Some(row);
+                        self.show_diff = true;
+                    } else if response.clicked() {
+                        response.surrender_focus();
+                        self.selected = Some(row);
+                    }
+                }
+                // A row not read yet keeps its slot, empty.
+            }
+        });
+        self.offset = result.state.clamped_offset().y;
+        self.page = (result.inner_rect.height() / crate::density::row())
+            .floor()
+            .max(1.0) as usize;
+    }
+
     /// Draw the history strip above whichever reader path is active.
     fn draw_reader(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, reading: bool) {
         let mut message = None;
@@ -539,6 +770,12 @@ impl Review {
         if self.replacing && self.staged.is_some() && replacement_safe {
             self.adopt_replacement();
         }
+        // Counts wait while a replacement is pending; they name its rows.
+        if !self.replacing
+            && let Some(update) = self.worker.as_ref().and_then(Worker::poll_stats)
+        {
+            self.apply_stats(update);
+        }
         if !self.replacing
             && let Some(update) = &self.staged
         {
@@ -601,6 +838,11 @@ impl Review {
             } else {
                 break;
             }
+        }
+        // Counts of rows far from the viewport are re-sent when they return.
+        if self.stats.len() > 768 {
+            let keep = self.viewport.start.saturating_sub(256)..self.viewport.end + 256;
+            self.stats.retain(|row, _| keep.contains(row));
         }
         let mut back = false;
         let mut reveal = self.reveal_selection;
@@ -776,24 +1018,6 @@ impl Review {
                                 _ => {}
                             }
                         });
-                        let label = format!(
-                            "{}{} file{}",
-                            self.count,
-                            if self.complete { "" } else { "+" },
-                            if self.count == 1 && self.complete {
-                                ""
-                            } else {
-                                "s"
-                            }
-                        );
-                        ui.allocate_ui_with_layout(
-                            egui::vec2(FILE_COUNT_WIDTH, ui.spacing().interact_size.y),
-                            egui::Layout::right_to_left(egui::Align::Center),
-                            |ui| {
-                                ui.set_min_width(FILE_COUNT_WIDTH);
-                                ui.weak(label);
-                            },
-                        );
                         if ui
                             .add_visible(self.error.is_some(), egui::Button::new("Retry"))
                             .clicked()
@@ -930,112 +1154,16 @@ impl Review {
             egui::Panel::bottom("review-file-diff")
                 .exact_size(height)
                 .show(ui, |ui| self.draw_reader(ui, ctx, false));
-        } else if !narrow {
-            egui::Panel::right("review-file-diff")
-                .default_size(640.0)
-                .size_range(400.0..=(ctx.content_rect().width() - 320.0).max(400.0))
-                .show(ui, |ui| self.draw_reader(ui, ctx, false));
+            egui::CentralPanel::default().show(ui, |ui| self.draw_files(ui, reveal));
+        } else {
+            if !narrow {
+                egui::Panel::right("review-file-diff")
+                    .default_size(640.0)
+                    .size_range(400.0..=(ctx.content_rect().width() - 320.0).max(400.0))
+                    .show(ui, |ui| self.draw_reader(ui, ctx, false));
+            }
+            egui::CentralPanel::default().show(ui, |ui| self.draw_files(ui, reveal));
         }
-        egui::CentralPanel::default().show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.add_space(26.0);
-                ui.weak("PATH");
-            });
-            self.rect = ui.available_rect_before_wrap();
-            if self.count == 0 {
-                // An empty list stays empty until the first files arrive.
-                if self.complete {
-                    ui.weak("This comparison has no changed files.");
-                }
-                return;
-            }
-            let mut scroll = egui::ScrollArea::vertical().id_salt("review-files");
-            if self.restore_files {
-                scroll = scroll.vertical_scroll_offset(self.offset);
-                self.restore_files = false;
-            }
-            if reveal && let Some(row) = self.selected {
-                let height = ui.available_height();
-                let top = row as f32 * crate::density::row();
-                let offset = if top < self.offset {
-                    top
-                } else if top + crate::density::row() > self.offset + height {
-                    top + crate::density::row() - height
-                } else {
-                    self.offset
-                };
-                scroll = scroll.vertical_scroll_offset(offset.clamp(
-                    0.0,
-                    (self.count as f32 * crate::density::row() - height).max(0.0),
-                ));
-            }
-            ui.spacing_mut().item_spacing.y = 0.0;
-            let result = scroll.show_rows(ui, crate::density::row(), self.count, |ui, rows| {
-                self.viewport = rows.start.saturating_sub(24)..rows.end.saturating_add(24);
-                self.row_rects.clear();
-                for row in rows {
-                    let change = self.rows.get(&row);
-                    let response = ui.add_sized(
-                        [ui.available_width(), crate::density::row()],
-                        egui::Button::new("")
-                            .fill(if self.selected == Some(row) {
-                                crate::colors::selection(ui.visuals())
-                            } else {
-                                egui::Color32::TRANSPARENT
-                            })
-                            .stroke(egui::Stroke::NONE)
-                            .corner_radius(0.0)
-                            .selected(self.selected == Some(row))
-                            .sense(if change.is_some() {
-                                egui::Sense::click()
-                            } else {
-                                egui::Sense::hover()
-                            }),
-                    );
-                    self.row_rects.push((row, response.rect));
-                    let rect = response.rect.shrink2(egui::vec2(6.0, 0.0));
-                    let status = egui::Rect::from_min_max(
-                        rect.min,
-                        egui::pos2(rect.left() + 14.0, rect.bottom()),
-                    );
-                    let path = egui::Rect::from_min_max(
-                        egui::pos2(status.right() + 8.0, rect.top()),
-                        rect.max,
-                    );
-                    if let Some(change) = change {
-                        let (label, color) = crate::colors::change(ui.visuals(), &change.kind);
-                        let response = response.clone().on_hover_text(label);
-                        bounded_text::paint(
-                            ui,
-                            status,
-                            crate::colors::change_symbol(&change.kind),
-                            egui::FontId::proportional(13.0),
-                            color,
-                        );
-                        bounded_text::paint(
-                            ui,
-                            path,
-                            &change.path,
-                            egui::FontId::proportional(13.0),
-                            ui.visuals().strong_text_color(),
-                        );
-                        if response.double_clicked() {
-                            response.surrender_focus();
-                            self.selected = Some(row);
-                            self.show_diff = true;
-                        } else if response.clicked() {
-                            response.surrender_focus();
-                            self.selected = Some(row);
-                        }
-                    }
-                    // A row not read yet keeps its slot, empty.
-                }
-            });
-            self.offset = result.state.clamped_offset().y;
-            self.page = (result.inner_rect.height() / crate::density::row())
-                .floor()
-                .max(1.0) as usize;
-        });
         self.reconcile_history_selection(ctx);
         if self.history.is_none()
             && (!narrow || self.show_diff)
@@ -1089,7 +1217,7 @@ impl Review {
             error: None,
             rows: (0..64)
                 .map(|row| {
-                    let path = format!("src/{row:04}-{}.rs", "long-path-".repeat(20));
+                    let path = format!("src/{}/{row:04}.rs", "long-path-".repeat(20));
                     (
                         row,
                         FileChange {
@@ -1233,7 +1361,7 @@ mod tests {
     fn select_path_opens_the_reader_on_that_file() {
         let ctx = egui::Context::default();
         let mut view = Review::fixture(&ctx);
-        let wanted = format!("src/0003-{}.rs", "long-path-".repeat(20));
+        let wanted = format!("src/{}/0003.rs", "long-path-".repeat(20));
         view.pending_path = Some(wanted.clone());
         for _ in 0..2 {
             let _ = crate::tests::run_ui(
@@ -1273,7 +1401,7 @@ mod tests {
                     _ => None,
                 })
             };
-            (find("History"), find("1000 files"))
+            (find("History"), find("Compare with"))
         };
         let files = place(&mut view);
         assert!(files.0.is_some() && files.1.is_some(), "{files:?}");
@@ -1323,17 +1451,17 @@ mod tests {
             "no placeholder text in the pane: {texts:?}"
         );
         assert!(
-            texts.iter().any(|text| text.starts_with("src/0000-")),
+            texts.iter().any(|text| text.ends_with("/0000.rs")),
             "the loaded row stays visible: {texts:?}"
         );
         assert!(
-            !texts.iter().any(|text| text.starts_with("src/0001-")),
+            !texts.iter().any(|text| text.ends_with("/0001.rs")),
             "an unread row stays empty"
         );
     }
 
     #[test]
-    fn commit_identity_shares_one_line_with_back_and_file_count() {
+    fn commit_identity_shares_one_line_with_back() {
         for width in [720.0, 1120.0] {
             let ctx = egui::Context::default();
             let mut view = Review::fixture(&ctx);
@@ -1358,14 +1486,126 @@ mod tests {
             };
             let back = row("Back to history");
             let subject = row("Review fixture");
-            let files = row("1000 files");
-            assert!(back.is_some() && subject.is_some() && files.is_some());
             assert!(
-                back.zip(subject).is_some_and(|(a, b)| (a - b).abs() < 2.0)
-                    && back.zip(files).is_some_and(|(a, b)| (a - b).abs() < 2.0),
-                "width {width}: back={back:?} subject={subject:?} files={files:?}"
+                back.zip(subject).is_some_and(|(a, b)| (a - b).abs() < 2.0),
+                "width {width}: back={back:?} subject={subject:?}"
             );
         }
+    }
+
+    /// Text shapes with their painted rectangles.
+    fn texts(output: &egui::FullOutput) -> Vec<(String, egui::Rect)> {
+        output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) => Some((
+                    text.galley.job.text.clone(),
+                    egui::Rect::from_min_size(text.pos, text.galley.size()),
+                )),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn file_list_header_and_line_counts_keep_their_slots_at_both_widths() -> Result<(), String> {
+        for width in [720.0, 1120.0] {
+            let ctx = egui::Context::default();
+            let mut view = Review::fixture(&ctx);
+            let draw = |view: &mut Review| {
+                let mut output = None;
+                for _ in 0..2 {
+                    output = Some(crate::tests::run_ui(
+                        &ctx,
+                        crate::tests::frame_input(width, 740.0, vec![]),
+                        |ui| {
+                            view.draw_ui(ui);
+                        },
+                    ));
+                }
+                output.map(|output| texts(&output)).ok_or("no frame")
+            };
+            let before = draw(&mut view)?;
+            // Only the list's rows; the reader names the selected path too.
+            let rows = view.rect;
+            let path = |texts: &[(String, egui::Rect)], row: &str| {
+                texts
+                    .iter()
+                    .find(|(text, rect)| text.ends_with(row) && rows.contains(rect.center()))
+                    .cloned()
+                    .ok_or(format!("width {width}: path {row} missing"))
+            };
+            // Long paths lose their start, so the file name stays visible.
+            let (first, first_rect) = path(&before, "/0000.rs")?;
+            assert!(first.starts_with('…'), "{first}");
+            let header = before
+                .iter()
+                .find(|(text, _)| text == "FILES 1000")
+                .map(|(_, rect)| *rect)
+                .ok_or("files header")?;
+            assert!(header.bottom() <= first_rect.top() + 1.0);
+            assert!(
+                !before.iter().any(|(text, _)| text.contains(" files")),
+                "the list header replaces the separate file count"
+            );
+            // Counts arrive in the background: the listing does not move.
+            view.apply_stats(StatsUpdate {
+                rows: vec![
+                    (
+                        0,
+                        LineStat::Lines {
+                            added: 18,
+                            deleted: 7,
+                        },
+                    ),
+                    (
+                        1,
+                        LineStat::Lines {
+                            added: 12_345,
+                            deleted: 0,
+                        },
+                    ),
+                    (2, LineStat::Binary),
+                    (3, LineStat::Skipped),
+                ],
+                added: 12_363,
+                deleted: 7,
+                complete: false,
+            });
+            let after = draw(&mut view)?;
+            for row in ["/0000.rs", "/0001.rs", "/0002.rs", "/0003.rs"] {
+                assert_eq!(path(&after, row)?, path(&before, row)?, "{row} moved");
+            }
+            let find = |wanted: &str| {
+                after
+                    .iter()
+                    .find(|(text, _)| text == wanted)
+                    .map(|(_, rect)| *rect)
+                    .ok_or(format!("width {width}: {wanted} missing"))
+            };
+            let (stat, large, binary) = (find("+18 −7")?, find("+12k")?, find("bin")?);
+            assert!((stat.right() - large.right()).abs() < 0.5);
+            assert!((stat.right() - binary.right()).abs() < 0.5);
+            assert!(first_rect.right() < stat.left());
+            let total = find("+12363+−7+")?;
+            assert!((total.center().y - header.center().y).abs() < 1.0);
+            let list = view.rect;
+            assert!(total.right() <= list.right() && stat.right() <= list.right());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn line_stat_labels_follow_the_mockup() {
+        let lines = |added, deleted| LineStat::Lines { added, deleted };
+        assert_eq!(stat_label(&lines(18, 7)), "+18 −7");
+        assert_eq!(stat_label(&lines(15, 0)), "+15");
+        assert_eq!(stat_label(&lines(0, 11)), "−11");
+        assert_eq!(stat_label(&lines(0, 0)), "");
+        assert_eq!(stat_label(&lines(100_000, 9_999)), "+100k −9999");
+        assert_eq!(stat_label(&LineStat::Binary), "bin");
+        assert_eq!(stat_label(&LineStat::Skipped), "");
     }
 
     #[test]

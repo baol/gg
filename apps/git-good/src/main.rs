@@ -12134,7 +12134,7 @@ mod tests {
                     _ => None,
                 })
             };
-            (find("Changed files").or(find("PATH")), find("…HEAD onto"))
+            (find("Changed files").or(find("FILES ")), find("…HEAD onto"))
         };
         let (reader, range) = place(&mut app, vec![]);
         assert!(reader.is_some() && range.is_some(), "{reader:?} {range:?}");
