@@ -12310,7 +12310,7 @@ mod tests {
         );
         let output = frame(&mut app, vec![]);
         let text = shown_text(&output);
-        assert!(text.iter().any(|line| line == "Back to rebase"), "{text:?}");
+        assert!(text.iter().any(|line| line == "‹ Rebase"), "{text:?}");
         assert!(!text.iter().any(|line| line == "Start rebase"));
         // Esc in Review returns to the plan with the choice kept.
         let _ = frame(

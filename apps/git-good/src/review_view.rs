@@ -671,22 +671,23 @@ impl Review {
             self.open_history_now_with_lines(ctx, Some(lines), start_index);
         }
     }
-    /// Return true when Back is explicitly requested.
+    /// The back pill's label, as in the mockup: `‹ History`, followed by a
+    /// dimmed `Esc`.
     fn back_label(&self) -> &'static str {
         if self.show_diff {
-            "Back to files"
+            "‹ Files"
         } else if matches!(
             self.return_location,
             Some(crate::return_location::ReturnLocation::Recovery { .. })
         ) {
-            "Back to recovery"
+            "‹ Recovery"
         } else if matches!(
             self.return_location,
             Some(crate::return_location::ReturnLocation::Rebase)
         ) {
-            "Back to rebase"
+            "‹ Rebase"
         } else {
-            "Back to history"
+            "‹ History"
         }
     }
 
@@ -938,7 +939,9 @@ impl Review {
                 ui.horizontal_centered(|ui| {
                     if !self.embedded
                         && self.history.is_none()
-                        && ui.button(self.back_label()).clicked()
+                        && ui
+                            .button((self.back_label(), egui::RichText::new("Esc").small().weak()))
+                            .clicked()
                     {
                         if self.show_diff {
                             self.show_diff = false;
@@ -1352,12 +1355,12 @@ mod tests {
         assert!(output.shapes.iter().any(|shape| matches!(
             &shape.shape,
             egui::epaint::Shape::Text(text)
-                if text.galley.job.text == "Back to recovery"
+                if text.galley.job.text == "‹ Recovery"
         )));
         assert!(!output.shapes.iter().any(|shape| matches!(
             &shape.shape,
             egui::epaint::Shape::Text(text)
-                if text.galley.job.text == "Back to history"
+                if text.galley.job.text == "‹ History"
         )));
     }
 
@@ -1488,7 +1491,7 @@ mod tests {
                     _ => None,
                 })
             };
-            let back = row("Back to history");
+            let back = row("‹ History");
             let subject = row("Review fixture");
             assert!(
                 back.zip(subject).is_some_and(|(a, b)| (a - b).abs() < 2.0),
