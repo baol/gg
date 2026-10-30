@@ -3516,7 +3516,12 @@ impl Browser {
                     .unless(changes)
                     .entry(),
                 item("Unstage all", "Ctrl+Shift+U", FrameCommand::UnstageAll)
-                    .unless(changes)
+                    .unless(changes.or_else(|| {
+                        self.working
+                            .as_ref()
+                            .filter(|working| working.amending())
+                            .map(|_| status_view::UNSTAGE_ALL_AMENDING)
+                    }))
                     .entry(),
                 item("Discard all…", "", FrameCommand::DiscardAll)
                     .unless(changes)
@@ -9479,6 +9484,17 @@ impl Browser {
                 .and_then(|working| working.take_lfs_request())
             {
                 self.open_lfs(ctx, request);
+            }
+            if let Some(stage) = self
+                .working
+                .as_mut()
+                .and_then(|working| working.take_group_request())
+            {
+                if stage {
+                    self.change_all(ctx, gg_git::worktree_changes::stage_all);
+                } else {
+                    self.change_all(ctx, gg_git::worktree_changes::unstage_all);
+                }
             }
             let committed = self
                 .working

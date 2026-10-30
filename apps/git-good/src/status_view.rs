@@ -43,6 +43,11 @@ fn commit_reason<'a>(
         None
     }
 }
+/// Why Unstage all waits while amending: it resets the index to HEAD, but
+/// Staged then shows HEAD's parent.
+pub const UNSTAGE_ALL_AMENDING: &str =
+    "Unstage all resets the index to HEAD; leave Amend HEAD first, or unstage files one by one.";
+
 fn group_name(list: usize) -> &'static str {
     if list == 0 { "Unstaged" } else { "Staged" }
 }
@@ -113,6 +118,9 @@ pub struct StatusView {
     stage: crate::stage_view::StageActions,
     reader: crate::diff_view::DiffView,
     drop_confirm: Option<crate::diff_view::StageEdit>,
+    /// A group header asked to stage everything (`Some(true)`) or unstage
+    /// everything (`Some(false)`); the window runs it like the menu item.
+    group_request: Option<bool>,
     commit: Option<std::sync::mpsc::Receiver<Result<gg_git::commit::Receipt, String>>>,
     commit_done: Option<String>,
     last_commit: Option<String>,
@@ -157,6 +165,7 @@ impl StatusView {
             stage: crate::stage_view::StageActions::default(),
             reader: crate::diff_view::DiffView::default(),
             drop_confirm: None,
+            group_request: None,
             commit: None,
             commit_done: None,
             last_commit: None,
@@ -620,6 +629,16 @@ impl StatusView {
         self.external_busy = reason;
     }
 
+    /// Whether the commit box is amending HEAD.
+    pub fn amending(&self) -> bool {
+        self.amend
+    }
+
+    /// Stage all (`true`) or Unstage all (`false`) chosen in a group header.
+    pub fn take_group_request(&mut self) -> Option<bool> {
+        self.group_request.take()
+    }
+
     pub fn take_commit(&mut self) -> Option<String> {
         self.commit_done.take()
     }
@@ -911,6 +930,7 @@ impl StatusView {
         shrink: bool,
     ) -> (Option<usize>, Option<usize>) {
         let busy = self.busy() || self.replacing;
+        let amending = self.amend;
         let complete = self.complete;
         let active = self.focus == index;
         let list = &mut self.lists[index];
@@ -931,6 +951,25 @@ impl StatusView {
                 }
             }
             ui.strong(format!("{} {count}", group_name(index).to_uppercase()));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let (label, key) = if index == 0 {
+                    ("Stage all", "Ctrl+Shift+S")
+                } else {
+                    ("Unstage all", "Ctrl+Shift+U")
+                };
+                let blocked = index == 1 && amending;
+                if ui
+                    .add_enabled(
+                        !busy && count > 0 && !blocked,
+                        egui::Button::new(label).small(),
+                    )
+                    .on_hover_text(key)
+                    .on_disabled_hover_text(if blocked { UNSTAGE_ALL_AMENDING } else { key })
+                    .clicked()
+                {
+                    self.group_request = Some(index == 0);
+                }
+            });
         });
         if collapsible && list.collapsed {
             list.rect = egui::Rect::NOTHING;
@@ -1697,6 +1736,7 @@ mod tests {
             stage: crate::stage_view::StageActions::default(),
             reader: crate::diff_view::DiffView::default(),
             drop_confirm: None,
+            group_request: None,
             commit: None,
             commit_done: None,
             last_commit: None,
@@ -2084,6 +2124,25 @@ mod tests {
             Some(Area::Unstaged)
         );
         assert!(view.reader.has_text("working"));
+        Ok(())
+    }
+    #[test]
+    fn group_headers_offer_stage_all_and_unstage_all() -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        let mut view = fixture(1, 1);
+        let output = run(&ctx, &mut view, 1120.0, vec![]);
+        let stage = text_pos(&output, "Stage all").ok_or("missing Stage all")?;
+        click(&ctx, &mut view, 1120.0, stage + egui::vec2(4.0, 4.0));
+        assert_eq!(view.take_group_request(), Some(true));
+        let output = run(&ctx, &mut view, 1120.0, vec![]);
+        let unstage = text_pos(&output, "Unstage all").ok_or("missing Unstage all")?;
+        click(&ctx, &mut view, 1120.0, unstage + egui::vec2(4.0, 4.0));
+        assert_eq!(view.take_group_request(), Some(false));
+        view.amend = true;
+        let output = run(&ctx, &mut view, 1120.0, vec![]);
+        let unstage = text_pos(&output, "Unstage all").ok_or("missing Unstage all")?;
+        click(&ctx, &mut view, 1120.0, unstage + egui::vec2(4.0, 4.0));
+        assert_eq!(view.take_group_request(), None, "waits while amending");
         Ok(())
     }
     #[test]
