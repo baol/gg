@@ -58,6 +58,10 @@ fn commit_reason<'a>(
         None
     }
 }
+/// Wide layouts keep the file list at this width (final design), so only a
+/// window resize changes the reader.
+const LIST_WIDTH: f32 = 300.0;
+
 /// Height of the line selection bar reserved below the reader.
 const SELECTION_BAR: f32 = 28.0;
 
@@ -1025,7 +1029,6 @@ impl StatusView {
         index: usize,
         content_height: f32,
         collapsible: bool,
-        shrink: bool,
     ) -> (Option<usize>, Option<usize>) {
         let busy = self.busy() || self.replacing;
         let amending = self.amend;
@@ -1075,34 +1078,38 @@ impl StatusView {
         }
         let mut clicked = None;
         let mut toggled = None;
+        ui.spacing_mut().item_spacing.y = 0.0;
         if count == 0 {
-            let empty_height = crate::density::row();
-            list.rect = egui::Rect::from_min_size(
-                ui.cursor().min,
-                egui::vec2(ui.available_width(), empty_height),
+            // An empty group keeps its slot, so the group below never moves.
+            // Only a finished scan says it is empty.
+            let (rect, _) = ui.allocate_exact_size(
+                egui::vec2(ui.available_width(), content_height),
+                egui::Sense::hover(),
             );
-            ui.allocate_ui_with_layout(
-                egui::vec2(list.rect.width(), empty_height),
-                egui::Layout::top_down(egui::Align::Min),
-                |ui| {
-                    ui.weak(if index == 0 && complete {
+            list.rect = rect;
+            if complete {
+                bounded_text::paint(
+                    ui,
+                    egui::Rect::from_min_size(
+                        rect.min + egui::vec2(6.0, 0.0),
+                        egui::vec2((rect.width() - 6.0).max(0.0), crate::density::row()),
+                    ),
+                    if index == 0 {
                         "No unstaged changes."
-                    } else if index == 1 && complete {
-                        "No staged changes."
                     } else {
-                        "Nothing to show."
-                    });
-                },
-            );
+                        "No staged changes."
+                    },
+                    egui::FontId::proportional(12.0),
+                    ui.visuals().weak_text_color(),
+                );
+            }
             return (None, None);
         }
         let mut scroll = egui::ScrollArea::vertical()
             .id_salt(("working-group", index))
             .max_height(content_height)
-            .auto_shrink([false, shrink]);
-        if !shrink {
-            scroll = scroll.min_scrolled_height(content_height);
-        }
+            .min_scrolled_height(content_height)
+            .auto_shrink([false, false]);
         if list.restore {
             scroll = scroll.vertical_scroll_offset(list.offset);
             list.restore = false;
@@ -1122,7 +1129,6 @@ impl StatusView {
             scroll = scroll.vertical_scroll_offset(offset.max(0.0));
             list.reveal = false;
         }
-        ui.spacing_mut().item_spacing.y = 0.0;
         let out = scroll.show_rows(ui, crate::density::row(), count, |ui, visible| {
             list.viewport = visible.start.saturating_sub(16)..visible.end.saturating_add(16);
             for row in visible {
@@ -1178,7 +1184,6 @@ impl StatusView {
                         Some(badge) => format!("{badge} · {}", entry.kind.label()),
                         None => entry.kind.label().to_string(),
                     };
-                    let _ = response.clone().on_hover_text(description);
                     bounded_text::paint(
                         ui,
                         egui::Rect::from_min_size(
@@ -1221,8 +1226,10 @@ impl StatusView {
                             toggled = Some(row);
                         }
                     }
+                    // Long paths lose their start so the file name stays
+                    // visible; hovering the row names the full path.
                     let path_x = 22.0;
-                    bounded_text::paint(
+                    let elided = bounded_text::paint_path(
                         ui,
                         egui::Rect::from_min_size(
                             rect.min + egui::vec2(path_x, 0.0),
@@ -1235,6 +1242,11 @@ impl StatusView {
                         egui::FontId::proportional(12.0),
                         ui.visuals().text_color(),
                     );
+                    let _ = response.on_hover_text(if elided {
+                        format!("{} · {description}", entry.path)
+                    } else {
+                        description
+                    });
                 }
                 // A row not read yet keeps its slot, empty.
             }
@@ -1245,15 +1257,15 @@ impl StatusView {
     }
 
     fn draw_lists_wide(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, height: f32) {
-        let left = (ui.available_width() * 0.32).clamp(250.0, 380.0);
+        let left = LIST_WIDTH;
         ui.allocate_ui_with_layout(
             egui::vec2(left, height),
             egui::Layout::top_down(egui::Align::Min),
             |ui| {
                 let each = ((height - 6.0) / 2.0 - GROUP_HEADER - 2.0).max(40.0);
-                let (first_click, first_toggle) = self.draw_group(ui, 0, each, false, true);
+                let (first_click, first_toggle) = self.draw_group(ui, 0, each, false);
                 ui.add_space(2.0);
-                let (second_click, second_toggle) = self.draw_group(ui, 1, each, false, true);
+                let (second_click, second_toggle) = self.draw_group(ui, 1, each, false);
                 if let Some(row) = first_click {
                     self.select_row(0, row, ctx);
                 } else if let Some(row) = second_click {
@@ -1276,8 +1288,8 @@ impl StatusView {
             .count()
             .max(1);
         let each = ((budget / visible as f32) - GROUP_HEADER - 2.0).max(16.0);
-        let (first_click, first_toggle) = self.draw_group(ui, 0, each, true, false);
-        let (second_click, second_toggle) = self.draw_group(ui, 1, each, true, false);
+        let (first_click, first_toggle) = self.draw_group(ui, 0, each, true);
+        let (second_click, second_toggle) = self.draw_group(ui, 1, each, true);
         if let Some(row) = first_click {
             self.select_row(0, row, ctx);
         } else if let Some(row) = second_click {
@@ -4261,5 +4273,75 @@ mod tests {
         }
         assert_eq!(std::fs::read(dir.path().join("a"))?, working);
         Ok(())
+    }
+
+    fn header_y(output: &egui::FullOutput, prefix: &str) -> Option<f32> {
+        output.shapes.iter().find_map(|shape| match &shape.shape {
+            egui::epaint::Shape::Text(text) if text.galley.job.text.starts_with(prefix) => {
+                Some(text.pos.y)
+            }
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn empty_groups_say_so_after_the_scan_and_keep_their_slot() {
+        for width in [720.0, 1120.0] {
+            let ctx = egui::Context::default();
+            let mut busy = fixture(3, 1);
+            let output = run(&ctx, &mut busy, width, vec![]);
+            let staged_header = header_y(&output, "STAGED ");
+
+            let mut view = fixture(0, 0);
+            view.complete = false;
+            let output = run(&ctx, &mut view, width, vec![]);
+            let text = texts(&output);
+            assert!(
+                !text
+                    .iter()
+                    .any(|text| text.starts_with("No ") || text == "Nothing to show."),
+                "an unfinished scan leaves empty groups blank: {text:?}"
+            );
+            view.complete = true;
+            let output = run(&ctx, &mut view, width, vec![]);
+            let text = texts(&output);
+            assert!(
+                text.contains(&"No unstaged changes.".to_string()),
+                "{text:?}"
+            );
+            assert!(text.contains(&"No staged changes.".to_string()));
+            assert_eq!(
+                header_y(&output, "STAGED "),
+                staged_header,
+                "the Staged group stays put when Unstaged empties"
+            );
+        }
+    }
+
+    #[test]
+    fn wide_file_list_is_fixed_and_long_paths_keep_their_file_name() {
+        for width in [1120.0, 1600.0] {
+            let ctx = egui::Context::default();
+            let mut view = fixture(1, 1);
+            let long = "apps/git-good/src/a/very/deeply/nested/folder/structure/stage_view.rs";
+            view.lists[0].rows.insert(
+                0,
+                StatusEntry::new(Area::Unstaged, Kind::Modified, long.as_bytes()),
+            );
+            let output = run(&ctx, &mut view, width, vec![]);
+            for list in &view.lists {
+                assert!(
+                    (list.rect.width() - LIST_WIDTH).abs() <= 1.0,
+                    "list width {} at {width}",
+                    list.rect.width()
+                );
+            }
+            let shown = texts(&output)
+                .into_iter()
+                .find(|text| text.starts_with('…'))
+                .unwrap_or_default();
+            assert!(shown.ends_with("/stage_view.rs"), "{shown:?}");
+            assert!(shown.chars().count() < long.chars().count());
+        }
     }
 }
