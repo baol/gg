@@ -101,6 +101,19 @@ pub fn show(
         return action;
     }
 
+    // `↑1 ↓3` beside each branch with an upstream, as in the mockup.
+    let counts = refs
+        .tracking
+        .iter()
+        .filter_map(|tracking| {
+            let parts = [
+                tracking.ahead.filter(|n| *n > 0).map(|n| format!("↑{n}")),
+                tracking.behind.filter(|n| *n > 0).map(|n| format!("↓{n}")),
+            ];
+            let text = parts.into_iter().flatten().collect::<Vec<_>>().join(" ");
+            (!text.is_empty()).then(|| (tracking.full_name.clone(), text))
+        })
+        .collect::<BTreeMap<_, _>>();
     egui::ScrollArea::vertical()
         .id_salt("refs-scroll")
         .auto_shrink([false, false])
@@ -128,10 +141,28 @@ pub fn show(
                     for item in branches {
                         tree.insert(item);
                     }
-                    render_tree(ui, &tree, "branch", head_name, busy, lanes, &mut action);
+                    render_tree(
+                        ui,
+                        &tree,
+                        "branch",
+                        head_name,
+                        busy,
+                        lanes,
+                        &counts,
+                        &mut action,
+                    );
                 } else {
                     for item in branches {
-                        render_leaf(ui, item, &item.name, head_name, busy, lanes, &mut action);
+                        render_leaf(
+                            ui,
+                            item,
+                            &item.name,
+                            head_name,
+                            busy,
+                            lanes,
+                            &counts,
+                            &mut action,
+                        );
                     }
                 }
             });
@@ -148,10 +179,28 @@ pub fn show(
                     for item in remotes {
                         tree.insert(item);
                     }
-                    render_tree(ui, &tree, "remote", head_name, busy, lanes, &mut action);
+                    render_tree(
+                        ui,
+                        &tree,
+                        "remote",
+                        head_name,
+                        busy,
+                        lanes,
+                        &counts,
+                        &mut action,
+                    );
                 } else {
                     for item in remotes {
-                        render_leaf(ui, item, &item.name, head_name, busy, lanes, &mut action);
+                        render_leaf(
+                            ui,
+                            item,
+                            &item.name,
+                            head_name,
+                            busy,
+                            lanes,
+                            &counts,
+                            &mut action,
+                        );
                     }
                 }
             });
@@ -168,10 +217,28 @@ pub fn show(
                     for item in tags {
                         tree.insert(item);
                     }
-                    render_tree(ui, &tree, "tag", head_name, busy, lanes, &mut action);
+                    render_tree(
+                        ui,
+                        &tree,
+                        "tag",
+                        head_name,
+                        busy,
+                        lanes,
+                        &counts,
+                        &mut action,
+                    );
                 } else {
                     for item in tags {
-                        render_leaf(ui, item, &item.name, head_name, busy, lanes, &mut action);
+                        render_leaf(
+                            ui,
+                            item,
+                            &item.name,
+                            head_name,
+                            busy,
+                            lanes,
+                            &counts,
+                            &mut action,
+                        );
                     }
                 }
             });
@@ -301,13 +368,14 @@ fn render_tree(
     head_name: Option<&str>,
     busy: bool,
     lanes: &BTreeMap<String, u8>,
+    counts: &BTreeMap<String, String>,
     action: &mut Option<Action>,
 ) {
     for (segment, node) in &tree.children {
         let path = format!("{section}/{segment}");
         if node.children.is_empty() {
             if let Some(item) = node.item {
-                render_leaf(ui, item, segment, head_name, busy, lanes, action);
+                render_leaf(ui, item, segment, head_name, busy, lanes, counts, action);
             }
         } else {
             egui::CollapsingHeader::new(
@@ -321,14 +389,15 @@ fn render_tree(
             .show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 1.0;
                 if let Some(item) = node.item {
-                    render_leaf(ui, item, segment, head_name, busy, lanes, action);
+                    render_leaf(ui, item, segment, head_name, busy, lanes, counts, action);
                 }
-                render_tree(ui, node, section, head_name, busy, lanes, action);
+                render_tree(ui, node, section, head_name, busy, lanes, counts, action);
             });
         }
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_leaf(
     ui: &mut egui::Ui,
     item: &RefItem,
@@ -336,6 +405,7 @@ fn render_leaf(
     head_name: Option<&str>,
     busy: bool,
     lanes: &BTreeMap<String, u8>,
+    counts: &BTreeMap<String, String>,
     action: &mut Option<Action>,
 ) {
     let current = Some(item.full_name.as_str()) == head_name;
@@ -358,7 +428,8 @@ fn render_leaf(
     } else {
         format!("{inspect}\nRight-click for ref actions")
     };
-    let response = row(ui, label, item.kind, current, lane).on_hover_text(hover);
+    let count = counts.get(&item.full_name).map(String::as_str);
+    let response = row(ui, label, item.kind, current, lane, count).on_hover_text(hover);
     if response.double_clicked() {
         if item.kind == RefKind::Branch && !current && !busy {
             *action = Some(Action::Switch(item.name.clone()));
@@ -483,6 +554,7 @@ fn row(
     kind: RefKind,
     current: bool,
     lane: Option<egui::Color32>,
+    count: Option<&str>,
 ) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), crate::density::row()),
@@ -526,7 +598,21 @@ fn row(
         color.gamma_multiply(0.9)
     };
     paint_icon(ui.painter(), icon, kind, icon_color);
-    let text_right = rect.right() - if current { 20.0 } else { 6.0 };
+    let mut text_right = rect.right() - if current { 20.0 } else { 6.0 };
+    if let Some(count) = count {
+        let galley = ui.painter().layout_no_wrap(
+            count.to_owned(),
+            egui::FontId::proportional(11.0),
+            ui.visuals().weak_text_color(),
+        );
+        let at = egui::pos2(
+            text_right - galley.size().x,
+            rect.center().y - galley.size().y / 2.0,
+        );
+        text_right = at.x - 6.0;
+        ui.painter()
+            .galley(at, galley, ui.visuals().weak_text_color());
+    }
     let text_rect = egui::Rect::from_min_max(
         egui::pos2(rect.left() + 19.0, rect.top()),
         egui::pos2(text_right, rect.bottom()),
@@ -844,7 +930,15 @@ mod tests {
                 _ => None,
             })
             .collect::<Vec<_>>();
-        for expected in ["BRANCHES", "main", "REMOTES", "TAGS", "origin/main", "2"] {
+        for expected in [
+            "BRANCHES",
+            "main",
+            "REMOTES",
+            "TAGS",
+            "origin/main",
+            "2",
+            "↑2 ↓1",
+        ] {
             assert!(
                 text.iter().any(|line| line.contains(expected)),
                 "{expected}: {text:?}"

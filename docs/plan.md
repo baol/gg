@@ -139,7 +139,7 @@ Still to build (medium):
 3. Rebase stop: **Commits made at this stop** section in Local Changes.
 4. Stash picker: two-line rows (Up/Down/Enter/Del keys are done).
 5. Preferences: still to build from the Final page: Diff context lines, whitespace, wrap, and invisibles, (modal, footer, search, keyboard list, zoom, code font, History display options, pull strategy, force-with-lease offer, clone naming, reopen last repository, commit hooks, backup retention, confirm before Drop and Reset, identity, subject guide, and sign tags are done).
-6. Refs sidebar: branch tracking counts (the **Worktrees** group is done).
+6. Refs sidebar: done (Worktrees group and branch tracking counts).
 
 Decisions for the review (see the canvas page **Review · as built**):
 
