@@ -4524,7 +4524,7 @@ impl Browser {
                     ui.label(egui::RichText::new("STASHES").small().weak());
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.label(
-                            egui::RichText::new("Up/Down: select · Enter: apply · Del: drop")
+                            egui::RichText::new("Up/Down choose · Enter apply · Del drop")
                                 .small()
                                 .weak(),
                         );
@@ -4568,9 +4568,11 @@ impl Browser {
 }
 
 /// Width of the Stashes picker popup.
-const STASH_PICKER_WIDTH: f32 = 560.0;
+const STASH_PICKER_WIDTH: f32 = 440.0;
+/// Height of one two-line picker row.
+const STASH_PICKER_ROW: f32 = 40.0;
 /// Height of the picker's entry list: six rows.
-const STASH_PICKER_LIST: f32 = 6.0 * 24.0;
+const STASH_PICKER_LIST: f32 = 5.0 * STASH_PICKER_ROW;
 /// Height reserved for the picker's actions, its drop confirmation, and an error.
 const STASH_PICKER_ACTIONS: f32 = 64.0;
 
@@ -4592,8 +4594,10 @@ fn stash_picker_row(
     entry: &gg_engine::stash::StashEntry,
     selected: bool,
 ) -> egui::Response {
-    let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(ui.available_width(), 24.0), egui::Sense::click());
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), STASH_PICKER_ROW),
+        egui::Sense::click(),
+    );
     if selected {
         ui.painter()
             .rect_filled(rect, 3.0, colors::selection(ui.visuals()));
@@ -4601,54 +4605,44 @@ fn stash_picker_row(
         ui.painter()
             .rect_filled(rect, 3.0, ui.visuals().widgets.hovered.weak_bg_fill);
     }
-    let font = egui::FontId::proportional(12.5);
+    // Two lines, as in the mockup: the ref on the left; the message over
+    // `on <branch> · <age> · <files>`.
     let weak = ui.visuals().weak_text_color();
     let strong = ui.visuals().strong_text_color();
-    let inner = rect.shrink2(egui::vec2(6.0, 0.0));
-    // Slots from the right: files 64, age 96, branch 110; ref 72 on the left.
-    let files = egui::Rect::from_min_max(egui::pos2(inner.right() - 64.0, inner.top()), inner.max);
-    let age = egui::Rect::from_min_max(
-        egui::pos2(files.left() - 100.0, inner.top()),
-        egui::pos2(files.left() - 4.0, inner.bottom()),
-    );
-    let branch = egui::Rect::from_min_max(
-        egui::pos2(age.left() - 114.0, inner.top()),
-        egui::pos2(age.left() - 4.0, inner.bottom()),
-    );
+    let inner = rect.shrink2(egui::vec2(8.0, 3.0));
     let reference =
-        egui::Rect::from_min_max(inner.min, egui::pos2(inner.left() + 72.0, inner.bottom()));
-    let message = egui::Rect::from_min_max(
-        egui::pos2(reference.right() + 4.0, inner.top()),
-        egui::pos2(branch.left() - 6.0, inner.bottom()),
-    );
+        egui::Rect::from_min_max(inner.min, egui::pos2(inner.left() + 64.0, inner.bottom()));
+    let text =
+        egui::Rect::from_min_max(egui::pos2(reference.right() + 8.0, inner.top()), inner.max);
+    let (top, bottom) = text.split_top_bottom_at_fraction(0.55);
     bounded_text::paint(
         ui,
         reference,
-        &entry.reference,
-        egui::FontId::monospace(11.5),
+        entry.reference.as_str(),
+        egui::FontId::monospace(11.0),
         weak,
     );
     bounded_text::paint(
         ui,
-        message,
+        top,
         stash_display_message(entry),
-        font.clone(),
+        egui::FontId::proportional(12.5),
         strong,
     );
-    bounded_text::paint(
-        ui,
-        branch,
-        entry.branch.as_deref().unwrap_or("detached"),
-        font.clone(),
-        weak,
-    );
-    bounded_text::paint(ui, age, &entry.age, font.clone(), weak);
     let count = match entry.files {
         Some(1) => "1 file".to_string(),
         Some(count) => format!("{count} files"),
         None => String::new(),
     };
-    bounded_text::paint(ui, files, &count, font, weak);
+    let mut details = format!(
+        "on {} · {}",
+        entry.branch.as_deref().unwrap_or("detached"),
+        entry.age
+    );
+    if !count.is_empty() {
+        details.push_str(&format!(" · {count}"));
+    }
+    bounded_text::paint(ui, bottom, &details, egui::FontId::proportional(11.0), weak);
     response.on_hover_text(format!(
         "{} · {}\n{}{}",
         entry.reference,
@@ -4730,9 +4724,14 @@ fn stash_picker_actions(
                     message: entry.message.clone(),
                 });
             }
-            if ui.button("Drop…").clicked() {
-                picker.confirm_drop = true;
-            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .button(egui::RichText::new("Drop…").color(ui.visuals().error_fg_color))
+                    .clicked()
+                {
+                    picker.confirm_drop = true;
+                }
+            });
         });
     }
     if let Some(error) = &picker.error {
@@ -15304,14 +15303,12 @@ mod tests {
             "Pop",
             "Show changes",
             "Drop…",
-            // Ref, message without the branch prefix, branch, age, file count.
+            // Ref, message without the branch prefix, then branch, age, and
+            // file count on the second line.
             "stash@{0}",
             "abc123 work 0",
-            "main",
-            "2 hours ago",
-            "1 file",
-            "detached",
-            "3 files",
+            "on main · 2 hours ago · 1 file",
+            "on detached · 3 hours ago · 3 files",
         ] {
             assert!(
                 texts.iter().any(|text| text == expected),
