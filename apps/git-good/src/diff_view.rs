@@ -960,6 +960,34 @@ impl DiffView {
         }
     }
 
+    /// Whether changed lines can be picked in the active comparison.
+    pub fn lines_selectable(&self) -> bool {
+        self.can_line_edit()
+    }
+
+    /// Number of picked changed lines.
+    pub fn line_selection(&self) -> usize {
+        self.stage_selected.len()
+    }
+
+    /// Forget the picked lines.
+    pub fn clear_line_selection(&mut self) {
+        self.stage_selected.clear();
+    }
+
+    /// One edit per hunk with picked lines; a discard expands each touched
+    /// change block.
+    pub fn selection_edits(&self, discard: bool) -> Vec<StageEdit> {
+        self.hunks
+            .iter()
+            .filter(|header| {
+                let bounds = self.hunk_bounds(**header);
+                self.stage_selected.keys().any(|row| bounds.contains(row))
+            })
+            .map(|header| self.hunk_edit(*header, discard))
+            .collect()
+    }
+
     fn file_edit(&self, discard: bool) -> StageEdit {
         StageEdit {
             scope: StageScope::File,
@@ -2289,7 +2317,14 @@ impl DiffView {
             self.toggle_hunk(header);
         }
         if let Some((header, discard)) = hunk_action {
-            self.stage_edit = Some(self.hunk_edit(header, discard));
+            // Hunk buttons act on the whole hunk; picked lines use the
+            // selection bar below the reader.
+            self.stage_edit = Some(StageEdit {
+                scope: StageScope::Hunk,
+                discard,
+                header: self.rows.get(&header).map(|row| row.text.clone()),
+                changes: vec![],
+            });
             self.stage_selected.clear();
         }
         self.offset = result.state.clamped_offset().y;
@@ -2310,23 +2345,15 @@ impl DiffView {
         pending: bool,
         can_discard: bool,
     ) -> (bool, Option<bool>) {
-        let bounds = self.hunk_bounds(index);
-        let chosen = self
-            .stage_selected
-            .keys()
-            .filter(|row| bounds.contains(row))
-            .count();
+        // Hunk buttons act on the whole hunk; picked lines use the selection
+        // bar below the reader.
         let mut buttons = vec![(
             egui::Rect::from_min_size(
                 rect.min + egui::vec2(4.0, 1.0),
                 egui::vec2(104.0, HEIGHT - 2.0),
             ),
-            if chosen == 0 {
-                format!("{verb} hunk")
-            } else {
-                format!("{verb} {chosen}")
-            },
-            "Apply the selected changed lines, or the whole hunk when none are selected",
+            format!("{verb} hunk"),
+            format!("{verb} this whole hunk"),
             "stage-hunk",
             false,
         )];
@@ -2336,12 +2363,8 @@ impl DiffView {
                     egui::pos2(rect.right() - 108.0, rect.top() + 1.0),
                     egui::vec2(104.0, HEIGHT - 2.0),
                 ),
-                if chosen == 0 {
-                    "Discard hunk".into()
-                } else {
-                    "Discard selected".into()
-                },
-                "Discard the selected change block, or the whole hunk when none is selected",
+                "Discard hunk".to_string(),
+                "Discard this whole hunk".to_string(),
                 "drop-hunk",
                 true,
             ));

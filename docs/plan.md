@@ -130,17 +130,16 @@ Placeholder text in panes:
 
 ### Mockup alignment · reviewed 2026-10-30 · in progress
 
-Second pass comparing every Final-page board with the app. Done: the Changes reader's Unstaged | Staged toggle (decided: follow the mockup), menus from one command table, About gg, rebase plan and stop wording, Changes group headers with Stage all/Unstage all, commit box wording, toolbar tooltips with shortcuts, the search placeholder, Blame and the ‹ › ⋯ reader buttons, refs sidebar groups, history pill order and colors, the History footer, the window title, and `[`/`]` between conflict blocks.
+Second pass comparing every Final-page board with the app. Done: the Changes reader's Unstaged | Staged toggle (decided: follow the mockup) and line selection bar with Clear, menus from one command table, About gg, rebase plan and stop wording, Changes group headers with Stage all/Unstage all, commit box wording, toolbar tooltips with shortcuts, the search placeholder, Blame and the ‹ › ⋯ reader buttons, refs sidebar groups, history pill order and colors, the History footer, the window title, and `[`/`]` between conflict blocks.
 
 Still to build (medium):
 
 1. Review header: per-file +/− stats and the `FILES n +x −y` header (subject, ID pill, author · date, and **Compare with** are done) (parents and HEAD); `FILES n +x −y` with per-file stats; left-elided paths; a fixed 300 px file list.
-2. Changes: line selection bar with Clear (per-row buttons and S/U keys are done).
-3. Conflict workspace: files panel with resolved list and blocks left; result line numbers. **Open in editor** needs a way to launch the user's editor (a new dependency or a setting): decide in review.
-4. Rebase stop: **Commits made at this stop** section in Local Changes.
-5. Stash picker: two-line rows (Up/Down/Enter/Del keys are done).
-6. Preferences: footer with the config path and Close; search field; the settings listed on the Final page that are not built yet.
-7. Refs sidebar: **Worktrees** group and branch tracking counts.
+2. Conflict workspace: files panel with resolved list and blocks left; result line numbers. **Open in editor** needs a way to launch the user's editor (a new dependency or a setting): decide in review.
+3. Rebase stop: **Commits made at this stop** section in Local Changes.
+4. Stash picker: two-line rows (Up/Down/Enter/Del keys are done).
+5. Preferences: footer with the config path and Close; search field; the settings listed on the Final page that are not built yet.
+6. Refs sidebar: **Worktrees** group and branch tracking counts.
 
 Decisions for the review (see the canvas page **Review · as built**):
 

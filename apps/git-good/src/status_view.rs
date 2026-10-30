@@ -58,6 +58,17 @@ fn commit_reason<'a>(
         None
     }
 }
+/// Height of the line selection bar reserved below the reader.
+const SELECTION_BAR: f32 = 28.0;
+
+fn lines(count: usize) -> String {
+    if count == 1 {
+        "1 line".into()
+    } else {
+        format!("{count} lines")
+    }
+}
+
 /// Width of the per-row stage/unstage button slot.
 const ROW_BUTTON: f32 = 24.0;
 
@@ -135,7 +146,9 @@ pub struct StatusView {
     identity: Option<gg_engine::status::StatusIdentity>,
     stage: crate::stage_view::StageActions,
     reader: crate::diff_view::DiffView,
-    drop_confirm: Option<crate::diff_view::StageEdit>,
+    /// A discard waiting for confirmation: one file or hunk edit, or the
+    /// picked lines across hunks.
+    drop_confirm: Option<Vec<crate::diff_view::StageEdit>>,
     /// A group header asked to stage everything (`Some(true)`) or unstage
     /// everything (`Some(false)`); the window runs it like the menu item.
     group_request: Option<bool>,
@@ -1331,9 +1344,9 @@ impl StatusView {
         };
         let mut confirm = self.drop_confirm.take();
         let mut confirmed = false;
-        if let Some(edit) = &confirm {
+        if let Some(edit) = confirm.as_ref().and_then(|edits| edits.first()) {
             let scope = match edit.scope {
-                crate::diff_view::StageScope::Selected => "the selected changes",
+                crate::diff_view::StageScope::Selected => "the selected lines' change blocks",
                 crate::diff_view::StageScope::Hunk => "this hunk",
                 crate::diff_view::StageScope::File => "all working changes",
             };
@@ -1361,8 +1374,14 @@ impl StatusView {
             ui.weak("Working-tree changes will be lost. The index is unchanged.");
         }
         if confirmed {
-            if let Some(edit) = confirm.take() {
-                self.stage.apply(edit, ctx);
+            if let Some(edits) = confirm.take() {
+                if edits
+                    .iter()
+                    .any(|edit| edit.scope == crate::diff_view::StageScope::Selected)
+                {
+                    self.reader.clear_line_selection();
+                }
+                self.stage.apply_all(edits, ctx);
             }
         } else {
             self.drop_confirm = confirm;
@@ -1374,12 +1393,27 @@ impl StatusView {
         } else {
             "Stage"
         };
+        // The selection bar keeps a fixed slot below the reader, so picking
+        // lines never moves the rows.
+        let area = ui.available_rect_before_wrap();
+        let reader_rect = egui::Rect::from_min_max(
+            area.min,
+            egui::pos2(
+                area.right(),
+                (area.bottom() - SELECTION_BAR).max(area.top()),
+            ),
+        );
+        let bar_rect =
+            egui::Rect::from_min_max(egui::pos2(area.left(), reader_rect.bottom()), area.max);
         self.reader
             .set_staging(verb, discard, self.mutations_blocked());
         if let Some(sides) = self.working_sides() {
             self.reader.set_sides(sides);
         }
-        self.reader.draw(ui);
+        ui.scope_builder(egui::UiBuilder::new().max_rect(reader_rect), |ui| {
+            self.reader.draw(ui);
+        });
+        let selectable = self.reader.lines_selectable();
         self.reader.clear_staging();
         if self.reader.take_side_request().is_some() {
             self.switch_side(ctx);
@@ -1388,11 +1422,65 @@ impl StatusView {
             if self.mutations_blocked() {
                 // Another view owns the repository; drop the stale edit.
             } else if edit.discard {
-                self.drop_confirm = Some(edit);
+                self.drop_confirm = Some(vec![edit]);
             } else {
                 self.apply_stage_edit(edit, ctx);
             }
         }
+        ui.scope_builder(egui::UiBuilder::new().max_rect(bar_rect), |ui| {
+            self.draw_selection_bar(ui, selectable, verb, discard, ctx);
+        });
+    }
+
+    /// Stage, unstage, or discard the picked lines, or clear them.
+    fn draw_selection_bar(
+        &mut self,
+        ui: &mut egui::Ui,
+        selectable: bool,
+        verb: &str,
+        discard: bool,
+        ctx: &egui::Context,
+    ) {
+        ui.separator();
+        let picked = self.reader.line_selection();
+        let blocked = self.mutations_blocked();
+        ui.horizontal(|ui| {
+            if picked == 0 || !selectable {
+                if selectable {
+                    ui.weak(
+                        "Click changed lines to pick them · click a hunk header to pick the hunk",
+                    );
+                }
+                return;
+            }
+            let count = lines(picked);
+            if ui
+                .add_enabled(!blocked, egui::Button::new(format!("{verb} {count}")))
+                .on_hover_text(format!("{verb} only the picked lines"))
+                .clicked()
+            {
+                let edits = self.reader.selection_edits(false);
+                self.reader.clear_line_selection();
+                self.stage.apply_all(edits, ctx);
+            }
+            if discard
+                && ui
+                    .add_enabled(!blocked, egui::Button::new(format!("Discard {count}")))
+                    .on_hover_text(
+                        "Discard the change blocks of the picked lines from the working file",
+                    )
+                    .clicked()
+            {
+                self.drop_confirm = Some(self.reader.selection_edits(true));
+            }
+            if ui
+                .button("Clear")
+                .on_hover_text("Unpick every line")
+                .clicked()
+            {
+                self.reader.clear_line_selection();
+            }
+        });
     }
 
     fn draw_amend_banner(&self, ui: &mut egui::Ui) {
@@ -2781,7 +2869,7 @@ mod tests {
         let line = text_pos(&output, "TWELVE").ok_or("missing added line")?;
         click(&ctx, &mut view, 1120.0, line + egui::vec2(5.0, 0.0));
         let output = run(&ctx, &mut view, 1120.0, vec![]);
-        let button = text_pos(&output, "Stage 1").ok_or("missing selected-line action")?;
+        let button = text_pos(&output, "Stage 1 line").ok_or("missing selected-line action")?;
         click(&ctx, &mut view, 1120.0, button + egui::vec2(5.0, 0.0));
         pump(&ctx, &mut view, 1120.0, |view| {
             !view.reader.pending()
@@ -3786,7 +3874,7 @@ mod tests {
         let line = text_pos(&output, "TWELVE").ok_or("missing selected line")?;
         click(&ctx, &mut view, 1120.0, line + egui::vec2(5.0, 0.0));
         let output = run(&ctx, &mut view, 1120.0, vec![]);
-        let drop = text_pos(&output, "Discard selected").ok_or("missing selected drop")?;
+        let drop = text_pos(&output, "Discard 1 line").ok_or("missing selected drop")?;
         click(&ctx, &mut view, 1120.0, drop + egui::vec2(5.0, 0.0));
         let output = run(&ctx, &mut view, 1120.0, vec![]);
         let discard = text_pos(&output, "Discard").ok_or("missing discard")?;
@@ -4034,6 +4122,144 @@ mod tests {
                 view.reader.ready() && view.reader.has_text("only working")
             });
         }
+        Ok(())
+    }
+
+    fn texts(output: &egui::FullOutput) -> Vec<String> {
+        output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) => Some(text.galley.job.text.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn settled(view: &StatusView) -> bool {
+        !view.reader.pending()
+            && view.reader.ready()
+            && !view.stage.mutating()
+            && view.complete
+            && !view.replacing
+    }
+
+    #[test]
+    fn selection_bar_counts_picked_lines_and_clears_them() -> Result<(), Box<dyn std::error::Error>>
+    {
+        for width in [720.0, 1120.0] {
+            let dir = tempfile::tempdir()?;
+            generated(dir.path())?;
+            let ctx = egui::Context::default();
+            let mut view = StatusView::new(dir.path().into(), &ctx);
+            settle(&ctx, &mut view, width);
+            select_area(&mut view, &ctx, Area::Unstaged);
+            ready(&ctx, &mut view, width);
+            let bar = view.reader_rect.bottom() - SELECTION_BAR;
+            let output = run(&ctx, &mut view, width, vec![]);
+            assert!(
+                texts(&output)
+                    .iter()
+                    .any(|text| text.starts_with("Click changed lines")),
+                "the empty bar explains how to pick lines"
+            );
+            let line = text_pos(&output, "ONE").ok_or("missing changed line")?;
+            click(&ctx, &mut view, width, line + egui::vec2(5.0, 0.0));
+            let output = run(&ctx, &mut view, width, vec![]);
+            let text = texts(&output);
+            assert!(text.contains(&"Stage 1 line".to_string()), "{text:?}");
+            assert!(text.contains(&"Discard 1 line".to_string()));
+            assert!(
+                text.contains(&"Stage hunk".to_string()),
+                "hunk buttons keep acting on the whole hunk"
+            );
+            assert!(
+                !text
+                    .iter()
+                    .any(|text| text.starts_with("Click changed lines"))
+            );
+            let stage = text_pos(&output, "Stage 1 line").ok_or("missing bar action")?;
+            assert!(
+                stage.y >= bar,
+                "the bar sits in its reserved slot below the reader"
+            );
+            assert_eq!(
+                text_pos(&output, "ONE").map(|pos| pos.y),
+                Some(line.y),
+                "picking a line moves no rows"
+            );
+            let clear = text_pos(&output, "Clear").ok_or("missing Clear")?;
+            click(&ctx, &mut view, width, clear + egui::vec2(5.0, 0.0));
+            let output = run(&ctx, &mut view, width, vec![]);
+            assert!(text_pos(&output, "Stage 1 line").is_none());
+            assert_eq!(view.reader.line_selection(), 0);
+            assert_eq!(
+                file(dir.path(), &["show", ":a"])?,
+                b"one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\ntwelve\n"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn picked_lines_across_hunks_stage_and_unstage_as_one_change()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        generated(dir.path())?;
+        let working = std::fs::read(dir.path().join("a"))?;
+        let ctx = egui::Context::default();
+        let mut view = StatusView::new(dir.path().into(), &ctx);
+        let width = 1120.0;
+        settle(&ctx, &mut view, width);
+        select_area(&mut view, &ctx, Area::Unstaged);
+        ready(&ctx, &mut view, width);
+        let output = run(&ctx, &mut view, width, vec![]);
+        for needle in ["ONE", "TWELVE"] {
+            let line = text_pos(&output, needle).ok_or("missing changed line")?;
+            click(&ctx, &mut view, width, line + egui::vec2(5.0, 0.0));
+        }
+        let stage = wait_text(&ctx, &mut view, width, "Stage 2 lines")?;
+        click(&ctx, &mut view, width, stage + egui::vec2(5.0, 0.0));
+        pump(&ctx, &mut view, width, |view| {
+            settled(view) && view.lists[1].count == 1
+        });
+        assert_eq!(
+            file(dir.path(), &["show", ":a"])?,
+            b"one\nONE\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\ntwelve\nTWELVE\n",
+            "only the added lines are staged, in both hunks"
+        );
+        assert_eq!(std::fs::read(dir.path().join("a"))?, working);
+        assert_eq!(view.reader.line_selection(), 0, "applying clears the picks");
+
+        let staged = wait_text(&ctx, &mut view, width, "Staged")?;
+        click(&ctx, &mut view, width, staged + egui::vec2(5.0, 4.0));
+        pump(&ctx, &mut view, width, |view| {
+            settled(view) && view.reader.has_text("TWELVE")
+        });
+        let output = run(&ctx, &mut view, width, vec![]);
+        let line = text_pos(&output, "TWELVE").ok_or("missing staged line")?;
+        click(&ctx, &mut view, width, line + egui::vec2(5.0, 0.0));
+        let output = run(&ctx, &mut view, width, vec![]);
+        let text = texts(&output);
+        assert!(text.contains(&"Unstage hunk".to_string()));
+        assert!(
+            !text.iter().any(|text| text.starts_with("Discard")),
+            "staged lines cannot be discarded: {text:?}"
+        );
+        let unstage = text_pos(&output, "Unstage 1 line").ok_or("missing Unstage 1 line")?;
+        click(&ctx, &mut view, width, unstage + egui::vec2(5.0, 0.0));
+        pump(&ctx, &mut view, width, |view| {
+            settled(view) && view.reader.line_selection() == 0
+        });
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while file(dir.path(), &["show", ":a"])?
+            != b"one\nONE\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\ntwelve\n"
+        {
+            assert!(std::time::Instant::now() < until, "unstage did not land");
+            frame(&ctx, &mut view, width, vec![]);
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert_eq!(std::fs::read(dir.path().join("a"))?, working);
         Ok(())
     }
 }
