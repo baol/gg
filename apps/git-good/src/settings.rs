@@ -59,6 +59,32 @@ pub fn write<T: Serialize>(path: &Path, key: &str, value: &T) -> Result<(), Stri
         .map_err(|error| format!("Write settings to {}: {error}", path.display()))
 }
 
+/// Most repositories listed under Repository › Open recent.
+pub const RECENT_LIMIT: usize = 10;
+
+/// Repositories opened before, newest first.
+pub fn recent() -> Vec<PathBuf> {
+    path()
+        .and_then(|path| read::<Vec<PathBuf>>(&path, "recent_repositories"))
+        .unwrap_or_default()
+}
+
+/// Put `repository` first in `list`, without duplicates, bounded.
+pub fn push_recent(list: &mut Vec<PathBuf>, repository: PathBuf) {
+    list.retain(|entry| entry != &repository);
+    list.insert(0, repository);
+    list.truncate(RECENT_LIMIT);
+}
+
+/// Save the recent list; tests never write the user's file.
+pub fn save_recent(list: &[PathBuf]) -> Result<(), String> {
+    if cfg!(test) {
+        return Ok(());
+    }
+    let path = path().ok_or("No configuration folder is available for preferences.")?;
+    write(&path, "recent_repositories", &list)
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Theme {
@@ -293,6 +319,19 @@ impl Prefs {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recent_repositories_move_to_the_front_without_duplicates() {
+        let mut list = Vec::new();
+        for name in ["a", "b", "a"] {
+            push_recent(&mut list, PathBuf::from(name));
+        }
+        assert_eq!(list, [PathBuf::from("a"), PathBuf::from("b")]);
+        for index in 0..20 {
+            push_recent(&mut list, PathBuf::from(format!("r{index}")));
+        }
+        assert_eq!(list.len(), RECENT_LIMIT);
+    }
 
     #[test]
     fn round_trips_and_keeps_unknown_keys() -> Result<(), Box<dyn std::error::Error>> {

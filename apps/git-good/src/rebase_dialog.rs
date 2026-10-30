@@ -107,6 +107,20 @@ impl Dialog {
         })
     }
 
+    /// Select `commit` and give it `action`, as Commit › Reword… and its
+    /// siblings do.
+    pub fn preset(&mut self, commit: &str, action: Action) {
+        if let Some(index) = self
+            .plan
+            .rows
+            .iter()
+            .position(|row| row.commit.id == commit)
+        {
+            self.selected = index;
+            self.set_action(action);
+        }
+    }
+
     fn range_label(&self) -> String {
         let onto = self.base.as_deref().map_or("the root".to_string(), |base| {
             rebase_plan::short(base).to_string()

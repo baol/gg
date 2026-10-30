@@ -27,6 +27,7 @@ mod interaction_tests;
 mod lfs_cli;
 mod lfs_worker;
 mod line_map_worker;
+mod menus;
 mod merge_cli;
 mod mutation_cli;
 mod navigation;
@@ -627,13 +628,11 @@ enum FrameCommand {
     Rewrite,
     /// Interactive rebase from the selected commit through HEAD.
     RewriteSelected,
-    CommitActions,
     Recovery,
     Worktrees,
     Open,
     Clone,
     Refresh,
-    Folders,
     Preferences,
     Shortcuts,
     LocalChanges,
@@ -645,6 +644,55 @@ enum FrameCommand {
     Inspect(String),
     /// Open the latest commit that changed this path, on that file.
     OpenFile(String),
+    OpenRecent(PathBuf),
+    Backups,
+    Reflog,
+    Quit,
+    /// Open the toolbar branch switcher.
+    SwitchTo,
+    SetUpstream,
+    RenameBranch,
+    DeleteBranch,
+    ReviewSelected,
+    CompareHead,
+    CopyId,
+    CherryPick,
+    Revert,
+    ResetHere,
+    /// Interactive rebase with the selected commit preset to this action.
+    RebasePreset(gg_engine::rewrite::Action),
+    StageAll,
+    UnstageAll,
+    DiscardAll,
+    CommitNow,
+    AmendHead,
+    ResolveConflicts,
+    ToggleDetails,
+    SetDensity(settings::Density),
+    SetTheme(settings::Theme),
+    Documentation,
+    About,
+    /// A menu item that is shown but cannot run yet.
+    Unavailable,
+}
+
+/// Branch › Rename… for the current branch.
+struct RenameDialog {
+    old: String,
+    new: String,
+    error: Option<String>,
+}
+
+/// Branch › Set upstream… for the current branch.
+struct UpstreamDialog {
+    branch: String,
+    upstream: String,
+    error: Option<String>,
+}
+
+/// Branch › Delete…: choose the local branch, then the usual confirmation.
+struct DeletePick {
+    name: String,
 }
 
 /// Open `Ctrl+K` search state.
@@ -1239,6 +1287,15 @@ struct Browser {
     prefs: settings::Prefs,
     /// Text in the toolbar search field.
     search_text: String,
+    /// Content width of the last frame, for menu readiness.
+    ctx_width: f32,
+    /// Repositories opened before, newest first.
+    recent: Vec<PathBuf>,
+    about_open: bool,
+    discard_confirm: bool,
+    rename_dialog: Option<RenameDialog>,
+    upstream_dialog: Option<UpstreamDialog>,
+    delete_pick: Option<DeletePick>,
     folders_dialog: Option<FoldersDialog>,
     force_push: Option<ForcePushDialog>,
     force_push_pending: bool,
@@ -1351,6 +1408,17 @@ impl Browser {
             folders: folders::Roots::load(),
             // Tests keep the defaults instead of reading the user's settings.
             search_text: String::new(),
+            ctx_width: 1120.0,
+            recent: if cfg!(test) {
+                Vec::new()
+            } else {
+                settings::recent()
+            },
+            about_open: false,
+            discard_confirm: false,
+            rename_dialog: None,
+            upstream_dialog: None,
+            delete_pick: None,
             prefs: if cfg!(test) {
                 settings::Prefs::default()
             } else {
@@ -2542,10 +2610,6 @@ impl Browser {
                     self.run_commit_action(ctx, id, CommitAction::Rewrite);
                 }
             }
-            FrameCommand::CommitActions => {
-                self.commit_actions = true;
-                ctx.request_repaint();
-            }
             FrameCommand::Recovery => self.open_recovery_window(),
             FrameCommand::Worktrees => self.open_worktrees(ctx),
             FrameCommand::Open => self.edit_path = true,
@@ -2556,7 +2620,6 @@ impl Browser {
                 ));
             }
             FrameCommand::Refresh => self.load(ctx),
-            FrameCommand::Folders => self.open_preferences(PrefSection::General),
             FrameCommand::Preferences => {
                 let section = self
                     .folders_dialog
@@ -2578,6 +2641,467 @@ impl Browser {
                 *go_history = true;
             }
             FrameCommand::OpenFile(file) => self.open_file(ctx, file),
+            FrameCommand::OpenRecent(path) => {
+                self.path = path.to_string_lossy().into_owned();
+                self.load(ctx);
+            }
+            FrameCommand::Backups => {
+                self.open_recovery(ctx, return_location::RecoverySource::Backups)
+            }
+            FrameCommand::Reflog => {
+                self.open_recovery(ctx, return_location::RecoverySource::Reflog)
+            }
+            FrameCommand::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+            FrameCommand::SwitchTo => egui::Popup::open_id(ctx, branch_switcher_popup_id()),
+            FrameCommand::SetUpstream => {
+                if let Some(branch) = self.current_branch() {
+                    let upstream = self
+                        .state
+                        .refs
+                        .current_tracking()
+                        .map(|tracking| tracking.upstream.clone())
+                        .unwrap_or_default();
+                    self.upstream_dialog = Some(UpstreamDialog {
+                        branch,
+                        upstream,
+                        error: None,
+                    });
+                }
+            }
+            FrameCommand::RenameBranch => {
+                if let Some(branch) = self.current_branch() {
+                    self.rename_dialog = Some(RenameDialog {
+                        new: branch.clone(),
+                        old: branch,
+                        error: None,
+                    });
+                }
+            }
+            FrameCommand::DeleteBranch => {
+                let current = self.current_branch();
+                if let Some(name) = self.state.refs.items.iter().find_map(|item| {
+                    (item.kind == gg_engine::refs::RefKind::Branch
+                        && Some(&item.name) != current.as_ref())
+                    .then(|| item.name.clone())
+                }) {
+                    self.delete_pick = Some(DeletePick { name });
+                }
+            }
+            FrameCommand::ReviewSelected => {
+                let location = self.capture_return_location();
+                self.open_review(ctx, location);
+            }
+            FrameCommand::CompareHead => self.on_selected(ctx, CommitAction::Compare),
+            FrameCommand::CherryPick => self.on_selected(ctx, CommitAction::CherryPick),
+            FrameCommand::Revert => self.on_selected(ctx, CommitAction::Revert),
+            FrameCommand::ResetHere => {
+                self.on_selected(ctx, CommitAction::Reset(gg_engine::reset::Mode::Mixed));
+            }
+            FrameCommand::CopyId => {
+                if let Some(id) = &self.state.selected {
+                    ctx.copy_text(id.clone());
+                }
+            }
+            FrameCommand::RebasePreset(action) => self.rebase_preset(action),
+            FrameCommand::StageAll => self.change_all(ctx, gg_git::worktree_changes::stage_all),
+            FrameCommand::UnstageAll => {
+                self.change_all(ctx, gg_git::worktree_changes::unstage_all);
+            }
+            FrameCommand::DiscardAll => self.discard_confirm = true,
+            FrameCommand::CommitNow => {
+                *go_local = false;
+                self.open_working(ctx);
+                if let Some(working) = &mut self.working {
+                    working.commit_now(ctx);
+                }
+            }
+            FrameCommand::AmendHead => {
+                self.open_working(ctx);
+                if let Some(working) = &mut self.working
+                    && let Err(error) = working.start_amend(ctx)
+                {
+                    self.mutation_error = Some(error);
+                }
+            }
+            FrameCommand::ResolveConflicts => self.open_conflict_view(ctx),
+            FrameCommand::ToggleDetails => {
+                if self.narrow_details_mode() {
+                    self.narrow_details = !self.narrow_details;
+                } else {
+                    self.details_visible = !self.details_visible;
+                }
+            }
+            FrameCommand::SetDensity(density) => {
+                self.prefs.density = density;
+                self.save_prefs(ctx);
+            }
+            FrameCommand::SetTheme(theme) => {
+                self.prefs.theme = theme;
+                self.save_prefs(ctx);
+            }
+            FrameCommand::Documentation => {
+                ctx.open_url(egui::OpenUrl::new_tab("https://github.com/baol/gg#readme"));
+            }
+            FrameCommand::About => self.about_open = true,
+            FrameCommand::Unavailable => {}
+        }
+    }
+
+    /// Menu shortcuts, read before any view so Ctrl+Shift chords win over
+    /// their Ctrl twins (Ctrl+Shift+F over the filter's Ctrl+F). Each runs
+    /// only when its menu item is enabled.
+    fn menu_shortcuts(&mut self, ctx: &egui::Context) {
+        if !crate::navigation::available(ctx) {
+            return;
+        }
+        let shift = egui::Modifiers::COMMAND | egui::Modifiers::SHIFT;
+        let typing = ctx.text_edit_focused();
+        let chords = [
+            (shift, egui::Key::F, FrameCommand::Fetch),
+            (shift, egui::Key::L, FrameCommand::Pull),
+            (shift, egui::Key::P, FrameCommand::Push),
+            (shift, egui::Key::B, FrameCommand::SwitchTo),
+            (shift, egui::Key::Z, FrameCommand::Stash),
+            (shift, egui::Key::S, FrameCommand::StageAll),
+            (shift, egui::Key::U, FrameCommand::UnstageAll),
+            (egui::Modifiers::COMMAND, egui::Key::O, FrameCommand::Open),
+            (
+                egui::Modifiers::COMMAND,
+                egui::Key::B,
+                FrameCommand::NewBranch,
+            ),
+            (egui::Modifiers::COMMAND, egui::Key::Q, FrameCommand::Quit),
+        ];
+        let mut chosen = None;
+        for (modifiers, key, command) in chords {
+            if chosen.is_none() && ctx.input_mut(|i| i.consume_key(modifiers, key)) {
+                chosen = Some(command);
+            }
+        }
+        if chosen.is_none() && !typing {
+            if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::F2)) {
+                chosen = Some(FrameCommand::RenameBranch);
+            } else if ctx
+                .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Questionmark))
+            {
+                chosen = Some(FrameCommand::Shortcuts);
+            }
+        }
+        let Some(command) = chosen else {
+            return;
+        };
+        let ready = self.frame_readiness();
+        let enabled = menus::flatten(&self.menu_table(&ready))
+            .into_iter()
+            .any(|(_, item)| item.command == command && item.disabled.is_none());
+        if enabled {
+            let (mut local, mut history) = (false, false);
+            self.run_frame_command(ctx, command, &mut local, &mut history);
+            if local {
+                self.open_working(ctx);
+            }
+        }
+    }
+
+    /// Dialogs opened from the Branch, Changes, and Help menus.
+    fn draw_menu_dialogs(&mut self, ctx: &egui::Context) {
+        let path = self.stash_path();
+        let mut reload = false;
+        if let Some(dialog) = &mut self.rename_dialog {
+            let mut open = true;
+            let mut cancel = false;
+            let mut submit = false;
+            egui::Window::new("Rename branch")
+                .id(egui::Id::unique("rename-branch"))
+                .modal(ctx, egui::Id::unique("rename-branch"))
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(false)
+                .default_pos(ctx.content_rect().center())
+                .pivot(egui::Align2::CENTER_CENTER)
+                .show(ctx, |ui| {
+                    ui.label(format!("Rename {} to:", dialog.old));
+                    let field =
+                        ui.add(egui::TextEdit::singleline(&mut dialog.new).desired_width(320.0));
+                    submit |= field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    ui.weak("The upstream setting moves with the branch.");
+                    if let Some(error) = &dialog.error {
+                        ui.colored_label(ui.visuals().error_fg_color, error);
+                    }
+                    ui.horizontal(|ui| {
+                        submit |= ui
+                            .add_enabled(
+                                !dialog.new.trim().is_empty() && dialog.new.trim() != dialog.old,
+                                egui::Button::new("Rename"),
+                            )
+                            .clicked();
+                        cancel |= ui.button("Cancel").clicked();
+                    });
+                });
+            if cancel {
+                open = false;
+            }
+            if submit && let Some(path) = &path {
+                match gg_git::branch::rename(path, &dialog.old, dialog.new.trim()) {
+                    Ok(_) => {
+                        open = false;
+                        reload = true;
+                    }
+                    Err(error) => dialog.error = Some(error),
+                }
+            }
+            if !open {
+                self.rename_dialog = None;
+            }
+        }
+        if let Some(dialog) = &mut self.upstream_dialog {
+            let mut open = true;
+            let mut cancel = false;
+            let mut submit = false;
+            let remotes = self
+                .state
+                .refs
+                .items
+                .iter()
+                .filter(|item| item.kind == gg_engine::refs::RefKind::Remote)
+                .map(|item| item.name.clone())
+                .collect::<Vec<_>>();
+            egui::Window::new("Set upstream")
+                .id(egui::Id::unique("set-upstream"))
+                .modal(ctx, egui::Id::unique("set-upstream"))
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(false)
+                .default_pos(ctx.content_rect().center())
+                .pivot(egui::Align2::CENTER_CENTER)
+                .show(ctx, |ui| {
+                    ui.label(format!("Upstream for {}:", dialog.branch));
+                    egui::ComboBox::from_id_salt("upstream-choice")
+                        .width(320.0)
+                        .selected_text(if dialog.upstream.is_empty() {
+                            "None".to_string()
+                        } else {
+                            dialog.upstream.clone()
+                        })
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut dialog.upstream, String::new(), "None");
+                            for name in &remotes {
+                                ui.selectable_value(&mut dialog.upstream, name.clone(), name);
+                            }
+                        });
+                    ui.weak("Pull, push, and the ahead/behind counts follow the upstream.");
+                    if let Some(error) = &dialog.error {
+                        ui.colored_label(ui.visuals().error_fg_color, error);
+                    }
+                    ui.horizontal(|ui| {
+                        submit |= ui.button("Set upstream").clicked();
+                        cancel |= ui.button("Cancel").clicked();
+                    });
+                });
+            if cancel {
+                open = false;
+            }
+            if submit && let Some(path) = &path {
+                let result = if dialog.upstream.is_empty() {
+                    gg_git::branch::unset_upstream(path, &dialog.branch)
+                } else {
+                    gg_git::branch::set_upstream(path, &dialog.branch, &dialog.upstream)
+                };
+                match result {
+                    Ok(_) => {
+                        open = false;
+                        reload = true;
+                    }
+                    Err(error) => dialog.error = Some(error),
+                }
+            }
+            if !open {
+                self.upstream_dialog = None;
+            }
+        }
+        if let Some(pick) = &mut self.delete_pick {
+            let mut open = true;
+            let mut cancel = false;
+            let mut next = false;
+            let current = self
+                .state
+                .refs
+                .head
+                .as_ref()
+                .and_then(|head| head.name.as_deref())
+                .map(|name| name.strip_prefix("refs/heads/").unwrap_or(name).to_string());
+            let branches = self
+                .state
+                .refs
+                .items
+                .iter()
+                .filter(|item| {
+                    item.kind == gg_engine::refs::RefKind::Branch
+                        && Some(&item.name) != current.as_ref()
+                })
+                .map(|item| item.name.clone())
+                .collect::<Vec<_>>();
+            egui::Window::new("Delete branch")
+                .id(egui::Id::unique("delete-branch-pick"))
+                .modal(ctx, egui::Id::unique("delete-branch-pick"))
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(false)
+                .default_pos(ctx.content_rect().center())
+                .pivot(egui::Align2::CENTER_CENTER)
+                .show(ctx, |ui| {
+                    ui.label("Local branch to delete:");
+                    egui::ComboBox::from_id_salt("delete-branch-choice")
+                        .width(320.0)
+                        .selected_text(pick.name.clone())
+                        .show_ui(ui, |ui| {
+                            for name in &branches {
+                                ui.selectable_value(&mut pick.name, name.clone(), name);
+                            }
+                        });
+                    ui.weak("The current branch cannot be deleted. The next step confirms.");
+                    ui.horizontal(|ui| {
+                        next |= ui.button("Delete…").clicked();
+                        cancel |= ui.button("Cancel").clicked();
+                    });
+                });
+            if cancel {
+                open = false;
+            }
+            if next {
+                self.branch_delete = Some(BranchDeleteDialog {
+                    name: pick.name.clone(),
+                    error: None,
+                });
+                open = false;
+            }
+            if !open {
+                self.delete_pick = None;
+            }
+        }
+        if self.discard_confirm {
+            let mut open = true;
+            let mut cancel = false;
+            let mut confirm = false;
+            egui::Window::new("Discard all changes")
+                .id(egui::Id::unique("discard-all"))
+                .modal(ctx, egui::Id::unique("discard-all"))
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(false)
+                .default_pos(ctx.content_rect().center())
+                .pivot(egui::Align2::CENTER_CENTER)
+                .show(ctx, |ui| {
+                    ui.label("Restore every tracked file, staged and unstaged, to HEAD?");
+                    ui.colored_label(
+                        ui.visuals().warn_fg_color,
+                        "This cannot be undone. Untracked files are kept.",
+                    );
+                    ui.horizontal(|ui| {
+                        confirm |= ui
+                            .button(
+                                egui::RichText::new("Discard all")
+                                    .color(ui.visuals().error_fg_color),
+                            )
+                            .clicked();
+                        cancel |= ui.button("Cancel").clicked();
+                    });
+                });
+            if cancel {
+                open = false;
+            }
+            if confirm {
+                self.discard_confirm = false;
+                self.change_all(ctx, gg_git::worktree_changes::discard_all);
+            } else if !open {
+                self.discard_confirm = false;
+            }
+        }
+        if self.about_open {
+            let mut open = true;
+            egui::Window::new("About gg")
+                .id(egui::Id::unique("about-gg"))
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(false)
+                .default_pos(ctx.content_rect().center())
+                .pivot(egui::Align2::CENTER_CENTER)
+                .show(ctx, |ui| {
+                    ui.heading("gg · good git");
+                    ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
+                    ui.hyperlink_to("github.com/baol/gg", "https://github.com/baol/gg");
+                });
+            self.about_open = open;
+        }
+        if reload {
+            self.load(ctx);
+        }
+    }
+
+    /// The checked-out branch, unless HEAD is detached.
+    fn current_branch(&self) -> Option<String> {
+        self.state
+            .refs
+            .head
+            .as_ref()
+            .filter(|head| !head.detached)
+            .and_then(|head| head.name.as_deref())
+            .map(|name| name.strip_prefix("refs/heads/").unwrap_or(name).to_string())
+    }
+
+    fn on_selected(&mut self, ctx: &egui::Context, action: CommitAction) {
+        if let Some(id) = self.state.selected.clone() {
+            self.run_commit_action(ctx, id, action);
+        }
+    }
+
+    /// Apply and save a preference changed from a menu.
+    fn save_prefs(&mut self, ctx: &egui::Context) {
+        self.apply_prefs(ctx);
+        if let Err(error) = self.prefs.save() {
+            self.mutation_error = Some(error);
+        }
+    }
+
+    /// Commit › Reword / Reopen / Fixup / Drop: the interactive rebase dialog
+    /// with the selected commit preset, so the plan stays reviewable.
+    fn rebase_preset(&mut self, action: gg_engine::rewrite::Action) {
+        let Some(id) = self.state.selected.clone() else {
+            return;
+        };
+        // Fixup needs the commit below in the range.
+        let from = if action == gg_engine::rewrite::Action::Fixup {
+            match self
+                .state
+                .displayed_details()
+                .and_then(|commit| commit.parents.first().cloned())
+            {
+                Some(parent) => parent,
+                None => return,
+            }
+        } else {
+            id.clone()
+        };
+        if let Err(error) = self.open_rewrite_dialog(&from) {
+            self.mutation_error = Some(error);
+            return;
+        }
+        if let Some(dialog) = &mut self.rewrite_dialog {
+            dialog.preset(&id, action);
+        }
+    }
+
+    /// Stage or unstage every change, then refresh what shows them.
+    fn change_all(&mut self, ctx: &egui::Context, change: fn(&Path) -> Result<(), String>) {
+        let Some(path) = self.stash_path() else {
+            return;
+        };
+        match change(&path) {
+            Ok(()) => {
+                self.refresh_working(ctx);
+                self.refresh_local_summary(ctx);
+            }
+            Err(error) => self.mutation_error = Some(error),
         }
     }
 
@@ -2619,11 +3143,17 @@ impl Browser {
 
     /// Search items: every frame command with its menu home and readiness,
     /// then branches, remotes, and tags.
-    fn search_items(&self, ready: &FrameReadiness) -> Vec<search::Item<FrameCommand>> {
-        use search::Group;
+    /// The menu bar as one table: titles, items, shortcuts, and disabled
+    /// reasons, shared with search (final design, action map).
+    fn narrow_details_mode(&self) -> bool {
+        self.ctx_width < 1040.0
+    }
+
+    fn menu_table(&self, ready: &FrameReadiness) -> Vec<menus::Menu<FrameCommand>> {
+        use menus::{Entry, Menu, item};
         let busy = "Wait for the current operation to finish";
         let no_repo = "Open a repository first";
-        let idle = |ok: bool| {
+        let idle = |ok: bool| -> Option<&'static str> {
             if ok {
                 None
             } else if ready.has_repo {
@@ -2632,197 +3162,393 @@ impl Browser {
                 Some(no_repo)
             }
         };
+        let selected = if self.state.selected.is_some() {
+            idle(ready.has_repo)
+        } else {
+            Some("Select a commit in History first")
+        };
+        let mutate = |ok: bool| if ok { selected } else { Some(busy) };
+        let head = self.state.refs.head.as_ref();
+        let current = head
+            .filter(|head| !head.detached)
+            .and_then(|head| head.name.as_deref())
+            .map(|name| name.strip_prefix("refs/heads/").unwrap_or(name).to_string());
+        let on_branch = match current {
+            Some(_) => idle(ready.branch_idle),
+            None if ready.has_repo => Some("Switch to a local branch first"),
+            None => Some(no_repo),
+        };
+        let other_branches = self.state.refs.items.iter().any(|item| {
+            item.kind == gg_engine::refs::RefKind::Branch && Some(&item.name) != current.as_ref()
+        });
+        let delete = if other_branches {
+            idle(ready.branch_idle)
+        } else {
+            Some("No other local branch to delete")
+        };
         let force = if self.force_push_target().is_some() {
             idle(ready.network_idle)
         } else {
             Some("Force with lease requires an upstream remote-tracking ref; track and fetch first")
         };
-        let selected = if self.state.selected.is_some() {
-            None
+        let changes = if ready.changes > 0 {
+            idle(ready.has_repo && !self.working_mutation_pending())
+        } else if ready.has_repo {
+            Some("No local changes")
         } else {
-            Some("Select a commit in History first")
+            Some(no_repo)
         };
-        let refresh = if self.pending.is_none() {
-            None
+        let conflicts = self
+            .mutation
+            .as_ref()
+            .is_some_and(|state| !state.conflicts.is_empty());
+        let selected_parent = self
+            .state
+            .displayed_details()
+            .and_then(|commit| commit.parents.first().cloned());
+        let fixup = match (selected, &selected_parent) {
+            (Some(reason), _) => Some(reason),
+            (None, None) => Some("The first commit has nothing below it to combine into"),
+            (None, Some(_)) => ready.rewrite_reason,
+        };
+        let rewrite = selected.or(ready.rewrite_reason);
+        let recent = if self.recent.is_empty() {
+            vec![
+                item("No recent repositories", "", FrameCommand::Unavailable)
+                    .unless(Some("Repositories you open are listed here"))
+                    .entry(),
+            ]
         } else {
-            Some(busy)
+            self.recent
+                .iter()
+                .map(|path| {
+                    item(
+                        path.display().to_string(),
+                        "",
+                        FrameCommand::OpenRecent(path.clone()),
+                    )
+                    .unless(self.repository_switch_pending().then_some(busy))
+                    .entry()
+                })
+                .collect()
         };
-        let actions: Vec<(&str, &str, &'static str, Option<&'static str>, FrameCommand)> = vec![
-            (
-                "Fetch",
-                "Repository menu",
-                "",
-                idle(ready.network_idle),
-                FrameCommand::Fetch,
-            ),
-            (
-                "Pull (rebase)",
-                "Repository menu",
-                "",
-                ready.pull_reason,
+        let quit = if cfg!(target_os = "macos") {
+            "Cmd+Q"
+        } else {
+            "Ctrl+Q"
+        };
+        let mut repository = vec![
+            item("Open…", "Ctrl+O", FrameCommand::Open)
+                .unless(self.repository_switch_pending().then_some(busy))
+                .entry(),
+            item("Clone…", "", FrameCommand::Clone)
+                .unless(
+                    (self.network.is_some() || self.branch.is_some() || self.operation_busy())
+                        .then_some(busy),
+                )
+                .hint("Clone a repository and open it; a URL on the clipboard pre-fills the form")
+                .entry(),
+            Entry::Submenu("Open recent".into(), recent),
+            item("Refresh", "Ctrl+R", FrameCommand::Refresh)
+                .unless(self.pending.is_some().then_some(busy))
+                .entry(),
+            Entry::Separator,
+            item("Fetch", "Ctrl+Shift+F", FrameCommand::Fetch)
+                .unless(idle(ready.network_idle))
+                .hint("Fetch the default remote without changing local branches")
+                .entry(),
+            item(
+                if ready.behind > 0 {
+                    format!("Pull {} (rebase)", ready.behind)
+                } else {
+                    "Pull (rebase)".into()
+                },
+                "Ctrl+Shift+L",
                 FrameCommand::Pull,
-            ),
-            (
-                "Push",
-                "Repository menu",
-                "",
-                idle(ready.network_idle),
-                FrameCommand::Push,
-            ),
-            (
-                "Force push with lease…",
-                "Repository menu",
-                "",
-                force,
-                FrameCommand::ForcePush,
-            ),
-            ("Open…", "Repository menu", "", None, FrameCommand::Open),
-            ("Clone…", "Repository menu", "", None, FrameCommand::Clone),
-            (
-                "Refresh",
-                "Repository menu",
-                "Ctrl+R",
-                refresh,
-                FrameCommand::Refresh,
-            ),
-            (
-                "Worktrees…",
-                "Repository menu",
-                "",
-                idle(ready.has_repo),
-                FrameCommand::Worktrees,
-            ),
-            (
-                "Recovery…",
-                "Repository menu · backups and reflog",
-                "",
-                idle(ready.has_repo),
-                FrameCommand::Recovery,
-            ),
-            (
-                "Development base folders…",
-                "Repository menu · clone folders",
-                "",
-                None,
-                FrameCommand::Folders,
-            ),
-            (
-                "Preferences…",
-                "Repository menu · theme, density, folders, avatars, rebase",
-                "Ctrl+,",
-                None,
-                FrameCommand::Preferences,
-            ),
-            (
-                "New branch…",
-                "Branch menu",
-                "",
-                idle(ready.branch_idle),
-                FrameCommand::NewBranch,
-            ),
-            (
-                "New tag…",
-                "Branch menu",
-                "",
-                idle(ready.branch_idle),
-                FrameCommand::NewTag,
-            ),
-            (
-                "Track remote branch…",
-                "Branch menu",
-                "",
-                idle(ready.branch_idle),
-                FrameCommand::TrackBranch,
-            ),
-            (
-                "Merge into current…",
-                "Branch menu",
-                "",
-                idle(ready.branch_idle),
-                FrameCommand::Merge,
-            ),
-            (
-                "Rebase current onto…",
-                "Branch menu",
-                "",
-                idle(ready.branch_idle),
-                FrameCommand::RebaseOnto,
-            ),
-            (
-                "Commit actions…",
-                "Commit menu · selected commit",
-                "Alt+A",
-                selected,
-                FrameCommand::CommitActions,
-            ),
-            (
-                "Interactive rebase from here…",
-                "Commit menu · from the selected commit",
-                "R",
-                ready.rewrite_reason,
-                FrameCommand::RewriteSelected,
-            ),
-            (
-                "Interactive rebase of this branch",
-                "toolbar · the branch's own commits",
-                "",
-                ready.branch_rewrite_reason,
-                FrameCommand::Rewrite,
-            ),
-            (
-                "Local Changes",
-                "Changes menu",
-                "",
-                idle(ready.has_repo),
-                FrameCommand::LocalChanges,
-            ),
-            (
-                "Stash changes…",
-                "Changes menu",
-                "",
-                ready.stash_reason,
-                FrameCommand::Stash,
-            ),
-            (
-                "Stashes…",
-                "Changes menu · list, restore, or drop",
-                "",
-                idle(ready.stash_idle),
-                FrameCommand::Stashes,
-            ),
-            (
-                "History",
-                "View menu",
-                "",
-                idle(ready.has_repo),
-                FrameCommand::History,
-            ),
-            (
-                "Refs sidebar",
-                "View menu",
-                "",
-                None,
-                FrameCommand::ToggleRefs,
-            ),
-            (
-                "Keyboard shortcuts…",
-                "Help menu",
-                "",
-                None,
-                FrameCommand::Shortcuts,
-            ),
+            )
+            .unless(ready.pull_reason)
+            .hint("Fetch the upstream and rebase the current branch onto it")
+            .entry(),
+            item("Push", "Ctrl+Shift+P", FrameCommand::Push)
+                .unless(idle(ready.network_idle))
+                .hint("Push the current branch without force; set upstream when absent")
+                .entry(),
+            item("Push with force-with-lease…", "", FrameCommand::ForcePush)
+                .unless(force)
+                .entry(),
+            Entry::Separator,
+            item("Worktrees…", "", FrameCommand::Worktrees)
+                .unless(idle(ready.has_repo))
+                .entry(),
+            item("Submodules…", "", FrameCommand::Unavailable)
+                .unless(Some(
+                    "Not built yet: open a submodule from a changed file in Local Changes or Review",
+                ))
+                .entry(),
+            item("LFS…", "", FrameCommand::Unavailable)
+                .unless(Some(
+                    "Not built yet: inspect an LFS file from Local Changes or Review",
+                ))
+                .entry(),
+            Entry::Separator,
+            item("Backups…", "", FrameCommand::Backups)
+                .unless(idle(ready.has_repo))
+                .hint("Private backups taken before every rewrite")
+                .entry(),
+            item("Reflog…", "", FrameCommand::Reflog)
+                .unless(idle(ready.has_repo))
+                .entry(),
         ];
-        let mut items = actions
+        if !cfg!(target_os = "macos") {
+            repository.extend([
+                Entry::Separator,
+                item("Preferences…", "Ctrl+,", FrameCommand::Preferences).entry(),
+                item("Quit", quit, FrameCommand::Quit).entry(),
+            ]);
+        }
+        let mut table = Vec::new();
+        if cfg!(target_os = "macos") {
+            table.push(Menu {
+                title: "gg",
+                entries: vec![
+                    item("Settings…", "Cmd+,", FrameCommand::Preferences).entry(),
+                    Entry::Separator,
+                    item("Quit gg", quit, FrameCommand::Quit).entry(),
+                ],
+            });
+        }
+        table.push(Menu {
+            title: "Repository",
+            entries: repository,
+        });
+        table.push(Menu {
+            title: "Branch",
+            entries: vec![
+                item("New branch…", "Ctrl+B", FrameCommand::NewBranch)
+                    .unless(idle(ready.branch_idle))
+                    .entry(),
+                item("New tag…", "", FrameCommand::NewTag)
+                    .unless(idle(ready.branch_idle))
+                    .entry(),
+                // Same readiness as the toolbar's branch button it opens.
+                item("Switch to…", "Ctrl+Shift+B", FrameCommand::SwitchTo)
+                    .unless(idle(ready.has_repo))
+                    .entry(),
+                Entry::Separator,
+                item("Merge into current…", "", FrameCommand::Merge)
+                    .unless(on_branch)
+                    .entry(),
+                item("Rebase current onto…", "", FrameCommand::RebaseOnto)
+                    .unless(on_branch)
+                    .entry(),
+                item("Set upstream…", "", FrameCommand::SetUpstream)
+                    .unless(on_branch)
+                    .entry(),
+                item("Track remote branch…", "", FrameCommand::TrackBranch)
+                    .unless(idle(ready.branch_idle))
+                    .entry(),
+                Entry::Separator,
+                item("Rename…", "F2", FrameCommand::RenameBranch)
+                    .unless(on_branch)
+                    .entry(),
+                item("Delete…", "", FrameCommand::DeleteBranch)
+                    .unless(delete)
+                    .danger()
+                    .entry(),
+            ],
+        });
+        table.push(Menu {
+            title: "Commit",
+            entries: vec![
+                item("Review changes", "Enter", FrameCommand::ReviewSelected)
+                    .unless(selected)
+                    .entry(),
+                item("Compare with HEAD", "", FrameCommand::CompareHead)
+                    .unless(selected)
+                    .entry(),
+                item("Copy ID", "Ctrl+C", FrameCommand::CopyId)
+                    .unless(selected)
+                    .entry(),
+                Entry::Separator,
+                item("Cherry-pick onto HEAD", "", FrameCommand::CherryPick)
+                    .unless(mutate(self.mutation.is_none()))
+                    .entry(),
+                item("Revert", "", FrameCommand::Revert)
+                    .unless(mutate(self.mutation.is_none()))
+                    .entry(),
+                Entry::Separator,
+                item(
+                    "Interactive rebase from here…",
+                    "R",
+                    FrameCommand::RewriteSelected,
+                )
+                .unless(rewrite)
+                .entry(),
+                item(
+                    "Reword…",
+                    "",
+                    FrameCommand::RebasePreset(gg_engine::rewrite::Action::Reword),
+                )
+                .unless(rewrite)
+                .entry(),
+                item(
+                    "Reopen for editing…",
+                    "E",
+                    FrameCommand::RebasePreset(gg_engine::rewrite::Action::Edit),
+                )
+                .unless(rewrite)
+                .entry(),
+                item(
+                    "Fixup into…",
+                    "F",
+                    FrameCommand::RebasePreset(gg_engine::rewrite::Action::Fixup),
+                )
+                .unless(fixup)
+                .entry(),
+                item(
+                    "Drop…",
+                    "D",
+                    FrameCommand::RebasePreset(gg_engine::rewrite::Action::Drop),
+                )
+                .unless(rewrite)
+                .danger()
+                .entry(),
+                Entry::Separator,
+                item("Reset current branch to here…", "", FrameCommand::ResetHere)
+                    .unless(mutate(self.mutation.is_none()))
+                    .danger()
+                    .entry(),
+            ],
+        });
+        table.push(Menu {
+            title: "Changes",
+            entries: vec![
+                item("Stage all", "Ctrl+Shift+S", FrameCommand::StageAll)
+                    .unless(changes)
+                    .entry(),
+                item("Unstage all", "Ctrl+Shift+U", FrameCommand::UnstageAll)
+                    .unless(changes)
+                    .entry(),
+                item("Discard all…", "", FrameCommand::DiscardAll)
+                    .unless(changes)
+                    .hint("Restore tracked files to HEAD; untracked files are kept")
+                    .danger()
+                    .entry(),
+                Entry::Separator,
+                item("Commit", "Ctrl+Enter", FrameCommand::CommitNow)
+                    .unless(idle(ready.has_repo))
+                    .hint("Commit the staged changes with the message in Local Changes")
+                    .entry(),
+                item("Amend HEAD", "Ctrl+Shift+Enter", FrameCommand::AmendHead)
+                    .unless(idle(ready.has_repo))
+                    .entry(),
+                Entry::Separator,
+                item("Stash changes", "Ctrl+Shift+Z", FrameCommand::Stash)
+                    .unless(ready.stash_reason)
+                    .entry(),
+                item("Stashes…", "", FrameCommand::Stashes)
+                    .unless((!ready.stash_idle).then_some(busy))
+                    .entry(),
+                Entry::Separator,
+                item("Resolve conflicts…", "", FrameCommand::ResolveConflicts)
+                    .unless((!conflicts).then_some("No conflicts to resolve"))
+                    .entry(),
+            ],
+        });
+        let details = if self.narrow_details_mode() {
+            self.narrow_details
+        } else {
+            self.details_visible
+        };
+        let sidebar = self.ctx_width >= 1120.0;
+        table.push(Menu {
+            title: "View",
+            entries: vec![
+                item("Local Changes", "Ctrl+1", FrameCommand::LocalChanges)
+                    .unless(idle(ready.has_repo))
+                    .checked(self.working.is_some())
+                    .entry(),
+                item("History", "Ctrl+2", FrameCommand::History)
+                    .checked(self.working.is_none() && self.review.is_none())
+                    .entry(),
+                Entry::Separator,
+                item("Refs sidebar", "Ctrl+\\", FrameCommand::ToggleRefs)
+                    .unless(
+                        (!sidebar)
+                            .then_some("Resize the window to at least 1120 px to show the sidebar"),
+                    )
+                    .checked(self.refs_visible && sidebar)
+                    .entry(),
+                item("Commit inspector", "Space", FrameCommand::ToggleDetails)
+                    .checked(details)
+                    .entry(),
+                Entry::Separator,
+                item("Inline diff", "", FrameCommand::Unavailable)
+                    .checked(true)
+                    .entry(),
+                item("Side-by-side diff", "", FrameCommand::Unavailable)
+                    .unless(Some("Not built yet: the reader shows inline diffs only"))
+                    .entry(),
+                Entry::Separator,
+                item(
+                    "Compact density",
+                    "",
+                    FrameCommand::SetDensity(match self.prefs.density {
+                        settings::Density::Compact => settings::Density::Comfortable,
+                        settings::Density::Comfortable => settings::Density::Compact,
+                    }),
+                )
+                .checked(self.prefs.density == settings::Density::Compact)
+                .entry(),
+                Entry::Submenu(
+                    format!("Theme: {}", self.prefs.theme.label()),
+                    settings::Theme::ALL
+                        .into_iter()
+                        .map(|theme| {
+                            item(theme.label(), "", FrameCommand::SetTheme(theme))
+                                .checked(self.prefs.theme == theme)
+                                .entry()
+                        })
+                        .collect(),
+                ),
+            ],
+        });
+        table.push(Menu {
+            title: "Help",
+            entries: vec![
+                item("Keyboard shortcuts", "?", FrameCommand::Shortcuts).entry(),
+                item("Documentation", "", FrameCommand::Documentation)
+                    .hint("Open the gg README in the browser")
+                    .entry(),
+                item("About gg", "", FrameCommand::About).entry(),
+            ],
+        });
+        table
+    }
+
+    fn search_items(&self, ready: &FrameReadiness) -> Vec<search::Item<FrameCommand>> {
+        use search::Group;
+        // Every menu item, named with its menu, plus the toolbar's own rebase.
+        let mut items = menus::flatten(&self.menu_table(ready))
             .into_iter()
-            .map(|(label, context, key, disabled, command)| search::Item {
+            .filter(|(_, item)| item.command != FrameCommand::Unavailable)
+            .map(|(path, item)| search::Item {
                 group: Group::Actions,
-                label: label.into(),
-                context: context.into(),
-                key,
-                disabled,
-                command,
+                label: item.label,
+                context: format!("{path} menu"),
+                key: item.key,
+                disabled: item.disabled,
+                command: item.command,
             })
             .collect::<Vec<_>>();
+        items.push(search::Item {
+            group: Group::Actions,
+            label: "Interactive rebase of this branch".into(),
+            context: "toolbar · the branch's own commits".into(),
+            key: "",
+            disabled: ready.branch_rewrite_reason.map(str::to_string),
+            command: FrameCommand::Rewrite,
+        });
         let head = self
             .state
             .refs
@@ -2930,7 +3656,7 @@ impl Browser {
                                     .right_text(item.key)
                                     .min_size(egui::vec2(ui.available_width(), 24.0)),
                             );
-                            let response = match item.disabled {
+                            let response = match &item.disabled {
                                 Some(reason) => response.on_disabled_hover_text(reason),
                                 None => response,
                             };
@@ -3594,6 +4320,12 @@ impl Browser {
         }
         if self.mutation_path.is_some() {
             self.clear_operation_state();
+        }
+        if let Some(path) = &path {
+            settings::push_recent(&mut self.recent, path.clone());
+            if let Err(error) = settings::save_recent(&self.recent) {
+                self.mutation_error = Some(error);
+            }
         }
         self.mutation_path = path;
         if self.mutation.is_none() {
@@ -6574,6 +7306,8 @@ impl Browser {
             // Esc leaves the conflict workspace before any view can take it.
             self.conflict_view = None;
         }
+        self.ctx_width = ctx.content_rect().width();
+        self.menu_shortcuts(ctx);
         self.poll_local_summary();
         let focused = ctx.input(|i| i.focused);
         if focused && !self.window_focused {
@@ -6927,6 +7661,18 @@ impl Browser {
                 {
                     self.run_commit_action(ctx, id, CommitAction::Rewrite);
                 }
+                for (key, action) in [
+                    (egui::Key::E, gg_engine::rewrite::Action::Edit),
+                    (egui::Key::F, gg_engine::rewrite::Action::Fixup),
+                    (egui::Key::D, gg_engine::rewrite::Action::Drop),
+                ] {
+                    if crate::navigation::activation_available(ctx)
+                        && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, key))
+                        && self.frame_readiness().rewrite_reason.is_none()
+                    {
+                        self.rebase_preset(action);
+                    }
+                }
                 let page = self.page_rows.saturating_sub(1).max(1) as i32;
                 for (modifiers, key, distance) in [
                     (egui::Modifiers::NONE, egui::Key::ArrowUp, -1),
@@ -6979,7 +7725,7 @@ impl Browser {
         let working_mutation_pending = self.working_mutation_pending();
         let ready = self.frame_readiness();
         let shortcuts = crate::navigation::available(ctx);
-        let mut open_preferences = shortcuts
+        let open_preferences = shortcuts
             && ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::Comma));
         if shortcuts && ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::Num1))
         {
@@ -6995,521 +7741,64 @@ impl Browser {
         {
             self.refs_visible = !self.refs_visible;
         }
-        let mut quit = false;
-        // A real menu bar: frameless titles, hover moves between open menus.
-        egui::Panel::top("menu-bar").exact_size(MENU_BAR_HEIGHT).show(ui, |ui| {
-            egui::MenuBar::new().ui(ui, |ui| {
-                if cfg!(target_os = "macos") {
-                    ui.menu_button("gg", |ui| {
-                        if ui
-                            .add(egui::Button::new("Settings…").shortcut_text("Cmd+,"))
-                            .clicked()
-                        {
-                            open_preferences = true;
-                            ui.close();
-                        }
-                        ui.separator();
-                        if ui.add(egui::Button::new("Quit gg").shortcut_text("Cmd+Q")).clicked() {
-                            quit = true;
-                            ui.close();
-                        }
-                    });
-                }
-                ui.menu_button("Repository", |ui| {
-                    if ui
-                        .add_enabled(
-                            !self.repository_switch_pending(),
-                            egui::Button::new("Open…"),
-                        )
-                        .clicked()
-                    {
-                        self.edit_path = true;
-                        ui.close();
-                    }
-                    if ui
-                        .add_enabled(
-                            self.pending.is_none(),
-                            egui::Button::new("Refresh").shortcut_text("Ctrl/Cmd+R"),
-                        )
-                        .clicked()
-                    {
-                        self.load(ctx);
-                        ui.close();
-                    }
-                    if ui
-                        .add_enabled(ready.has_repo, egui::Button::new("Recovery…"))
-                        .on_hover_text(
-                            "Recover rewrite backups or reflog entries from one source selector",
-                        )
-                        .clicked()
-                    {
-                        self.open_recovery_window();
-                        ui.close();
-                    }
-                    if ui
-                        .add_enabled(
-                            self.state.history.is_some(),
-                            egui::Button::new("Worktrees…"),
-                        )
-                        .on_hover_text("List, create, open, or remove linked worktrees")
-                        .clicked()
-                    {
-                        self.open_worktrees(ctx);
-                        ui.close();
-                    }
+        let table = self.menu_table(&ready);
+        let mut menu_command = None;
+        // egui's in-window menu bar: frameless titles, hover moves between open menus.
+        egui::Panel::top("menu-bar")
+            .exact_size(MENU_BAR_HEIGHT)
+            .show(ui, |ui| {
+                egui::MenuBar::new().ui(ui, |ui| {
+                    menu_command = menus::show(ui, &table);
                     ui.separator();
-                    let network_idle = ready.network_idle;
-                    if ui
-                        .add_enabled(network_idle, egui::Button::new("Fetch"))
-                        .on_hover_text("Fetch the default remote without changing local branches")
-                        .clicked()
-                    {
-                        self.start_fetch(ctx, None, self.prefs.fetch_prune);
-                        ui.close();
-                    }
-                    let pull_label = if ready.behind > 0 {
-                        format!("Pull {} (rebase)", ready.behind)
-                    } else {
-                        "Pull (rebase)".into()
-                    };
-                    let pull = ui
-                        .add_enabled(ready.pull_reason.is_none(), egui::Button::new(pull_label))
-                        .on_hover_text(
-                            "Fetch the upstream and rebase the current branch onto it",
-                        );
-                    let pull = match ready.pull_reason {
-                        Some(reason) => pull.on_disabled_hover_text(reason),
-                        None => pull,
-                    };
-                    if pull.clicked() {
-                        self.start_pull_rebase(ctx);
-                        ui.close();
-                    }
-                    if ui
-                        .add_enabled(network_idle, egui::Button::new("Push"))
-                        .on_hover_text(
-                            "Push the current branch without force; set upstream when absent",
-                        )
-                        .clicked()
-                    {
-                        self.start_push(ctx);
-                        ui.close();
-                    }
-                    let force_target = self.force_push_target();
-                    if ui
-                        .add_enabled(
-                            network_idle && force_target.is_some(),
-                            egui::Button::new("Force push with lease…"),
-                        )
-                        .on_hover_text(
-                            "Rewrite the upstream branch only if it still matches the fetched lease",
-                        )
-                        .on_disabled_hover_text(
-                            "Force with lease requires an upstream remote-tracking ref; track and fetch first",
-                        )
-                        .clicked()
-                        && let Some(target) = force_target
-                    {
-                        self.force_push = Some(target);
-                        ui.close();
-                    }
-                    if ui
-                        .add_enabled(
-                            self.network.is_none()
-                                && self.branch.is_none()
-                                && self.mutation.is_none()
-                                && !self.operation_busy(),
-                            egui::Button::new("Clone…"),
-                        )
-                        .on_hover_text(
-                            "Clone a repository and open it after success; a repository URL on the clipboard pre-fills the form",
-                        )
-                        .clicked()
-                    {
-                        self.clone_dialog = Some(CloneDialog::from_url(
-                            clipboard::repository_url(),
-                            self.clone_start_folder(),
-                        ));
-                        ui.close();
-                    }
-                    if ui
-                        .button("Development base folders…")
-                        .on_hover_text(
-                            "Choose the folders where you keep repositories and the default clone folder",
-                        )
-                        .clicked()
-                    {
-                        self.open_preferences(PrefSection::General);
-                        ui.close();
-                    }
-                    if !cfg!(target_os = "macos") {
-                        if ui
-                            .add(egui::Button::new("Preferences…").shortcut_text("Ctrl+,"))
-                            .on_hover_text(
-                                "Theme, density, clone folders, avatars, and rebase defaults",
-                            )
-                            .clicked()
-                        {
-                            open_preferences = true;
-                            ui.close();
-                        }
-                        ui.separator();
-                        if ui.button("Quit").clicked() {
-                            quit = true;
-                            ui.close();
-                        }
-                    }
-                });
-                let refs = self.state.refs.clone();
-                let branch_pending = self.branch.is_some()
-                    || self.network.is_some()
-                    || self.mutation.is_some()
-                    || self.operation_busy();
-                let mut jump = None;
-                let mut switch = None;
-                let mut new_branch = false;
-                let mut new_tag = false;
-                let mut track_branch = false;
-                let mut merge = false;
-                let mut rebase = false;
-                ui.menu_button("Branch", |ui| {
-                    let head_name = refs.head.as_ref().and_then(|head| head.name.as_deref());
-                    if ui
-                        .add_enabled(
-                            !branch_pending && refs.head.is_some() && self.network.is_none(),
-                            egui::Button::new("New branch…"),
-                        )
-                        .clicked()
-                    {
-                        new_branch = true;
-                        ui.close();
-                    }
-                    if ui
-                        .add_enabled(
-                            !branch_pending && refs.head.is_some() && self.network.is_none(),
-                            egui::Button::new("New tag…"),
-                        )
-                        .on_hover_text("Create an annotated or signed tag at an explicit target")
-                        .clicked()
-                    {
-                        new_tag = true;
-                        ui.close();
-                    }
-                    if ui
-                        .add_enabled(
-                            !branch_pending
-                                && self.network.is_none()
-                                && refs
-                                    .items
-                                    .iter()
-                                    .any(|item| item.kind == gg_engine::refs::RefKind::Remote),
-                            egui::Button::new("Track remote branch…"),
-                        )
-                        .clicked()
-                    {
-                        track_branch = true;
-                        ui.close();
-                    }
-                    if ui
-                        .add_enabled(
-                            !branch_pending
-                                && self.mutation.is_none()
-                                && self.network.is_none()
-                                && !self.operation_busy(),
-                            egui::Button::new("Merge into current…"),
-                        )
-                        .on_hover_text("Merge a local branch, remote-tracking ref, or tag")
-                        .clicked()
-                    {
-                        merge = true;
-                        ui.close();
-                    }
-                    if ui
-                        .add_enabled(
-                            !branch_pending
-                                && self.mutation.is_none()
-                                && self.network.is_none()
-                                && !self.operation_busy(),
-                            egui::Button::new("Rebase current onto…"),
-                        )
-                        .on_hover_text("Rebase the current branch onto a branch, remote, or tag")
-                        .clicked()
-                    {
-                        rebase = true;
-                        ui.close();
-                    }
-                    let branches = refs
-                        .items
-                        .iter()
-                        .filter(|item| item.kind == gg_engine::refs::RefKind::Branch)
-                        .collect::<Vec<_>>();
-                    if !branches.is_empty() {
-                        ui.menu_button("Branches", |ui| {
-                            for item in &branches {
-                                let current = Some(item.full_name.as_str()) == head_name;
-                                let label = if current {
-                                    format!("{}  ·  HEAD", item.name)
+                    let identity_width = ui.available_width().max(80.0);
+                    let (identity, path) = if let Some(history) = &self.state.history {
+                        let tracking = match self.rebase_step_label() {
+                            Some(step) => format!("  ·  {step}"),
+                            None => self
+                                .state
+                                .refs
+                                .current_tracking()
+                                .map(|tracking| {
+                                    format!("  ·  {}", refs_view::tracking_label(tracking))
+                                })
+                                .unwrap_or_default(),
+                        };
+                        (
+                            format!(
+                                "{}  ·  {}{}",
+                                history
+                                    .path
+                                    .file_name()
+                                    .unwrap_or_default()
+                                    .to_string_lossy(),
+                                if history.shallow {
+                                    format!("{} · shallow", history.head)
                                 } else {
-                                    item.name.clone()
-                                };
-                                if ui.button(label).clicked() {
-                                    jump = Some(item.commit.clone());
-                                    ui.close();
-                                }
-                            }
-                        });
-                        ui.menu_button("Switch to branch", |ui| {
-                            for item in &branches {
-                                let current = Some(item.full_name.as_str()) == head_name;
-                                if ui
-                                    .add_enabled(
-                                        !current && !branch_pending,
-                                        egui::Button::new(format!("Switch to {}", item.name)),
-                                    )
-                                    .on_hover_text(if current {
-                                        "Already on this branch"
-                                    } else {
-                                        "Switch the worktree after a clean-worktree check"
-                                    })
-                                    .clicked()
-                                {
-                                    switch = Some(item.name.clone());
-                                    ui.close();
-                                }
-                            }
-                        });
-                    }
-                    for (title, kind) in [
-                        ("Remotes", gg_engine::refs::RefKind::Remote),
-                        ("Tags", gg_engine::refs::RefKind::Tag),
-                    ] {
-                        let filtered = refs
-                            .items
-                            .iter()
-                            .filter(|item| item.kind == kind)
-                            .collect::<Vec<_>>();
-                        if filtered.is_empty() {
-                            continue;
-                        }
-                        ui.menu_button(title, |ui| {
-                            for item in filtered {
-                                if ui.button(item.name.clone()).clicked() {
-                                    jump = Some(item.commit.clone());
-                                    ui.close();
-                                }
-                            }
-                        });
-                    }
-                    if refs.items.is_empty() {
-                        ui.weak("No branches or tags");
-                    }
-                });
-                if let Some(name) = switch {
-                    self.start_branch(ctx, name, false);
-                }
-                if new_branch {
-                    self.open_new_branch();
-                }
-                if new_tag {
-                    self.open_new_tag();
-                }
-                if track_branch {
-                    self.track_dialog = Some(self.default_track_branch());
-                }
-                if merge {
-                    self.open_merge_dialog();
-                }
-                if rebase {
-                    self.rebase_dialog = Some(RebaseDialog {
-                        reference: String::new(),
-                        autostash: self.prefs.rebase_autostash,
-                        error: None,
-                    });
-                }
-                if let Some(id) = jump {
-                    self.jump_to_ref(id);
-                }
-                let mut rewrite_selected = false;
-                ui.menu_button("Commit", |ui| {
-                    let selected = self.state.selected.is_some();
-                    if ui
-                        .add_enabled(
-                            selected,
-                            egui::Button::new("Commit actions…").shortcut_text("Alt+A"),
+                                    history.head.clone()
+                                },
+                                tracking
+                            ),
+                            history.path.display().to_string(),
                         )
-                        .on_hover_text("Review, compare, cherry-pick, revert, reset, or rewrite the selected commit")
-                        .on_disabled_hover_text("Select a commit in History first")
-                        .clicked()
-                    {
-                        self.commit_actions = true;
-                        ui.ctx().request_repaint();
-                        ui.close();
-                    }
-                    let rewrite = ui
-                        .add_enabled(
-                            ready.rewrite_reason.is_none(),
-                            egui::Button::new("Interactive rebase from here…").shortcut_text("R"),
-                        )
-                        .on_hover_text("Rewrite commits from the selected commit through HEAD");
-                    let rewrite = match ready.rewrite_reason {
-                        Some(reason) => rewrite.on_disabled_hover_text(reason),
-                        None => rewrite,
-                    };
-                    if rewrite.clicked() {
-                        rewrite_selected = true;
-                        ui.close();
-                    }
-                });
-                if rewrite_selected && let Some(id) = self.state.selected.clone() {
-                    self.run_commit_action(ctx, id, CommitAction::Rewrite);
-                }
-                ui.menu_button("Changes", |ui| {
-                    if ui
-                        .add_enabled(ready.has_repo, egui::Button::new("Local Changes"))
-                        .on_hover_text("Stage, unstage, commit, and amend in one view")
-                        .clicked()
-                    {
-                        go_local = true;
-                        ui.close();
-                    }
-                    ui.separator();
-                    let stash = ui
-                        .add_enabled(
-                            ready.stash_reason.is_none(),
-                            egui::Button::new("Stash changes…"),
-                        )
-                        .on_hover_text("Record working changes in a new stash entry");
-                    let stash = match ready.stash_reason {
-                        Some(reason) => stash.on_disabled_hover_text(reason),
-                        None => stash,
-                    };
-                    if stash.clicked() {
-                        self.open_stash_dialog();
-                        ui.close();
-                    }
-                    if ui
-                        .add_enabled(ready.stash_idle, egui::Button::new("Stashes…"))
-                        .on_hover_text("List, restore, or drop stash entries")
-                        .clicked()
-                    {
-                        self.open_stash_window();
-                        ui.close();
-                    }
-                });
-                ui.menu_button("View", |ui| {
-                    if ui
-                        .add_enabled(
-                            self.state.history.is_some(),
-                            egui::Button::selectable(self.working.is_some(), "Local Changes")
-                                .shortcut_text("Ctrl+1"),
-                        )
-                        .clicked()
-                    {
-                        go_local = true;
-                        ui.close();
-                    }
-                    if ui
-                        .add(
-                            egui::Button::selectable(
-                                self.working.is_none() && self.review.is_none(),
-                                "History",
-                            )
-                            .shortcut_text("Ctrl+2"),
-                        )
-                        .clicked()
-                    {
-                        go_history = true;
-                        ui.close();
-                    }
-                    ui.separator();
-                    let shown = if narrow {
-                        &mut self.narrow_details
                     } else {
-                        &mut self.details_visible
+                        ("Open a repository".into(), self.path.clone())
                     };
-                    if ui
-                        .add(egui::Button::selectable(*shown, "Commit details").shortcut_text("Space"))
-                        .clicked()
-                    {
-                        *shown = !*shown;
-                        ui.close();
-                    }
-                    ui.separator();
-                    let sidebar_available = ctx.content_rect().width() >= 1120.0;
-                    let sidebar = ui.add_enabled(
-                        sidebar_available,
-                        egui::Button::selectable(self.refs_visible, "Refs sidebar")
-                            .shortcut_text("Ctrl+\\"),
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(identity_width, 26.0),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            ui.set_min_width(identity_width);
+                            bounded_text::field(
+                                ui,
+                                &format!("{identity}  ·  {path}"),
+                                egui::FontId::proportional(13.0),
+                                26.0,
+                            );
+                        },
                     );
-                    if sidebar.clicked() {
-                        self.refs_visible = !self.refs_visible;
-                        ui.close();
-                    }
-                    sidebar.on_hover_text(if sidebar_available {
-                        "Show branches, remotes, and tags on the left"
-                    } else {
-                        "Resize the window to at least 1120 px to show the sidebar"
-                    });
                 });
-                ui.menu_button("Help", |ui| {
-                    if ui.button("Keyboard shortcuts…").clicked() {
-                        self.help_shortcuts = true;
-                        ui.close();
-                    }
-                });
-                ui.separator();
-                let identity_width = ui.available_width().max(80.0);
-                let (identity, path) = if let Some(history) = &self.state.history {
-                    let tracking = match self.rebase_step_label() {
-                        Some(step) => format!("  ·  {step}"),
-                        None => self
-                            .state
-                            .refs
-                            .current_tracking()
-                            .map(|tracking| {
-                                format!("  ·  {}", refs_view::tracking_label(tracking))
-                            })
-                            .unwrap_or_default(),
-                    };
-                    (
-                        format!(
-                            "{}  ·  {}{}",
-                            history
-                                .path
-                                .file_name()
-                                .unwrap_or_default()
-                                .to_string_lossy(),
-                            if history.shallow {
-                                format!("{} · shallow", history.head)
-                            } else {
-                                history.head.clone()
-                            },
-                            tracking
-                        ),
-                        history.path.display().to_string(),
-                    )
-                } else {
-                    ("Open a repository".into(), self.path.clone())
-                };
-                ui.allocate_ui_with_layout(
-                    egui::vec2(identity_width, 26.0),
-                    egui::Layout::left_to_right(egui::Align::Center),
-                    |ui| {
-                        ui.set_min_width(identity_width);
-                        bounded_text::field(
-                            ui,
-                            &format!("{identity}  ·  {path}"),
-                            egui::FontId::proportional(13.0),
-                            26.0,
-                        );
-                    },
-                );
             });
-        });
-        if quit {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-        }
-        let mut tool = None;
+        let mut tool = menu_command;
         let mut stash_pick = None;
         let mut open_search = false;
         let mut search_field: Option<(egui::Rect, bool)> = None;
@@ -8083,6 +8372,7 @@ impl Browser {
             self.narrow_details = false;
         }
         self.draw_folders_dialog(ctx);
+        self.draw_menu_dialogs(ctx);
         self.draw_stash_switch(ctx);
         let mut chosen_clone_folder = None;
         if let Some(dialog) = &mut self.clone_dialog {
@@ -8558,6 +8848,7 @@ impl Browser {
 
         let mut reset_submit = None;
         let mut reset_cancel = false;
+        let mut reset_mode = None;
         if let Some((commit, mode)) = self.reset_confirm.clone() {
             egui::Window::new("Reset here")
                 .id(egui::Id::unique("reset-here"))
@@ -8572,6 +8863,33 @@ impl Browser {
                         commit.chars().take(8).collect::<String>(),
                         mode.as_str()
                     ));
+                    ui.horizontal(|ui| {
+                        for (choice, label, hint) in [
+                            (
+                                gg_engine::reset::Mode::Soft,
+                                "Soft",
+                                "Move the branch; keep the index and working files",
+                            ),
+                            (
+                                gg_engine::reset::Mode::Mixed,
+                                "Mixed",
+                                "Move the branch and reset the index; keep working files",
+                            ),
+                            (
+                                gg_engine::reset::Mode::Hard,
+                                "Hard",
+                                "Move the branch and discard staged and working changes",
+                            ),
+                        ] {
+                            if ui
+                                .radio(mode == choice, label)
+                                .on_hover_text(hint)
+                                .clicked()
+                            {
+                                reset_mode = Some(choice);
+                            }
+                        }
+                    });
                     if mode == gg_engine::reset::Mode::Hard {
                         ui.colored_label(
                             ui.visuals().warn_fg_color,
@@ -8587,6 +8905,9 @@ impl Browser {
                         }
                     });
                 });
+        }
+        if let (Some(mode), Some((_, current))) = (reset_mode, &mut self.reset_confirm) {
+            *current = mode;
         }
         if reset_cancel {
             self.reset_confirm = None;
@@ -11151,6 +11472,26 @@ mod tests {
     }
 
     #[test]
+    fn commit_menu_presets_select_the_commit_in_the_rebase_plan() -> Result<(), String> {
+        let app = layout_fixture();
+        let mut dialog = rebase_fixture(&app)?;
+        dialog.preset(&"a".repeat(40), gg_engine::rewrite::Action::Drop);
+        assert_eq!(dialog.selected, 1, "the oldest row is selected");
+        assert_eq!(dialog.plan.rows[1].action, gg_engine::rewrite::Action::Drop);
+        dialog.preset(&"b".repeat(40), gg_engine::rewrite::Action::Fixup);
+        assert_eq!(dialog.plan.rows[0].action, gg_engine::rewrite::Action::Pick);
+        assert!(
+            dialog
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("No kept commit below")),
+            "a fixup with only a dropped commit below is refused: {:?}",
+            dialog.error
+        );
+        Ok(())
+    }
+
+    #[test]
     fn rebase_dialog_keys_still_work_after_a_button_took_focus() -> Result<(), String> {
         let ctx = egui::Context::default();
         let mut app = layout_fixture();
@@ -13456,6 +13797,176 @@ mod tests {
     }
 
     #[test]
+    fn menus_follow_the_final_design_mockup() {
+        let app = layout_fixture();
+        let ready = app.frame_readiness();
+        let table = app.menu_table(&ready);
+        let labels = |title: &str| {
+            table
+                .iter()
+                .find(|menu| menu.title == title)
+                .map(|menu| {
+                    menu.entries
+                        .iter()
+                        .map(|entry| match entry {
+                            menus::Entry::Item(item) => item.label.clone(),
+                            menus::Entry::Separator => "-".into(),
+                            menus::Entry::Submenu(title, _) => format!("{title} ▸"),
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+        };
+        let titles = table.iter().map(|menu| menu.title).collect::<Vec<_>>();
+        if cfg!(target_os = "macos") {
+            assert_eq!(
+                titles,
+                [
+                    "gg",
+                    "Repository",
+                    "Branch",
+                    "Commit",
+                    "Changes",
+                    "View",
+                    "Help"
+                ]
+            );
+        } else {
+            assert_eq!(
+                titles,
+                ["Repository", "Branch", "Commit", "Changes", "View", "Help"]
+            );
+            // Refresh is kept from before the mockup (Ctrl+R); see the review board.
+            assert_eq!(
+                labels("Repository"),
+                [
+                    "Open…",
+                    "Clone…",
+                    "Open recent ▸",
+                    "Refresh",
+                    "-",
+                    "Fetch",
+                    "Pull (rebase)",
+                    "Push",
+                    "Push with force-with-lease…",
+                    "-",
+                    "Worktrees…",
+                    "Submodules…",
+                    "LFS…",
+                    "-",
+                    "Backups…",
+                    "Reflog…",
+                    "-",
+                    "Preferences…",
+                    "Quit"
+                ]
+            );
+        }
+        // Track remote branch… is kept from before the mockup; see the review board.
+        assert_eq!(
+            labels("Branch"),
+            [
+                "New branch…",
+                "New tag…",
+                "Switch to…",
+                "-",
+                "Merge into current…",
+                "Rebase current onto…",
+                "Set upstream…",
+                "Track remote branch…",
+                "-",
+                "Rename…",
+                "Delete…"
+            ]
+        );
+        assert_eq!(
+            labels("Commit"),
+            [
+                "Review changes",
+                "Compare with HEAD",
+                "Copy ID",
+                "-",
+                "Cherry-pick onto HEAD",
+                "Revert",
+                "-",
+                "Interactive rebase from here…",
+                "Reword…",
+                "Reopen for editing…",
+                "Fixup into…",
+                "Drop…",
+                "-",
+                "Reset current branch to here…"
+            ]
+        );
+        assert_eq!(
+            labels("Changes"),
+            [
+                "Stage all",
+                "Unstage all",
+                "Discard all…",
+                "-",
+                "Commit",
+                "Amend HEAD",
+                "-",
+                "Stash changes",
+                "Stashes…",
+                "-",
+                "Resolve conflicts…"
+            ]
+        );
+        assert_eq!(
+            labels("View"),
+            [
+                "Local Changes",
+                "History",
+                "-",
+                "Refs sidebar",
+                "Commit inspector",
+                "-",
+                "Inline diff",
+                "Side-by-side diff",
+                "-",
+                "Compact density",
+                "Theme: Dark ▸"
+            ]
+        );
+        assert_eq!(
+            labels("Help"),
+            ["Keyboard shortcuts", "Documentation", "About gg"]
+        );
+    }
+
+    #[test]
+    fn ctrl_shift_b_opens_the_branch_switcher_before_other_keys() {
+        let ctx = egui::Context::default();
+        crate::phosphor::install(&ctx);
+        let mut app = layout_fixture();
+        let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        let _ = crate::tests::run_ui(
+            &ctx,
+            frame_input(
+                1120.0,
+                740.0,
+                vec![key(
+                    egui::Key::B,
+                    egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                )],
+            ),
+            |ctx| app.draw_ui(ctx),
+        );
+        let ready = app.frame_readiness();
+        let switch = menus::flatten(&app.menu_table(&ready))
+            .into_iter()
+            .find(|(_, item)| item.command == FrameCommand::SwitchTo)
+            .and_then(|(_, item)| item.disabled);
+        assert_eq!(switch, None, "Switch to… is enabled");
+        assert!(egui::Popup::is_id_open(&ctx, branch_switcher_popup_id()));
+        assert!(app.create_branch.is_none(), "Ctrl+Shift+B is not Ctrl+B");
+    }
+
+    #[test]
     fn menu_bar_is_one_row_and_view_shortcuts_switch_views() -> Result<(), String> {
         let ctx = egui::Context::default();
         crate::phosphor::install(&ctx);
@@ -14332,10 +14843,12 @@ mod tests {
         let pull = items
             .iter()
             .find(|item| item.label == "Pull (rebase)")
-            .map(|item| item.disabled);
+            .map(|item| item.disabled.clone());
         assert_eq!(
             pull,
-            Some(Some("The current branch has no upstream to pull from")),
+            Some(Some(
+                "The current branch has no upstream to pull from".to_string()
+            )),
             "search shares the toolbar's readiness"
         );
         let results = search::results("release", &items, FrameCommand::Filter("release".into()));
@@ -14532,18 +15045,15 @@ mod tests {
                         _ => None,
                     })
                     .collect();
-                if text.iter().any(|line| line == "Switch to branch") {
+                if text.iter().any(|line| line == "Switch to…") {
                     break;
                 }
             }
             assert!(
-                text.iter().any(|line| line == "Switch to branch"),
+                text.iter().any(|line| line == "Switch to…"),
                 "missing explicit switch route at {width}: {text:?}"
             );
-            assert!(
-                text.iter().any(|line| line == "Branches"),
-                "missing read-only branch browsing at {width}"
-            );
+            // Read-only browsing lives in the refs sidebar and search.
         }
     }
 

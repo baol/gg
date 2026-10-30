@@ -794,6 +794,13 @@ impl StatusView {
         )
     }
 
+    /// Changes › Commit and Ctrl+Enter: commit when the box and index allow it.
+    pub fn commit_now(&mut self, ctx: &egui::Context) {
+        if self.commit.is_none() {
+            self.start_commit(ctx);
+        }
+    }
+
     fn start_commit(&mut self, ctx: &egui::Context) {
         self.signing = Some(gg_git::signature::config(&self.path));
         let signing_error = self.signing_error();
@@ -1432,6 +1439,17 @@ impl StatusView {
     }
 
     pub(crate) fn draw_ui(&mut self, ui: &mut egui::Ui) -> bool {
+        // Changes › Commit (Ctrl+Enter) and Amend HEAD (Ctrl+Shift+Enter).
+        let shift = egui::Modifiers::COMMAND | egui::Modifiers::SHIFT;
+        if ui.input_mut(|i| i.consume_key(shift, egui::Key::Enter)) {
+            let ctx = ui.ctx().clone();
+            if let Err(error) = self.start_amend(&ctx) {
+                self.error = Some(error);
+            }
+        } else if ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::Enter)) {
+            let ctx = ui.ctx().clone();
+            self.commit_now(&ctx);
+        }
         let ctx = ui.ctx().clone();
         let ctx = &ctx;
         self.poll_commit(ctx);

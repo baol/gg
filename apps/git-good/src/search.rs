@@ -37,7 +37,7 @@ pub struct Item<C> {
     /// Shortcut shown at the right edge, if any.
     pub key: &'static str,
     /// Why the command cannot run now; shown instead of running it.
-    pub disabled: Option<&'static str>,
+    pub disabled: Option<String>,
     pub command: C,
 }
 
