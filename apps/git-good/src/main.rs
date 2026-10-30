@@ -10600,6 +10600,47 @@ mod tests {
     }
 
     #[test]
+    fn rebase_dialog_layout_holds_still_when_actions_change() -> Result<(), String> {
+        let ctx = egui::Context::default();
+        crate::phosphor::install(&ctx);
+        let mut app = layout_fixture();
+        app.rewrite_dialog = Some(rebase_fixture(&app)?);
+        let place = |app: &mut Browser, events: Vec<egui::Event>| {
+            let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, events), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let find = |wanted: &str| {
+                output.shapes.iter().find_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) if text.galley.job.text.contains(wanted) => {
+                        Some(text.pos)
+                    }
+                    _ => None,
+                })
+            };
+            (find("Changed files").or(find("PATH")), find("…HEAD onto"))
+        };
+        let (reader, range) = place(&mut app, vec![]);
+        assert!(reader.is_some() && range.is_some(), "{reader:?} {range:?}");
+        // Drop changes the result count; Reword swaps the message for a field.
+        let (after_drop, range_after_drop) =
+            place(&mut app, vec![key(egui::Key::D, egui::Modifiers::NONE)]);
+        assert_eq!(
+            range_after_drop, range,
+            "the range does not move with the count"
+        );
+        assert_eq!(after_drop, reader);
+        let (after_reword, _) = place(&mut app, vec![key(egui::Key::R, egui::Modifiers::NONE)]);
+        assert_eq!(
+            after_reword, reader,
+            "the reader does not move for the reword field"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn rebase_dialog_keys_still_work_after_a_button_took_focus() -> Result<(), String> {
         let ctx = egui::Context::default();
         let mut app = layout_fixture();

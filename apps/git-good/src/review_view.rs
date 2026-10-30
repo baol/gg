@@ -8,6 +8,22 @@ use gg_engine::{file::ReadingSide, review::*};
 use std::{collections::BTreeMap, ops::Range};
 #[cfg(test)]
 const ROW: f32 = crate::density::COMPACT_ROW;
+/// Fixed slot for the "N files" count in the header.
+const FILE_COUNT_WIDTH: f32 = 72.0;
+
+/// Run `add` in a scope that keeps its space but draws nothing when hidden.
+fn visible_scope<R>(
+    ui: &mut egui::Ui,
+    visible: bool,
+    add: impl FnOnce(&mut egui::Ui) -> R,
+) -> egui::InnerResponse<R> {
+    ui.scope(|ui| {
+        if !visible {
+            ui.set_invisible();
+        }
+        add(ui)
+    })
+}
 
 fn short_id(id: &str) -> String {
     id.chars().take(8).collect()
@@ -607,33 +623,38 @@ impl Review {
                         ui.separator();
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if let Some(comparison) = &self.comparison {
-                            let parents = comparison.parents.clone();
-                            if parents.len() > 1 {
-                                let mut parent = self.request.parent.unwrap_or(1);
-                                let before = parent;
-                                egui::ComboBox::from_id_salt("review-parent")
-                                    .width(150.0)
-                                    .selected_text(format!("Parent {parent} of {}", parents.len()))
-                                    .show_ui(ui, |ui| {
-                                        for (index, id) in parents.iter().enumerate() {
-                                            ui.selectable_value(
-                                                &mut parent,
+                        // Every control keeps its slot; ones that do not apply are
+                        // hidden rather than removed, so nothing shifts when the
+                        // comparison loads, fails, or the reading mode changes.
+                        let parents = self
+                            .comparison
+                            .as_ref()
+                            .map(|comparison| comparison.parents.clone())
+                            .unwrap_or_default();
+                        visible_scope(ui, parents.len() > 1, |ui| {
+                            let mut parent = self.request.parent.unwrap_or(1);
+                            let before = parent;
+                            egui::ComboBox::from_id_salt("review-parent")
+                                .width(150.0)
+                                .selected_text(format!("Parent {parent} of {}", parents.len()))
+                                .show_ui(ui, |ui| {
+                                    for (index, id) in parents.iter().enumerate() {
+                                        ui.selectable_value(
+                                            &mut parent,
+                                            index + 1,
+                                            format!(
+                                                "Parent {} · {}",
                                                 index + 1,
-                                                format!(
-                                                    "Parent {} · {}",
-                                                    index + 1,
-                                                    &id[..id.len().min(8)]
-                                                ),
-                                            )
-                                            .on_hover_text(id);
-                                        }
-                                    });
-                                if parent != before {
-                                    self.switch_parent(parent, ctx);
-                                }
+                                                &id[..id.len().min(8)]
+                                            ),
+                                        )
+                                        .on_hover_text(id);
+                                    }
+                                });
+                            if parent != before {
+                                self.switch_parent(parent, ctx);
                             }
-                        }
+                        });
                         let label = format!(
                             "{}{} file{}",
                             self.count,
@@ -644,47 +665,76 @@ impl Review {
                                 "s"
                             }
                         );
-                        ui.weak(label);
-                        if self.error.is_some() && ui.button("Retry").clicked() {
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(FILE_COUNT_WIDTH, ui.spacing().interact_size.y),
+                            egui::Layout::right_to_left(egui::Align::Center),
+                            |ui| {
+                                ui.set_min_width(FILE_COUNT_WIDTH);
+                                ui.weak(label);
+                            },
+                        );
+                        if ui
+                            .add_visible(self.error.is_some(), egui::Button::new("Retry"))
+                            .clicked()
+                        {
                             self.retry(ctx);
                         }
-                        if self.history.is_none()
-                            && (!narrow || self.show_diff)
-                            && ui
-                                .add_enabled(history_available, egui::Button::new("History"))
-                                .on_disabled_hover_text("Select a file to follow its history")
-                                .clicked()
+                        let history_shown = self.history.is_none() && (!narrow || self.show_diff);
+                        if ui
+                            .add_visible(
+                                history_shown,
+                                egui::Button::new("History").sense(if history_available {
+                                    egui::Sense::click()
+                                } else {
+                                    egui::Sense::hover()
+                                }),
+                            )
+                            .on_hover_text(if history_available {
+                                "Follow the selected file's history (H)"
+                            } else {
+                                "Select a file to follow its history"
+                            })
+                            .clicked()
+                            && history_available
                         {
                             self.open_history = true;
                             ctx.request_repaint();
                         }
-                        if self.show_diff {
-                            if ui
-                                .add_enabled(
-                                    self.count > 0
-                                        && self.selected.map_or(0, |row| row + 1) < self.count,
-                                    egui::Button::new("Next file"),
-                                )
-                                .clicked()
-                            {
-                                self.selected = Some(
-                                    self.selected
-                                        .unwrap_or(0)
-                                        .saturating_add(1)
-                                        .min(self.count.saturating_sub(1)),
-                                );
-                                reveal = true;
-                            }
-                            if ui
-                                .add_enabled(
-                                    self.count > 0 && self.selected.unwrap_or(0) > 0,
-                                    egui::Button::new("Prev file"),
-                                )
-                                .clicked()
-                            {
-                                self.selected = Some(self.selected.unwrap_or(0).saturating_sub(1));
-                                reveal = true;
-                            }
+                        let next_enabled = self.show_diff
+                            && self.count > 0
+                            && self.selected.map_or(0, |row| row + 1) < self.count;
+                        if ui
+                            .scope(|ui| {
+                                if !self.show_diff {
+                                    ui.set_invisible();
+                                }
+                                ui.add_enabled(next_enabled, egui::Button::new("Next file"))
+                            })
+                            .inner
+                            .clicked()
+                        {
+                            self.selected = Some(
+                                self.selected
+                                    .unwrap_or(0)
+                                    .saturating_add(1)
+                                    .min(self.count.saturating_sub(1)),
+                            );
+                            reveal = true;
+                        }
+                        let prev_enabled =
+                            self.show_diff && self.count > 0 && self.selected.unwrap_or(0) > 0;
+                        if ui
+                            .scope(|ui| {
+                                if !self.show_diff {
+                                    ui.set_invisible();
+                                }
+                                ui.add_enabled(prev_enabled, egui::Button::new("Prev file"))
+                            })
+                            .inner
+                            .clicked()
+                        {
+                            self.selected = Some(self.selected.unwrap_or(0).saturating_sub(1));
+                            reveal = true;
                         }
                         if self.history.is_none() && !self.embedded {
                             ui.with_layout(
@@ -1062,6 +1112,45 @@ mod tests {
             egui::epaint::Shape::Text(text)
                 if text.galley.job.text == "Back to history"
         )));
+    }
+
+    #[test]
+    fn header_controls_keep_their_place_across_states() {
+        let ctx = egui::Context::default();
+        let mut view = Review::fixture(&ctx);
+        let place = |view: &mut Review| {
+            let mut output = None;
+            for _ in 0..2 {
+                output = Some(crate::tests::run_ui(
+                    &ctx,
+                    crate::tests::frame_input(1120.0, 740.0, vec![]),
+                    |ctx| {
+                        view.draw_ui(ctx);
+                    },
+                ));
+            }
+            let Some(output) = output else { unreachable!() };
+            let find = |wanted: &str| {
+                output.shapes.iter().find_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) if text.galley.job.text == wanted => {
+                        Some(text.pos)
+                    }
+                    _ => None,
+                })
+            };
+            (find("History"), find("1000 files"))
+        };
+        let files = place(&mut view);
+        assert!(files.0.is_some() && files.1.is_some(), "{files:?}");
+        view.error = Some("transient failure".into());
+        assert_eq!(place(&mut view), files, "Retry appears in its own slot");
+        view.error = None;
+        view.show_diff = true;
+        assert_eq!(
+            place(&mut view),
+            files,
+            "Prev/Next file appear in reserved slots"
+        );
     }
 
     #[test]

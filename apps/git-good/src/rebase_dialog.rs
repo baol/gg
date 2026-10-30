@@ -16,6 +16,8 @@ use gg_engine::rewrite::{Action, RangeCommit, Step};
 use std::path::PathBuf;
 
 const ROW: f32 = 28.0;
+/// Height reserved for the selected commit's message or reword field.
+const MESSAGE_SLOT: f32 = 86.0;
 
 pub enum Outcome {
     Start {
@@ -268,14 +270,16 @@ impl Dialog {
                 if ui.button("Cancel").on_hover_text("Esc").clicked() {
                     outcome = Some(Outcome::Cancel);
                 }
-                // The identity takes the remaining width and truncates.
+                // The identity takes the remaining width and truncates. The
+                // result count changes as the plan changes, so it comes last
+                // and nothing after it can move.
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                     ui.heading("Interactive rebase");
                     ui.add(egui::Label::new(egui::RichText::new(&self.branch).strong()).truncate());
-                    ui.add(egui::Label::new(self.plan.summary()).truncate());
                     ui.add(
                         egui::Label::new(egui::RichText::new(self.range_label()).weak()).truncate(),
                     );
+                    ui.add(egui::Label::new(self.plan.summary()).truncate());
                 });
             });
         });
@@ -535,33 +539,45 @@ impl Dialog {
                 }
             });
         });
-        if action == Action::Reword {
-            let field = ui.add(
-                egui::TextEdit::multiline(&mut row.message)
-                    .id(egui::Id::unique("rebase-reword"))
-                    .desired_rows(3)
-                    .desired_width(f32::INFINITY)
-                    .hint_text("New commit message"),
-            );
-            if std::mem::take(&mut self.focus_message) {
-                field.request_focus();
+        // One fixed-height slot for the message, whatever the action, so the
+        // reader below never moves when the action or selection changes.
+        let slot = egui::Rect::from_min_size(
+            ui.cursor().min,
+            egui::vec2(ui.available_width(), MESSAGE_SLOT),
+        );
+        let focus_message = &mut self.focus_message;
+        ui.scope_builder(egui::UiBuilder::new().max_rect(slot), |ui| {
+            ui.set_clip_rect(slot.intersect(ui.clip_rect()));
+            if action == Action::Reword {
+                let field = ui.add(
+                    egui::TextEdit::multiline(&mut row.message)
+                        .id(egui::Id::unique("rebase-reword"))
+                        .desired_rows(3)
+                        .desired_width(f32::INFINITY)
+                        .hint_text("New commit message"),
+                );
+                if std::mem::take(focus_message) {
+                    field.request_focus();
+                }
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(format!("Original: {}", row.commit.subject))
+                            .small()
+                            .weak(),
+                    )
+                    .truncate(),
+                );
+            } else {
+                egui::ScrollArea::vertical()
+                    .id_salt("rebase-message")
+                    .max_height(MESSAGE_SLOT)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.add(egui::Label::new(&row.commit.message).wrap());
+                    });
             }
-            ui.add(
-                egui::Label::new(
-                    egui::RichText::new(format!("Original: {}", row.commit.subject))
-                        .small()
-                        .weak(),
-                )
-                .truncate(),
-            );
-        } else {
-            egui::ScrollArea::vertical()
-                .id_salt("rebase-message")
-                .max_height(52.0)
-                .show(ui, |ui| {
-                    ui.add(egui::Label::new(&row.commit.message).wrap());
-                });
-        }
+        });
+        ui.allocate_rect(slot, egui::Sense::hover());
         ui.add_space(4.0);
         let id = row.commit.id.clone();
         let subject = row.commit.subject.clone();
