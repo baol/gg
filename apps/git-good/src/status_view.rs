@@ -7,7 +7,6 @@ use crate::{
 use eframe::egui;
 use gg_engine::status::{Area, Kind, StatusEntry};
 use std::{collections::BTreeMap, ops::Range, path::PathBuf};
-const HEIGHT: f32 = 22.0;
 const GROUP_HEADER: f32 = 24.0;
 const WIDE_LAYOUT: f32 = 900.0;
 type Comparison = (Vec<u8>, Area);
@@ -914,7 +913,7 @@ impl StatusView {
         let mut clicked = None;
         let mut toggled = None;
         if count == 0 {
-            let empty_height = HEIGHT;
+            let empty_height = crate::density::row();
             list.rect = egui::Rect::from_min_size(
                 ui.cursor().min,
                 egui::vec2(ui.available_width(), empty_height),
@@ -948,8 +947,8 @@ impl StatusView {
         if list.reveal
             && let Some(row) = list.selected_row
         {
-            let row_top = row as f32 * HEIGHT;
-            let row_bottom = row_top + HEIGHT;
+            let row_top = row as f32 * crate::density::row();
+            let row_bottom = row_top + crate::density::row();
             let offset = if row_top < list.offset {
                 row_top
             } else if row_bottom > list.offset + content_height {
@@ -961,11 +960,11 @@ impl StatusView {
             list.reveal = false;
         }
         ui.spacing_mut().item_spacing.y = 0.0;
-        let out = scroll.show_rows(ui, HEIGHT, count, |ui, visible| {
+        let out = scroll.show_rows(ui, crate::density::row(), count, |ui, visible| {
             list.viewport = visible.start.saturating_sub(16)..visible.end.saturating_add(16);
             for row in visible {
                 let (rect, response) = ui.allocate_exact_size(
-                    egui::vec2(ui.available_width(), HEIGHT),
+                    egui::vec2(ui.available_width(), crate::density::row()),
                     egui::Sense::click(),
                 );
                 if list.selected_row == Some(row) {
@@ -1019,7 +1018,10 @@ impl StatusView {
                     let _ = response.clone().on_hover_text(description);
                     bounded_text::paint(
                         ui,
-                        egui::Rect::from_min_size(rect.min, egui::vec2(14.0, HEIGHT)),
+                        egui::Rect::from_min_size(
+                            rect.min,
+                            egui::vec2(14.0, crate::density::row()),
+                        ),
                         symbol,
                         egui::FontId::proportional(13.0),
                         symbol_color,
@@ -1029,7 +1031,7 @@ impl StatusView {
                         ui,
                         egui::Rect::from_min_size(
                             rect.min + egui::vec2(path_x, 0.0),
-                            egui::vec2((rect.width() - path_x).max(0.0), HEIGHT),
+                            egui::vec2((rect.width() - path_x).max(0.0), crate::density::row()),
                         ),
                         entry.path.as_str(),
                         egui::FontId::proportional(12.0),
@@ -1446,7 +1448,7 @@ impl StatusView {
                 if list.rect.contains(point) {
                     return Some((
                         index,
-                        ((point.y - list.rect.top() + list.offset) / HEIGHT)
+                        ((point.y - list.rect.top() + list.offset) / crate::density::row())
                             .floor()
                             .max(0.0) as usize,
                     ));
@@ -1506,7 +1508,7 @@ impl StatusView {
                 }
                 crate::navigation::focus_content(ctx);
             }
-            let page = (self.lists[self.focus].rect.height() / HEIGHT)
+            let page = (self.lists[self.focus].rect.height() / crate::density::row())
                 .floor()
                 .max(2.0) as isize
                 - 1;

@@ -3,7 +3,6 @@ use eframe::egui;
 use gg_engine::refs::{RefItem, RefKind, Snapshot};
 use std::collections::BTreeMap;
 
-const ROW_HEIGHT: f32 = 22.0;
 const ICON_SIZE: f32 = 12.0;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -212,7 +211,7 @@ pub fn show(
                             ))
                             .frame_when_inactive(false)
                             .truncate()
-                            .min_size(egui::vec2(ui.available_width(), ROW_HEIGHT)),
+                            .min_size(egui::vec2(ui.available_width(), crate::density::row())),
                         )
                         .on_hover_text(format!(
                             "{}\n{}\nOpen in the stash picker to apply, pop, show, or drop",
@@ -440,7 +439,7 @@ fn row(
     lane: Option<egui::Color32>,
 ) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), ROW_HEIGHT),
+        egui::vec2(ui.available_width(), crate::density::row()),
         egui::Sense::click(),
     );
     response.widget_info(|| {

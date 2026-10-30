@@ -92,7 +92,7 @@ Goal: deliver the agreed [final interface design](final-design.md): one window f
 5. **Rebase engine · complete.** Extend the rewrite plan beyond pick and squash with reword, fixup, drop, and edit (reopen), with CLI support and Git-oracle tests before any UI.
 6. **Interactive rebase dialog and review header · complete.** Fold the Review commit identity into one line. Replace Reorder and squash with the planned modal: newest-first plan, action chips and keys, consequence badges, the selected commit in the shared reader with inline reword, and Open in Review with return.
 7. **Rebase stops · complete.** Reopened-commit stop in Local Changes with split commits, and the three-column conflict blocks with per-block choices, both in the operation area with Continue, Skip commit, and Abort and restore.
-8. **Preferences.** Repository › Preferences… window per the [Settings panel](#settings-panel--planned) plan, starting with clone folders and a preferred folder.
+8. **Preferences · complete.** Repository › Preferences… window per the [Settings panel](#settings-panel--planned) plan, starting with clone folders and a preferred folder.
 
 ### Acceptance
 
@@ -132,9 +132,11 @@ Goal: gather user preferences in one Settings window and keep them across launch
 
 ### Increments
 
-1. **Settings store.** Persist preferences in `gg/settings.json` under the OS configuration directory; read `gg/roots.json` once and fold it in. Unknown or malformed values fall back to defaults without losing the rest.
-2. **General.** Theme (system, light, dark) and network avatars (on, or cached avatars and initials). Promote the `GG_THEME` and `GG_OFFLINE` debug switches to these settings; keep the variables as overrides.
-3. **Repositories.** Move Development base folders and the default clone folder into Settings; keep Repository → Clone's **Folders…** shortcut.
+Status: increments 1–3 shipped with the final interface (General, Appearance, Rebase & recovery, and Keyboard sections); 4 and 5 remain.
+
+1. **Settings store · complete.** Persist preferences in `gg/settings.json` under the OS configuration directory; read `gg/roots.json` once and fold it in. Unknown or malformed values fall back to defaults without losing the rest.
+2. **General · complete.** Theme (system, light, dark) and network avatars (on, or cached avatars and initials). Promote the `GG_THEME` and `GG_OFFLINE` debug switches to these settings; keep the variables as overrides.
+3. **Repositories · complete.** Move Development base folders and the default clone folder into Settings; keep Repository → Clone's **Folders…** shortcut.
 4. **Layout.** Remember Commit details visibility and the binary preview layout.
 5. **Operation defaults.** Remember the last choices for stash (include untracked, keep staged), stash restore (restore staged, remove after restore), merge (always create a merge commit), new branch (switch after creation), and fetch prune. Dialogs open with these values; every operation stays explicitly submitted.
 

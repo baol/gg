@@ -11,6 +11,7 @@ mod colors;
 mod commit_cli;
 mod conflict_blocks;
 mod conflict_cli;
+mod density;
 mod details_view;
 mod diff_view;
 mod diff_worker;
@@ -48,6 +49,7 @@ mod review_view;
 mod review_worker;
 mod rewrite_cli;
 mod search;
+mod settings;
 mod signature_cli;
 mod signature_worker;
 mod stage_view;
@@ -232,17 +234,9 @@ git-good tag --create TAG --at REF -m MESSAGE [--sign] [--repo PATH]   Create an
             ..Default::default()
         },
         Box::new(move |cc| {
-            cc.egui_ctx.set_visuals(
-                if cfg!(debug_assertions)
-                    && std::env::var("GG_THEME").is_ok_and(|theme| theme == "light")
-                {
-                    egui::Visuals::light()
-                } else {
-                    egui::Visuals::dark()
-                },
-            );
             phosphor::install(&cc.egui_ctx);
             let mut app = Browser::new(path);
+            app.apply_prefs(&cc.egui_ctx);
             app.load(&cc.egui_ctx);
             Ok(Box::new(app))
         }),
@@ -328,9 +322,51 @@ fn clone_folder_label(path: &Path, default: &Path) -> String {
     }
 }
 
+/// Sections of the Preferences window.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PrefSection {
+    General,
+    Appearance,
+    Rebase,
+    Keyboard,
+}
+
+impl PrefSection {
+    const ALL: [Self; 4] = [
+        Self::General,
+        Self::Appearance,
+        Self::Rebase,
+        Self::Keyboard,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::General => "General",
+            Self::Appearance => "Appearance",
+            Self::Rebase => "Rebase & recovery",
+            Self::Keyboard => "Keyboard",
+        }
+    }
+}
+
+/// The Preferences window (Repository › Preferences…), non-modal.
 struct FoldersDialog {
+    section: PrefSection,
     new_root: String,
     error: Option<String>,
+    /// Repository count per clone folder; `None` for a missing folder.
+    counts: Vec<(PathBuf, Option<usize>)>,
+}
+
+impl FoldersDialog {
+    fn new(section: PrefSection) -> Self {
+        Self {
+            section,
+            new_root: String::new(),
+            error: None,
+            counts: Vec::new(),
+        }
+    }
 }
 
 struct StashSwitchDialog {
@@ -588,6 +624,7 @@ enum FrameCommand {
     Clone,
     Refresh,
     Folders,
+    Preferences,
     Shortcuts,
     LocalChanges,
     History,
@@ -1149,6 +1186,7 @@ struct Browser {
     /// Parent folder chosen in the clone dialog for this session only.
     clone_folder: Option<PathBuf>,
     folders: folders::Roots,
+    prefs: settings::Prefs,
     folders_dialog: Option<FoldersDialog>,
     force_push: Option<ForcePushDialog>,
     force_push_pending: bool,
@@ -1259,6 +1297,12 @@ impl Browser {
             clone_dialog: None,
             clone_folder: None,
             folders: folders::Roots::load(),
+            // Tests keep the defaults instead of reading the user's settings.
+            prefs: if cfg!(test) {
+                settings::Prefs::default()
+            } else {
+                settings::Prefs::load()
+            },
             folders_dialog: None,
             force_push: None,
             force_push_pending: false,
@@ -1671,108 +1715,285 @@ impl Browser {
         }
     }
 
+    /// Apply the saved theme, density, and avatar source.
+    fn apply_prefs(&self, ctx: &egui::Context) {
+        ctx.set_theme(match self.prefs.effective_theme() {
+            settings::Theme::System => egui::ThemePreference::System,
+            settings::Theme::Light => egui::ThemePreference::Light,
+            settings::Theme::Dark => egui::ThemePreference::Dark,
+        });
+        density::set(self.prefs.density);
+        avatars::set_network(self.prefs.effective_network_avatars());
+    }
+
+    fn open_preferences(&mut self, section: PrefSection) {
+        match &mut self.folders_dialog {
+            Some(dialog) => dialog.section = section,
+            None => self.folders_dialog = Some(FoldersDialog::new(section)),
+        }
+    }
+
+    /// Repository › Preferences…: a non-modal window whose changes apply and
+    /// save immediately.
     fn draw_folders_dialog(&mut self, ctx: &egui::Context) {
         let Some(dialog) = &mut self.folders_dialog else {
             return;
         };
+        // Count repositories once per folder list change, not every frame.
+        if dialog.counts.len() != self.folders.entries().len()
+            || dialog
+                .counts
+                .iter()
+                .zip(self.folders.entries())
+                .any(|((counted, _), folder)| counted != folder)
+        {
+            dialog.counts = self
+                .folders
+                .entries()
+                .iter()
+                .map(|folder| (folder.clone(), folders::repository_count(folder)))
+                .collect();
+        }
         let mut open = true;
         let mut add = None;
         let mut remove = None;
         let mut prefer = None;
+        let mut moved = None;
         let mut add_current = false;
+        let mut prefs = self.prefs.clone();
+        let mut show_shortcuts = false;
         let default_folder = self.folders.default_folder();
-        egui::Window::new("Development base folders")
-            .id(egui::Id::unique("clone-folders")).modal(ctx, egui::Id::unique("clone-folders"))
+        let offline_override = std::env::var_os("GG_OFFLINE").is_some();
+        egui::Window::new("Preferences")
+            .id(egui::Id::unique("preferences"))
             .open(&mut open)
             .collapsible(false)
-            .resizable([false, true])
-            .default_width(460.0)
-            .min_width(460.0)
-            .max_width(460.0)
-            .default_pos(ctx.content_rect().center() - egui::vec2(230.0, 160.0))
+            .resizable(false)
+            // A fixed size keeps the window in place while folders come and go.
+            .fixed_size([620.0, 400.0])
+            .default_pos(ctx.content_rect().center() - egui::vec2(310.0, 210.0))
             .show(ctx, |ui| {
-                ui.label(
-                    "Folders where you keep repositories. Clone offers them in this order, then the launch folder. The selected folder is the default.",
-                );
-                ui.add_space(4.0);
-                egui::ScrollArea::vertical()
-                    .id_salt("clone-folders-list")
-                    .max_height(180.0)
-                    .min_scrolled_height(180.0)
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        if self.folders.entries().is_empty() {
-                            ui.weak("No saved folders. Add the current folder or type one below.");
-                        }
-                        for (index, root) in self.folders.entries().iter().enumerate() {
-                            ui.horizontal(|ui| {
-                                let label = root.to_string_lossy().into_owned();
-                                ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
-                                    |ui| {
-                                        if ui.small_button("Remove").clicked() {
-                                            remove = Some(index);
-                                        }
-                                        if ui
-                                            .radio(root == &default_folder, "Default")
-                                            .on_hover_text(
-                                                "Start new clones in this folder at every launch",
-                                            )
-                                            .clicked()
-                                        {
-                                            prefer = Some(index);
-                                        }
-                                        let width = ui.available_width().max(0.0);
-                                        let (rect, _) = ui.allocate_exact_size(
-                                            egui::vec2(width, 18.0),
-                                            egui::Sense::hover(),
-                                        );
-                                        bounded_text::paint(
-                                            ui,
-                                            rect,
-                                            &label,
-                                            egui::FontId::proportional(12.0),
-                                            ui.visuals().text_color(),
-                                        );
-                                    },
-                                );
-                            });
+                ui.horizontal_top(|ui| {
+                    ui.vertical(|ui| {
+                        ui.set_width(130.0);
+                        for section in PrefSection::ALL {
+                            if ui
+                                .selectable_label(dialog.section == section, section.label())
+                                .clicked()
+                            {
+                                dialog.section = section;
+                            }
                         }
                     });
+                    ui.separator();
+                    egui::ScrollArea::vertical()
+                        .id_salt("preferences-section")
+                        .max_height(370.0)
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| ui.vertical(|ui| match dialog.section {
+                        PrefSection::General => {
+                            ui.strong("Clone folders");
+                            ui.weak(
+                                "Folders where you keep repositories. Clone starts in the preferred one and offers the others in this order, then the launch folder.",
+                            );
+                            ui.add_space(4.0);
+                            egui::ScrollArea::vertical()
+                                .id_salt("clone-folders-list")
+                                .max_height(170.0)
+                                .min_scrolled_height(170.0)
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| {
+                                    let count = self.folders.entries().len();
+                                    if count == 0 {
+                                        ui.weak("No saved folders. Add the current folder or type one below.");
+                                    }
+                                    for (index, root) in self.folders.entries().iter().enumerate() {
+                                        ui.horizontal(|ui| {
+                                            if ui
+                                                .radio(root == &default_folder, "")
+                                                .on_hover_text("Preferred: Clone starts here")
+                                                .clicked()
+                                            {
+                                                prefer = Some(index);
+                                            }
+                                            ui.with_layout(
+                                                egui::Layout::right_to_left(egui::Align::Center),
+                                                |ui| {
+                                                    if ui.small_button("Remove").clicked() {
+                                                        remove = Some(index);
+                                                    }
+                                                    if ui
+                                                        .add_enabled(
+                                                            index + 1 < count,
+                                                            egui::Button::new(
+                                                                phosphor::icon(phosphor::ARROW_DOWN).size(11.0),
+                                                            )
+                                                            .frame_when_inactive(false),
+                                                        )
+                                                        .on_hover_text("Move down")
+                                                        .clicked()
+                                                    {
+                                                        moved = Some((index, false));
+                                                    }
+                                                    if ui
+                                                        .add_enabled(
+                                                            index > 0,
+                                                            egui::Button::new(
+                                                                phosphor::icon(phosphor::ARROW_UP).size(11.0),
+                                                            )
+                                                            .frame_when_inactive(false),
+                                                        )
+                                                        .on_hover_text("Move up")
+                                                        .clicked()
+                                                    {
+                                                        moved = Some((index, true));
+                                                    }
+                                                    match dialog.counts.get(index).and_then(|(_, n)| *n) {
+                                                        Some(n) => {
+                                                            ui.weak(format!(
+                                                                "{n} repositor{}",
+                                                                if n == 1 { "y" } else { "ies" }
+                                                            ));
+                                                        }
+                                                        None => {
+                                                            ui.colored_label(
+                                                                ui.visuals().warn_fg_color,
+                                                                "missing",
+                                                            )
+                                                            .on_hover_text("This folder does not exist.");
+                                                        }
+                                                    }
+                                                    let width = ui.available_width().max(0.0);
+                                                    let (rect, response) = ui.allocate_exact_size(
+                                                        egui::vec2(width, 18.0),
+                                                        egui::Sense::hover(),
+                                                    );
+                                                    let label = root.to_string_lossy().into_owned();
+                                                    bounded_text::paint(
+                                                        ui,
+                                                        rect,
+                                                        &label,
+                                                        egui::FontId::proportional(12.0),
+                                                        ui.visuals().text_color(),
+                                                    );
+                                                    response.on_hover_text(label);
+                                                },
+                                            );
+                                        });
+                                    }
+                                });
+                            ui.add_space(4.0);
+                            ui.horizontal(|ui| {
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut dialog.new_root)
+                                        .hint_text("Absolute folder")
+                                        .desired_width((ui.available_width() - 84.0).max(120.0)),
+                                );
+                                if ui
+                                    .button("Browse…")
+                                    .on_hover_text("Choose a folder with the desktop dialog")
+                                    .clicked()
+                                    && let Some(path) = folder_picker::pick_folder(
+                                        "Clone folder",
+                                        Some(Path::new(dialog.new_root.trim())),
+                                    )
+                                {
+                                    dialog.new_root = path.to_string_lossy().into_owned();
+                                }
+                            });
+                            ui.horizontal(|ui| {
+                                if ui.button("Add folder").clicked() {
+                                    add = Some(dialog.new_root.clone());
+                                }
+                                if ui.button("Add current").clicked() {
+                                    add_current = true;
+                                }
+                            });
+                            if let Some(error) = &dialog.error {
+                                ui.colored_label(ui.visuals().error_fg_color, error);
+                            }
+                            ui.separator();
+                            ui.strong("Avatars");
+                            ui.add_enabled(
+                                !offline_override,
+                                egui::Checkbox::new(
+                                    &mut prefs.network_avatars,
+                                    "Load avatars from the network",
+                                ),
+                            )
+                            .on_disabled_hover_text("GG_OFFLINE is set for this launch.");
+                            ui.weak("Off: cached avatars and initials only.");
+                        }
+                        PrefSection::Appearance => {
+                            ui.strong("Theme");
+                            ui.horizontal(|ui| {
+                                for theme in settings::Theme::ALL {
+                                    ui.radio_value(&mut prefs.theme, theme, theme.label());
+                                }
+                            });
+                            ui.separator();
+                            ui.strong("Density");
+                            ui.radio_value(
+                                &mut prefs.density,
+                                settings::Density::Compact,
+                                "Compact · 22 px rows",
+                            );
+                            ui.radio_value(
+                                &mut prefs.density,
+                                settings::Density::Comfortable,
+                                "Comfortable · 28 px rows",
+                            );
+                            ui.weak("History, file, and refs rows.");
+                        }
+                        PrefSection::Rebase => {
+                            ui.strong("Rebase");
+                            ui.checkbox(
+                                &mut prefs.rebase_autostash,
+                                "Stash working changes first",
+                            );
+                            ui.weak(
+                                "Rebase and interactive rebase dialogs start with this choice; each rebase still asks.",
+                            );
+                            ui.separator();
+                            ui.strong("Recovery");
+                            ui.weak(
+                                "Every rewrite creates a private backup ref first. Repository › Recovery… lists them with the reflog.",
+                            );
+                        }
+                        PrefSection::Keyboard => {
+                            ui.weak(
+                                "Single letters act on the focused list and never fire while typing; Ctrl chords are global.",
+                            );
+                            if ui.button("Show keyboard shortcuts…").clicked() {
+                                show_shortcuts = true;
+                            }
+                        }
+                    }));
+                });
                 ui.add_space(4.0);
-                ui.horizontal(|ui| {
-                    ui.add(
-                        egui::TextEdit::singleline(&mut dialog.new_root)
-                            .hint_text("Absolute folder")
-                            .desired_width((ui.available_width() - 84.0).max(120.0)),
-                    );
-                    if ui
-                        .button("Browse…")
-                        .on_hover_text("Choose a folder with the desktop dialog")
-                        .clicked()
-                        && let Some(path) = folder_picker::pick_folder(
-                            "Development base folder",
-                            Some(Path::new(dialog.new_root.trim())),
-                        )
-                    {
-                        dialog.new_root = path.to_string_lossy().into_owned();
-                    }
-                });
-                ui.horizontal(|ui| {
-                    if ui.button("Add folder").clicked() {
-                        add = Some(dialog.new_root.clone());
-                    }
-                    if ui.button("Add current").clicked() {
-                        add_current = true;
-                    }
-                });
-                if let Some(error) = &dialog.error {
-                    ui.colored_label(ui.visuals().error_fg_color, error);
-                }
-                ui.weak("Changes are saved for the next launch.");
+                ui.weak("Changes apply now and are saved for the next launch.");
             });
+        if show_shortcuts {
+            self.help_shortcuts = true;
+        }
+        if prefs != self.prefs {
+            self.prefs = prefs;
+            self.apply_prefs(ctx);
+            let error = self.prefs.save().err();
+            if let Some(dialog) = &mut self.folders_dialog {
+                dialog.error = error;
+            }
+        }
         if let Some(index) = prefer {
             let error = self.prefer_clone_folder(index);
+            if let Some(dialog) = &mut self.folders_dialog {
+                dialog.error = error;
+            }
+        }
+        if let Some((index, up)) = moved
+            && self.folders.move_entry(index, up)
+        {
+            let error = self.folders.save().err();
             if let Some(dialog) = &mut self.folders_dialog {
                 dialog.error = error;
             }
@@ -1787,15 +2008,15 @@ impl Browser {
                     .unwrap_or_else(|| folders::starting_folder().to_string_lossy().into_owned());
                 match self.folders.add(&value) {
                     Ok(true) => self.folders.save().err(),
-                    Ok(false) => Some("That folder is already in the list.".into()),
+                    Ok(false) => Some("Already in the list.".into()),
                     Err(error) => Some(error),
                 }
             };
             if let Some(dialog) = &mut self.folders_dialog {
-                dialog.error = error;
-                if adding {
+                if adding && error.is_none() {
                     dialog.new_root.clear();
                 }
+                dialog.error = error;
             }
         }
         if !open {
@@ -2165,7 +2386,7 @@ impl Browser {
             FrameCommand::RebaseOnto => {
                 self.rebase_dialog = Some(RebaseDialog {
                     reference: String::new(),
-                    autostash: false,
+                    autostash: self.prefs.rebase_autostash,
                     error: None,
                 });
             }
@@ -2201,11 +2422,13 @@ impl Browser {
                 ));
             }
             FrameCommand::Refresh => self.load(ctx),
-            FrameCommand::Folders => {
-                self.folders_dialog = Some(FoldersDialog {
-                    new_root: String::new(),
-                    error: None,
-                });
+            FrameCommand::Folders => self.open_preferences(PrefSection::General),
+            FrameCommand::Preferences => {
+                let section = self
+                    .folders_dialog
+                    .as_ref()
+                    .map_or(PrefSection::General, |dialog| dialog.section);
+                self.open_preferences(section);
             }
             FrameCommand::Shortcuts => self.help_shortcuts = true,
             FrameCommand::LocalChanges => *go_local = true,
@@ -2324,6 +2547,13 @@ impl Browser {
                 "",
                 None,
                 FrameCommand::Folders,
+            ),
+            (
+                "Preferences…",
+                "Repository menu · theme, density, folders, avatars, rebase",
+                "Ctrl+,",
+                None,
+                FrameCommand::Preferences,
             ),
             (
                 "New branch…",
@@ -3614,12 +3844,9 @@ impl Browser {
             return Err("Recover the operation in progress before rewriting history.".into());
         }
         let (commits, base) = gg_git::rewrite::plan_range(&path, from)?;
-        self.rewrite_dialog = Some(rebase_dialog::Dialog::new(
-            path,
-            commits,
-            base,
-            &self.state.refs,
-        )?);
+        let mut dialog = rebase_dialog::Dialog::new(path, commits, base, &self.state.refs)?;
+        dialog.autostash = self.prefs.rebase_autostash;
+        self.rewrite_dialog = Some(dialog);
         Ok(())
     }
 
@@ -4320,7 +4547,7 @@ impl Browser {
             anchor_id: self
                 .state
                 .rows
-                .get(&((self.scroll_offset / history_view::ROW_HEIGHT) as usize))
+                .get(&((self.scroll_offset / crate::density::row()) as usize))
                 .map(|c| c.id.clone()),
             ..Default::default()
         };
@@ -5909,8 +6136,8 @@ impl Browser {
                     update
                         .anchor_row
                         .map(|row| {
-                            row as f32 * history_view::ROW_HEIGHT
-                                + self.scroll_offset % history_view::ROW_HEIGHT
+                            row as f32 * crate::density::row()
+                                + self.scroll_offset % crate::density::row()
                         })
                         .unwrap_or(0.0),
                 );
@@ -6060,6 +6287,8 @@ impl Browser {
         let mut go_history = false;
         let working_mutation_pending = self.working_mutation_pending();
         let ready = self.frame_readiness();
+        let mut open_preferences = crate::navigation::available(ctx)
+            && ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::Comma));
         egui::Panel::top("toolbar").exact_size(42.0).show(ui, |ui| {
             ui.add_space(5.0);
             ui.horizontal(|ui| {
@@ -6188,10 +6417,15 @@ impl Browser {
                         )
                         .clicked()
                     {
-                        self.folders_dialog = Some(FoldersDialog {
-                            new_root: String::new(),
-                            error: None,
-                        });
+                        self.open_preferences(PrefSection::General);
+                        ui.close();
+                    }
+                    if ui
+                        .add(egui::Button::new("Preferences…").shortcut_text("Ctrl+,"))
+                        .on_hover_text("Theme, density, clone folders, avatars, and rebase defaults")
+                        .clicked()
+                    {
+                        open_preferences = true;
                         ui.close();
                     }
                 });
@@ -6357,7 +6591,7 @@ impl Browser {
                 if rebase {
                     self.rebase_dialog = Some(RebaseDialog {
                         reference: String::new(),
-                        autostash: false,
+                        autostash: self.prefs.rebase_autostash,
                         error: None,
                     });
                 }
@@ -6692,6 +6926,13 @@ impl Browser {
             Some(BranchPick::New) => self.open_new_branch(),
             None => {}
         }
+        if open_preferences {
+            let section = self
+                .folders_dialog
+                .as_ref()
+                .map_or(PrefSection::General, |dialog| dialog.section);
+            self.open_preferences(section);
+        }
         if open_search || ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::K)) {
             self.search = match self.search.take() {
                 Some(_) if !open_search => None,
@@ -6991,7 +7232,7 @@ impl Browser {
                 Some(refs_view::Action::Rebase(name)) => {
                     self.rebase_dialog = Some(RebaseDialog {
                         reference: name,
-                        autostash: false,
+                        autostash: self.prefs.rebase_autostash,
                         error: None,
                     });
                 }
@@ -7154,10 +7395,9 @@ impl Browser {
                 open = false;
             }
             if open_folders {
-                self.folders_dialog = Some(FoldersDialog {
-                    new_root: dialog.folder.trim().to_owned(),
-                    error: None,
-                });
+                let mut preferences = FoldersDialog::new(PrefSection::General);
+                preferences.new_root = dialog.folder.trim().to_owned();
+                self.folders_dialog = Some(preferences);
             }
             if let Some((url, destination)) = submit {
                 self.clone_dialog = None;
@@ -8616,8 +8856,8 @@ impl Browser {
                             && let Some(index) = self.state.selected_row
                         {
                             let height = ui.available_height();
-                            let top = index as f32 * history_view::ROW_HEIGHT;
-                            let bottom = top + history_view::ROW_HEIGHT;
+                            let top = index as f32 * crate::density::row();
+                            let bottom = top + crate::density::row();
                             let offset = self.scroll_offset;
                             let reveal = if top < offset {
                                 top
@@ -8626,9 +8866,8 @@ impl Browser {
                             } else {
                                 offset
                             };
-                            let maximum = (self.state.count as f32 * history_view::ROW_HEIGHT
-                                - height)
-                                .max(0.0);
+                            let maximum =
+                                (self.state.count as f32 * crate::density::row() - height).max(0.0);
                             scroll = scroll.vertical_scroll_offset(reveal.clamp(0.0, maximum));
                         }
                         if let Some(offset) = self.restore_offset.take() {
@@ -8638,7 +8877,7 @@ impl Browser {
                         ui.spacing_mut().item_spacing.y = 0.0;
                         let scroll_output = scroll.show_rows(
                             ui,
-                            history_view::ROW_HEIGHT,
+                            crate::density::row(),
                             self.state.count,
                             |ui, rows| {
                                 self.viewport =
@@ -8716,10 +8955,7 @@ impl Browser {
                                         }
                                     } else {
                                         let (rect, _) = ui.allocate_exact_size(
-                                            egui::vec2(
-                                                ui.available_width(),
-                                                history_view::ROW_HEIGHT,
-                                            ),
+                                            egui::vec2(ui.available_width(), crate::density::row()),
                                             egui::Sense::hover(),
                                         );
                                         self.row_rects.push((row, rect));
@@ -8735,8 +8971,7 @@ impl Browser {
                             },
                         );
                         self.scroll_offset = scroll_output.state.clamped_offset().y;
-                        self.page_rows = (scroll_output.inner_rect.height()
-                            / history_view::ROW_HEIGHT)
+                        self.page_rows = (scroll_output.inner_rect.height() / crate::density::row())
                             .floor()
                             .max(1.0) as usize;
                         ui.spacing_mut().item_spacing.y = previous_spacing;
@@ -8942,10 +9177,7 @@ mod tests {
         ));
         assert!(rendered(&mut app).iter().any(|line| line == "Browse…"));
         app.clone_dialog = None;
-        app.folders_dialog = Some(FoldersDialog {
-            new_root: String::new(),
-            error: None,
-        });
+        app.folders_dialog = Some(FoldersDialog::new(PrefSection::General));
         assert!(rendered(&mut app).iter().any(|line| line == "Browse…"));
         app.folders_dialog = None;
         app.edit_path = true;
@@ -9297,15 +9529,100 @@ mod tests {
     }
 
     #[test]
+    fn preferences_list_sections_folders_and_save_changes_at_once()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let settings_file = dir.path().join("settings.json");
+        for width in [720.0, 1120.0] {
+            let ctx = egui::Context::default();
+            crate::phosphor::install(&ctx);
+            let mut app = layout_fixture();
+            app.prefs = settings::Prefs::load_from(&settings_file);
+            app.folders = folders::Roots::load_from(&settings_file);
+            let repos = dir.path().join("projects");
+            std::fs::create_dir_all(repos.join("gg/.git"))?;
+            app.folders.add(&repos.to_string_lossy())?;
+            app.folders
+                .add(&dir.path().join("gone").to_string_lossy())?;
+            app.open_preferences(PrefSection::General);
+            let frame = |app: &mut Browser, events| {
+                crate::tests::run_ui(&ctx, frame_input(width, 740.0, events), |ctx| {
+                    app.draw_ui(ctx)
+                })
+            };
+            let _ = frame(&mut app, vec![]);
+            let text = shown_text(&frame(&mut app, vec![]));
+            for expected in [
+                "Preferences",
+                "General",
+                "Appearance",
+                "Rebase & recovery",
+                "Keyboard",
+                "Clone folders",
+                "1 repository",
+                "missing",
+                "Load avatars from the network",
+            ] {
+                assert!(
+                    text.iter().any(|line| line.contains(expected)),
+                    "width {width}: missing {expected:?} in {text:?}"
+                );
+            }
+            // Adding a folder already in the list names the reason.
+            if let Some(dialog) = &mut app.folders_dialog {
+                dialog.new_root = repos.to_string_lossy().into_owned();
+            }
+            let add = frame(&mut app, vec![])
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) if text.galley.job.text == "Add folder" => {
+                        Some(text.visual_bounding_rect().center())
+                    }
+                    _ => None,
+                })
+                .ok_or("Add folder button missing")?;
+            let _ = frame(&mut app, click_at(add));
+            let _ = frame(&mut app, vec![]);
+            assert_eq!(
+                app.folders_dialog
+                    .as_ref()
+                    .and_then(|dialog| dialog.error.as_deref()),
+                Some("Already in the list.")
+            );
+
+            // Appearance: choosing Light applies and saves immediately.
+            app.open_preferences(PrefSection::Appearance);
+            let light = frame(&mut app, vec![])
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) if text.galley.job.text == "Light" => {
+                        Some(text.visual_bounding_rect().center())
+                    }
+                    _ => None,
+                })
+                .ok_or("Light theme option missing")?;
+            let _ = frame(&mut app, click_at(light));
+            assert_eq!(app.prefs.theme, settings::Theme::Light);
+            assert_eq!(
+                settings::Prefs::load_from(&settings_file).theme,
+                settings::Theme::Light
+            );
+            assert!(app.folders_dialog.is_some(), "the window stays open");
+            app.prefs.theme = settings::Theme::Dark;
+            app.prefs.save()?;
+        }
+        Ok(())
+    }
+
+    #[test]
     fn adding_a_clone_folder_does_not_move_the_dialog() {
         let ctx = egui::Context::default();
         let mut app = layout_fixture();
-        app.folders_dialog = Some(FoldersDialog {
-            new_root: String::new(),
-            error: None,
-        });
+        app.folders_dialog = Some(FoldersDialog::new(PrefSection::General));
         app.folders = folders::Roots::default();
-        let id = egui::Id::unique("clone-folders");
+        let id = egui::Id::unique("preferences");
         let rect = |app: &mut Browser| {
             for _ in 0..3 {
                 crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
@@ -9316,7 +9633,7 @@ mod tests {
         };
         rect(&mut app);
         let empty = rect(&mut app);
-        assert!(empty.is_some(), "the clone folders window did not render");
+        assert!(empty.is_some(), "the Preferences window did not render");
         let root = folders::starting_folder();
         assert!(app.folders.add(&root.to_string_lossy()).unwrap_or(false));
         let one = rect(&mut app);
@@ -9864,6 +10181,24 @@ mod tests {
         assert_eq!(dialog.plan.rows[0].refs, ["feature"]);
         assert_eq!(dialog.plan.rows[1].refs, ["keep", "v1"]);
         Ok(())
+    }
+
+    fn click_at(pos: egui::Pos2) -> Vec<egui::Event> {
+        vec![
+            egui::Event::PointerMoved(pos),
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ]
     }
 
     fn shown_text(output: &egui::FullOutput) -> Vec<String> {

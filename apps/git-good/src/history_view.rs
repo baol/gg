@@ -3,7 +3,9 @@ use crate::avatars::Avatars;
 use eframe::egui;
 use gg_engine::Commit;
 
-pub const ROW_HEIGHT: f32 = 22.0;
+/// Compact row height; runtime code uses `crate::density::row()`.
+#[cfg(test)]
+pub const ROW_HEIGHT: f32 = crate::density::COMPACT_ROW;
 pub const MIN_WIDTH: f32 = 610.0;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -62,7 +64,7 @@ pub fn sort_labels(refs: &mut [gg_engine::refs::RefItem], head_name: Option<&str
 
 pub fn header(ui: &mut egui::Ui) {
     let (rect, _) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), ROW_HEIGHT),
+        egui::vec2(ui.available_width(), crate::density::row()),
         egui::Sense::hover(),
     );
     for (cell, label) in columns(rect)
@@ -231,7 +233,7 @@ pub fn row(
     avatars: &mut Avatars,
 ) -> (egui::Response, Option<RefAction>) {
     let response = ui.add_sized(
-        [ui.available_width(), ROW_HEIGHT],
+        [ui.available_width(), crate::density::row()],
         egui::Button::new("")
             .fill(if selected {
                 crate::colors::selection(ui.visuals())

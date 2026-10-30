@@ -6,7 +6,8 @@ use crate::{
 use eframe::egui;
 use gg_engine::{file::ReadingSide, review::*};
 use std::{collections::BTreeMap, ops::Range};
-const ROW: f32 = 22.0;
+#[cfg(test)]
+const ROW: f32 = crate::density::COMPACT_ROW;
 
 fn short_id(id: &str) -> String {
     id.chars().take(8).collect()
@@ -785,26 +786,27 @@ impl Review {
             }
             if reveal && let Some(row) = self.selected {
                 let height = ui.available_height();
-                let top = row as f32 * ROW;
+                let top = row as f32 * crate::density::row();
                 let offset = if top < self.offset {
                     top
-                } else if top + ROW > self.offset + height {
-                    top + ROW - height
+                } else if top + crate::density::row() > self.offset + height {
+                    top + crate::density::row() - height
                 } else {
                     self.offset
                 };
-                scroll = scroll.vertical_scroll_offset(
-                    offset.clamp(0.0, (self.count as f32 * ROW - height).max(0.0)),
-                );
+                scroll = scroll.vertical_scroll_offset(offset.clamp(
+                    0.0,
+                    (self.count as f32 * crate::density::row() - height).max(0.0),
+                ));
             }
             ui.spacing_mut().item_spacing.y = 0.0;
-            let result = scroll.show_rows(ui, ROW, self.count, |ui, rows| {
+            let result = scroll.show_rows(ui, crate::density::row(), self.count, |ui, rows| {
                 self.viewport = rows.start.saturating_sub(24)..rows.end.saturating_add(24);
                 self.row_rects.clear();
                 for row in rows {
                     let change = self.rows.get(&row);
                     let response = ui.add_sized(
-                        [ui.available_width(), ROW],
+                        [ui.available_width(), crate::density::row()],
                         egui::Button::new("")
                             .fill(if self.selected == Some(row) {
                                 crate::colors::selection(ui.visuals())
@@ -867,7 +869,9 @@ impl Review {
                 }
             });
             self.offset = result.state.clamped_offset().y;
-            self.page = (result.inner_rect.height() / ROW).floor().max(1.0) as usize;
+            self.page = (result.inner_rect.height() / crate::density::row())
+                .floor()
+                .max(1.0) as usize;
         });
         self.reconcile_history_selection(ctx);
         if self.history.is_none()
