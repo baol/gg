@@ -89,6 +89,89 @@ pub enum Density {
     Comfortable,
 }
 
+/// How image and binary files are compared.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ImageLayout {
+    #[default]
+    SideBySide,
+    Swipe,
+    Onion,
+}
+
+impl ImageLayout {
+    pub const ALL: [Self; 3] = [Self::SideBySide, Self::Swipe, Self::Onion];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::SideBySide => "Side by side",
+            Self::Swipe => "Swipe",
+            Self::Onion => "Onion skin",
+        }
+    }
+}
+
+/// The presentation a newly opened reader starts in.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReaderMode {
+    #[default]
+    Diff,
+    Full,
+}
+
+/// Whether Local Changes starts with **Sign** checked.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SignCommits {
+    /// Follow `commit.gpgSign`.
+    #[default]
+    Git,
+    /// Checked whenever signing is configured and ready.
+    Always,
+    Never,
+}
+
+impl SignCommits {
+    pub const ALL: [Self; 3] = [Self::Git, Self::Always, Self::Never];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Git => "Follow Git config (commit.gpgSign)",
+            Self::Always => "Always, when signing is configured",
+            Self::Never => "Never",
+        }
+    }
+}
+
+/// Starting values readers take from the window: stored per egui context
+/// (so each window and each test has its own), seeded from the preferences.
+pub fn image_layout(ctx: &eframe::egui::Context) -> ImageLayout {
+    ctx.data(|data| data.get_temp(image_layout_id()))
+        .unwrap_or_default()
+}
+
+pub fn set_image_layout(ctx: &eframe::egui::Context, layout: ImageLayout) {
+    ctx.data_mut(|data| data.insert_temp(image_layout_id(), layout));
+}
+
+fn image_layout_id() -> eframe::egui::Id {
+    eframe::egui::Id::unique("gg-image-layout")
+}
+
+pub fn reader_mode(ctx: &eframe::egui::Context) -> ReaderMode {
+    ctx.data(|data| data.get_temp(reader_mode_id()))
+        .unwrap_or_default()
+}
+
+pub fn set_reader_mode(ctx: &eframe::egui::Context, mode: ReaderMode) {
+    ctx.data_mut(|data| data.insert_temp(reader_mode_id(), mode));
+}
+
+fn reader_mode_id() -> eframe::egui::Id {
+    eframe::egui::Id::unique("gg-reader-mode")
+}
+
 /// Preferences other than the clone folders, which `folders::Roots` keeps
 /// under its own key.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -99,6 +182,22 @@ pub struct Prefs {
     pub network_avatars: bool,
     /// Rebase dialogs start with "stash working changes first" checked.
     pub rebase_autostash: bool,
+    /// Reader presentation for newly opened files.
+    pub reader_mode: ReaderMode,
+    /// Image comparison layout; remembered from the last choice.
+    pub image_layout: ImageLayout,
+    pub sign_commits: SignCommits,
+    /// Commit details pane in wide History; remembered.
+    pub details_visible: bool,
+    /// Remembered from the last submitted stash form.
+    pub stash_include_untracked: bool,
+    pub stash_keep_index: bool,
+    /// Remembered from the last submitted merge.
+    pub merge_no_ff: bool,
+    /// Remembered from the last new branch created at a commit.
+    pub branch_switch: bool,
+    /// Fetch also prunes remote-tracking branches deleted on the remote.
+    pub fetch_prune: bool,
     path: Option<PathBuf>,
 }
 
@@ -109,6 +208,15 @@ impl Default for Prefs {
             density: Density::default(),
             network_avatars: true,
             rebase_autostash: false,
+            reader_mode: ReaderMode::default(),
+            image_layout: ImageLayout::default(),
+            sign_commits: SignCommits::default(),
+            details_visible: true,
+            stash_include_untracked: false,
+            stash_keep_index: false,
+            merge_no_ff: false,
+            branch_switch: true,
+            fetch_prune: false,
             path: None,
         }
     }
@@ -128,6 +236,16 @@ impl Prefs {
             density: read(path, "density").unwrap_or(defaults.density),
             network_avatars: read(path, "network_avatars").unwrap_or(defaults.network_avatars),
             rebase_autostash: read(path, "rebase_autostash").unwrap_or(defaults.rebase_autostash),
+            reader_mode: read(path, "reader_mode").unwrap_or(defaults.reader_mode),
+            image_layout: read(path, "image_layout").unwrap_or(defaults.image_layout),
+            sign_commits: read(path, "sign_commits").unwrap_or(defaults.sign_commits),
+            details_visible: read(path, "details_visible").unwrap_or(defaults.details_visible),
+            stash_include_untracked: read(path, "stash_include_untracked")
+                .unwrap_or(defaults.stash_include_untracked),
+            stash_keep_index: read(path, "stash_keep_index").unwrap_or(defaults.stash_keep_index),
+            merge_no_ff: read(path, "merge_no_ff").unwrap_or(defaults.merge_no_ff),
+            branch_switch: read(path, "branch_switch").unwrap_or(defaults.branch_switch),
+            fetch_prune: read(path, "fetch_prune").unwrap_or(defaults.fetch_prune),
             path: Some(path.to_path_buf()),
         }
     }
@@ -140,7 +258,20 @@ impl Prefs {
         write(path, "theme", &self.theme)?;
         write(path, "density", &self.density)?;
         write(path, "network_avatars", &self.network_avatars)?;
-        write(path, "rebase_autostash", &self.rebase_autostash)
+        write(path, "rebase_autostash", &self.rebase_autostash)?;
+        write(path, "reader_mode", &self.reader_mode)?;
+        write(path, "image_layout", &self.image_layout)?;
+        write(path, "sign_commits", &self.sign_commits)?;
+        write(path, "details_visible", &self.details_visible)?;
+        write(
+            path,
+            "stash_include_untracked",
+            &self.stash_include_untracked,
+        )?;
+        write(path, "stash_keep_index", &self.stash_keep_index)?;
+        write(path, "merge_no_ff", &self.merge_no_ff)?;
+        write(path, "branch_switch", &self.branch_switch)?;
+        write(path, "fetch_prune", &self.fetch_prune)
     }
 
     /// The theme to show: `GG_THEME` (debug builds) wins over the saved one
@@ -181,6 +312,15 @@ mod tests {
         prefs.density = Density::Comfortable;
         prefs.network_avatars = false;
         prefs.rebase_autostash = true;
+        prefs.reader_mode = ReaderMode::Full;
+        prefs.image_layout = ImageLayout::Onion;
+        prefs.sign_commits = SignCommits::Never;
+        prefs.details_visible = false;
+        prefs.stash_include_untracked = true;
+        prefs.stash_keep_index = true;
+        prefs.merge_no_ff = true;
+        prefs.branch_switch = false;
+        prefs.fetch_prune = true;
         prefs.save()?;
         assert_eq!(Prefs::load_from(&path), prefs);
         assert_eq!(read::<u32>(&path, "future_option"), Some(7));
@@ -199,6 +339,9 @@ mod tests {
         assert_eq!(prefs.theme, Theme::Dark);
         assert_eq!(prefs.density, Density::Comfortable);
         assert!(prefs.network_avatars);
+        assert!(prefs.branch_switch, "absent keys keep their defaults");
+        assert!(prefs.details_visible);
+        assert_eq!(prefs.sign_commits, SignCommits::Git);
         std::fs::write(&path, b"{not json")?;
         assert_eq!(Prefs::load_from(&path).density, Density::Compact);
         Ok(())

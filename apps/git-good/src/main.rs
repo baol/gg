@@ -237,6 +237,7 @@ git-good tag --create TAG --at REF -m MESSAGE [--sign] [--repo PATH]   Create an
             phosphor::install(&cc.egui_ctx);
             let mut app = Browser::new(path);
             app.apply_prefs(&cc.egui_ctx);
+            app.details_visible = app.prefs.details_visible;
             app.load(&cc.egui_ctx);
             Ok(Box::new(app))
         }),
@@ -327,14 +328,18 @@ fn clone_folder_label(path: &Path, default: &Path) -> String {
 enum PrefSection {
     General,
     Appearance,
+    Diff,
+    Commit,
     Rebase,
     Keyboard,
 }
 
 impl PrefSection {
-    const ALL: [Self; 4] = [
+    const ALL: [Self; 6] = [
         Self::General,
         Self::Appearance,
+        Self::Diff,
+        Self::Commit,
         Self::Rebase,
         Self::Keyboard,
     ];
@@ -343,6 +348,8 @@ impl PrefSection {
         match self {
             Self::General => "General",
             Self::Appearance => "Appearance",
+            Self::Diff => "Diff",
+            Self::Commit => "Commit",
             Self::Rebase => "Rebase & recovery",
             Self::Keyboard => "Keyboard",
         }
@@ -1564,7 +1571,7 @@ impl Browser {
         };
         let remote = target.remote.clone();
         self.pull_rebase = Some(target);
-        self.start_fetch(ctx, Some(remote), false);
+        self.start_fetch(ctx, Some(remote), self.prefs.fetch_prune);
         if self.network.is_none() {
             self.pull_rebase = None;
         }
@@ -1768,6 +1775,29 @@ impl Browser {
         });
         density::set(self.prefs.density);
         avatars::set_network(self.prefs.effective_network_avatars());
+        settings::set_reader_mode(ctx, self.prefs.reader_mode);
+        settings::set_image_layout(ctx, self.prefs.image_layout);
+    }
+
+    /// Save a remembered starting value when it changes. A save failure only
+    /// loses the memory for the next launch, so it is not reported.
+    fn remember(&mut self, change: impl FnOnce(&mut settings::Prefs)) {
+        let before = self.prefs.clone();
+        change(&mut self.prefs);
+        if self.prefs != before {
+            let _ = self.prefs.save();
+        }
+    }
+
+    /// Keep layout choices made outside Preferences: the details pane and
+    /// the image comparison layout chosen in the reader.
+    fn remember_layout(&mut self, ctx: &egui::Context) {
+        let details = self.details_visible;
+        let layout = settings::image_layout(ctx);
+        self.remember(|prefs| {
+            prefs.details_visible = details;
+            prefs.image_layout = layout;
+        });
     }
 
     fn open_preferences(&mut self, section: PrefSection) {
@@ -1967,6 +1997,30 @@ impl Browser {
                             )
                             .on_disabled_hover_text("GG_OFFLINE is set for this launch.");
                             ui.weak("Off: cached avatars and initials only.");
+                            ui.separator();
+                            ui.strong("Fetch");
+                            ui.checkbox(
+                                &mut prefs.fetch_prune,
+                                "Remove remote-tracking branches deleted on the remote",
+                            );
+                            ui.separator();
+                            ui.strong("Dialog defaults");
+                            ui.weak(
+                                "Forms start with these choices and remember the last one you submitted; each still asks.",
+                            );
+                            ui.checkbox(
+                                &mut prefs.stash_include_untracked,
+                                "Stash: include untracked files",
+                            );
+                            ui.checkbox(
+                                &mut prefs.stash_keep_index,
+                                "Stash: keep staged changes in the index",
+                            );
+                            ui.checkbox(&mut prefs.merge_no_ff, "Merge: always create a merge commit");
+                            ui.checkbox(
+                                &mut prefs.branch_switch,
+                                "New branch: switch after creation",
+                            );
                         }
                         PrefSection::Appearance => {
                             ui.strong("Theme");
@@ -1988,6 +2042,39 @@ impl Browser {
                                 "Comfortable · 28 px rows",
                             );
                             ui.weak("History, file, and refs rows.");
+                        }
+                        PrefSection::Diff => {
+                            ui.strong("Open files in");
+                            ui.horizontal(|ui| {
+                                ui.radio_value(
+                                    &mut prefs.reader_mode,
+                                    settings::ReaderMode::Diff,
+                                    "Diff",
+                                );
+                                ui.radio_value(
+                                    &mut prefs.reader_mode,
+                                    settings::ReaderMode::Full,
+                                    "Full file",
+                                );
+                            });
+                            ui.weak("Each newly opened reader starts here; D and F still switch.");
+                            ui.separator();
+                            ui.strong("Compare images");
+                            ui.horizontal(|ui| {
+                                for layout in settings::ImageLayout::ALL {
+                                    ui.radio_value(&mut prefs.image_layout, layout, layout.label());
+                                }
+                            });
+                            ui.weak("Also remembered from the last choice in the reader.");
+                        }
+                        PrefSection::Commit => {
+                            ui.strong("Sign commits");
+                            for sign in settings::SignCommits::ALL {
+                                ui.radio_value(&mut prefs.sign_commits, sign, sign.label());
+                            }
+                            ui.weak(
+                                "Sets the Sign checkbox when Local Changes opens; it can still be changed per commit.",
+                            );
                         }
                         PrefSection::Rebase => {
                             ui.strong("Rebase");
@@ -2110,6 +2197,7 @@ impl Browser {
         if submit {
             let target = dialog.target.clone();
             let include_untracked = dialog.include_untracked;
+            self.remember(|prefs| prefs.stash_include_untracked = include_untracked);
             self.stash_switch = None;
             self.pending_switch = Some(target.clone());
             self.start_branch_stashing(ctx, target, include_untracked);
@@ -2415,7 +2503,7 @@ impl Browser {
         go_history: &mut bool,
     ) {
         match command {
-            FrameCommand::Fetch => self.start_fetch(ctx, None, false),
+            FrameCommand::Fetch => self.start_fetch(ctx, None, self.prefs.fetch_prune),
             FrameCommand::Pull => self.start_pull_rebase(ctx),
             FrameCommand::Push => self.start_push(ctx),
             FrameCommand::ForcePush => {
@@ -3412,6 +3500,7 @@ impl Browser {
         };
         self.review = None;
         let mut working = status_view::StatusView::new(history.path.clone(), ctx);
+        working.apply_sign_default(self.prefs.sign_commits);
         if let Some(draft) = self.working_drafts.get(&working.repository_key()).cloned() {
             working.restore_draft(draft, ctx);
         }
@@ -3739,7 +3828,7 @@ impl Browser {
                 }
             }
             RecoveryAction::ResolveConflicts => self.open_conflict_view(ctx),
-            RecoveryAction::RetryFetch => self.start_fetch(ctx, None, false),
+            RecoveryAction::RetryFetch => self.start_fetch(ctx, None, self.prefs.fetch_prune),
             RecoveryAction::RetryPush => self.start_push(ctx),
             RecoveryAction::RetrySwitch => {
                 if let Some(target) = self.pending_switch.clone() {
@@ -3759,7 +3848,7 @@ impl Browser {
                 if let Some(target) = self.pending_switch.clone() {
                     self.stash_switch = Some(StashSwitchDialog {
                         target,
-                        include_untracked: false,
+                        include_untracked: self.prefs.stash_include_untracked,
                         error: None,
                     });
                 }
@@ -4213,8 +4302,8 @@ impl Browser {
     fn open_stash_dialog(&mut self) {
         self.stash_dialog = Some(StashDialog {
             message: String::new(),
-            include_untracked: false,
-            keep_index: false,
+            include_untracked: self.prefs.stash_include_untracked,
+            keep_index: self.prefs.stash_keep_index,
             error: None,
         });
     }
@@ -4232,7 +4321,7 @@ impl Browser {
     fn open_merge_dialog(&mut self) {
         self.merge_dialog = Some(MergeDialog {
             reference: String::new(),
-            no_ff: false,
+            no_ff: self.prefs.merge_no_ff,
             error: None,
         });
     }
@@ -4583,7 +4672,7 @@ impl Browser {
             name: String::new(),
             commit,
             selector: "current HEAD".into(),
-            switch: true,
+            switch: self.prefs.branch_switch,
             recovery_source: None,
             error: None,
         });
@@ -6165,6 +6254,7 @@ impl Browser {
             self.open_working(ctx);
         }
         self.open_reopened_commit(ctx);
+        self.remember_layout(ctx);
         #[cfg(debug_assertions)]
         if self.state.history.is_some()
             && let Some(from) = self.open_rebase.take()
@@ -6637,7 +6727,7 @@ impl Browser {
                         .on_hover_text("Fetch the default remote without changing local branches")
                         .clicked()
                     {
-                        self.start_fetch(ctx, None, false);
+                        self.start_fetch(ctx, None, self.prefs.fetch_prune);
                         ui.close();
                     }
                     let pull_label = if ready.behind > 0 {
@@ -7624,7 +7714,7 @@ impl Browser {
                 Some(refs_view::Action::Merge(name)) => {
                     self.merge_dialog = Some(MergeDialog {
                         reference: name,
-                        no_ff: false,
+                        no_ff: self.prefs.merge_no_ff,
                         error: None,
                     });
                 }
@@ -7985,6 +8075,11 @@ impl Browser {
         if let Some((name, switch)) = create_branch_submit
             && let Some(dialog) = self.create_branch.clone()
         {
+            // Recovery branches always start with switching off; remember
+            // only the ordinary new-branch choice.
+            if dialog.recovery_source.is_none() {
+                self.remember(|prefs| prefs.branch_switch = switch);
+            }
             match self.stash_path() {
                 Some(path) => match gg_git::branch::create_at(&path, &name, &dialog.commit) {
                     Ok(receipt) => {
@@ -8544,6 +8639,7 @@ impl Browser {
             }
         }
         if let Some((reference, no_ff)) = merge_submit {
+            self.remember(|prefs| prefs.merge_no_ff = no_ff);
             match self.start_merge(ctx, &reference, no_ff) {
                 Ok(()) => self.merge_dialog = None,
                 Err(error) => {
@@ -8719,6 +8815,10 @@ impl Browser {
             }
         }
         if let Some((message, include_untracked, keep_index)) = stash_submit {
+            self.remember(|prefs| {
+                prefs.stash_include_untracked = include_untracked;
+                prefs.stash_keep_index = keep_index;
+            });
             match self.push_stash(ctx, &message, include_untracked, keep_index) {
                 Ok(()) => self.stash_dialog = None,
                 Err(error) => {
@@ -10005,6 +10105,113 @@ mod tests {
             assert!(app.folders_dialog.is_some(), "the window stays open");
             app.prefs.theme = settings::Theme::Dark;
             app.prefs.save()?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn dialogs_open_with_remembered_choices_and_save_them_on_submission()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let settings_file = dir.path().join("settings.json");
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        app.prefs = settings::Prefs::load_from(&settings_file);
+        app.prefs.stash_include_untracked = true;
+        app.prefs.stash_keep_index = true;
+        app.prefs.merge_no_ff = true;
+        app.prefs.branch_switch = false;
+
+        app.open_stash_dialog();
+        let stash = app.stash_dialog.as_ref().ok_or("stash dialog missing")?;
+        assert!(stash.include_untracked && stash.keep_index);
+        app.stash_dialog = None;
+        app.open_new_branch();
+        let branch = app.create_branch.as_ref().ok_or("branch dialog missing")?;
+        assert!(
+            !branch.switch,
+            "switch after creation starts from the memory"
+        );
+        app.create_branch = None;
+
+        // Opening alone saves nothing; submitting a changed choice does.
+        app.open_merge_dialog();
+        assert!(app.merge_dialog.as_ref().is_some_and(|dialog| dialog.no_ff));
+        let frame = |app: &mut Browser, events| {
+            crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, events), |ctx| {
+                app.draw_ui(ctx)
+            })
+        };
+        let _ = frame(&mut app, vec![]);
+        assert_eq!(settings::read::<bool>(&settings_file, "merge_no_ff"), None);
+        if let Some(dialog) = &mut app.merge_dialog {
+            dialog.reference = "main".into();
+            dialog.no_ff = false;
+        }
+        let output = frame(&mut app, vec![]);
+        let merge = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) if text.galley.job.text == "Merge" => {
+                    Some(text.visual_bounding_rect().center())
+                }
+                _ => None,
+            })
+            .ok_or("Merge button missing")?;
+        let _ = frame(&mut app, click_at(merge));
+        assert!(!app.prefs.merge_no_ff);
+        assert_eq!(
+            settings::read::<bool>(&settings_file, "merge_no_ff"),
+            Some(false),
+            "the submitted choice is saved"
+        );
+        assert!(
+            settings::Prefs::load_from(&settings_file).stash_keep_index,
+            "the other remembered values are saved with it"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn preferences_show_diff_and_commit_sections() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let settings_file = dir.path().join("settings.json");
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        app.prefs = settings::Prefs::load_from(&settings_file);
+        let frame = |app: &mut Browser| {
+            crate::tests::run_ui(&ctx, frame_input(720.0, 520.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            })
+        };
+        app.open_preferences(PrefSection::Diff);
+        let _ = frame(&mut app);
+        let text = shown_text(&frame(&mut app));
+        for expected in [
+            "Diff",
+            "Commit",
+            "Open files in",
+            "Full file",
+            "Compare images",
+            "Onion skin",
+        ] {
+            assert!(
+                text.iter().any(|line| line == expected),
+                "missing {expected:?} in {text:?}"
+            );
+        }
+        app.open_preferences(PrefSection::Commit);
+        let text = shown_text(&frame(&mut app));
+        for expected in [
+            "Sign commits",
+            "Follow Git config (commit.gpgSign)",
+            "Never",
+        ] {
+            assert!(
+                text.iter().any(|line| line == expected),
+                "missing {expected:?} in {text:?}"
+            );
         }
         Ok(())
     }

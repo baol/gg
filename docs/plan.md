@@ -113,7 +113,7 @@ Design not yet implemented:
 2. **Stashes picker · fixed.** Rows show ref, message, branch, age, and file count in fixed slots; the picker keeps a fixed size.
 3. **Search:** the Files group is missing; the toolbar has a Search button rather than a field.
 4. **Conflict stop:** blocks live in the floating Resolve conflicts window, not in the main workspace beside the operation area.
-5. **Preferences:** no Diff or Commit sections yet; the Settings panel plan's layout memory and operation defaults (increments 4–5) remain.
+5. **Preferences · fixed.** Diff (reader presentation, image layout) and Commit (signing default) sections; the details pane and image layout are remembered; stash, merge, new-branch, and fetch-prune choices start from remembered values. There is no stash restore form with options, so none is remembered.
 6. **Frame metrics:** the menu row is 42 px, not 26 px; compact diff rows are 20 px, not 19 px.
 
 Layout moves with content:
@@ -157,13 +157,13 @@ Goal: gather user preferences in one Settings window and keep them across launch
 
 ### Increments
 
-Status: increments 1–3 shipped with the final interface (General, Appearance, Rebase & recovery, and Keyboard sections); 4 and 5 remain.
+Status: complete. Increments 1–3 shipped with the final interface; 4 and 5 shipped with the Diff and Commit sections.
 
 1. **Settings store · complete.** Persist preferences in `gg/settings.json` under the OS configuration directory; read `gg/roots.json` once and fold it in. Unknown or malformed values fall back to defaults without losing the rest.
 2. **General · complete.** Theme (system, light, dark) and network avatars (on, or cached avatars and initials). Promote the `GG_THEME` and `GG_OFFLINE` debug switches to these settings; keep the variables as overrides.
 3. **Repositories · complete.** Move Development base folders and the default clone folder into Settings; keep Repository → Clone's **Folders…** shortcut.
-4. **Layout.** Remember Commit details visibility and the binary preview layout.
-5. **Operation defaults.** Remember the last choices for stash (include untracked, keep staged), stash restore (restore staged, remove after restore), merge (always create a merge commit), new branch (switch after creation), and fetch prune. Dialogs open with these values; every operation stays explicitly submitted.
+4. **Layout · complete.** Remember Commit details visibility and the binary preview layout.
+5. **Operation defaults · complete.** Remember the last choices for stash (include untracked, keep staged), stash restore (restore staged, remove after restore), merge (always create a merge commit), new branch (switch after creation), and fetch prune. Dialogs open with these values; every operation stays explicitly submitted.
 
 ### Acceptance
 

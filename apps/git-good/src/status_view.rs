@@ -689,6 +689,25 @@ impl StatusView {
         self.restart(ctx);
     }
 
+    /// Apply the Preferences › Commit choice for the **Sign** checkbox:
+    /// follow `commit.gpgSign`, always when signing is ready, or never.
+    pub fn apply_sign_default(&mut self, default: crate::settings::SignCommits) {
+        let ready = self.signing.as_ref().is_some_and(|config| config.ready());
+        self.sign_commit = match default {
+            crate::settings::SignCommits::Git => self
+                .signing
+                .as_ref()
+                .is_some_and(|config| config.commit_signing),
+            crate::settings::SignCommits::Always => ready,
+            crate::settings::SignCommits::Never => false,
+        };
+    }
+
+    #[cfg(test)]
+    pub(crate) fn sign_checked(&self) -> bool {
+        self.sign_commit
+    }
+
     /// Put `message` in an empty commit box, such as a reopened commit's
     /// original message; a draft the user typed is kept.
     pub fn prefill_message(&mut self, message: &str) {
@@ -2828,6 +2847,34 @@ mod tests {
             collapse.unwrap_or_default() + egui::vec2(5.0, 0.0),
         );
         assert!(!view.message_expanded);
+    }
+
+    #[test]
+    fn the_sign_checkbox_starts_from_the_commit_preference() {
+        let ctx = egui::Context::default();
+        let mut view = StatusView::new("/missing-sign-fixture".into(), &ctx);
+        let config = |commit_signing, key: Option<&str>| gg_engine::signature::Config {
+            format: "openpgp".into(),
+            signing_key: key.map(str::to_string),
+            gpg_program: None,
+            commit_signing,
+            tag_signing: false,
+            allowed_signers: None,
+            tool_available: true,
+            note: None,
+        };
+        use crate::settings::SignCommits;
+        view.signing = Some(config(true, Some("KEY")));
+        view.apply_sign_default(SignCommits::Git);
+        assert!(view.sign_checked(), "follows commit.gpgSign");
+        view.apply_sign_default(SignCommits::Never);
+        assert!(!view.sign_checked());
+        view.signing = Some(config(false, Some("KEY")));
+        view.apply_sign_default(SignCommits::Always);
+        assert!(view.sign_checked(), "always, when signing is ready");
+        view.signing = Some(config(false, None));
+        view.apply_sign_default(SignCommits::Always);
+        assert!(!view.sign_checked(), "no key: signing is not ready");
     }
 
     #[test]

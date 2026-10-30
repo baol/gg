@@ -100,6 +100,9 @@ pub struct DiffView {
     offset: f32,
     reset: bool,
     mode: Mode,
+    /// Whether the starting presentation was decided: by the preference on
+    /// first draw, or by an explicit choice or restored place before it.
+    mode_seeded: bool,
     side: ReadingSide,
     full: Option<FileText>,
     full_side: ReadingSide,
@@ -165,6 +168,7 @@ impl Default for DiffView {
             offset: 0.0,
             reset: false,
             mode: Mode::Diff,
+            mode_seeded: false,
             side: ReadingSide::After,
             full: None,
             full_side: ReadingSide::After,
@@ -540,6 +544,7 @@ impl DiffView {
                     &context.change.new,
                 ));
         let mut place = context.place.clone();
+        self.mode_seeded = true;
         if !same {
             self.mode = place.mode;
             self.side = place.side;
@@ -1227,6 +1232,7 @@ impl DiffView {
     }
 
     fn set_mode(&mut self, mode: Mode, ctx: &egui::Context) {
+        self.mode_seeded = true;
         if self.mode == mode {
             return;
         }
@@ -1734,6 +1740,13 @@ impl DiffView {
     fn draw_inner(&mut self, ui: &mut egui::Ui, keyboard: bool) {
         self.bounds = ui.max_rect();
         let ctx = ui.ctx().clone();
+        if !self.mode_seeded && self.change.is_some() {
+            // A new reader starts in the preferred presentation.
+            if crate::settings::reader_mode(&ctx) == crate::settings::ReaderMode::Full {
+                self.set_mode(Mode::Full, &ctx);
+            }
+            self.mode_seeded = true;
+        }
         self.poll_blame();
         self.sync_blame(&ctx);
         self.export.draw(&ctx);
@@ -3120,6 +3133,44 @@ mod tests {
         view.jump_change(-1, &ctx);
         assert_eq!(view.cursor, Some(1));
         assert_eq!(view.change_position(), (1, 2));
+    }
+
+    #[test]
+    fn a_new_reader_starts_in_the_preferred_presentation() {
+        let ctx = egui::Context::default();
+        crate::settings::set_reader_mode(&ctx, crate::settings::ReaderMode::Full);
+        let mut view = DiffView {
+            change: Some(file("a", true, true)),
+            generation: 1,
+            ..Default::default()
+        };
+        let _ = crate::tests::run_ui(
+            &ctx,
+            crate::tests::frame_input(1120.0, 740.0, vec![]),
+            |ui| view.draw(ui),
+        );
+        assert_eq!(view.mode, Mode::Full);
+        // A later explicit choice is kept; the preference applies once.
+        view.set_mode(Mode::Diff, &ctx);
+        let _ = crate::tests::run_ui(
+            &ctx,
+            crate::tests::frame_input(1120.0, 740.0, vec![]),
+            |ui| view.draw(ui),
+        );
+        assert_eq!(view.mode, Mode::Diff);
+        // Without a preference in the window, readers start in Diff.
+        let plain = egui::Context::default();
+        let mut view = DiffView {
+            change: Some(file("a", true, true)),
+            generation: 1,
+            ..Default::default()
+        };
+        let _ = crate::tests::run_ui(
+            &plain,
+            crate::tests::frame_input(1120.0, 740.0, vec![]),
+            |ui| view.draw(ui),
+        );
+        assert_eq!(view.mode, Mode::Diff);
     }
 
     #[test]

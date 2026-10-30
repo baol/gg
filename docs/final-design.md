@@ -76,7 +76,7 @@ Both stops use the operation area under the toolbar. Its first line names the st
 
 ## Preferences
 
-**Repository › Preferences…** opens a non-blocking window; changes apply immediately and persist under the OS configuration directory. Sections: General, Appearance, Rebase & recovery, Keyboard; Diff and Commit sections join when they have settings.
+**Repository › Preferences…** opens a non-blocking window; changes apply immediately and persist under the OS configuration directory. Sections: General, Appearance, Diff, Commit, Rebase & recovery, Keyboard.
 
 - **Clone folders** (General): an ordered list of parent folders. One radio marks the **preferred** folder used by Clone by default. Each row shows its repository count or a missing-folder state; rows reorder and remove. Adding validates the path (`Folder is empty.`, `Folder must be an absolute path.`, `Already in the list.`). Removing the preferred folder makes the first one preferred.
 - The remaining sections follow the [Settings panel](plan.md#settings-panel--planned) plan.
