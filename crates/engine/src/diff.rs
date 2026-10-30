@@ -4,6 +4,7 @@ use similar::{Algorithm, ChangeTag};
 use std::time::{Duration, Instant};
 pub const MAX_BLOB_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_LINES: usize = 100_000;
+/// Time spent looking for the smallest diff; after it the diff is coarser but exact.
 pub const COMPUTE_BUDGET: Duration = Duration::from_millis(250);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -109,12 +110,8 @@ pub fn compare(old: &[u8], new: &[u8], cancelled: impl Fn() -> bool) -> Result<F
     if cancelled() {
         return Err("Comparison cancelled".into());
     }
-    if Instant::now() >= deadline {
-        return Ok(summary(
-            DiffKind::Limited,
-            "Text comparison reached its time budget",
-        ));
-    }
+    // Past the deadline the algorithm stops refining and returns a coarser
+    // but still exact diff; the reader always gets text, never a fallback.
     let mut result = summary(
         DiffKind::Text,
         if old == new { "Content unchanged" } else { "" },
@@ -178,6 +175,39 @@ pub fn compare(old: &[u8], new: &[u8], cancelled: impl Fn() -> bool) -> Result<F
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn a_slow_comparison_still_returns_a_complete_text_diff() -> Result<(), String> {
+        // Reversing 20,000 lines makes an exact diff far slower than the
+        // compute budget; the reader must still get text, never a fallback.
+        let old = (0..20_000)
+            .map(|i| format!("line {i}\n"))
+            .collect::<String>();
+        let new = (0..20_000)
+            .rev()
+            .map(|i| format!("line {i}\n"))
+            .collect::<String>();
+        let diff = compare(old.as_bytes(), new.as_bytes(), || false)?;
+        assert_eq!(diff.kind, DiffKind::Text, "{}", diff.note);
+        assert!(diff.complete);
+        let side = |keep: RowKind| {
+            diff.rows
+                .iter()
+                .filter(|row| row.kind == RowKind::Context || row.kind == keep)
+                .flat_map(|row| row.bytes.clone())
+                .collect::<Vec<u8>>()
+        };
+        assert_eq!(
+            side(RowKind::Deleted),
+            old.as_bytes(),
+            "the old side is intact"
+        );
+        assert_eq!(
+            side(RowKind::Added),
+            new.as_bytes(),
+            "the new side is intact"
+        );
+        Ok(())
+    }
     #[test]
     fn byte_exact_lines_context_and_missing_newline() -> Result<(), String> {
         let old = b"one\r\nold\nkeep\nlast";
