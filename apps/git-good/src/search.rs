@@ -11,6 +11,7 @@ pub enum Group {
     Branches,
     Remotes,
     Tags,
+    Files,
 }
 
 impl Group {
@@ -21,6 +22,7 @@ impl Group {
             Self::Branches => "BRANCHES",
             Self::Remotes => "REMOTES",
             Self::Tags => "TAGS",
+            Self::Files => "FILES",
         }
     }
 }
@@ -95,6 +97,37 @@ pub fn results<C: Clone>(query: &str, items: &[Item<C>], filter: C) -> Vec<Item<
     out
 }
 
+/// Up to [`GROUP_LIMIT`] tracked files matching `query`, file names that
+/// start with the query first. An empty query lists none.
+pub fn files<C>(query: &str, paths: &[String], command: impl Fn(&str) -> C) -> Vec<Item<C>> {
+    let query = query.trim();
+    if query.is_empty() {
+        return Vec::new();
+    }
+    let lower = query.to_lowercase();
+    let mut matched = paths
+        .iter()
+        .filter(|path| matches(query, path))
+        .map(|path| {
+            let name = path.rsplit('/').next().unwrap_or(path);
+            (!name.to_lowercase().starts_with(&lower), path.len(), path)
+        })
+        .collect::<Vec<_>>();
+    matched.sort();
+    matched
+        .into_iter()
+        .take(GROUP_LIMIT)
+        .map(|(_, _, path)| Item {
+            group: Group::Files,
+            label: path.clone(),
+            context: "open its latest change".into(),
+            key: "",
+            disabled: None,
+            command: command(path),
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -149,6 +182,22 @@ mod tests {
         let results = results("  ", &items, "filter".to_string());
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].label, "Fetch");
+    }
+
+    #[test]
+    fn files_prefer_names_that_start_with_the_query() {
+        let paths = vec![
+            "docs/plan.md".to_string(),
+            "src/plan_view.rs".to_string(),
+            "src/replan.rs".to_string(),
+            "README.md".to_string(),
+        ];
+        let found = files("plan", &paths, str::to_string)
+            .into_iter()
+            .map(|item| item.label)
+            .collect::<Vec<_>>();
+        assert_eq!(found, ["docs/plan.md", "src/plan_view.rs", "src/replan.rs"]);
+        assert!(files(" ", &paths, str::to_string).is_empty());
     }
 
     #[test]

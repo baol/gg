@@ -68,6 +68,8 @@ pub struct Review {
     /// Drawn inside another surface: no Back button, identity, or status
     /// line, and the reader sits below the file list.
     embedded: bool,
+    /// File to select and read once its row arrives.
+    pending_path: Option<String>,
 }
 impl Review {
     pub fn new(request: ReviewRequest, subject: String, ctx: &egui::Context) -> Self {
@@ -99,6 +101,7 @@ impl Review {
             history_entry_row: None,
             reveal_selection: false,
             embedded: false,
+            pending_path: None,
         };
         view.retry(ctx);
         view
@@ -108,6 +111,12 @@ impl Review {
     /// dialog: files above the reader, no Back button, identity, or status line.
     pub fn embedded(mut self) -> Self {
         self.embedded = true;
+        self
+    }
+
+    /// Open on `path`: select it and show its reader once its row arrives.
+    pub fn select_path(mut self, path: String) -> Self {
+        self.pending_path = Some(path);
         self
     }
 
@@ -499,6 +508,21 @@ impl Review {
             }
             if quiet && pinned.is_none() && !scrollbar {
                 self.staged = None;
+            }
+        }
+        if let Some(path) = &self.pending_path {
+            if let Some(row) = self
+                .rows
+                .iter()
+                .find(|(_, change)| &change.path == path)
+                .map(|(row, _)| *row)
+            {
+                self.selected = Some(row);
+                self.show_diff = true;
+                self.reveal_selection = true;
+                self.pending_path = None;
+            } else if self.complete && self.staged.is_none() {
+                self.pending_path = None;
             }
         }
         while self.rows.len() > 768 {
@@ -1112,6 +1136,26 @@ mod tests {
             egui::epaint::Shape::Text(text)
                 if text.galley.job.text == "Back to history"
         )));
+    }
+
+    #[test]
+    fn select_path_opens_the_reader_on_that_file() {
+        let ctx = egui::Context::default();
+        let mut view = Review::fixture(&ctx);
+        let wanted = format!("src/0003-{}.rs", "long-path-".repeat(20));
+        view.pending_path = Some(wanted.clone());
+        for _ in 0..2 {
+            let _ = crate::tests::run_ui(
+                &ctx,
+                crate::tests::frame_input(1120.0, 740.0, vec![]),
+                |ctx| {
+                    view.draw_ui(ctx);
+                },
+            );
+        }
+        assert_eq!(view.selected, Some(3));
+        assert!(view.show_diff);
+        assert_eq!(view.pending_path, None);
     }
 
     #[test]

@@ -270,6 +270,7 @@ pub mod diff;
 pub mod drop;
 pub mod file;
 pub mod file_history;
+pub mod files;
 pub mod lfs;
 pub mod merge;
 pub mod mutation;

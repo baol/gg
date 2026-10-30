@@ -415,6 +415,8 @@ struct LocalSummary {
     branch_start: Option<(String, usize)>,
     /// Steps and stop of an interactive rebase in progress.
     rebase: Option<gg_engine::mutation::RebaseProgress>,
+    /// Tracked paths for the search Files group, bounded.
+    files: Vec<String>,
 }
 
 impl LocalSummary {
@@ -426,6 +428,7 @@ impl LocalSummary {
                 .unwrap_or_default(),
             branch_start: gg_git::rewrite::branch_start(&path).ok().flatten(),
             rebase: gg_git::mutation::rebase_progress(&path).ok().flatten(),
+            files: gg_git::files::tracked(&path, SEARCH_FILE_LIMIT).unwrap_or_default(),
         }
     }
 }
@@ -633,15 +636,47 @@ enum FrameCommand {
     Filter(String),
     /// Inspect a ref's commit without moving HEAD.
     Inspect(String),
+    /// Open the latest commit that changed this path, on that file.
+    OpenFile(String),
 }
 
 /// Open `Ctrl+K` search state.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 struct SearchPalette {
     query: String,
     selected: usize,
     focused: bool,
+    /// Typed into the toolbar field; results open under `anchor`.
+    in_field: bool,
+    anchor: egui::Rect,
+    /// File results for `files_query`, recomputed only when it changes.
+    files_query: String,
+    file_items: Vec<search::Item<FrameCommand>>,
 }
+
+impl Default for SearchPalette {
+    fn default() -> Self {
+        Self {
+            query: String::new(),
+            selected: 0,
+            focused: false,
+            in_field: false,
+            anchor: egui::Rect::NOTHING,
+            files_query: String::new(),
+            file_items: Vec::new(),
+        }
+    }
+}
+
+fn search_field_id() -> egui::Id {
+    egui::Id::unique("toolbar-search-field")
+}
+
+/// Most tracked paths kept for the search Files group.
+const SEARCH_FILE_LIMIT: usize = 50_000;
+
+/// Fixed height of the search results popup.
+const SEARCH_RESULTS_HEIGHT: f32 = 360.0;
 
 /// Fixed height of the operation area: two lines.
 const OPERATION_AREA_HEIGHT: f32 = 44.0;
@@ -1193,6 +1228,8 @@ struct Browser {
     clone_folder: Option<PathBuf>,
     folders: folders::Roots,
     prefs: settings::Prefs,
+    /// Text in the toolbar search field.
+    search_text: String,
     folders_dialog: Option<FoldersDialog>,
     force_push: Option<ForcePushDialog>,
     force_push_pending: bool,
@@ -1304,6 +1341,7 @@ impl Browser {
             clone_folder: None,
             folders: folders::Roots::load(),
             // Tests keep the defaults instead of reading the user's settings.
+            search_text: String::new(),
             prefs: if cfg!(test) {
                 settings::Prefs::default()
             } else {
@@ -2449,6 +2487,30 @@ impl Browser {
                 self.jump_to_ref(commit);
                 *go_history = true;
             }
+            FrameCommand::OpenFile(file) => self.open_file(ctx, file),
+        }
+    }
+
+    /// Open the latest commit that changed `file` in Review, on that file.
+    fn open_file(&mut self, ctx: &egui::Context, file: String) {
+        let Some(path) = self.stash_path() else {
+            return;
+        };
+        match gg_git::files::last_change(&path, &file) {
+            Ok(Some((commit, subject))) => {
+                if self.working.is_some() {
+                    self.close_to_history(ctx);
+                }
+                let location = self.capture_return_location();
+                self.open_review_at(ctx, commit, subject, Some(location));
+                if let Some(review) = self.review.take() {
+                    self.review = Some(review.select_path(file));
+                }
+            }
+            Ok(None) => {
+                self.mutation_error = Some(format!("No commit in this history changes {file}."))
+            }
+            Err(error) => self.mutation_error = Some(error),
         }
     }
 
@@ -2701,27 +2763,42 @@ impl Browser {
     }
 
     /// Draws the `Ctrl+K` search popup and returns the command to run.
+    fn close_search(&mut self, ctx: &egui::Context) {
+        self.search = None;
+        self.search_text.clear();
+        ctx.memory_mut(|m| m.surrender_focus(search_field_id()));
+    }
+
     fn draw_search(&mut self, ctx: &egui::Context, ready: &FrameReadiness) -> Option<FrameCommand> {
         let palette = self.search.as_mut()?;
         let query = palette.query.clone();
-        let items = {
-            let palette_query = query.clone();
+        if palette.files_query != query {
+            palette.files_query = query.clone();
+            palette.file_items = search::files(
+                &query,
+                self.local_summary
+                    .as_ref()
+                    .map(|summary| summary.files.as_slice())
+                    .unwrap_or_default(),
+                |path| FrameCommand::OpenFile(path.to_string()),
+            );
+        }
+        let file_items = palette.file_items.clone();
+        let mut items = {
             let base = self.search_items(ready);
-            search::results(
-                &palette_query,
-                &base,
-                FrameCommand::Filter(palette_query.trim().to_owned()),
-            )
+            search::results(&query, &base, FrameCommand::Filter(query.trim().to_owned()))
         };
+        items.extend(file_items);
         let palette = self.search.as_mut()?;
         if palette.selected >= items.len() {
             palette.selected = items.len().saturating_sub(1);
         }
-        let (down, up, enter) = ctx.input_mut(|i| {
+        let (down, up, enter, escape) = ctx.input_mut(|i| {
             (
                 i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown),
                 i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp),
                 i.consume_key(egui::Modifiers::NONE, egui::Key::Enter),
+                i.key_pressed(egui::Key::Escape),
             )
         });
         if down && palette.selected + 1 < items.len() {
@@ -2731,34 +2808,20 @@ impl Browser {
             palette.selected = palette.selected.saturating_sub(1);
         }
         let mut chosen = enter.then_some(palette.selected);
-        let id = egui::Id::unique("frame-search");
-        let area =
-            egui::Modal::default_area(id).anchor(egui::Align2::RIGHT_TOP, egui::vec2(-8.0, 74.0));
-        let modal = egui::Modal::new(id)
-            .area(area)
-            .backdrop_color(egui::Color32::from_black_alpha(40))
-            .show(ctx, |ui| {
-                ui.set_width(520.0_f32.min(ctx.content_rect().width() - 32.0));
-                let edit = ui.add(
-                    egui::TextEdit::singleline(&mut palette.query)
-                        .hint_text("Search commands, branches, remotes, and tags")
-                        .desired_width(f32::INFINITY),
-                );
-                if !palette.focused {
-                    edit.request_focus();
-                    palette.focused = true;
-                }
-                if edit.changed() {
-                    palette.selected = 0;
-                }
-                ui.add_space(4.0);
-                if items.is_empty() {
-                    ui.weak("No matching commands or refs");
-                }
+        let width = 520.0_f32.min(ctx.content_rect().width() - 32.0);
+        // Results keep one fixed height however many match.
+        let results =
+            |ui: &mut egui::Ui, palette: &mut SearchPalette, chosen: &mut Option<usize>| {
                 let mut group = None;
                 egui::ScrollArea::vertical()
-                    .max_height(420.0)
+                    .id_salt("search-results")
+                    .min_scrolled_height(SEARCH_RESULTS_HEIGHT)
+                    .max_height(SEARCH_RESULTS_HEIGHT)
+                    .auto_shrink([false, false])
                     .show(ui, |ui| {
+                        if items.is_empty() {
+                            ui.weak("No matching commands, refs, or files");
+                        }
                         for (index, item) in items.iter().enumerate() {
                             if group != Some(item.group) {
                                 group = Some(item.group);
@@ -2782,7 +2845,7 @@ impl Browser {
                                 None => response,
                             };
                             if response.clicked() {
-                                chosen = Some(index);
+                                *chosen = Some(index);
                             }
                             if palette.selected == index && (down || up) {
                                 response.scroll_to_me(None);
@@ -2793,14 +2856,61 @@ impl Browser {
                 ui.weak(
                     "Enter: run · Up/Down: choose · Esc: close · every action also lives in a menu",
                 );
+            };
+        let mut close = escape;
+        if palette.in_field {
+            let anchor = palette.anchor;
+            let left = (anchor.right() - width).max(ctx.content_rect().left() + 8.0);
+            let area = egui::Area::new(egui::Id::unique("frame-search"))
+                .order(egui::Order::Foreground)
+                .fixed_pos(egui::pos2(left, anchor.bottom() + 4.0))
+                .show(ctx, |ui| {
+                    egui::Frame::popup(ui.style()).show(ui, |ui| {
+                        ui.set_width(width);
+                        results(ui, palette, &mut chosen);
+                    });
+                });
+            let outside = ctx.input(|i| {
+                i.pointer.any_pressed()
+                    && i.pointer.interact_pos().is_some_and(|pos| {
+                        !area.response.rect.contains(pos) && !anchor.contains(pos)
+                    })
             });
-        let close = modal.should_close();
+            close |= outside;
+        } else {
+            let id = egui::Id::unique("frame-search");
+            let area = egui::Modal::default_area(id).anchor(
+                egui::Align2::RIGHT_TOP,
+                egui::vec2(-8.0, MENU_BAR_HEIGHT + 34.0),
+            );
+            let modal = egui::Modal::new(id)
+                .area(area)
+                .backdrop_color(egui::Color32::from_black_alpha(40))
+                .show(ctx, |ui| {
+                    ui.set_width(width);
+                    let edit = ui.add(
+                        egui::TextEdit::singleline(&mut palette.query)
+                            .hint_text("Search commands, branches, remotes, tags, and files")
+                            .desired_width(f32::INFINITY),
+                    );
+                    if !palette.focused {
+                        edit.request_focus();
+                        palette.focused = true;
+                    }
+                    if edit.changed() {
+                        palette.selected = 0;
+                    }
+                    ui.add_space(4.0);
+                    results(ui, palette, &mut chosen);
+                });
+            close |= modal.should_close();
+        }
         let command = chosen
             .and_then(|index| items.get(index))
             .filter(|item| item.disabled.is_none())
             .map(|item| item.command.clone());
         if close || command.is_some() {
-            self.search = None;
+            self.close_search(ctx);
         }
         command
     }
@@ -5922,6 +6032,12 @@ impl Browser {
         self.sync_mutation();
         let ctx = ui.ctx().clone();
         let ctx = &ctx;
+        // Esc closes search before any view can take the key.
+        if self.search.is_some()
+            && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+        {
+            self.close_search(ctx);
+        }
         self.poll_local_summary();
         let focused = ctx.input(|i| i.focused);
         if focused && !self.window_focused {
@@ -6859,6 +6975,7 @@ impl Browser {
         let mut tool = None;
         let mut stash_pick = None;
         let mut open_search = false;
+        let mut search_field: Option<(egui::Rect, bool)> = None;
         let mut branch_pick = None;
         egui::Panel::top("navigation")
             .exact_size(34.0)
@@ -7008,25 +7125,41 @@ impl Browser {
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let icon = crate::phosphor::icon(crate::phosphor::MAGNIFYING_GLASS);
-                        // Narrow windows keep the icon only, so it never overlaps the tools.
-                        let button = if ui.available_width() >= 150.0 {
-                            egui::Button::new((
-                                icon.size(14.0),
-                                egui::RichText::new("Search").weak(),
-                                egui::RichText::new("Ctrl+K").small().weak(),
-                            ))
-                            .min_size(egui::vec2(140.0, 24.0))
-                        } else {
-                            egui::Button::new(icon.size(17.0))
-                                .min_size(egui::vec2(28.0, 26.0))
-                                .frame_when_inactive(false)
-                        };
+                        // A search field when there is room; narrow windows keep
+                        // an icon that opens the same search with its own field.
                         let wide = ui.available_width() >= 150.0;
-                        let search = ui.add(button).on_hover_text(
-                            "Search commands, branches, remotes, and tags (Ctrl+K)",
-                        );
-                        if search.clicked() {
-                            open_search = true;
+                        if wide {
+                            let width = if ui.available_width() >= 420.0 { 220.0 } else { 140.0 };
+                            let field = ui
+                                .add(
+                                    egui::TextEdit::singleline(&mut self.search_text)
+                                        .id(search_field_id())
+                                        .hint_text(format!(
+                                            "{}  Search  Ctrl+K",
+                                            crate::phosphor::MAGNIFYING_GLASS
+                                        ))
+                                        .desired_width(width),
+                                )
+                                .on_hover_text(
+                                    "Search commands, branches, remotes, tags, and files (Ctrl+K)",
+                                );
+                            search_field = Some((
+                                field.rect,
+                                field.has_focus() || field.changed(),
+                            ));
+                        } else {
+                            let search = ui
+                                .add(
+                                    egui::Button::new(icon.size(17.0))
+                                        .min_size(egui::vec2(28.0, 26.0))
+                                        .frame_when_inactive(false),
+                                )
+                                .on_hover_text(
+                                    "Search commands, branches, remotes, tags, and files (Ctrl+K)",
+                                );
+                            if search.clicked() {
+                                open_search = true;
+                            }
                         }
                         let compact = !wide || ui.available_width() < 230.0;
                         if let Some(pick) = self.branch_switcher_button(ui, &ready, compact) {
@@ -7050,11 +7183,36 @@ impl Browser {
                 .map_or(PrefSection::General, |dialog| dialog.section);
             self.open_preferences(section);
         }
-        if open_search || ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::K)) {
-            self.search = match self.search.take() {
-                Some(_) if !open_search => None,
-                _ => Some(SearchPalette::default()),
-            };
+        let toggle = ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::K));
+        match search_field {
+            // Wide: Ctrl+K focuses the toolbar field; typing there opens results.
+            Some((rect, active)) => {
+                if toggle && self.search.is_some() {
+                    self.close_search(ctx);
+                } else if toggle || active {
+                    if toggle {
+                        ctx.memory_mut(|m| m.request_focus(search_field_id()));
+                    }
+                    let palette = self.search.get_or_insert_with(SearchPalette::default);
+                    palette.in_field = true;
+                    palette.anchor = rect;
+                    if palette.query != self.search_text {
+                        palette.query = self.search_text.clone();
+                        palette.selected = 0;
+                    }
+                } else if let Some(palette) = &mut self.search {
+                    palette.anchor = rect;
+                }
+            }
+            None => {
+                if open_search || toggle {
+                    if self.search.is_some() && !open_search {
+                        self.close_search(ctx);
+                    } else {
+                        self.search = Some(SearchPalette::default());
+                    }
+                }
+            }
         }
         if self.search.is_some()
             && let Some(command) = self.draw_search(ctx, &ready)
@@ -13170,8 +13328,15 @@ mod tests {
                             .shapes
                             .iter()
                             .find_map(|shape| match &shape.shape {
+                                // The search field's hint starts with its glyph.
                                 egui::epaint::Shape::Text(text)
-                                    if text.galley.job.text == *glyph && text.pos.y < 90.0 =>
+                                    if (text.galley.job.text == *glyph
+                                        || text
+                                            .galley
+                                            .job
+                                            .text
+                                            .starts_with(&format!("{glyph} ")))
+                                        && text.pos.y < 90.0 =>
                                 {
                                     Some(text.pos.x)
                                 }
@@ -13336,6 +13501,7 @@ mod tests {
                 .collect(),
             branch_start: None,
             rebase: None,
+            files: Vec::new(),
         });
         let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
             app.draw_ui(ctx)
@@ -13611,6 +13777,50 @@ mod tests {
     }
 
     #[test]
+    fn search_field_lists_files_in_a_popup_of_one_height() -> Result<(), String> {
+        let ctx = egui::Context::default();
+        crate::phosphor::install(&ctx);
+        let mut app = layout_fixture();
+        app.local_summary = Some(LocalSummary {
+            files: vec!["docs/plan.md".into(), "src/plan_view.rs".into()],
+            ..Default::default()
+        });
+        let frame = |app: &mut Browser, events: Vec<egui::Event>| {
+            crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, events), |ctx| {
+                app.draw_ui(ctx)
+            })
+        };
+        let _ = frame(&mut app, vec![]);
+        let _ = frame(&mut app, vec![key(egui::Key::K, egui::Modifiers::COMMAND)]);
+        assert!(
+            ctx.memory(|m| m.has_focus(search_field_id())),
+            "Ctrl+K focuses the toolbar field"
+        );
+        let _ = frame(&mut app, vec![egui::Event::Text("p".into())]);
+        let _ = frame(&mut app, vec![]);
+        let popup = egui::Id::unique("frame-search");
+        let many = ctx
+            .memory(|m| m.area_rect(popup))
+            .ok_or("no results popup")?;
+        let output = frame(&mut app, vec![egui::Event::Text("lan_view".into())]);
+        let _ = frame(&mut app, vec![]);
+        let few = ctx
+            .memory(|m| m.area_rect(popup))
+            .ok_or("no results popup")?;
+        assert_eq!(few, many, "the popup keeps its size as results change");
+        let text = shown_text(&output);
+        assert!(text.iter().any(|line| line == "FILES"), "{text:?}");
+        assert!(text.iter().any(|line| line.starts_with("src/plan_view.rs")));
+        let _ = frame(
+            &mut app,
+            vec![key(egui::Key::Escape, egui::Modifiers::NONE)],
+        );
+        assert!(app.search.is_none());
+        assert!(app.search_text.is_empty(), "Esc clears the field");
+        Ok(())
+    }
+
+    #[test]
     fn search_offers_frame_actions_with_their_readiness_and_refs() {
         let mut app = layout_fixture();
         app.state.refs.items = vec![gg_engine::refs::RefItem {
@@ -13644,6 +13854,7 @@ mod tests {
             stashes: Vec::new(),
             branch_start: None,
             rebase: None,
+            files: Vec::new(),
         });
         let ready = app.frame_readiness();
         assert_eq!(ready.stash_reason, Some("No local changes to stash"));
@@ -13659,6 +13870,7 @@ mod tests {
             }],
             branch_start: Some(("e".repeat(40), 2)),
             rebase: None,
+            files: Vec::new(),
         });
         let ready = app.frame_readiness();
         assert_eq!(ready.stash_reason, None);
