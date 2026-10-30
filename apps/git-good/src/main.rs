@@ -60,6 +60,7 @@ mod tag_cli;
 mod thumbnails;
 mod worktree_cli;
 mod worktree_worker;
+use crate::navigation::ModalWindow;
 use eframe::egui;
 #[cfg(test)]
 use gg_engine::History;
@@ -384,6 +385,37 @@ impl LocalSummary {
             branch_start: gg_git::rewrite::branch_start(&path).ok().flatten(),
         }
     }
+}
+
+/// A choice made in the toolbar branch switcher.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum BranchPick {
+    Switch(String),
+    New,
+}
+
+fn branch_switcher_popup_id() -> egui::Id {
+    egui::Id::unique("toolbar-branch-switcher")
+}
+
+/// Local branches for the switcher: short name and whether it is checked
+/// out, filtered by every word of `filter`, current branch first.
+fn switcher_branches(refs: &gg_engine::refs::Snapshot, filter: &str) -> Vec<(String, bool)> {
+    let head = refs.head.as_ref().and_then(|head| head.name.as_deref());
+    let mut branches = refs
+        .items
+        .iter()
+        .filter(|item| item.kind == gg_engine::refs::RefKind::Branch)
+        .filter(|item| crate::search::matches(filter, &item.name))
+        .map(|item| (item.name.clone(), Some(item.full_name.as_str()) == head))
+        .collect::<Vec<_>>();
+    branches.sort_by_key(|(_, current)| !*current);
+    branches
+}
+
+/// The toolbar stash picker's popup, also opened from the sidebar.
+fn stash_picker_popup_id() -> egui::Id {
+    egui::Id::unique("toolbar-stash-picker")
 }
 
 /// A command chosen in the toolbar stash picker.
@@ -1148,6 +1180,7 @@ struct Browser {
     window_focused: bool,
     stash_picker: StashPicker,
     search: Option<SearchPalette>,
+    branch_filter: String,
     help_shortcuts: bool,
     conflict_view: Option<ConflictView>,
     reset_confirm: Option<(String, gg_engine::reset::Mode)>,
@@ -1253,6 +1286,7 @@ impl Browser {
             window_focused: true,
             stash_picker: StashPicker::default(),
             // Debug builds open search with `GG_SEARCH=<query>` for native review.
+            branch_filter: String::new(),
             search: if cfg!(debug_assertions) {
                 std::env::var("GG_SEARCH").ok().map(|query| SearchPalette {
                     query,
@@ -1581,7 +1615,7 @@ impl Browser {
         let mut submit = false;
         let mut cancel = false;
         egui::Window::new("Force push with lease")
-            .id(egui::Id::unique("force-push-lease"))
+            .id(egui::Id::unique("force-push-lease")).modal(ctx, egui::Id::unique("force-push-lease"))
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
@@ -1634,7 +1668,7 @@ impl Browser {
         let mut add_current = false;
         let default_folder = self.folders.default_folder();
         egui::Window::new("Development base folders")
-            .id(egui::Id::unique("clone-folders"))
+            .id(egui::Id::unique("clone-folders")).modal(ctx, egui::Id::unique("clone-folders"))
             .open(&mut open)
             .collapsible(false)
             .resizable([false, true])
@@ -1763,7 +1797,7 @@ impl Browser {
         let mut submit = false;
         let mut cancel = false;
         egui::Window::new("Stash changes and switch")
-            .id(egui::Id::unique("stash-switch"))
+            .id(egui::Id::unique("stash-switch")).modal(ctx, egui::Id::unique("stash-switch"))
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
@@ -2521,6 +2555,124 @@ impl Browser {
         command
     }
 
+    /// The toolbar current-branch button and its filterable switcher popup.
+    fn branch_switcher_button(
+        &mut self,
+        ui: &mut egui::Ui,
+        ready: &FrameReadiness,
+        compact: bool,
+    ) -> Option<BranchPick> {
+        let head = self.state.refs.head.as_ref();
+        let name = match head.and_then(|head| head.name.as_deref()) {
+            Some(full) => full.strip_prefix("refs/heads/").unwrap_or(full).to_string(),
+            None if head.is_some_and(|head| head.detached) => "detached HEAD".into(),
+            None => "no branch".into(),
+        };
+        let tracking = self
+            .state
+            .refs
+            .current_tracking()
+            .map(|tracking| {
+                format!(
+                    "{}{} {}{}",
+                    crate::phosphor::ARROW_UP,
+                    tracking.ahead.unwrap_or(0),
+                    crate::phosphor::ARROW_DOWN,
+                    tracking.behind.unwrap_or(0)
+                )
+            })
+            .unwrap_or_default();
+        let icon = crate::phosphor::icon(crate::phosphor::GIT_BRANCH).size(15.0);
+        let caret = crate::phosphor::icon(crate::phosphor::CARET_DOWN).size(10.0);
+        let button = if compact {
+            egui::Button::new((icon, caret))
+        } else {
+            egui::Button::new((
+                icon,
+                egui::RichText::new(&name),
+                egui::RichText::new(&tracking).small().weak(),
+                caret,
+            ))
+            .truncate()
+        }
+        .min_size(egui::vec2(28.0, 24.0));
+        let response = ui
+            .add_enabled(ready.has_repo, button)
+            .on_hover_text(format!("{name} {tracking}\nSwitch branch"));
+        if response.clicked() {
+            self.branch_filter.clear();
+        }
+        let branches = switcher_branches(&self.state.refs, &self.branch_filter);
+        let filter = &mut self.branch_filter;
+        let mut pick = None;
+        egui::Popup::from_toggle_button_response(&response)
+            .id(branch_switcher_popup_id())
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+            .show(|ui| {
+                ui.set_width(320.0);
+                let edit = ui.add(
+                    egui::TextEdit::singleline(filter)
+                        .hint_text("Switch to branch…")
+                        .desired_width(f32::INFINITY),
+                );
+                if !edit.has_focus() && filter.is_empty() {
+                    edit.request_focus();
+                }
+                let switch_reason = if ready.branch_idle {
+                    None
+                } else {
+                    Some("Wait for the current operation to finish")
+                };
+                egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
+                    if branches.is_empty() {
+                        ui.weak("No matching branches");
+                    }
+                    for (branch, current) in &branches {
+                        let reason = if *current {
+                            Some("Already on this branch")
+                        } else {
+                            switch_reason
+                        };
+                        let label = if *current {
+                            format!("{branch}  ·  current")
+                        } else {
+                            branch.clone()
+                        };
+                        let response = ui.add_enabled(
+                            reason.is_none(),
+                            egui::Button::selectable(*current, label)
+                                .truncate()
+                                .min_size(egui::vec2(ui.available_width(), 24.0)),
+                        );
+                        let response = match reason {
+                            Some(reason) => response.on_disabled_hover_text(reason),
+                            None => response.on_hover_text(
+                                "Switch after the clean-worktree check; local changes are never discarded",
+                            ),
+                        };
+                        if response.clicked() {
+                            pick = Some(BranchPick::Switch(branch.clone()));
+                        }
+                    }
+                });
+                ui.separator();
+                if ui
+                    .add_enabled(
+                        ready.branch_idle,
+                        egui::Button::new("New branch from HEAD…")
+                            .min_size(egui::vec2(ui.available_width(), 24.0)),
+                    )
+                    .clicked()
+                {
+                    pick = Some(BranchPick::New);
+                }
+            });
+        if pick.is_some() {
+            egui::Popup::close_all(ui.ctx());
+        }
+        pick
+    }
+
     /// The toolbar **Stashes** button and its picker popup.
     fn stash_picker_button(
         &mut self,
@@ -2563,6 +2715,7 @@ impl Browser {
         let picker = &mut self.stash_picker;
         let mut pick = None;
         egui::Popup::from_toggle_button_response(&response)
+            .id(stash_picker_popup_id())
             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
             .show(|ui| {
                 ui.set_width(420.0);
@@ -3755,7 +3908,7 @@ impl Browser {
                 return;
             };
             egui::Window::new("Create tag")
-                .id(egui::Id::unique("create-tag"))
+                .id(egui::Id::unique("create-tag")).modal(ctx, egui::Id::unique("create-tag"))
                 .open(&mut open)
                 .collapsible(false)
                 .resizable(false)
@@ -4471,6 +4624,7 @@ impl Browser {
             let mut dialog_open = true;
             egui::Window::new("Create worktree")
                 .id(egui::Id::unique("create-worktree"))
+                .modal(ctx, egui::Id::unique("create-worktree"))
                 .open(&mut dialog_open)
                 .collapsible(false)
                 .resizable(false)
@@ -4549,7 +4703,7 @@ impl Browser {
         {
             let mut confirm = true;
             egui::Window::new("Remove worktree")
-                .id(egui::Id::unique("remove-worktree"))
+                .id(egui::Id::unique("remove-worktree")).modal(ctx, egui::Id::unique("remove-worktree"))
                 .open(&mut confirm)
                 .collapsible(false)
                 .resizable(false)
@@ -4836,6 +4990,7 @@ impl Browser {
                 let mut confirm = true;
                 egui::Window::new("Update submodule")
                     .id(egui::Id::unique("update-submodule"))
+                    .modal(ctx, egui::Id::unique("update-submodule"))
                     .open(&mut confirm)
                     .collapsible(false)
                     .resizable(false)
@@ -5275,6 +5430,7 @@ impl Browser {
                 let mut confirm = true;
                 egui::Window::new("Fetch LFS object")
                     .id(egui::Id::unique("fetch-lfs"))
+                    .modal(ctx, egui::Id::unique("fetch-lfs"))
                     .open(&mut confirm)
                     .collapsible(false)
                     .resizable(false)
@@ -6244,6 +6400,7 @@ impl Browser {
         let mut tool = None;
         let mut stash_pick = None;
         let mut open_search = false;
+        let mut branch_pick = None;
         egui::Panel::top("navigation")
             .exact_size(34.0)
             .show(ui, |ui| {
@@ -6403,17 +6560,27 @@ impl Browser {
                                 .min_size(egui::vec2(28.0, 26.0))
                                 .frame_when_inactive(false)
                         };
+                        let wide = ui.available_width() >= 150.0;
                         let search = ui.add(button).on_hover_text(
                             "Search commands, branches, remotes, and tags (Ctrl+K)",
                         );
                         if search.clicked() {
                             open_search = true;
                         }
+                        let compact = !wide || ui.available_width() < 230.0;
+                        if let Some(pick) = self.branch_switcher_button(ui, &ready, compact) {
+                            branch_pick = Some(pick);
+                        }
                     });
                 });
             });
         if let Some(pick) = stash_pick {
             self.apply_stash_pick(ctx, pick);
+        }
+        match branch_pick {
+            Some(BranchPick::Switch(name)) => self.start_branch(ctx, name, false),
+            Some(BranchPick::New) => self.open_new_branch(),
+            None => {}
         }
         if open_search || ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::K)) {
             self.search = match self.search.take() {
@@ -6639,9 +6806,15 @@ impl Browser {
                     child.set_clip_rect(rect.intersect(ui.clip_rect()));
                     let ui = &mut child;
                     ui.add_enabled_ui(has_repo, |ui| {
+                        let stashes = self
+                            .local_summary
+                            .as_ref()
+                            .map(|summary| summary.stashes.clone())
+                            .unwrap_or_default();
                         action = refs_view::show(
                             ui,
                             &refs,
+                            &stashes,
                             &mut self.refs_query,
                             busy,
                             &self.state.ref_lanes,
@@ -6658,6 +6831,12 @@ impl Browser {
                     self.track_dialog = Some(name);
                 }
                 Some(refs_view::Action::PullRebase) => self.start_pull_rebase(ctx),
+                Some(refs_view::Action::OpenStash(index)) => {
+                    self.stash_picker.selected = index;
+                    self.stash_picker.confirm_drop = false;
+                    self.stash_picker.error = None;
+                    egui::Popup::open_id(ctx, stash_picker_popup_id());
+                }
                 Some(refs_view::Action::Merge(name)) => {
                     self.merge_dialog = Some(MergeDialog {
                         reference: name,
@@ -6702,7 +6881,7 @@ impl Browser {
             let default_folder = self.folders.default_folder();
             let candidates = self.folders.candidates();
             egui::Window::new("Clone repository")
-                .id(egui::Id::unique("clone-repository"))
+                .id(egui::Id::unique("clone-repository")).modal(ctx, egui::Id::unique("clone-repository"))
                 .open(&mut open)
                 .collapsible(false)
                 .resizable(false)
@@ -6854,7 +7033,7 @@ impl Browser {
                 !ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
             let busy = track_busy;
             egui::Window::new("Track remote branch")
-                .id(egui::Id::unique("track-remote-branch"))
+                .id(egui::Id::unique("track-remote-branch")).modal(ctx, egui::Id::unique("track-remote-branch"))
                 .open(&mut open)
                 .collapsible(false)
                 .resizable(false)
@@ -6980,6 +7159,7 @@ impl Browser {
         if let Some(dialog) = &mut self.create_branch {
             egui::Window::new(dialog.title())
                 .id(egui::Id::unique("create-branch-dialog"))
+                .modal(ctx, egui::Id::unique("create-branch-dialog"))
                 .collapsible(false)
                 .resizable(false)
                 .default_pos(ctx.content_rect().center())
@@ -7081,6 +7261,7 @@ impl Browser {
             let mut cancelled = false;
             egui::Window::new("Delete branch")
                 .id(egui::Id::unique("delete-branch"))
+                .modal(ctx, egui::Id::unique("delete-branch"))
                 .open(&mut branch_delete_open)
                 .collapsible(false)
                 .resizable(false)
@@ -7123,6 +7304,7 @@ impl Browser {
             let mut cancelled = false;
             egui::Window::new("Delete tag")
                 .id(egui::Id::unique("delete-tag"))
+                .modal(ctx, egui::Id::unique("delete-tag"))
                 .open(&mut tag_delete_open)
                 .collapsible(false)
                 .resizable(false)
@@ -7161,6 +7343,7 @@ impl Browser {
         if let Some((commit, mode)) = self.reset_confirm.clone() {
             egui::Window::new("Reset here")
                 .id(egui::Id::unique("reset-here"))
+                .modal(ctx, egui::Id::unique("reset-here"))
                 .collapsible(false)
                 .resizable(false)
                 .default_pos(ctx.content_rect().center())
@@ -7458,7 +7641,7 @@ impl Browser {
         if let Some(dialog) = &mut self.merge_dialog {
             let mut cancelled = false;
             egui::Window::new("Merge branch")
-                .id(egui::Id::unique("merge-branch"))
+                .id(egui::Id::unique("merge-branch")).modal(ctx, egui::Id::unique("merge-branch"))
                 .open(&mut merge_open)
                 .collapsible(false)
                 .resizable(false)
@@ -7513,7 +7696,7 @@ impl Browser {
         if let Some(dialog) = &mut self.rebase_dialog {
             let mut cancelled = false;
             egui::Window::new("Rebase branch")
-                .id(egui::Id::unique("rebase-branch"))
+                .id(egui::Id::unique("rebase-branch")).modal(ctx, egui::Id::unique("rebase-branch"))
                 .open(&mut rebase_open)
                 .collapsible(false)
                 .resizable(false)
@@ -7722,6 +7905,7 @@ impl Browser {
             let mut cancelled = false;
             egui::Window::new("Stash changes")
                 .id(egui::Id::unique("stash-changes"))
+                .modal(ctx, egui::Id::unique("stash-changes"))
                 .open(&mut stash_open)
                 .collapsible(false)
                 .resizable(false)
@@ -7819,6 +8003,7 @@ impl Browser {
                 let reference = window.confirm_drop.clone().unwrap_or_default();
                 egui::Window::new("Drop stash")
                     .id(egui::Id::unique("drop-stash"))
+                    .modal(ctx, egui::Id::unique("drop-stash"))
                     .collapsible(false)
                     .resizable(false)
                     .default_pos(ctx.content_rect().center())
@@ -7853,6 +8038,7 @@ impl Browser {
             let mut cancelled = false;
             egui::Window::new("Restore stash")
                 .id(egui::Id::unique("restore-stash"))
+                .modal(ctx, egui::Id::unique("restore-stash"))
                 .open(&mut open)
                 .collapsible(false)
                 .resizable(false)
@@ -12118,6 +12304,181 @@ mod tests {
             "both entries are listed"
         );
         Ok(())
+    }
+
+    #[test]
+    fn decision_dialogs_block_the_window_behind_them() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        let frame = |app: &mut Browser, events: Vec<egui::Event>| {
+            let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, events), |ctx| {
+                app.draw_ui(ctx)
+            });
+        };
+        let click = |pos: egui::Pos2| {
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]
+        };
+        frame(&mut app, vec![]);
+        let selected = app.state.selected.clone();
+        let row = app
+            .row_rects
+            .iter()
+            .find(|(row, _)| *row == 3)
+            .map(|(_, rect)| rect.left_center() + egui::vec2(40.0, 0.0));
+        let Some(row) = row else {
+            unreachable!("row 3 is not painted");
+        };
+        app.open_merge_dialog();
+        frame(&mut app, vec![]);
+        frame(&mut app, vec![]);
+        frame(&mut app, click(row));
+        assert_eq!(
+            app.state.selected, selected,
+            "clicks behind a modal dialog are ignored"
+        );
+        frame(
+            &mut app,
+            vec![key(egui::Key::ArrowDown, egui::Modifiers::NONE)],
+        );
+        assert_eq!(
+            app.state.selected, selected,
+            "navigation keys behind a modal dialog are ignored"
+        );
+        app.merge_dialog = None;
+        frame(&mut app, vec![]);
+        frame(&mut app, vec![]);
+        frame(&mut app, click(row));
+        assert_ne!(app.state.selected, selected, "the window responds again");
+    }
+
+    fn switcher_fixture(app: &mut Browser) {
+        let branch = |name: &str, kind| gg_engine::refs::RefItem {
+            name: name.into(),
+            full_name: match kind {
+                gg_engine::refs::RefKind::Branch => format!("refs/heads/{name}"),
+                gg_engine::refs::RefKind::Remote => format!("refs/remotes/{name}"),
+                gg_engine::refs::RefKind::Tag => format!("refs/tags/{name}"),
+            },
+            kind,
+            commit: "a".repeat(40),
+        };
+        app.state.refs = gg_engine::refs::Snapshot {
+            head: Some(gg_engine::refs::Head {
+                name: Some("refs/heads/main".into()),
+                detached: false,
+                commit: Some("a".repeat(40)),
+            }),
+            items: vec![
+                branch("feature/search", gg_engine::refs::RefKind::Branch),
+                branch("main", gg_engine::refs::RefKind::Branch),
+                branch("origin/main", gg_engine::refs::RefKind::Remote),
+                branch("v1", gg_engine::refs::RefKind::Tag),
+            ],
+            ..Default::default()
+        };
+    }
+
+    #[test]
+    fn switcher_lists_local_branches_current_first_and_filters() {
+        let mut app = layout_fixture();
+        switcher_fixture(&mut app);
+        assert_eq!(
+            switcher_branches(&app.state.refs, ""),
+            vec![
+                ("main".to_string(), true),
+                ("feature/search".to_string(), false)
+            ]
+        );
+        assert_eq!(
+            switcher_branches(&app.state.refs, "FEAT sea"),
+            vec![("feature/search".to_string(), false)]
+        );
+    }
+
+    #[test]
+    fn the_branch_button_opens_the_switcher_at_both_widths() {
+        for width in [720.0, 1120.0] {
+            let ctx = egui::Context::default();
+            crate::phosphor::install(&ctx);
+            let mut app = layout_fixture();
+            switcher_fixture(&mut app);
+            let output = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            // The switcher's branch glyph is the right-most one in the toolbar.
+            let glyph = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text)
+                        if text.galley.job.text == crate::phosphor::GIT_BRANCH
+                            && text.pos.y < 80.0 =>
+                    {
+                        Some(egui::Rect::from_min_size(text.pos, text.galley.size()))
+                    }
+                    _ => None,
+                })
+                .max_by(|a, b| a.left().total_cmp(&b.left()));
+            let Some(glyph) = glyph else {
+                unreachable!("branch button at {width}")
+            };
+            assert!(glyph.right() <= width, "{glyph:?} at {width}");
+            let pos = glyph.center();
+            let click = vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ];
+            let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, click), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let output = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let texts = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) => Some(text.galley.job.text.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            for expected in [
+                "main  ·  current",
+                "feature/search",
+                "New branch from HEAD…",
+            ] {
+                assert!(
+                    texts.iter().any(|text| text == expected),
+                    "missing {expected:?} at {width}"
+                );
+            }
+            assert!(!texts.iter().any(|text| text == "origin/main"));
+        }
     }
 
     #[test]

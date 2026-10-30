@@ -20,7 +20,7 @@ The frame has two rows above every view. Both rows keep the same order and posit
    - Interactive rebase of the current branch (the commits its upstream lacks, else the commits the default branch lacks; independent of the selection) · Recovery. **Commit › Interactive rebase from here…** starts at the selected commit.
    - Right-aligned: current-branch button (`name ↑ahead ↓behind`, opens the branch switcher) and the search field (`Ctrl+K`).
 
-Toolbar buttons are icon-only Phosphor glyphs with tooltips naming the action and its shortcut. Disabled buttons stay in place with the same disable reason as their menu item.
+Dialogs that ask for a decision or start a change are modal; tool and information windows are not. Toolbar buttons are icon-only Phosphor glyphs with tooltips naming the action and its shortcut. Disabled buttons stay in place with the same disable reason as their menu item.
 
 The old navigation strip is merged into the toolbar; no other row repeats the tabs.
 

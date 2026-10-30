@@ -19,6 +19,8 @@ pub enum Action {
     DeleteBranch(String),
     DeleteTag(String),
     VerifyTag(String),
+    /// Open the toolbar stash picker on the entry at this index.
+    OpenStash(usize),
 }
 
 #[derive(Default)]
@@ -40,6 +42,7 @@ impl<'a> Tree<'a> {
 pub fn show(
     ui: &mut egui::Ui,
     refs: &Snapshot,
+    stashes: &[gg_engine::stash::StashEntry],
     filter: &mut String,
     busy: bool,
     lanes: &BTreeMap<String, u8>,
@@ -97,7 +100,17 @@ pub fn show(
     let tags = matching(RefKind::Tag);
     let empty = branches.is_empty() && remotes.is_empty() && tags.is_empty();
 
-    if !query.is_empty() && empty {
+    let stash_rows = stashes
+        .iter()
+        .enumerate()
+        .filter(|(_, entry)| {
+            query.is_empty()
+                || entry.reference.to_lowercase().contains(&query)
+                || entry.message.to_lowercase().contains(&query)
+        })
+        .collect::<Vec<_>>();
+
+    if !query.is_empty() && empty && stash_rows.is_empty() {
         ui.add_space(6.0);
         ui.weak("No matching refs");
         return action;
@@ -174,6 +187,39 @@ pub fn show(
                 } else {
                     for item in tags {
                         render_leaf(ui, item, &item.name, head_name, busy, lanes, &mut action);
+                    }
+                }
+            });
+
+            section(ui, "Stashes", stash_rows.len(), |ui| {
+                if stash_rows.is_empty() {
+                    ui.weak(if query.is_empty() {
+                        "No stashes"
+                    } else {
+                        "No matching stashes"
+                    });
+                }
+                for (index, entry) in stash_rows {
+                    let short = entry
+                        .reference
+                        .strip_prefix("stash")
+                        .unwrap_or(&entry.reference);
+                    let response = ui
+                        .add(
+                            egui::Button::new((
+                                egui::RichText::new(short).monospace().weak(),
+                                egui::RichText::new(&entry.message),
+                            ))
+                            .frame_when_inactive(false)
+                            .truncate()
+                            .min_size(egui::vec2(ui.available_width(), ROW_HEIGHT)),
+                        )
+                        .on_hover_text(format!(
+                            "{}\n{}\nOpen in the stash picker to apply, pop, show, or drop",
+                            entry.reference, entry.message
+                        ));
+                    if response.clicked() {
+                        action = Some(Action::OpenStash(index));
                     }
                 }
             });
@@ -655,7 +701,7 @@ mod tests {
             },
             |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    let action = show(ui, &refs, &mut filter, false, &BTreeMap::new());
+                    let action = show(ui, &refs, &[], &mut filter, false, &BTreeMap::new());
                     assert!(action.is_none());
                 });
             },
@@ -688,11 +734,86 @@ mod tests {
     }
 
     #[test]
+    fn stash_entries_open_the_picker_and_follow_the_filter() {
+        let ctx = egui::Context::default();
+        let refs = snapshot();
+        let stashes = (0..2)
+            .map(|index| gg_engine::stash::StashEntry {
+                index,
+                reference: format!("stash@{{{index}}}"),
+                commit: format!("{index:040x}"),
+                message: format!("WIP on main: work {index}"),
+            })
+            .collect::<Vec<_>>();
+        let frame = |filter: &mut String, events: Vec<egui::Event>| {
+            let mut action = None;
+            let output = crate::tests::run_ui(
+                &ctx,
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(220.0, 900.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        action = show(ui, &refs, &stashes, filter, false, &BTreeMap::new());
+                    });
+                },
+            );
+            (output, action)
+        };
+        let mut filter = String::new();
+        let (output, _) = frame(&mut filter, vec![]);
+        let row = output.shapes.iter().find_map(|shape| match &shape.shape {
+            egui::epaint::Shape::Text(text) if text.galley.job.text == "WIP on main: work 1" => {
+                Some(text.pos + text.galley.size() / 2.0)
+            }
+            _ => None,
+        });
+        let Some(row) = row else {
+            unreachable!("stash entry is listed")
+        };
+        let click = vec![
+            egui::Event::PointerMoved(row),
+            egui::Event::PointerButton {
+                pos: row,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+            egui::Event::PointerButton {
+                pos: row,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ];
+        let (_, action) = frame(&mut filter, click);
+        assert_eq!(action, Some(Action::OpenStash(1)));
+
+        let mut filter = "work 0".to_string();
+        let (output, _) = frame(&mut filter, vec![]);
+        let texts = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) => Some(text.galley.job.text.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(texts.iter().any(|text| text == "WIP on main: work 0"));
+        assert!(!texts.iter().any(|text| text == "WIP on main: work 1"));
+    }
+
+    #[test]
     fn filter_flattens_and_clears_unmatched_groups() {
         let ctx = egui::Context::default();
         crate::phosphor::install(&ctx);
         let refs = snapshot();
-        let mut filter = "nomatch".into();
+        let mut filter: String = "nomatch".into();
         let output = crate::tests::run_ui(
             &ctx,
             egui::RawInput {
@@ -704,7 +825,7 @@ mod tests {
             },
             |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    show(ui, &refs, &mut filter, false, &BTreeMap::new());
+                    show(ui, &refs, &[], &mut filter, false, &BTreeMap::new());
                 });
             },
         );
@@ -740,7 +861,7 @@ mod tests {
                 },
                 |ctx| {
                     egui::CentralPanel::default().show(ctx, |ui| {
-                        action = show(ui, &refs, &mut filter, false, &BTreeMap::new());
+                        action = show(ui, &refs, &[], &mut filter, false, &BTreeMap::new());
                     });
                 },
             )
