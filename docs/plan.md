@@ -139,7 +139,7 @@ Still to build (medium):
 3. Rebase stop: **Commits made at this stop** section in Local Changes.
 4. Stash picker: two-line rows (Up/Down/Enter/Del keys are done).
 5. Preferences: footer with the config path and Close; search field; the settings listed on the Final page that are not built yet.
-6. Refs sidebar: **Worktrees** group and branch tracking counts.
+6. Refs sidebar: branch tracking counts (the **Worktrees** group is done).
 
 Decisions for the review (see the canvas page **Review · as built**):
 

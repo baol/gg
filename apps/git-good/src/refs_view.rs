@@ -18,6 +18,8 @@ pub enum Action {
     VerifyTag(String),
     /// Open the toolbar stash picker on the entry at this index.
     OpenStash(usize),
+    /// Open another worktree of this repository.
+    OpenWorktree(String),
 }
 
 #[derive(Default)]
@@ -40,6 +42,7 @@ pub fn show(
     ui: &mut egui::Ui,
     refs: &Snapshot,
     stashes: &[gg_engine::stash::StashEntry],
+    worktrees: &[gg_engine::worktree::Worktree],
     filter: &mut String,
     busy: bool,
     lanes: &BTreeMap<String, u8>,
@@ -82,7 +85,17 @@ pub fn show(
         })
         .collect::<Vec<_>>();
 
-    if !query.is_empty() && empty && stash_rows.is_empty() {
+    // Linked worktrees, as in the History mockup; collapsed until
+    // opened, and only listed when there is more than the main one.
+    let worktree_rows = worktrees
+        .iter()
+        .filter(|worktree| {
+            query.is_empty()
+                || worktree.path.to_lowercase().contains(&query)
+                || worktree.branch_label().to_lowercase().contains(&query)
+        })
+        .collect::<Vec<_>>();
+    if !query.is_empty() && empty && stash_rows.is_empty() && worktree_rows.is_empty() {
         ui.add_space(6.0);
         ui.weak("No matching refs");
         return action;
@@ -196,6 +209,56 @@ pub fn show(
                 }
             });
 
+            if worktrees.len() > 1 {
+                section(
+                    ui,
+                    "Worktrees",
+                    worktree_rows.len(),
+                    !query.is_empty(),
+                    |ui| {
+                        for worktree in worktree_rows {
+                            let folder = std::path::Path::new(&worktree.path)
+                                .file_name()
+                                .map(|name| name.to_string_lossy().into_owned())
+                                .unwrap_or_else(|| worktree.path.clone());
+                            let branch = worktree
+                                .branch
+                                .as_deref()
+                                .map(|name| name.strip_prefix("refs/heads/").unwrap_or(name))
+                                .unwrap_or(worktree.branch_label());
+                            let mut text = egui::text::LayoutJob::default();
+                            text.append(&folder, 0.0, egui::TextFormat::default());
+                            text.append(
+                                &format!("  {branch}{}", if worktree.current { "  ✓" } else { "" }),
+                                0.0,
+                                egui::TextFormat {
+                                    color: ui.visuals().weak_text_color(),
+                                    ..Default::default()
+                                },
+                            );
+                            let response = ui
+                                .add(
+                                    egui::Button::new(text)
+                                        .frame_when_inactive(false)
+                                        .truncate()
+                                        .min_size(egui::vec2(
+                                            ui.available_width(),
+                                            crate::density::row(),
+                                        )),
+                                )
+                                .on_hover_text(if worktree.current {
+                                    format!("{}\nThe open worktree", worktree.path)
+                                } else {
+                                    format!("{}\nOpen this worktree", worktree.path)
+                                });
+                            if response.clicked() && !worktree.current {
+                                action = Some(Action::OpenWorktree(worktree.path.clone()));
+                            }
+                        }
+                    },
+                );
+            }
+
             if query.is_empty() && empty {
                 ui.add_space(6.0);
                 ui.weak("Branches and tags appear after the first commit.");
@@ -205,7 +268,7 @@ pub fn show(
 }
 
 /// A collapsible group headed like the mockup: `BRANCHES 2`. Branches and
-/// Stashes start open; Remotes and Tags start collapsed. Every group opens
+/// Stashes start open; Remotes, Tags, and Worktrees start collapsed. Every group opens
 /// while the filter has text, so matches are never hidden.
 fn section(
     ui: &mut egui::Ui,
@@ -221,7 +284,7 @@ fn section(
             .color(ui.visuals().weak_text_color()),
     )
     .id_salt(("refs-section", title))
-    .default_open(!matches!(title, "Remotes" | "Tags"))
+    .default_open(!matches!(title, "Remotes" | "Tags" | "Worktrees"))
     .open(filtering.then_some(true))
     .show_background(false)
     .show(ui, |ui| {
@@ -667,6 +730,91 @@ mod tests {
     }
 
     #[test]
+    fn worktrees_are_listed_when_linked_ones_exist_and_open_on_click() {
+        let ctx = egui::Context::default();
+        crate::phosphor::install(&ctx);
+        let refs = snapshot();
+        let worktree = |path: &str, branch: &str, current: bool| gg_engine::worktree::Worktree {
+            path: path.into(),
+            path_bytes: path.as_bytes().to_vec(),
+            head: Some("a".repeat(40)),
+            branch: Some(format!("refs/heads/{branch}")),
+            detached: false,
+            bare: false,
+            locked: None,
+            prunable: None,
+            current,
+            main: current,
+            dirty: Some(false),
+        };
+        let worktrees = [
+            worktree("/src/gg", "main", true),
+            worktree("/src/gg-feature", "feature", false),
+        ];
+        // The filter opens every group, so the rows are drawn.
+        let mut filter = "gg".to_string();
+        let mut action = None;
+        let mut draw = |events: Vec<egui::Event>| {
+            crate::tests::run_ui(
+                &ctx,
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(260.0, 700.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        let chosen = show(
+                            ui,
+                            &refs,
+                            &[],
+                            &worktrees,
+                            &mut filter,
+                            false,
+                            &BTreeMap::new(),
+                        );
+                        action = action.clone().or(chosen);
+                    });
+                },
+            )
+        };
+        let output = draw(vec![]);
+        let row = output.shapes.iter().find_map(|shape| match &shape.shape {
+            egui::epaint::Shape::Text(text) if text.galley.job.text.starts_with("gg-feature") => {
+                Some(text.pos + egui::vec2(4.0, 4.0))
+            }
+            _ => None,
+        });
+        let text = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) => Some(text.galley.job.text.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            text.iter().any(|line| line.starts_with("WORKTREES  2")),
+            "{text:?}"
+        );
+        let Some(row) = row else {
+            unreachable!("the linked worktree row is drawn: {text:?}");
+        };
+        let button = |pressed| egui::Event::PointerButton {
+            pos: row,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        draw(vec![egui::Event::PointerMoved(row), button(true)]);
+        draw(vec![button(false)]);
+        assert_eq!(action, Some(Action::OpenWorktree("/src/gg-feature".into())));
+    }
+
+    #[test]
     fn shows_grouped_sections_and_current_branch() {
         let ctx = egui::Context::default();
         crate::phosphor::install(&ctx);
@@ -683,7 +831,7 @@ mod tests {
             },
             |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    let action = show(ui, &refs, &[], &mut filter, false, &BTreeMap::new());
+                    let action = show(ui, &refs, &[], &[], &mut filter, false, &BTreeMap::new());
                     assert!(action.is_none());
                 });
             },
@@ -732,7 +880,7 @@ mod tests {
                 },
                 |ctx| {
                     egui::CentralPanel::default().show(ctx, |ui| {
-                        action = show(ui, &refs, &stashes, filter, false, &BTreeMap::new());
+                        action = show(ui, &refs, &stashes, &[], filter, false, &BTreeMap::new());
                     });
                 },
             );
@@ -798,7 +946,7 @@ mod tests {
             },
             |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    show(ui, &refs, &[], &mut filter, false, &BTreeMap::new());
+                    show(ui, &refs, &[], &[], &mut filter, false, &BTreeMap::new());
                 });
             },
         );
@@ -834,7 +982,7 @@ mod tests {
                 },
                 |ctx| {
                     egui::CentralPanel::default().show(ctx, |ui| {
-                        action = show(ui, &refs, &[], &mut filter, false, &BTreeMap::new());
+                        action = show(ui, &refs, &[], &[], &mut filter, false, &BTreeMap::new());
                     });
                 },
             )

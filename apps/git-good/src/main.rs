@@ -428,6 +428,8 @@ struct LocalSummary {
     rebase: Option<gg_engine::mutation::RebaseProgress>,
     /// Tracked paths for the search Files group, bounded.
     files: Vec<String>,
+    /// This repository's worktrees, for the refs sidebar.
+    worktrees: Vec<gg_engine::worktree::Worktree>,
 }
 
 impl LocalSummary {
@@ -440,6 +442,9 @@ impl LocalSummary {
             branch_start: gg_git::rewrite::branch_start(&path).ok().flatten(),
             rebase: gg_git::mutation::rebase_progress(&path).ok().flatten(),
             files: gg_git::files::tracked(&path, SEARCH_FILE_LIMIT).unwrap_or_default(),
+            worktrees: gg_git::worktree::list(&path)
+                .map(|snapshot| snapshot.worktrees)
+                .unwrap_or_default(),
         }
     }
 }
@@ -8595,10 +8600,16 @@ impl Browser {
                             .as_ref()
                             .map(|summary| summary.stashes.clone())
                             .unwrap_or_default();
+                        let worktrees = self
+                            .local_summary
+                            .as_ref()
+                            .map(|summary| summary.worktrees.clone())
+                            .unwrap_or_default();
                         action = refs_view::show(
                             ui,
                             &refs,
                             &stashes,
+                            &worktrees,
                             &mut self.refs_query,
                             busy,
                             &self.state.ref_lanes,
@@ -8607,6 +8618,15 @@ impl Browser {
                 });
             self.refs_width = refs_panel.response.rect.width();
             match action {
+                Some(refs_view::Action::OpenWorktree(path)) => {
+                    let (mut local, mut history) = (false, false);
+                    self.run_frame_command(
+                        ctx,
+                        FrameCommand::OpenRecent(PathBuf::from(path)),
+                        &mut local,
+                        &mut history,
+                    );
+                }
                 Some(refs_view::Action::Switch(name)) => self.start_branch(ctx, name, false),
                 Some(refs_view::Action::Jump(id)) => self.jump_to_ref(id),
                 Some(refs_view::Action::Track(name)) => {
@@ -11473,6 +11493,7 @@ mod tests {
             conflicts: Vec::new(),
         });
         app.local_summary = Some(LocalSummary {
+            worktrees: Vec::new(),
             rebase: Some(progress),
             ..Default::default()
         });
@@ -14760,6 +14781,7 @@ mod tests {
         crate::phosphor::install(&ctx);
         let mut app = layout_fixture();
         app.local_summary = Some(LocalSummary {
+            worktrees: Vec::new(),
             changes: Some(2),
             stashes: (0..2)
                 .map(|index| gg_engine::stash::StashEntry {
@@ -15119,6 +15141,7 @@ mod tests {
         crate::phosphor::install(&ctx);
         let mut app = layout_fixture();
         app.local_summary = Some(LocalSummary {
+            worktrees: Vec::new(),
             files: vec!["docs/plan.md".into(), "src/plan_view.rs".into()],
             ..Default::default()
         });
@@ -15189,6 +15212,7 @@ mod tests {
     fn stash_commands_follow_local_changes_and_entries() {
         let mut app = layout_fixture();
         app.local_summary = Some(LocalSummary {
+            worktrees: Vec::new(),
             changes: Some(0),
             stashes: Vec::new(),
             branch_start: None,
@@ -15200,6 +15224,7 @@ mod tests {
         assert_eq!(ready.stashes, 0);
         assert!(ready.branch_rewrite_reason.is_some());
         app.local_summary = Some(LocalSummary {
+            worktrees: Vec::new(),
             changes: Some(2),
             stashes: vec![gg_engine::stash::StashEntry {
                 index: 0,
