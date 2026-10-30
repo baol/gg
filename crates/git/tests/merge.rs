@@ -171,3 +171,35 @@ fn rejects_option_shaped_and_missing_references() -> Result {
     assert!(error.contains("was not found"), "{error}");
     Ok(())
 }
+
+#[test]
+fn fast_forward_only_moves_or_refuses_without_merging() -> Result {
+    let dir = repo()?;
+    let p = dir.path();
+    git(p, &["switch", "-qc", "feature"])?;
+    std::fs::write(p.join("b"), b"feature\n")?;
+    git(p, &["add", "b"])?;
+    git(p, &["commit", "-qm", "feature"])?;
+    git(p, &["switch", "-q", "main"])?;
+    let receipt = gg_git::merge::fast_forward(p, "feature")?;
+    assert_eq!(receipt.kind, Some(gg_engine::merge::Kind::FastForward));
+    assert_eq!(parents(p)?, 1);
+
+    // Diverged: refused, nothing changes, no merge in progress.
+    std::fs::write(p.join("c"), b"main\n")?;
+    git(p, &["add", "c"])?;
+    git(p, &["commit", "-qm", "main"])?;
+    git(p, &["switch", "-q", "feature"])?;
+    std::fs::write(p.join("d"), b"feature 2\n")?;
+    git(p, &["add", "d"])?;
+    git(p, &["commit", "-qm", "feature 2"])?;
+    git(p, &["switch", "-q", "main"])?;
+    let before = head(p)?;
+    let error = gg_git::merge::fast_forward(p, "feature")
+        .err()
+        .ok_or("a diverged fast-forward must fail")?;
+    assert!(error.contains("fast-forward"), "{error}");
+    assert_eq!(head(p)?, before);
+    assert!(gg_git::mutation::state(p)?.is_none());
+    Ok(())
+}

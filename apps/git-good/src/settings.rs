@@ -8,6 +8,37 @@
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::path::{Path, PathBuf};
 
+/// What Pull does after fetching the upstream.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PullStrategy {
+    #[default]
+    Rebase,
+    Merge,
+    FastForward,
+}
+
+impl PullStrategy {
+    pub const ALL: [Self; 3] = [Self::Rebase, Self::Merge, Self::FastForward];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Rebase => "Rebase",
+            Self::Merge => "Merge",
+            Self::FastForward => "Fast-forward only",
+        }
+    }
+
+    /// The menu and toolbar label: `Pull (rebase)`.
+    pub fn menu_label(self) -> &'static str {
+        match self {
+            Self::Rebase => "rebase",
+            Self::Merge => "merge",
+            Self::FastForward => "fast-forward",
+        }
+    }
+}
+
 /// Interface zoom choices, in percent.
 pub const ZOOMS: [u16; 3] = [100, 110, 125];
 /// Code font sizes, in tenths of a pixel.
@@ -284,6 +315,10 @@ pub struct Prefs {
     pub sign_tags: bool,
     /// Commit subject length guide in characters; 0 is off.
     pub subject_guide: u16,
+    pub pull_strategy: PullStrategy,
+    /// After rewriting a branch that has an upstream, offer Push with
+    /// force-with-lease.
+    pub offer_force_lease: bool,
     /// History rows: author avatars, tag pills, and relative dates.
     pub history_avatars: bool,
     pub history_tags: bool,
@@ -313,6 +348,8 @@ impl Default for Prefs {
             code_font: 125,
             sign_tags: false,
             subject_guide: 72,
+            pull_strategy: PullStrategy::default(),
+            offer_force_lease: true,
             history_avatars: true,
             history_tags: true,
             relative_dates: false,
@@ -354,6 +391,9 @@ impl Prefs {
                 .filter(|size| CODE_FONTS.contains(size))
                 .unwrap_or(defaults.code_font),
             sign_tags: read(path, "sign_tags").unwrap_or(defaults.sign_tags),
+            pull_strategy: read(path, "pull_strategy").unwrap_or(defaults.pull_strategy),
+            offer_force_lease: read(path, "offer_force_lease")
+                .unwrap_or(defaults.offer_force_lease),
             history_avatars: read(path, "history_avatars").unwrap_or(defaults.history_avatars),
             history_tags: read(path, "history_tags").unwrap_or(defaults.history_tags),
             relative_dates: read(path, "relative_dates").unwrap_or(defaults.relative_dates),
@@ -392,6 +432,8 @@ impl Prefs {
         write(path, "code_font", &self.code_font)?;
         write(path, "sign_tags", &self.sign_tags)?;
         write(path, "subject_guide", &self.subject_guide)?;
+        write(path, "pull_strategy", &self.pull_strategy)?;
+        write(path, "offer_force_lease", &self.offer_force_lease)?;
         write(path, "history_avatars", &self.history_avatars)?;
         write(path, "history_tags", &self.history_tags)?;
         write(path, "relative_dates", &self.relative_dates)
@@ -464,6 +506,8 @@ mod tests {
         prefs.sign_tags = true;
         prefs.subject_guide = 50;
         prefs.history_avatars = false;
+        prefs.pull_strategy = PullStrategy::FastForward;
+        prefs.offer_force_lease = false;
         prefs.history_tags = false;
         prefs.relative_dates = true;
         prefs.save()?;

@@ -6,6 +6,18 @@ use std::{
 };
 
 pub fn merge(path: &Path, reference: &str, no_ff: bool) -> Result<Receipt, String> {
+    merge_with(path, reference, if no_ff { "--no-ff" } else { "" })
+}
+
+/// Move the current branch to `reference` only when that is a fast-forward;
+/// otherwise refuse and change nothing (Pull with the fast-forward-only
+/// strategy).
+pub fn fast_forward(path: &Path, reference: &str) -> Result<Receipt, String> {
+    merge_with(path, reference, "--ff-only")
+}
+
+fn merge_with(path: &Path, reference: &str, mode: &str) -> Result<Receipt, String> {
+    let no_ff = mode == "--no-ff";
     let reference = reference.trim();
     if reference.is_empty() || reference.starts_with('-') {
         return Err("Merge reference must not start with '-'.".into());
@@ -13,14 +25,19 @@ pub fn merge(path: &Path, reference: &str, no_ff: bool) -> Result<Receipt, Strin
     let resolved = resolve(path, reference)?;
     let before = head(path)?;
     let mut args = vec!["merge".into(), "--no-edit".into()];
-    if no_ff {
-        args.push("--no-ff".into());
+    if no_ff || mode == "--ff-only" {
+        args.push(mode.into());
     }
     args.push(reference.to_string());
     let output = run(path, &args)?;
     let conflicts = unmerged(path)?;
     let state = crate::mutation::state(path)?;
     if !output.status.success() && conflicts.is_empty() && state.is_none() {
+        if mode == "--ff-only" {
+            return Err(format!(
+                "Not a fast-forward: the branch and {reference} have diverged. Pull with rebase or merge instead."
+            ));
+        }
         return Err(failure("Merge", &output));
     }
     let in_progress = state.is_some() || !conflicts.is_empty();

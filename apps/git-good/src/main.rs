@@ -350,7 +350,9 @@ impl PrefSection {
             }
             Self::Diff => "diff open files full file layout inline side by side images compare",
             Self::Commit => "commit identity name email signing sign tags subject length guide",
-            Self::Rebase => "rebase recovery stash autostash backup",
+            Self::Rebase => {
+                "rebase recovery stash autostash backup pull strategy merge fast-forward push force lease"
+            }
             Self::Keyboard => "keyboard shortcuts keys",
         }
     }
@@ -1192,6 +1194,8 @@ enum RecoveryAction {
     RetrySwitch,
     StashAndSwitch,
     PullRebase,
+    /// Push the rewritten branch with force-with-lease.
+    ForcePush,
 }
 
 struct Outcome {
@@ -1210,7 +1214,8 @@ fn recovery_label(action: RecoveryAction) -> &'static str {
         RecoveryAction::ManageStashes => "Stashes…",
         RecoveryAction::RetrySwitch => "Retry switch",
         RecoveryAction::StashAndSwitch => "Stash and switch…",
-        RecoveryAction::PullRebase => "Pull --rebase",
+        RecoveryAction::PullRebase => "Pull",
+        RecoveryAction::ForcePush => "Push with force-with-lease…",
     }
 }
 
@@ -2404,6 +2409,21 @@ impl Browser {
                                 "Rebase and interactive rebase dialogs start with this choice; each rebase still asks.",
                             );
                             ui.separator();
+                            ui.strong("Pull strategy");
+                            ui.horizontal(|ui| {
+                                for strategy in settings::PullStrategy::ALL {
+                                    ui.selectable_value(&mut prefs.pull_strategy, strategy, strategy.label());
+                                }
+                            });
+                            ui.weak("Pull fetches the upstream, then rebases onto it, merges it, or only fast-forwards.");
+                            ui.separator();
+                            ui.strong("Push");
+                            ui.checkbox(
+                                &mut prefs.offer_force_lease,
+                                "Offer force-with-lease after a rewrite",
+                            );
+                            ui.weak("After rewriting a published branch, the status line offers Push with force-with-lease….");
+                            ui.separator();
                             ui.strong("Recovery");
                             ui.weak(
                                 "Every rewrite creates a private backup ref first. Repository › Recovery… lists them with the reflog.",
@@ -2636,7 +2656,18 @@ impl Browser {
                 self.load(ctx);
                 if let Some(pull) = pull {
                     self.network_notice = None;
-                    if let Err(error) = self.start_rebase(ctx, &pull.upstream, false) {
+                    let started = match self.prefs.pull_strategy {
+                        settings::PullStrategy::Rebase => {
+                            self.start_rebase(ctx, &pull.upstream, false)
+                        }
+                        settings::PullStrategy::Merge => {
+                            self.start_merge(ctx, &pull.upstream, false)
+                        }
+                        settings::PullStrategy::FastForward => {
+                            self.start_fast_forward(ctx, &pull.upstream)
+                        }
+                    };
+                    if let Err(error) = started {
                         self.set_outcome(OutcomeSeverity::Error, error, None, None);
                     }
                 }
@@ -3631,9 +3662,13 @@ impl Browser {
                 .entry(),
             item(
                 if ready.behind > 0 {
-                    format!("Pull {} (rebase)", ready.behind)
+                    format!(
+                        "Pull {} ({})",
+                        ready.behind,
+                        self.prefs.pull_strategy.menu_label()
+                    )
                 } else {
-                    "Pull (rebase)".into()
+                    format!("Pull ({})", self.prefs.pull_strategy.menu_label())
                 },
                 "Ctrl+Shift+L",
                 FrameCommand::Pull,
@@ -5016,6 +5051,11 @@ impl Browser {
                 }
             }
             RecoveryAction::PullRebase => self.start_pull_rebase(ctx),
+            RecoveryAction::ForcePush => {
+                if let Some(target) = self.force_push_target() {
+                    self.force_push = Some(target);
+                }
+            }
         }
     }
 
@@ -5330,6 +5370,19 @@ impl Browser {
         })
     }
 
+    /// Pull with the fast-forward-only strategy: move the branch to the
+    /// upstream, or refuse when they have diverged.
+    fn start_fast_forward(&mut self, ctx: &egui::Context, reference: &str) -> Result<(), String> {
+        let path = self
+            .stash_path()
+            .ok_or("Open a repository before pulling.")?;
+        let reference = reference.to_string();
+        let label = format!("Fast-forwarding to {reference}…");
+        self.start_operation(ctx, label, move || {
+            gg_git::merge::fast_forward(&path, &reference).map(OperationOutcome::Merge)
+        })
+    }
+
     fn start_rebase(
         &mut self,
         ctx: &egui::Context,
@@ -5445,6 +5498,9 @@ impl Browser {
             (!details.is_empty()).then(|| details.join("\n")),
             Some(if conflicts {
                 RecoveryAction::ResolveConflicts
+            } else if self.prefs.offer_force_lease && self.state.refs.current_tracking().is_some() {
+                // The branch was published: the rewrite needs a forced push.
+                RecoveryAction::ForcePush
             } else {
                 RecoveryAction::Backups
             }),
@@ -8353,10 +8409,11 @@ impl Browser {
                     if toolbar_button(ui, icon::DOWNLOAD_SIMPLE, None, "Fetch  Ctrl+Shift+F", idle(ready.network_idle)) {
                         tool = Some(FrameCommand::Fetch);
                     }
+                    let strategy = self.prefs.pull_strategy.menu_label();
                     let pull_tip = if ready.behind > 0 {
-                        format!("Pull {} (rebase)  Ctrl+Shift+L", ready.behind)
+                        format!("Pull {} ({strategy})  Ctrl+Shift+L", ready.behind)
                     } else {
-                        "Pull (rebase)  Ctrl+Shift+L".into()
+                        format!("Pull ({strategy})  Ctrl+Shift+L")
                     };
                     if toolbar_button(
                         ui,
@@ -10797,15 +10854,15 @@ mod tests {
         });
         assert!(app.refs_width > 0.0, "the refs pane did not render");
         let button = output.shapes.iter().find_map(|shape| match &shape.shape {
-            egui::epaint::Shape::Text(text) if text.galley.job.text == "Pull --rebase" => {
+            egui::epaint::Shape::Text(text) if text.galley.job.text == "Pull" => {
                 Some(egui::Rect::from_min_size(text.pos, text.galley.size()))
             }
             _ => None,
         });
-        assert!(button.is_some(), "the Pull --rebase button is missing");
+        assert!(button.is_some(), "the Pull button is missing");
         assert!(
             button.is_some_and(|rect| rect.max.x <= app.refs_width + 0.5),
-            "the Pull --rebase button is clipped by the {} point pane: {button:?}",
+            "the Pull button is clipped by the {} point pane: {button:?}",
             app.refs_width
         );
     }

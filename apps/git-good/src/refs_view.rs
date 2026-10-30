@@ -644,9 +644,9 @@ fn tracking_row(
             tracking.upstream_full_name, tracking.remote
         ));
         if ui
-            .add_enabled(!busy, egui::Button::new("Pull --rebase").small())
+            .add_enabled(!busy, egui::Button::new("Pull").small())
             .on_hover_text(format!(
-                "Fetch {} and rebase this branch onto {}",
+                "Fetch {}, then update this branch from {} with the pull strategy from Preferences (rebase by default)",
                 tracking.remote, tracking.upstream
             ))
             .on_disabled_hover_text("Wait for the current operation to finish.")
