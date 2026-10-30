@@ -20,6 +20,28 @@ pub fn paint(
     font: egui::FontId,
     color: egui::Color32,
 ) -> Option<egui::Rect> {
+    paint_weighted(ui, rect, value, font, color, false)
+}
+
+/// Paint one-line text with a faux-bold weight on the selected row.
+pub fn paint_bold(
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    value: &str,
+    font: egui::FontId,
+    color: egui::Color32,
+) -> Option<egui::Rect> {
+    paint_weighted(ui, rect, value, font, color, true)
+}
+
+fn paint_weighted(
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    value: &str,
+    font: egui::FontId,
+    color: egui::Color32,
+    bold: bool,
+) -> Option<egui::Rect> {
     let single_line = value.replace(['\n', '\r', '\t'], " ");
     let layout = |width: f32| {
         let mut job =
@@ -49,13 +71,18 @@ pub fn paint(
         response.widget_info(|| {
             egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), "Show full text")
         });
-        ui.painter().with_clip_rect(button).text(
-            button.center(),
-            egui::Align2::CENTER_CENTER,
-            "...",
-            font.clone(),
-            color,
-        );
+        let painter = ui.painter().with_clip_rect(button);
+        let at = button.center();
+        painter.text(at, egui::Align2::CENTER_CENTER, "...", font.clone(), color);
+        if bold {
+            painter.text(
+                at + egui::vec2(0.4, 0.0),
+                egui::Align2::CENTER_CENTER,
+                "...",
+                font.clone(),
+                color,
+            );
+        }
         if response.clicked() {
             ui.ctx()
                 .data_mut(|data| data.insert_temp(disclosure_id(), value.to_owned()));
@@ -68,14 +95,15 @@ pub fn paint(
         egui::Sense::hover(),
     )
     .on_hover_text(value);
-    ui.painter().with_clip_rect(text_rect).galley(
-        egui::pos2(
-            text_rect.left(),
-            text_rect.center().y - galley.size().y / 2.0,
-        ),
-        galley,
-        color,
+    let painter = ui.painter().with_clip_rect(text_rect);
+    let at = egui::pos2(
+        text_rect.left(),
+        text_rect.center().y - galley.size().y / 2.0,
     );
+    painter.galley(at, galley.clone(), color);
+    if bold {
+        painter.galley(at + egui::vec2(0.4, 0.0), galley, color);
+    }
     more
 }
 

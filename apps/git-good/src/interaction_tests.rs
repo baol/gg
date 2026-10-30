@@ -41,6 +41,7 @@ fn update(request: stream::Request, count: usize) -> stream::Update {
         complete: true,
         rows,
         graphs: vec![],
+        ref_lanes: Default::default(),
         refs: Default::default(),
         selection,
         error: None,

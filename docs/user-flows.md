@@ -116,13 +116,15 @@ flowchart TD
 
 ### F06 · Clone, fetch, and push
 
-**Clone:** Repository → Clone → URL and destination → validate → bounded progress/Cancel → open the repository only after success. An existing nonempty destination or authentication failure remains actionable; retain inputs and never clean up user files automatically.
+**Clone:** Repository → Clone opens with a clipboard repository URL when available, otherwise an empty URL. Paste works in the URL and all other text inputs. Compose the destination from a root-folder selector (configured roots, favorites, or current working directory; default current directory) and a project-slug text field (default URL slug). Validate → bounded progress/Cancel → open only after success. An existing nonempty destination or authentication failure remains actionable; retain inputs and never clean up user files automatically. Root-folder preferences persist across launches.
 
 **Fetch:** select the explicit configured remote (or documented sole/default choice), optionally prune, then start. Fetch updates remote-tracking refs; it does not merge or change working files. Success refreshes history/refs while retaining selection. Cancel/failure preserves the previous display and offers Retry fetch.
 
 **Push:** show local branch, destination remote/branch, and upstream decision when missing. Start a non-force push; report progress and allow cancellation. A rejected push offers Details and Retry push; guide the user to fetch and inspect before integration, without automatic fetch, merge, or rebase. Record upstream only after successful push. Credentials use Git configuration/helpers/SSH; output excludes secrets.
 
 **Force push with lease:** a separate explicit Repository action, enabled only with an upstream remote-tracking ref. The confirmation names the local branch, destination, and lease commit and warns that the remote branch must still match that lease. A missing/stale lease fails without changing the remote and does not offer a retry that falls back to non-force. Bare force is never offered.
+
+**Branch switching and integration:** resize Refs and Details by dragging their dividers; widths remain stable during normal use. The current branch is bold, with a dot matching its history lane. Double-click requests the ordinary validated switch. Dirty checkout offers **Stash and switch…**, retaining the stash afterward; dirty rebase retains its target and offers explicit resubmission with autostash. **Pull --rebase** fetches and rebases onto the upstream, including when cached tracking reports zero behind. Choose other targets through **Rebase current onto this**.
 
 **Completion:** a receipt names the actual outcome; tracking refreshes when changed. **Mockup:** Network toggles rejected/pending/success states; Retry push is a simulation.
 

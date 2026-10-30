@@ -4,11 +4,15 @@ use std::{ffi::OsString, path::PathBuf};
 pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::error::Error>> {
     let mut path = std::env::current_dir()?;
     let mut create = false;
+    let mut stash = false;
+    let mut include_untracked = false;
     let mut branch = None;
     while let Some(arg) = args.next() {
         match arg.to_str() {
             Some("--repo") => path = PathBuf::from(args.next().ok_or("--repo needs a path")?),
             Some("--create") if !create => create = true,
+            Some("--stash") if !stash => stash = true,
+            Some("--include-untracked") if !include_untracked => include_untracked = true,
             Some(value) if value.starts_with("--") => {
                 return Err("Unknown branch option".into());
             }
@@ -16,13 +20,24 @@ pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::
                 branch = Some(arg.into_string().map_err(|_| "Branch name must be UTF-8")?);
             }
             _ => {
-                return Err("Usage: git good switch [--create] BRANCH [--repo PATH]".into());
+                return Err(
+                    "Usage: git good switch [--create] [--stash [--include-untracked]] BRANCH [--repo PATH]"
+                        .into(),
+                );
             }
         }
     }
     let branch = branch.ok_or("Branch switch requires a branch name")?;
+    if stash && create {
+        return Err("--stash is only valid when switching to an existing branch".into());
+    }
+    if include_untracked && !stash {
+        return Err("--include-untracked requires --stash".into());
+    }
     let receipt = if create {
         gg_git::branch::create(&path, &branch)?
+    } else if stash {
+        gg_git::branch::switch_with_stash(&path, &branch, include_untracked)?
     } else {
         gg_git::branch::switch(&path, &branch)?
     };
@@ -33,6 +48,7 @@ pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::
             "branch": receipt.branch,
             "head": receipt.head,
             "warnings": receipt.warnings,
+            "stash": receipt.stash,
             "complete": true,
         }),
     )?;

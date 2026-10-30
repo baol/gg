@@ -6,6 +6,7 @@ mod blame_worker;
 mod bounded_text;
 mod branch_cli;
 mod branding;
+mod clipboard;
 mod colors;
 mod commit_cli;
 mod conflict_cli;
@@ -15,6 +16,7 @@ mod diff_worker;
 mod export;
 mod file_history_view;
 mod file_history_worker;
+mod folders;
 mod graph;
 mod history_view;
 #[cfg(test)]
@@ -71,7 +73,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("--help")) {
         println!(
-            "gg · good git\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good refs [PATH]      Print branches, remotes, tags, and HEAD as JSON\ngit-good status [PATH] [--file PATH --area AREA]   Print working status or diff as JSON\ngit-good stage --file PATH [--hunk HEADER]... [--repo PATH]   Stage one file or selected hunks\ngit-good unstage --file PATH [--repo PATH]   Unstage one file\ngit-good commit [--amend] [--sign|--no-sign] -m MESSAGE [--repo PATH]   Commit the index or amend HEAD after Git hooks\ngit-good reflog [REF] [--repo PATH]   Print reflog entries as JSON\ngit-good blame PATH [--revision REF] [--lines START,END] [--repo PATH]   Print line attribution as JSON\ngit-good worktree <list|add|remove> [OPTIONS] [--repo PATH]   List, add, or remove worktrees\ngit-good submodule <status|update> PATH [OPTIONS] [--repo PATH]   Inspect or update a gitlink submodule\ngit-good lfs <status|fetch> PATH [--area staged|unstaged|untracked|conflict] [--revision REF] [--before REF] [--repo PATH]   Inspect or fetch an LFS pointer\ngit-good signature <config|verify> [REF] [--repo PATH]   Read signing config or verify a commit/tag\ngit-good switch [--create] BRANCH [--repo PATH]   Switch to or create a local branch\ngit-good fetch [REMOTE] [--prune] [--repo PATH]   Fetch and update remote-tracking refs\ngit-good push [REMOTE] [BRANCH] [--set-upstream] [--force-with-lease] [--repo PATH]   Push a local branch, with an explicit lease when rewriting\ngit-good clone URL [PATH]   Clone a repository and open it\ngit-good stash <list|push|apply|pop|drop> [OPTIONS] [--repo PATH]   List or mutate stashes\ngit-good cherry-pick COMMIT [--repo PATH]   Apply a commit\ngit-good revert COMMIT [--repo PATH]   Invert a commit\ngit-good merge REF [--no-ff] [--repo PATH]   Merge a branch, remote, or tag\ngit-good rebase REF [--autostash] [--repo PATH]   Rebase the current branch onto a branch, remote, or tag\ngit-good rebase --continue|--skip|--abort [--repo PATH]   Recover an in-progress rebase\ngit-good rewrite --from COMMIT --pick COMMIT... --squash COMMIT... [--autostash] [--repo PATH]   Reorder or squash a linear range\ngit-good rewrite --continue|--skip|--abort [--repo PATH]   Recover an in-progress rewrite\ngit-good conflicts [--repo PATH]   List unmerged paths\ngit-good conflict --file PATH [--use ours|theirs|--stage] [--repo PATH]   Read or resolve a conflict\ngit-good reset --soft|--mixed|--hard COMMIT [--repo PATH]   Reset the current branch\ngit-good branch --delete BRANCH [--force] [--repo PATH]   Delete a local branch\ngit-good branch --create NAME [--at REF] [--repo PATH]   Create a local branch without switching\ngit-good tag --delete TAG [--repo PATH]   Delete a local tag
+            "gg · good git\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good refs [PATH]      Print branches, remotes, tags, and HEAD as JSON\ngit-good status [PATH] [--file PATH --area AREA]   Print working status or diff as JSON\ngit-good stage --file PATH [--hunk HEADER]... [--repo PATH]   Stage one file or selected hunks\ngit-good unstage --file PATH [--repo PATH]   Unstage one file\ngit-good commit [--amend] [--sign|--no-sign] -m MESSAGE [--repo PATH]   Commit the index or amend HEAD after Git hooks\ngit-good reflog [REF] [--repo PATH]   Print reflog entries as JSON\ngit-good blame PATH [--revision REF] [--lines START,END] [--repo PATH]   Print line attribution as JSON\ngit-good worktree <list|add|remove> [OPTIONS] [--repo PATH]   List, add, or remove worktrees\ngit-good submodule <status|update> PATH [OPTIONS] [--repo PATH]   Inspect or update a gitlink submodule\ngit-good lfs <status|fetch> PATH [--area staged|unstaged|untracked|conflict] [--revision REF] [--before REF] [--repo PATH]   Inspect or fetch an LFS pointer\ngit-good signature <config|verify> [REF] [--repo PATH]   Read signing config or verify a commit/tag\ngit-good switch [--create] [--stash [--include-untracked]] BRANCH [--repo PATH]   Switch to or create a local branch, optionally stashing changes first\ngit-good fetch [REMOTE] [--prune] [--repo PATH]   Fetch and update remote-tracking refs\ngit-good push [REMOTE] [BRANCH] [--set-upstream] [--force-with-lease] [--repo PATH]   Push a local branch, with an explicit lease when rewriting\ngit-good clone URL [PATH]   Clone a repository and open it\ngit-good stash <list|push|apply|pop|drop> [OPTIONS] [--repo PATH]   List or mutate stashes\ngit-good cherry-pick COMMIT [--repo PATH]   Apply a commit\ngit-good revert COMMIT [--repo PATH]   Invert a commit\ngit-good merge REF [--no-ff] [--repo PATH]   Merge a branch, remote, or tag\ngit-good rebase REF [--autostash] [--repo PATH]   Rebase the current branch onto a branch, remote, or tag\ngit-good rebase --continue|--skip|--abort [--repo PATH]   Recover an in-progress rebase\ngit-good rewrite --from COMMIT --pick COMMIT... --squash COMMIT... [--autostash] [--repo PATH]   Reorder or squash a linear range\ngit-good rewrite --continue|--skip|--abort [--repo PATH]   Recover an in-progress rewrite\ngit-good conflicts [--repo PATH]   List unmerged paths\ngit-good conflict --file PATH [--use ours|theirs|--stage] [--repo PATH]   Read or resolve a conflict\ngit-good reset --soft|--mixed|--hard COMMIT [--repo PATH]   Reset the current branch\ngit-good branch --delete BRANCH [--force] [--repo PATH]   Delete a local branch\ngit-good branch --create NAME [--at REF] [--repo PATH]   Create a local branch without switching\ngit-good tag --delete TAG [--repo PATH]   Delete a local tag
 git-good tag --create TAG --at REF -m MESSAGE [--sign] [--repo PATH]   Create an annotated or signed tag\ngit-good show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]   Review or export\n\nBrowse commits reachable from HEAD and all local, remote, and tag refs."
         );
         return Ok(());
@@ -268,7 +270,59 @@ fn write_history_json(
 
 struct CloneDialog {
     url: String,
-    destination: String,
+    folder: String,
+    name: String,
+    name_from_url: bool,
+}
+
+impl CloneDialog {
+    fn from_url(url: Option<String>, folder: PathBuf) -> Self {
+        let url = url.unwrap_or_default();
+        let name = gg_engine::sync::repository_name(&url).unwrap_or_default();
+        Self {
+            url,
+            folder: folder.to_string_lossy().into_owned(),
+            name,
+            name_from_url: true,
+        }
+    }
+
+    fn sync_name(&mut self) {
+        if self.name_from_url
+            && let Some(name) = gg_engine::sync::repository_name(&self.url)
+        {
+            self.name = name;
+        }
+    }
+
+    fn destination(&self) -> Option<PathBuf> {
+        let folder = self.folder.trim();
+        let name = self.name.trim();
+        if folder.is_empty()
+            || !std::path::Path::new(folder).is_absolute()
+            || !gg_engine::sync::repository_folder_name(name)
+        {
+            return None;
+        }
+        Some(PathBuf::from(folder).join(name))
+    }
+}
+
+struct FoldersDialog {
+    new_root: String,
+    error: Option<String>,
+}
+
+struct StashSwitchDialog {
+    target: String,
+    include_untracked: bool,
+    error: Option<String>,
+}
+
+struct PullRebase {
+    path: PathBuf,
+    remote: String,
+    upstream: String,
 }
 
 struct ForcePushDialog {
@@ -688,6 +742,8 @@ enum RecoveryAction {
     RetryPush,
     ManageStashes,
     RetrySwitch,
+    StashAndSwitch,
+    PullRebase,
 }
 
 struct Outcome {
@@ -705,6 +761,8 @@ fn recovery_label(action: RecoveryAction) -> &'static str {
         RecoveryAction::RetryPush => "Retry push",
         RecoveryAction::ManageStashes => "Stashes…",
         RecoveryAction::RetrySwitch => "Retry switch",
+        RecoveryAction::StashAndSwitch => "Stash and switch…",
+        RecoveryAction::PullRebase => "Pull --rebase",
     }
 }
 
@@ -890,6 +948,8 @@ struct Browser {
     network_error: Option<String>,
     network_notice: Option<String>,
     clone_dialog: Option<CloneDialog>,
+    folders: folders::Roots,
+    folders_dialog: Option<FoldersDialog>,
     force_push: Option<ForcePushDialog>,
     force_push_pending: bool,
     track_dialog: Option<String>,
@@ -912,6 +972,9 @@ struct Browser {
     operation_restore_row: Option<usize>,
     merge_dialog: Option<MergeDialog>,
     rebase_dialog: Option<RebaseDialog>,
+    rebase_target: Option<String>,
+    stash_switch: Option<StashSwitchDialog>,
+    pull_rebase: Option<PullRebase>,
     rewrite_dialog: Option<RewriteDialog>,
     rewrite_job: Option<RewriteJob>,
     rewrite_refresh: Option<u64>,
@@ -939,6 +1002,7 @@ struct Browser {
     signature_generation: u64,
     refs_visible: bool,
     refs_query: String,
+    refs_width: f32,
     state: state::State,
     pending: Option<stream::Worker>,
     pending_filter_edit: bool,
@@ -983,6 +1047,8 @@ impl Browser {
             network_error: None,
             network_notice: None,
             clone_dialog: None,
+            folders: folders::Roots::load(),
+            folders_dialog: None,
             force_push: None,
             force_push_pending: false,
             track_dialog: None,
@@ -1005,6 +1071,9 @@ impl Browser {
             operation_restore_row: None,
             merge_dialog: None,
             rebase_dialog: None,
+            rebase_target: None,
+            stash_switch: None,
+            pull_rebase: None,
             rewrite_dialog: None,
             rewrite_job: None,
             rewrite_refresh: None,
@@ -1032,6 +1101,7 @@ impl Browser {
             signature_generation: 0,
             refs_visible: true,
             refs_query: String::new(),
+            refs_width: 0.0,
             state: state::State::default(),
             pending: None,
             pending_filter_edit: false,
@@ -1094,6 +1164,90 @@ impl Browser {
                 self.branch_warning = None;
             }
             Err(e) => self.branch_error = Some(format!("Start branch operation: {e}")),
+        }
+    }
+
+    fn start_branch_stashing(
+        &mut self,
+        ctx: &egui::Context,
+        name: String,
+        include_untracked: bool,
+    ) {
+        if self.branch.is_some() || self.network.is_some() {
+            return;
+        }
+        let Some(path) = self
+            .state
+            .history
+            .as_ref()
+            .map(|history| history.path.clone())
+        else {
+            self.branch_error = Some("Open a repository before changing branches".into());
+            return;
+        };
+        let target_name = name.clone();
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        let repaint = ctx.clone();
+        match std::thread::Builder::new()
+            .name("gg-branch-stash".into())
+            .spawn(move || {
+                let result = gg_git::branch::switch_with_stash(&path, &name, include_untracked);
+                let _ = tx.send(result);
+                repaint.request_repaint();
+            }) {
+            Ok(_) => {
+                self.branch = Some(rx);
+                self.branch_target = Some((target_name, false));
+                self.branch_label = Some("Stashing changes and switching branch…".into());
+                self.branch_error = None;
+                self.branch_warning = None;
+            }
+            Err(e) => self.branch_error = Some(format!("Start branch operation: {e}")),
+        }
+    }
+
+    fn pull_rebase_target(&self, full_name: &str) -> Option<PullRebase> {
+        let path = self.stash_path()?;
+        let tracking = self
+            .state
+            .refs
+            .tracking
+            .iter()
+            .find(|tracking| tracking.full_name == full_name)?;
+        Some(PullRebase {
+            path,
+            remote: tracking.remote.clone(),
+            upstream: tracking.upstream_full_name.clone(),
+        })
+    }
+
+    fn start_pull_rebase(&mut self, ctx: &egui::Context) {
+        if self.network.is_some() || self.branch.is_some() || self.operation_busy() {
+            return;
+        }
+        let full_name = match self
+            .state
+            .refs
+            .head
+            .as_ref()
+            .and_then(|head| head.name.as_deref())
+        {
+            Some(name) => name.to_string(),
+            None => {
+                self.branch_error =
+                    Some("Switch to a local branch before pulling with rebase.".into());
+                return;
+            }
+        };
+        let Some(target) = self.pull_rebase_target(&full_name) else {
+            self.branch_error = Some("The current branch has no upstream to pull from.".into());
+            return;
+        };
+        let remote = target.remote.clone();
+        self.pull_rebase = Some(target);
+        self.start_fetch(ctx, Some(remote), false);
+        if self.network.is_none() {
+            self.pull_rebase = None;
         }
     }
 
@@ -1286,6 +1440,151 @@ impl Browser {
         }
     }
 
+    fn draw_folders_dialog(&mut self, ctx: &egui::Context) {
+        let Some(dialog) = &mut self.folders_dialog else {
+            return;
+        };
+        let mut open = true;
+        let mut add = None;
+        let mut remove = None;
+        let mut add_current = false;
+        egui::Window::new("Clone folders")
+            .id(egui::Id::unique("clone-folders"))
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(true)
+            .default_width(460.0)
+            .default_pos(ctx.content_rect().center())
+            .pivot(egui::Align2::CENTER_CENTER)
+            .show(ctx, |ui| {
+                ui.label(
+                    "Parent folders offered as clone destinations. The launch folder is always available.",
+                );
+                ui.add_space(4.0);
+                if self.folders.entries().is_empty() {
+                    ui.weak("No saved folders. Add the current folder or type one below.");
+                }
+                egui::ScrollArea::vertical()
+                    .id_salt("clone-folders-list")
+                    .max_height(180.0)
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                        for (index, root) in self.folders.entries().iter().enumerate() {
+                            ui.horizontal(|ui| {
+                                let label = root.to_string_lossy().into_owned();
+                                let width = (ui.available_width() - 70.0).max(80.0);
+                                let (rect, _) = ui.allocate_exact_size(
+                                    egui::vec2(width, 18.0),
+                                    egui::Sense::hover(),
+                                );
+                                bounded_text::paint(
+                                    ui,
+                                    rect,
+                                    &label,
+                                    egui::FontId::proportional(12.0),
+                                    ui.visuals().text_color(),
+                                );
+                                if ui.small_button("Remove").clicked() {
+                                    remove = Some(index);
+                                }
+                            });
+                        }
+                    });
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut dialog.new_root)
+                            .hint_text("Absolute folder")
+                            .desired_width(260.0),
+                    );
+                    if ui.button("Add folder").clicked() {
+                        add = Some(dialog.new_root.clone());
+                    }
+                    if ui.button("Add current").clicked() {
+                        add_current = true;
+                    }
+                });
+                if let Some(error) = &dialog.error {
+                    ui.colored_label(ui.visuals().error_fg_color, error);
+                }
+                ui.weak("Changes are saved for the next launch.");
+            });
+        if remove.is_some() || add.is_some() || add_current {
+            let adding = add.is_some() || add_current;
+            let error = if let Some(index) = remove {
+                self.folders.remove(index);
+                self.folders.save().err()
+            } else {
+                let value = add
+                    .unwrap_or_else(|| folders::starting_folder().to_string_lossy().into_owned());
+                match self.folders.add(&value) {
+                    Ok(true) => self.folders.save().err(),
+                    Ok(false) => Some("That folder is already in the list.".into()),
+                    Err(error) => Some(error),
+                }
+            };
+            if let Some(dialog) = &mut self.folders_dialog {
+                dialog.error = error;
+                if adding {
+                    dialog.new_root.clear();
+                }
+            }
+        }
+        if !open {
+            self.folders_dialog = None;
+        }
+    }
+
+    fn draw_stash_switch(&mut self, ctx: &egui::Context) {
+        let Some(dialog) = &mut self.stash_switch else {
+            return;
+        };
+        let mut open = true;
+        let mut submit = false;
+        let mut cancel = false;
+        egui::Window::new("Stash changes and switch")
+            .id(egui::Id::unique("stash-switch"))
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .default_width(440.0)
+            .default_pos(ctx.content_rect().center())
+            .pivot(egui::Align2::CENTER_CENTER)
+            .show(ctx, |ui| {
+                ui.label(format!(
+                    "Local changes block switching to {}.",
+                    dialog.target
+                ));
+                ui.label(
+                    "Stash the changes, switch branches, and keep the stash entry so it can be restored from Stashes.",
+                );
+                ui.checkbox(
+                    &mut dialog.include_untracked,
+                    "Include untracked files in the stash",
+                );
+                if let Some(error) = &dialog.error {
+                    ui.colored_label(ui.visuals().error_fg_color, error);
+                }
+                ui.horizontal(|ui| {
+                    if ui.button("Stash and switch").clicked() {
+                        submit = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        cancel = true;
+                    }
+                });
+            });
+        if submit {
+            let target = dialog.target.clone();
+            let include_untracked = dialog.include_untracked;
+            self.stash_switch = None;
+            self.pending_switch = Some(target.clone());
+            self.start_branch_stashing(ctx, target, include_untracked);
+        } else if cancel || !open {
+            self.stash_switch = None;
+        }
+    }
+
     fn start_clone(&mut self, ctx: &egui::Context, url: String, destination: Option<PathBuf>) {
         if self.branch.is_some() || self.network.is_some() {
             return;
@@ -1326,7 +1625,17 @@ impl Browser {
             Ok(network::Outcome::Fetch(receipt)) => {
                 self.network_error = None;
                 self.network_notice = Some(format!("Fetched {}", receipt.remote));
+                let pull = self
+                    .pull_rebase
+                    .take()
+                    .filter(|pull| self.stash_path().as_ref() == Some(&pull.path));
                 self.load(ctx);
+                if let Some(pull) = pull {
+                    self.network_notice = None;
+                    if let Err(error) = self.start_rebase(ctx, &pull.upstream, false) {
+                        self.set_outcome(OutcomeSeverity::Error, error, None, None);
+                    }
+                }
             }
             Ok(network::Outcome::Push(receipt)) => {
                 self.network_error = None;
@@ -1375,6 +1684,9 @@ impl Browser {
                 self.load(ctx);
             }
             Err(error) => {
+                if matches!(operation, Some(gg_engine::sync::Operation::Fetch)) {
+                    self.pull_rebase = None;
+                }
                 let error =
                     if force_push && matches!(operation, Some(gg_engine::sync::Operation::Push)) {
                         format!("Force push with lease failed: {error}")
@@ -1602,6 +1914,9 @@ impl Browser {
         self.rewrite_job = None;
         self.rewrite_refresh = None;
         self.conflict_view = None;
+        self.pull_rebase = None;
+        self.rebase_target = None;
+        self.stash_switch = None;
     }
 
     /// Detect an operation already in progress when a repository is opened.
@@ -1827,11 +2142,12 @@ impl Browser {
     }
 
     fn dismiss_outcome(&mut self) {
-        if self
-            .outcome
-            .as_ref()
-            .is_some_and(|outcome| matches!(outcome.recovery, Some(RecoveryAction::RetrySwitch)))
-        {
+        if self.outcome.as_ref().is_some_and(|outcome| {
+            matches!(
+                outcome.recovery,
+                Some(RecoveryAction::RetrySwitch | RecoveryAction::StashAndSwitch)
+            )
+        }) {
             self.pending_switch = None;
         }
         self.outcome = None;
@@ -1877,6 +2193,16 @@ impl Browser {
                 });
                 self.refresh_stashes();
             }
+            RecoveryAction::StashAndSwitch => {
+                if let Some(target) = self.pending_switch.clone() {
+                    self.stash_switch = Some(StashSwitchDialog {
+                        target,
+                        include_untracked: false,
+                        error: None,
+                    });
+                }
+            }
+            RecoveryAction::PullRebase => self.start_pull_rebase(ctx),
         }
     }
 
@@ -2064,6 +2390,7 @@ impl Browser {
                 self.refresh_working(ctx);
             }
             OperationOutcome::Rebase(receipt) => {
+                self.rebase_target = None;
                 let summary = if receipt.in_progress {
                     format!(
                         "Rebasing onto {}{}",
@@ -2202,9 +2529,14 @@ impl Browser {
             .ok_or("Open a repository before rebasing.")?;
         let reference = reference.to_string();
         let label = format!("Rebasing onto {reference}…");
-        self.start_operation(ctx, label, move || {
+        self.rebase_target = Some(reference.clone());
+        let started = self.start_operation(ctx, label, move || {
             gg_git::rebase::rebase(&path, &reference, autostash).map(OperationOutcome::Rebase)
-        })
+        });
+        if started.is_err() {
+            self.rebase_target = None;
+        }
+        started
     }
 
     fn open_rewrite_dialog(&mut self, from: &str) -> Result<(), String> {
@@ -4134,15 +4466,32 @@ impl Browser {
                     self.pending_switch = None;
                     self.branch_after_create = None;
                     if self.outcome.as_ref().is_some_and(|outcome| {
-                        matches!(outcome.recovery, Some(RecoveryAction::RetrySwitch))
+                        matches!(
+                            outcome.recovery,
+                            Some(RecoveryAction::RetrySwitch | RecoveryAction::StashAndSwitch)
+                        )
                     }) {
                         self.outcome = None;
                     }
-                    self.branch_warning = if receipt.warnings.is_empty() {
-                        None
+                    let warnings =
+                        (!receipt.warnings.is_empty()).then(|| receipt.warnings.join(" · "));
+                    self.branch_warning = warnings.clone();
+                    let pull = (!receipt.created)
+                        .then(|| self.pull_rebase_target(&format!("refs/heads/{}", receipt.branch)))
+                        .flatten();
+                    let summary = if receipt.created {
+                        format!("Created {}", receipt.branch)
                     } else {
-                        Some(receipt.warnings.join(" · "))
+                        format!("Switched to {}", receipt.branch)
                     };
+                    if warnings.is_some() || pull.is_some() {
+                        self.set_outcome(
+                            OutcomeSeverity::Info,
+                            summary,
+                            warnings,
+                            pull.is_some().then_some(RecoveryAction::PullRebase),
+                        );
+                    }
                     self.state.query.clear();
                     self.state.start_filter();
                     self.state.selected = Some(receipt.head);
@@ -4163,12 +4512,12 @@ impl Browser {
                             }
                             None => format!("Switch to {name} blocked: {error}"),
                         };
-                        self.set_outcome(
-                            OutcomeSeverity::Warning,
-                            summary,
-                            None,
-                            Some(RecoveryAction::RetrySwitch),
-                        );
+                        let recovery = if gg_git::dirty_tree_error(&error) {
+                            RecoveryAction::StashAndSwitch
+                        } else {
+                            RecoveryAction::RetrySwitch
+                        };
+                        self.set_outcome(OutcomeSeverity::Warning, summary, None, Some(recovery));
                     } else {
                         self.branch_error = Some(error);
                     }
@@ -4250,6 +4599,18 @@ impl Browser {
                     Err(error) => {
                         self.operation_restore_row = None;
                         self.mutation_notice = None;
+                        if let Some(target) = self.rebase_target.take()
+                            && gg_git::dirty_tree_error(&error)
+                        {
+                            self.rebase_dialog = Some(RebaseDialog {
+                                reference: target,
+                                autostash: true,
+                                error: Some(
+                                    "Working tree is not clean. Autostash is enabled: submit Rebase to stash the changes and continue."
+                                        .into(),
+                                ),
+                            });
+                        }
                         self.set_outcome(OutcomeSeverity::Error, error.clone(), None, None);
                         self.mutation_error = Some(error.clone());
                         if let Some(view) = &mut self.conflict_view {
@@ -4589,12 +4950,25 @@ impl Browser {
                     }
                     if ui
                         .add_enabled(network_idle, egui::Button::new("Clone…"))
-                        .on_hover_text("Clone a repository and open it after success")
+                        .on_hover_text(
+                            "Clone a repository and open it after success; a repository URL on the clipboard pre-fills the form",
+                        )
                         .clicked()
                     {
-                        self.clone_dialog = Some(CloneDialog {
-                            url: String::new(),
-                            destination: String::new(),
+                        self.clone_dialog = Some(CloneDialog::from_url(
+                            clipboard::repository_url(),
+                            folders::starting_folder(),
+                        ));
+                        ui.close();
+                    }
+                    if ui
+                        .button("Clone folders…")
+                        .on_hover_text("Choose parent folders offered as clone destinations")
+                        .clicked()
+                    {
+                        self.folders_dialog = Some(FoldersDialog {
+                            new_root: String::new(),
+                            error: None,
                         });
                         ui.close();
                     }
@@ -5058,15 +5432,34 @@ impl Browser {
                 || self.operation_busy();
             let has_repo = self.state.history.is_some();
             let mut action = None;
-            egui::Panel::left("refs-sidebar")
-                .exact_size(190.0)
-                .resizable(false)
-                .frame(egui::Frame::side_top_panel(ui.style().as_ref()).inner_margin(8.0))
+            let refs_panel = egui::Panel::left("refs-sidebar")
+                .default_size(230.0)
+                .min_size(200.0)
+                .max_size(420.0)
+                .resizable(true)
+                .show_separator_line(false)
+                .frame(
+                    egui::Frame::side_top_panel(ui.style().as_ref())
+                        .inner_margin(8.0)
+                        .stroke(egui::Stroke::NONE),
+                )
                 .show(ui, |ui| {
+                    let rect = ui.available_rect_before_wrap();
+                    ui.allocate_rect(rect, egui::Sense::hover());
+                    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+                    child.set_clip_rect(rect.intersect(ui.clip_rect()));
+                    let ui = &mut child;
                     ui.add_enabled_ui(has_repo, |ui| {
-                        action = refs_view::show(ui, &refs, &mut self.refs_query, busy);
+                        action = refs_view::show(
+                            ui,
+                            &refs,
+                            &mut self.refs_query,
+                            busy,
+                            &self.state.ref_lanes,
+                        );
                     });
                 });
+            self.refs_width = refs_panel.response.rect.width();
             match action {
                 Some(refs_view::Action::Switch(name)) => self.start_branch(ctx, name, false),
                 Some(refs_view::Action::Jump(id)) => self.jump_to_ref(id),
@@ -5075,6 +5468,7 @@ impl Browser {
                 Some(refs_view::Action::Track(name)) => {
                     self.track_dialog = Some(name);
                 }
+                Some(refs_view::Action::PullRebase) => self.start_pull_rebase(ctx),
                 Some(refs_view::Action::Merge(name)) => {
                     self.merge_dialog = Some(MergeDialog {
                         reference: name,
@@ -5106,50 +5500,124 @@ impl Browser {
             self.close_to_history(ctx);
             self.narrow_details = false;
         }
+        self.draw_folders_dialog(ctx);
+        self.draw_stash_switch(ctx);
         if let Some(dialog) = &mut self.clone_dialog {
             let mut submit = None;
             let mut cancelled = false;
+            let mut open_folders = false;
+            let mut field_lost_focus = false;
             let mut open =
                 !ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+            let mut candidates = vec![folders::starting_folder()];
+            for root in self.folders.entries() {
+                if !candidates.iter().any(|candidate| candidate == root) {
+                    candidates.push(root.clone());
+                }
+            }
             egui::Window::new("Clone repository")
                 .id(egui::Id::unique("clone-repository"))
                 .open(&mut open)
                 .collapsible(false)
                 .resizable(false)
-                .default_width(420.0)
+                .default_width(520.0)
                 .default_pos(ctx.content_rect().center())
                 .pivot(egui::Align2::CENTER_CENTER)
                 .show(ctx, |ui| {
                     ui.label(
                         "Clone with Git credentials and progress. The worktree opens after success.",
                     );
+                    ui.label("Repository URL");
                     let url = ui.add(
                         egui::TextEdit::singleline(&mut dialog.url)
-                            .hint_text("Repository URL")
+                            .hint_text("https://host/owner/repo.git or git@host:owner/repo.git")
                             .desired_width(f32::INFINITY),
                     );
-                    let destination = ui.add(
-                        egui::TextEdit::singleline(&mut dialog.destination)
-                            .hint_text("Destination (optional; defaults from the URL)")
-                            .desired_width(f32::INFINITY),
-                    );
-                    let enter = (url.lost_focus() || destination.lost_focus())
+                    if url.changed() {
+                        dialog.sync_name();
+                    }
+                    ui.add_space(4.0);
+                    ui.label("Destination");
+                    ui.horizontal(|ui| {
+                        let selected = if candidates
+                            .iter()
+                            .any(|candidate| candidate.to_string_lossy() == dialog.folder.trim())
+                        {
+                            dialog.folder.trim().to_owned()
+                        } else {
+                            "Custom folder".to_owned()
+                        };
+                        egui::ComboBox::from_id_salt("clone-folder")
+                            .selected_text(selected)
+                            .width(210.0)
+                            .show_ui(ui, |ui| {
+                                for candidate in &candidates {
+                                    let label = candidate.to_string_lossy().into_owned();
+                                    if ui
+                                        .selectable_label(
+                                            dialog.folder.trim() == label,
+                                            label.clone(),
+                                        )
+                                        .clicked()
+                                    {
+                                        dialog.folder = label;
+                                    }
+                                }
+                            });
+                        let folder = ui.add(
+                            egui::TextEdit::singleline(&mut dialog.folder)
+                                .hint_text("Parent folder")
+                                .desired_width(220.0),
+                        );
+                        field_lost_focus |= folder.lost_focus();
+                        if ui
+                            .button("Folders…")
+                            .on_hover_text("Configure the folders offered here")
+                            .clicked()
+                        {
+                            open_folders = true;
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Name");
+                        let name = ui.add(
+                            egui::TextEdit::singleline(&mut dialog.name)
+                                .hint_text("Project folder")
+                                .desired_width(220.0),
+                        );
+                        if name.changed() {
+                            dialog.name_from_url = false;
+                        }
+                        field_lost_focus |= name.lost_focus();
+                    });
+                    let destination = dialog.destination();
+                    match &destination {
+                        Some(path) => {
+                            ui.weak(format!("Clones into {}", path.display()));
+                        }
+                        None => {
+                            ui.colored_label(
+                                ui.visuals().warn_fg_color,
+                                "Enter an absolute parent folder and one project name.",
+                            );
+                        }
+                    }
+                    let ready = !dialog.url.trim().is_empty()
+                        && destination.is_some()
+                        && self.network.is_none()
+                        && self.branch.is_none();
+                    let enter = (url.lost_focus() || field_lost_focus)
                         && ui.input(|i| i.key_pressed(egui::Key::Enter));
                     ui.horizontal(|ui| {
                         if ui
-                            .add_enabled(
-                                !dialog.url.trim().is_empty()
-                                    && self.network.is_none()
-                                    && self.branch.is_none(),
-                                egui::Button::new("Clone"),
+                            .add_enabled(ready, egui::Button::new("Clone"))
+                            .on_disabled_hover_text(
+                                "Enter a repository URL, an absolute parent folder, and a single project name",
                             )
                             .clicked()
-                            || (enter && self.network.is_none() && self.branch.is_none())
+                            || (enter && ready)
                         {
-                            submit = Some((
-                                dialog.url.trim().to_string(),
-                                dialog.destination.trim().to_string(),
-                            ));
+                            submit = Some((dialog.url.trim().to_string(), destination.clone()));
                         }
                         if ui.button("Cancel").clicked() {
                             cancelled = true;
@@ -5159,13 +5627,15 @@ impl Browser {
             if cancelled {
                 open = false;
             }
+            if open_folders {
+                self.folders_dialog = Some(FoldersDialog {
+                    new_root: dialog.folder.trim().to_owned(),
+                    error: None,
+                });
+            }
             if let Some((url, destination)) = submit {
                 self.clone_dialog = None;
-                self.start_clone(
-                    ctx,
-                    url,
-                    (!destination.is_empty()).then(|| PathBuf::from(destination)),
-                );
+                self.start_clone(ctx, url, destination);
             } else if !open {
                 self.clone_dialog = None;
             }
@@ -6345,7 +6815,10 @@ impl Browser {
                 (
                     format!(
                         "{} · {}",
-                        if matches!(outcome.recovery, Some(RecoveryAction::RetrySwitch)) {
+                        if matches!(
+                            outcome.recovery,
+                            Some(RecoveryAction::RetrySwitch | RecoveryAction::StashAndSwitch)
+                        ) {
                             "Branch"
                         } else {
                             "History"
@@ -6414,7 +6887,7 @@ impl Browser {
             ui.horizontal(|ui| {
                 let reserved = 70.0
                     + if recovery.is_some() {
-                        80.0
+                        130.0
                     } else if details.is_some() {
                         76.0
                     } else {
@@ -6529,17 +7002,27 @@ impl Browser {
         }
         self.details_rect = egui::Rect::NOTHING;
         if !narrow && self.details_visible {
+            let reserved_refs = if wide_refs { self.refs_width } else { 0.0 };
+            let available =
+                (ctx.content_rect().width() - reserved_refs - history_view::MIN_WIDTH - 16.0)
+                    .max(240.0);
+            let details_default = available.min(320.0);
             let details = egui::Panel::right("details")
-                .default_size(300.0)
-                .size_range(
-                    300.0
-                        ..=(ctx.content_rect().width()
-                            - if wide_refs { 190.0 } else { 0.0 }
-                            - history_view::MIN_WIDTH)
-                            .max(300.0),
+                .default_size(details_default)
+                .size_range(240.0..=available)
+                .resizable(true)
+                .show_separator_line(false)
+                .frame(
+                    egui::Frame::side_top_panel(ui.style().as_ref())
+                        .inner_margin(12.0)
+                        .stroke(egui::Stroke::NONE),
                 )
-                .frame(egui::Frame::side_top_panel(ui.style().as_ref()).inner_margin(12.0))
                 .show(ui, |ui| {
+                    let rect = ui.available_rect_before_wrap();
+                    ui.allocate_rect(rect, egui::Sense::hover());
+                    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+                    child.set_clip_rect(rect.intersect(ui.clip_rect()));
+                    let ui = &mut child;
                     ui.weak("DETAILS");
                     ui.add_space(8.0);
                     let commit = self.state.displayed_details();
@@ -6833,6 +7316,60 @@ mod tests {
         output
     }
     #[test]
+    fn clone_destination_uses_the_repository_slug() {
+        assert_eq!(
+            gg_engine::sync::repository_name("https://example.org/team/project.git"),
+            Some("project".into())
+        );
+        assert_eq!(
+            gg_engine::sync::repository_name("git@example.org:team/project"),
+            Some("project".into())
+        );
+    }
+
+    #[test]
+    fn clone_rejects_a_project_name_outside_the_root() {
+        let mut dialog = CloneDialog::from_url(
+            Some("https://example.org/team/project.git".into()),
+            folders::starting_folder(),
+        );
+        assert_eq!(
+            dialog.destination(),
+            Some(folders::starting_folder().join("project"))
+        );
+        dialog.name = "../outside".into();
+        assert!(dialog.destination().is_none());
+        dialog.name = "project".into();
+        dialog.folder = "relative".into();
+        assert!(dialog.destination().is_none());
+    }
+
+    #[test]
+    fn clone_enter_requires_a_focused_field() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        let mut dialog = CloneDialog::from_url(
+            Some("https://example.org/team/project.git".into()),
+            folders::starting_folder(),
+        );
+        dialog.name = "../outside".into();
+        app.clone_dialog = Some(dialog);
+        crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ui| {
+            app.draw_ui(ui)
+        });
+        crate::tests::run_ui(
+            &ctx,
+            frame_input(
+                1120.0,
+                740.0,
+                vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
+            ),
+            |ui| app.draw_ui(ui),
+        );
+        assert!(app.network.is_none());
+        assert!(app.clone_dialog.is_some());
+    }
+    #[test]
     fn native_graphics_backends_are_enabled() {
         assert!(!wgpu::Instance::enabled_backend_features().is_empty());
     }
@@ -6843,6 +7380,76 @@ mod tests {
             pressed: true,
             repeat: false,
             modifiers,
+        }
+    }
+
+    #[test]
+    fn resized_refs_and_details_keep_their_width_on_idle_frames() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        let mut time = 1.0;
+        let frame = |app: &mut Browser, time: &mut f64, events| {
+            *time += 0.1;
+            let mut input = frame_input(1600.0, 740.0, events);
+            input.time = Some(*time);
+            crate::tests::run_ui(&ctx, input, |ui| app.draw_ui(ui));
+        };
+        frame(&mut app, &mut time, vec![]);
+        frame(&mut app, &mut time, vec![]);
+        for left in [true, false] {
+            let original = if left {
+                app.refs_width
+            } else {
+                app.details_rect.width()
+            };
+            let start = egui::pos2(
+                if left {
+                    app.refs_width
+                } else {
+                    app.details_rect.left()
+                },
+                300.0,
+            );
+            let end = start + egui::vec2(if left { 60.0 } else { -60.0 }, 0.0);
+            frame(&mut app, &mut time, vec![egui::Event::PointerMoved(start)]);
+            frame(
+                &mut app,
+                &mut time,
+                vec![egui::Event::PointerButton {
+                    pos: start,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+            );
+            frame(&mut app, &mut time, vec![egui::Event::PointerMoved(end)]);
+            frame(
+                &mut app,
+                &mut time,
+                vec![egui::Event::PointerButton {
+                    pos: end,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+            );
+            let resized = if left {
+                app.refs_width
+            } else {
+                app.details_rect.width()
+            };
+            assert!(
+                resized > original + 30.0,
+                "divider did not resize: {original} -> {resized}"
+            );
+            let expected = (app.refs_width, app.details_rect, app.history_rect);
+            for _ in 0..20 {
+                frame(&mut app, &mut time, vec![]);
+                assert_eq!(
+                    (app.refs_width, app.details_rect, app.history_rect),
+                    expected
+                );
+            }
         }
     }
 
@@ -6959,10 +7566,10 @@ mod tests {
                 let ctx = egui::Context::default();
                 let mut app = layout_fixture();
                 if clone {
-                    app.clone_dialog = Some(CloneDialog {
-                        url: "https://example.org/gg.git".into(),
-                        destination: String::new(),
-                    });
+                    app.clone_dialog = Some(CloneDialog::from_url(
+                        Some("https://example.org/gg.git".into()),
+                        folders::starting_folder(),
+                    ));
                 } else {
                     app.track_dialog = Some("origin/main".into());
                 }
@@ -8651,6 +9258,7 @@ mod tests {
             head: "a".repeat(40),
             created: false,
             warnings: vec![],
+            stash: None,
         }));
         app.branch = Some(rx);
         app.branch_target = Some(("feature".into(), false));
@@ -9590,6 +10198,7 @@ mod tests {
             complete: true,
             rows: vec![],
             graphs: vec![],
+            ref_lanes: Default::default(),
             refs: Default::default(),
             selection: None,
             error: None,

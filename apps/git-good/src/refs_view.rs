@@ -15,6 +15,7 @@ pub enum Action {
     Track(String),
     Merge(String),
     Rebase(String),
+    PullRebase,
     DeleteBranch(String),
     DeleteTag(String),
     VerifyTag(String),
@@ -36,7 +37,13 @@ impl<'a> Tree<'a> {
     }
 }
 
-pub fn show(ui: &mut egui::Ui, refs: &Snapshot, filter: &mut String, busy: bool) -> Option<Action> {
+pub fn show(
+    ui: &mut egui::Ui,
+    refs: &Snapshot,
+    filter: &mut String,
+    busy: bool,
+    lanes: &BTreeMap<String, u8>,
+) -> Option<Action> {
     let mut action = None;
     ui.add_space(4.0);
     ui.strong("Refs");
@@ -71,7 +78,7 @@ pub fn show(ui: &mut egui::Ui, refs: &Snapshot, filter: &mut String, busy: bool)
     });
     if let Some(tracking) = refs.current_tracking() {
         ui.add_space(2.0);
-        tracking_row(ui, tracking);
+        tracking_row(ui, tracking, busy, &mut action);
     }
     ui.add_space(2.0);
 
@@ -123,10 +130,10 @@ pub fn show(ui: &mut egui::Ui, refs: &Snapshot, filter: &mut String, busy: bool)
                     for item in branches {
                         tree.insert(item);
                     }
-                    render_tree(ui, &tree, "branch", head_name, busy, &mut action);
+                    render_tree(ui, &tree, "branch", head_name, busy, lanes, &mut action);
                 } else {
                     for item in branches {
-                        render_leaf(ui, item, &item.name, head_name, busy, &mut action);
+                        render_leaf(ui, item, &item.name, head_name, busy, lanes, &mut action);
                     }
                 }
             });
@@ -143,10 +150,10 @@ pub fn show(ui: &mut egui::Ui, refs: &Snapshot, filter: &mut String, busy: bool)
                     for item in remotes {
                         tree.insert(item);
                     }
-                    render_tree(ui, &tree, "remote", head_name, busy, &mut action);
+                    render_tree(ui, &tree, "remote", head_name, busy, lanes, &mut action);
                 } else {
                     for item in remotes {
-                        render_leaf(ui, item, &item.name, head_name, busy, &mut action);
+                        render_leaf(ui, item, &item.name, head_name, busy, lanes, &mut action);
                     }
                 }
             });
@@ -163,10 +170,10 @@ pub fn show(ui: &mut egui::Ui, refs: &Snapshot, filter: &mut String, busy: bool)
                     for item in tags {
                         tree.insert(item);
                     }
-                    render_tree(ui, &tree, "tag", head_name, busy, &mut action);
+                    render_tree(ui, &tree, "tag", head_name, busy, lanes, &mut action);
                 } else {
                     for item in tags {
-                        render_leaf(ui, item, &item.name, head_name, busy, &mut action);
+                        render_leaf(ui, item, &item.name, head_name, busy, lanes, &mut action);
                     }
                 }
             });
@@ -195,19 +202,21 @@ fn section(ui: &mut egui::Ui, title: &str, count: usize, contents: impl FnOnce(&
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_tree(
     ui: &mut egui::Ui,
     tree: &Tree<'_>,
     section: &str,
     head_name: Option<&str>,
     busy: bool,
+    lanes: &BTreeMap<String, u8>,
     action: &mut Option<Action>,
 ) {
     for (segment, node) in &tree.children {
         let path = format!("{section}/{segment}");
         if node.children.is_empty() {
             if let Some(item) = node.item {
-                render_leaf(ui, item, segment, head_name, busy, action);
+                render_leaf(ui, item, segment, head_name, busy, lanes, action);
             }
         } else {
             egui::CollapsingHeader::new(
@@ -221,9 +230,9 @@ fn render_tree(
             .show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 1.0;
                 if let Some(item) = node.item {
-                    render_leaf(ui, item, segment, head_name, busy, action);
+                    render_leaf(ui, item, segment, head_name, busy, lanes, action);
                 }
-                render_tree(ui, node, section, head_name, busy, action);
+                render_tree(ui, node, section, head_name, busy, lanes, action);
             });
         }
     }
@@ -235,9 +244,17 @@ fn render_leaf(
     label: &str,
     head_name: Option<&str>,
     busy: bool,
+    lanes: &BTreeMap<String, u8>,
     action: &mut Option<Action>,
 ) {
     let current = Some(item.full_name.as_str()) == head_name;
+    let lane = (item.kind == RefKind::Branch)
+        .then(|| {
+            lanes
+                .get(&item.full_name)
+                .map(|lane| crate::graph::lane_color(*lane))
+        })
+        .flatten();
     let inspect = format!("Inspect {}\n{}", item.full_name, short(&item.commit));
     let hover = if current {
         format!(
@@ -245,11 +262,17 @@ fn render_leaf(
             item.full_name,
             short(&item.commit)
         )
+    } else if item.kind == RefKind::Branch {
+        format!("{inspect}\nDouble-click to switch\nRight-click for ref actions")
     } else {
         format!("{inspect}\nRight-click for ref actions")
     };
-    let response = row(ui, label, item.kind, current).on_hover_text(hover);
-    if response.clicked() {
+    let response = row(ui, label, item.kind, current, lane).on_hover_text(hover);
+    if response.double_clicked() {
+        if item.kind == RefKind::Branch && !current && !busy {
+            *action = Some(Action::Switch(item.name.clone()));
+        }
+    } else if response.clicked() {
         *action = Some(Action::Jump(item.commit.clone()));
     }
     response.context_menu(|ui| {
@@ -363,7 +386,13 @@ fn render_leaf(
     });
 }
 
-fn row(ui: &mut egui::Ui, label: &str, kind: RefKind, current: bool) -> egui::Response {
+fn row(
+    ui: &mut egui::Ui,
+    label: &str,
+    kind: RefKind,
+    current: bool,
+    lane: Option<egui::Color32>,
+) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), ROW_HEIGHT),
         egui::Sense::click(),
@@ -398,18 +427,25 @@ fn row(ui: &mut egui::Ui, label: &str, kind: RefKind, current: bool) -> egui::Re
         egui::pos2(rect.left() + 9.0, rect.center().y),
         egui::vec2(ICON_SIZE, ICON_SIZE),
     );
-    paint_icon(ui.painter(), icon, kind, color.gamma_multiply(0.9));
+    let icon_color = if let Some(dot) = lane {
+        ui.painter()
+            .circle_filled(icon.center(), ICON_SIZE / 2.0, dot);
+        crate::graph::on_lane_color(dot)
+    } else {
+        color.gamma_multiply(0.9)
+    };
+    paint_icon(ui.painter(), icon, kind, icon_color);
     let text_right = rect.right() - if current { 20.0 } else { 6.0 };
-    crate::bounded_text::paint(
-        ui,
-        egui::Rect::from_min_max(
-            egui::pos2(rect.left() + 19.0, rect.top()),
-            egui::pos2(text_right, rect.bottom()),
-        ),
-        label,
-        egui::FontId::proportional(12.0),
-        color,
+    let text_rect = egui::Rect::from_min_max(
+        egui::pos2(rect.left() + 19.0, rect.top()),
+        egui::pos2(text_right, rect.bottom()),
     );
+    let font = egui::FontId::proportional(12.0);
+    if current {
+        crate::bounded_text::paint_bold(ui, text_rect, label, font, color);
+    } else {
+        crate::bounded_text::paint(ui, text_rect, label, font, color);
+    }
     if current {
         let check = egui::pos2(rect.right() - 10.0, rect.center().y);
         let stroke = egui::Stroke::new(1.4_f32, color);
@@ -476,7 +512,12 @@ pub(crate) fn paint_icon(
     }
 }
 
-fn tracking_row(ui: &mut egui::Ui, tracking: &gg_engine::refs::Tracking) {
+fn tracking_row(
+    ui: &mut egui::Ui,
+    tracking: &gg_engine::refs::Tracking,
+    busy: bool,
+    action: &mut Option<Action>,
+) {
     use crate::phosphor;
     let weak = ui.visuals().weak_text_color();
     let response = ui
@@ -502,6 +543,17 @@ fn tracking_row(ui: &mut egui::Ui, tracking: &gg_engine::refs::Tracking) {
                 );
             } else {
                 ui.label(egui::RichText::new("· unavailable").size(11.0).color(weak));
+            }
+            if ui
+                .add_enabled(!busy, egui::Button::new("Pull --rebase").small())
+                .on_hover_text(format!(
+                    "Fetch {} and rebase this branch onto {}",
+                    tracking.remote, tracking.upstream
+                ))
+                .on_disabled_hover_text("Wait for the current operation to finish.")
+                .clicked()
+            {
+                *action = Some(Action::PullRebase);
             }
         })
         .response;
@@ -600,7 +652,7 @@ mod tests {
             },
             |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    let action = show(ui, &refs, &mut filter, false);
+                    let action = show(ui, &refs, &mut filter, false, &BTreeMap::new());
                     assert!(action.is_none());
                 });
             },
@@ -649,7 +701,7 @@ mod tests {
             },
             |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    show(ui, &refs, &mut filter, false);
+                    show(ui, &refs, &mut filter, false, &BTreeMap::new());
                 });
             },
         );
@@ -685,7 +737,7 @@ mod tests {
                 },
                 |ctx| {
                     egui::CentralPanel::default().show(ctx, |ui| {
-                        action = show(ui, &refs, &mut filter, false);
+                        action = show(ui, &refs, &mut filter, false, &BTreeMap::new());
                     });
                 },
             )
@@ -732,6 +784,18 @@ mod tests {
         assert_eq!(
             click_label("feature", "feature/nested", 1),
             Some(Action::Jump(commit))
+        );
+    }
+
+    #[test]
+    fn double_clicking_a_branch_row_switches() {
+        assert_eq!(
+            click_label("feature", "feature/nested", 2),
+            Some(Action::Switch("feature/nested".into()))
+        );
+        assert_ne!(
+            click_label("mai", "main", 2),
+            Some(Action::Switch("main".into()))
         );
     }
 

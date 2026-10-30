@@ -271,12 +271,8 @@ fn validate_branch(branch: &str) -> Result<(), String> {
 }
 
 fn default_destination(url: &str) -> Result<PathBuf, String> {
-    let trimmed = url.trim_end_matches('/');
-    let last = trimmed.rsplit(['/', ':']).next().unwrap_or_default();
-    let name = last.strip_suffix(".git").unwrap_or(last);
-    if name.is_empty() || name == "." || name == ".." {
-        return Err("Could not derive a clone destination. Provide a path.".into());
-    }
+    let name = gg_engine::sync::repository_name(url)
+        .ok_or("Could not derive a clone destination. Provide a path.")?;
     Ok(PathBuf::from(name))
 }
 

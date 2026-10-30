@@ -8,6 +8,8 @@ pub struct State {
     pub history: Option<History>,
     pub rows: BTreeMap<usize, Commit>,
     pub graphs: BTreeMap<usize, crate::graph::Row>,
+    /// History lane for each ref tip, keyed by full ref name.
+    pub ref_lanes: BTreeMap<String, u8>,
     pub refs: gg_engine::refs::Snapshot,
     pub count: usize,
     pub viewport: std::ops::Range<usize>,
@@ -87,6 +89,7 @@ impl State {
         if replace {
             self.rows.clear();
             self.graphs.clear();
+            self.ref_lanes.clear();
             self.history = Some(update.identity);
             self.refs = update.refs.clone();
             self.query = update.query;
@@ -123,6 +126,9 @@ impl State {
         }
         for (row, graph) in update.graphs {
             self.graphs.entry(row).or_insert(graph);
+        }
+        for (name, lane) in update.ref_lanes {
+            self.ref_lanes.insert(name, lane);
         }
         while self.rows.len() > crate::stream::CACHE_ROWS {
             let victim = self
@@ -363,6 +369,7 @@ mod streaming_tests {
             selection: rows.first().cloned(),
             rows,
             graphs: vec![],
+            ref_lanes: Default::default(),
             refs: Default::default(),
             error: None,
         }

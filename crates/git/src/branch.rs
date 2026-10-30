@@ -12,6 +12,8 @@ pub struct Receipt {
     pub head: String,
     pub created: bool,
     pub warnings: Vec<String>,
+    /// Stash entry created before switching, when the user asked to park changes.
+    pub stash: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -94,6 +96,47 @@ pub fn create_at(path: &Path, branch: &str, start: &str) -> Result<CreateReceipt
 
 pub fn switch(path: &Path, branch: &str) -> Result<Receipt, String> {
     run(path, branch, false)
+}
+
+/// Park tracked changes in a stash entry, then switch to another local branch.
+///
+/// The stash entry is kept for the user to restore or drop explicitly.
+pub fn switch_with_stash(
+    path: &Path,
+    branch: &str,
+    include_untracked: bool,
+) -> Result<Receipt, String> {
+    let branch = branch.trim();
+    validate_name(branch)?;
+    let repo = gix::discover(path).map_err(|e| format!("Read repository: {e}"))?;
+    let full = format!("refs/heads/{branch}");
+    if repo
+        .try_find_reference(full.as_str())
+        .map_err(|e| format!("Read branch {branch}: {e}"))?
+        .is_none()
+    {
+        return Err(format!(
+            "Local branch {branch} does not exist. Refresh refs or create it first."
+        ));
+    }
+    let message = format!("gg: switch to {branch}");
+    let stash = crate::stash::push(path, Some(&message), include_untracked, false)?;
+    let reference = stash
+        .reference
+        .clone()
+        .unwrap_or_else(|| "stash@{0}".into());
+    match run(path, branch, false) {
+        Ok(mut receipt) => {
+            receipt.stash = Some(reference.clone());
+            receipt.warnings.push(format!(
+                "Stashed working changes as {reference}. Restore them from Stashes."
+            ));
+            Ok(receipt)
+        }
+        Err(error) => Err(format!(
+            "Working changes were saved to {reference}, but the switch failed. {error}"
+        )),
+    }
 }
 
 pub fn delete(path: &Path, branch: &str, force: bool) -> Result<DeleteReceipt, String> {
@@ -322,6 +365,7 @@ fn complete(
         head,
         created,
         warnings,
+        stash: None,
     })
 }
 

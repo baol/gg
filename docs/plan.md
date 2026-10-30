@@ -79,6 +79,29 @@ Goal: consolidate navigation, reading, scoped commands, operations, and recovery
 
 Implementation handoff: [phased implementation and verification prompts](implementation-prompts.md). These increments change no deferred M7 scope: LFS smudging/materialization remains planned.
 
+## Repository setup and branch integration · in review
+
+Goal: make clone destinations quick to compose and branch integration discoverable without weakening Git safety.
+
+Contracts: [repository clone and branch switching](architecture.md#branch-switching-and-creation), [clone](architecture.md#network-operations).
+
+### Increments
+
+1. **Clone setup and input editing.** Seed Clone's URL only from clipboard text recognized as a repository URL; preserve native paste in every text field. Replace the single destination path input with a root selector and project-slug field. Default to current working directory plus URL slug, and persist configurable clone roots/favorites.
+2. **Branch list clarity.** Make the refs sidebar user-resizable; bold the selected branch and use a stable per-ref color shared with its history lane for branch glyph and dot. Double-click a branch to request the ordinary safe switch, never to bypass validation.
+3. **Recoverable integration.** When local changes block a requested switch/rebase, retain the target and offer explicitly submitted stash-and-switch or rebase autostash. Expose **Pull --rebase** for upstream integration and the existing ref-scoped rebase actions through operation and recovery paths.
+
+### Acceptance
+
+| Scenario | Expected result | Method |
+| --- | --- | --- |
+| Clone destination | URL can be pasted; recognized clipboard URL seeds the field; root plus slug defaults to current directory plus repository name; configured/favorite roots persist and can be selected | Clipboard/UI tests, settings tests, native review |
+| Text entry | Paste works in every single-line and multiline text input without replacing normal editing | Input-event tests and native review |
+| Resizable refs and Details | Divider drag changes widths within bounds; idle frames and normal interaction preserve both axes of history geometry | egui geometry/interaction and native review |
+| Branch identity | Current branch is bold; branch glyph and dot match its stable history-lane color | egui paint/geometry and native review |
+| Branch double-click | Double-click requests ordinary checked-out switch; current branch is inert; dirty state does not bypass validation | egui interaction and Git oracle |
+| Dirty integration | Blocked switch/rebase offers explicit stash and retains target; no automatic stash/retry; post-switch pull-rebase and rebase-onto remain explicit and recoverable | Git oracle, operation worker tests, native review |
+
 ## UI-flow consolidation · pre-M7
 
 Goal: improve continuity, explicit decisions, and recovery feedback in the existing native workflows before adding M7 features.

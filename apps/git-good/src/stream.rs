@@ -2,6 +2,7 @@
 use crate::graph;
 use gg_engine::{Commit, History, HistoryReader, HistoryRequest, refs::Snapshot};
 use std::{
+    collections::{BTreeMap, HashSet},
     fs::File,
     io::{Read, Seek, SeekFrom, Write},
     ops::Range,
@@ -50,6 +51,8 @@ pub struct Update {
     pub complete: bool,
     pub rows: Vec<(usize, Commit)>,
     pub graphs: Vec<(usize, graph::Row)>,
+    /// History lane for each ref tip, keyed by full ref name.
+    pub ref_lanes: BTreeMap<String, u8>,
     pub refs: Snapshot,
     pub selection: Option<(usize, Commit)>,
     pub error: Option<String>,
@@ -310,6 +313,8 @@ fn run_session(
     let mut graph_state = graph::Graph::default();
     let mut graph_rows = Vec::new();
     let mut ids = Vec::new();
+    let tips: HashSet<String> = refs.items.iter().map(|item| item.commit.clone()).collect();
+    let mut commit_lanes: BTreeMap<String, u8> = BTreeMap::new();
     let mut current = input.lock().map_err(err)?.clone();
     let mut scanned = 0;
     let mut finished = false;
@@ -353,7 +358,11 @@ fn run_session(
                 match session.next_commit() {
                     Ok(Some(commit)) => {
                         let record = spool.append(&commit)?;
-                        graph_rows.push(graph_state.push(&commit));
+                        let row = graph_state.push(&commit);
+                        if tips.contains(&commit.id) {
+                            commit_lanes.entry(commit.id.clone()).or_insert(row.lane);
+                        }
+                        graph_rows.push(row);
                         ids.push(commit.id.clone());
                         appended = Some((commit, record));
                     }
@@ -435,6 +444,15 @@ fn run_session(
             complete,
             rows: cached_rows.clone(),
             graphs: cached_graphs.clone(),
+            ref_lanes: refs
+                .items
+                .iter()
+                .filter_map(|item| {
+                    commit_lanes
+                        .get(&item.commit)
+                        .map(|lane| (item.full_name.clone(), *lane))
+                })
+                .collect(),
             refs: refs.clone(),
             selection: selection.clone(),
             error: failure.clone(),

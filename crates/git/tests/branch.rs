@@ -84,6 +84,34 @@ fn switches_branches_only_when_clean() -> Result {
 }
 
 #[test]
+fn stashes_tracked_changes_before_switching_and_keeps_the_entry() -> Result {
+    let dir = repo()?;
+    let p = dir.path();
+    git(p, &["branch", "feature"])?;
+    std::fs::write(p.join("a"), b"dirty\n")?;
+    std::fs::write(p.join("untracked"), b"new\n")?;
+
+    let receipt = gg_git::branch::switch_with_stash(p, "feature", true)?;
+    assert_eq!(receipt.branch, "feature");
+    let stash = receipt.stash.ok_or("missing stash reference")?;
+    assert!(stash.starts_with("stash@{"), "{stash}");
+    assert!(receipt.warnings.iter().any(|line| line.contains(&stash)));
+    assert_eq!(git(p, &["symbolic-ref", "--short", "HEAD"])?, b"feature\n");
+    assert_eq!(std::fs::read(p.join("a"))?, b"main\n");
+    assert!(!p.join("untracked").exists());
+    assert_eq!(
+        String::from_utf8(git(p, &["stash", "list", "--format=%gd"])?)?.trim(),
+        stash
+    );
+    std::fs::write(p.join("a"), b"dirty\n")?;
+    std::fs::write(p.join("untracked"), b"new\n")?;
+    let error = rejected(gg_git::branch::switch_with_stash(p, "missing", false))?;
+    assert!(error.contains("does not exist"), "{error}");
+    assert_eq!(git(p, &["symbolic-ref", "--short", "HEAD"])?, b"feature\n");
+    Ok(())
+}
+
+#[test]
 fn untracked_files_do_not_block_switching_or_creation() -> Result {
     let dir = repo()?;
     let p = dir.path();
