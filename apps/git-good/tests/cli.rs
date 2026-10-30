@@ -1892,6 +1892,9 @@ fn rewrite_cli_rewords_fixes_up_drops_and_edits() -> Result {
     assert_eq!(receipt["applied"], false);
     assert_eq!(receipt["in_progress"], true);
     assert_eq!(receipt["conflicts"], serde_json::json!([]));
+    // The reopened commit's changes are staged on its parent; commit them again.
+    assert_eq!(text(&["diff", "--cached", "--name-only"])?, "four");
+    git(repo.path(), &["commit", "-qm", "four, again"])?;
 
     let out = Command::new(binary)
         .args(["rewrite", "--continue", "--repo"])
@@ -1902,7 +1905,7 @@ fn rewrite_cli_rewords_fixes_up_drops_and_edits() -> Result {
     assert_eq!(receipt["applied"], true);
     assert_eq!(
         text(&["log", "--reverse", "--format=%s"])?,
-        "base\none, reworded\nfour"
+        "base\none, reworded\nfour, again"
     );
     assert!(!repo.path().join("three").exists());
     assert_eq!(std::fs::read(repo.path().join("two"))?, b"two\n");

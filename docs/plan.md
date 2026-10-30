@@ -91,7 +91,7 @@ Goal: deliver the agreed [final interface design](final-design.md): one window f
 4. **Sidebar stashes, branch switcher, and modal dialogs · complete.** Sidebar stash entries opening the toolbar picker; current-branch button with ahead/behind counts opening a filterable switcher that uses the validated switch; decision dialogs become modal with a dimmed, click-absorbing backdrop while tool windows stay non-modal.
 5. **Rebase engine · complete.** Extend the rewrite plan beyond pick and squash with reword, fixup, drop, and edit (reopen), with CLI support and Git-oracle tests before any UI.
 6. **Interactive rebase dialog and review header · complete.** Fold the Review commit identity into one line. Replace Reorder and squash with the planned modal: newest-first plan, action chips and keys, consequence badges, the selected commit in the shared reader with inline reword, and Open in Review with return.
-7. **Rebase stops.** Reopened-commit stop in Local Changes with split commits, and the three-column conflict blocks with per-block choices, both in the operation area with Continue, Skip commit, and Abort and restore.
+7. **Rebase stops.** *(Reopened-commit stop and operation area complete; conflict blocks next.)* Reopened-commit stop in Local Changes with split commits, and the three-column conflict blocks with per-block choices, both in the operation area with Continue, Skip commit, and Abort and restore.
 8. **Preferences.** Repository › Preferences… window per the [Settings panel](#settings-panel--planned) plan, starting with clone folders and a preferred folder.
 
 ### Acceptance

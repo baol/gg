@@ -93,6 +93,7 @@ pub fn rewrite(
     });
     args.push("--no-autosquash".into());
     args.push("--no-rebase-merges".into());
+    args.push("--no-reschedule-failed-exec".into());
     if range.root {
         args.push("--root".into());
     } else {
@@ -119,7 +120,7 @@ pub fn rewrite(
         );
     } else if in_progress && steps.iter().any(|step| step.action == Action::Edit) {
         warnings.push(
-            "The rewrite stopped at a reopened commit. Amend or split it, then continue, skip, or abort."
+            "The rewrite stopped at a reopened commit. Its changes are staged on its parent; commit them in one or more parts, then continue, skip, or abort."
                 .into(),
         );
     } else if in_progress {
@@ -395,6 +396,10 @@ fn write_plan(path: &Path, steps: &[Step]) -> Result<String, String> {
                     shell_quote(&file.to_string_lossy())
                 ));
             }
+            (Action::Edit, _) => {
+                todo.push_str(&format!("pick {}\n", step.commit));
+                todo.push_str(&format!("exec {}\n", reopen_script(&step.commit)));
+            }
             (action, _) => todo.push_str(&format!("{} {}\n", action.as_str(), step.commit)),
         }
     }
@@ -402,6 +407,20 @@ fn write_plan(path: &Path, steps: &[Step]) -> Result<String, String> {
     std::fs::write(&file, todo.as_bytes())
         .map_err(|error| format!("Could not write the rewrite plan: {error}"))?;
     Ok(format!("cp {}", shell_quote(&file.to_string_lossy())))
+}
+
+/// File under the rebase state that names a reopened commit: the commit its
+/// changes were staged on (empty for a root commit) and the original commit.
+pub const REOPEN_FILE: &str = "rebase-merge/gg-reopen";
+
+/// Shell run after picking a reopened commit: record it, then move HEAD to
+/// its parent so the commit's changes are staged. A root commit stays at HEAD.
+/// The script always fails so Git stops here, even when nothing is staged;
+/// `--no-reschedule-failed-exec` keeps Continue from running it again.
+fn reopen_script(commit: &str) -> String {
+    format!(
+        "f=\"$(git rev-parse --git-path {REOPEN_FILE})\"; if p=\"$(git rev-parse -q --verify HEAD~1)\"; then printf '%s\\n%s\\n' \"$p\" {commit} > \"$f\" && git reset -q --soft HEAD~1; else printf '\\n%s\\n' {commit} > \"$f\"; fi; exit 1"
+    )
 }
 
 /// Quote `value` as one POSIX shell word.

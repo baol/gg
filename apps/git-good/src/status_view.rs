@@ -690,6 +690,14 @@ impl StatusView {
         self.restart(ctx);
     }
 
+    /// Put `message` in an empty commit box, such as a reopened commit's
+    /// original message; a draft the user typed is kept.
+    pub fn prefill_message(&mut self, message: &str) {
+        if !self.amend && self.message.trim().is_empty() {
+            self.message = message.to_string();
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn draft(&self) -> &str {
         &self.message

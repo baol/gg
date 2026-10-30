@@ -1,5 +1,7 @@
 //! Cherry-pick, revert, and their continue/skip/abort recovery.
-use gg_engine::mutation::{MutationReceipt, Operation, OperationState};
+use gg_engine::mutation::{
+    MutationReceipt, Operation, OperationState, RebaseProgress, RebaseStep, RebaseStop,
+};
 use std::{
     path::Path,
     process::{Command, Output, Stdio},
@@ -36,6 +38,184 @@ pub fn state(path: &Path) -> Result<Option<OperationState>, String> {
         }));
     }
     Ok(None)
+}
+
+/// The steps and stop of an interactive rebase in progress, or `None` when no
+/// interactive rebase is running.
+pub fn rebase_progress(path: &Path) -> Result<Option<RebaseProgress>, String> {
+    let Some(dir) = git_path(path, "rebase-merge")? else {
+        return Ok(None);
+    };
+    if !dir.is_dir() {
+        return Ok(None);
+    }
+    let read = |name: &str| std::fs::read_to_string(dir.join(name)).unwrap_or_default();
+    let done_lines = read("done");
+    let done = commit_lines(&done_lines);
+    let todo = commit_lines(&read("git-rebase-todo"));
+    let subjects = subjects(
+        path,
+        done.iter()
+            .chain(todo.iter())
+            .map(|(_, commit)| commit.as_str()),
+    )?;
+    let step = |(action, commit): &(String, String)| RebaseStep {
+        action: action.clone(),
+        commit: subjects
+            .iter()
+            .find(|(id, _)| id.starts_with(commit.as_str()))
+            .map_or_else(|| commit.clone(), |(id, _)| id.clone()),
+        subject: subjects
+            .iter()
+            .find(|(id, _)| id.starts_with(commit.as_str()))
+            .map(|(_, subject)| subject.clone())
+            .unwrap_or_default(),
+    };
+    let done = done.iter().map(step).collect::<Vec<_>>();
+    let todo = todo.iter().map(step).collect::<Vec<_>>();
+    // gg's reopen script is the last line Git ran when it stopped there.
+    let reopen_last = done_lines
+        .lines()
+        .map(str::trim)
+        .rfind(|line| !line.is_empty() && !line.starts_with('#'))
+        .is_some_and(|line| line.starts_with("exec") && line.contains("gg-reopen"));
+    let reopen = read("gg-reopen");
+    let mut reopen = reopen.lines();
+    let reopen_base = reopen.next().map(str::trim).unwrap_or_default().to_string();
+    let reopen_commit = reopen.next().map(str::trim).unwrap_or_default().to_string();
+    let stop = if !unmerged(path)?.is_empty() {
+        RebaseStop::Conflict
+    } else if reopen_last
+        && !reopen_commit.is_empty()
+        && done.last().is_some_and(|step| {
+            step.commit.starts_with(&reopen_commit) || reopen_commit.starts_with(&step.commit)
+        })
+    {
+        let base = (!reopen_base.is_empty()).then_some(reopen_base);
+        let message = log(path, &["-1", "--format=%B", &reopen_commit])?
+            .trim_end()
+            .to_string();
+        let subject = message.lines().next().unwrap_or_default().to_string();
+        let made = match &base {
+            Some(base) => log(
+                path,
+                &["--reverse", "--format=%H%x1f%s", &format!("{base}..HEAD")],
+            )?
+            .lines()
+            .filter_map(|line| line.split_once('\x1f'))
+            .map(|(commit, subject)| RebaseStep {
+                action: "commit".into(),
+                commit: commit.to_string(),
+                subject: subject.to_string(),
+            })
+            .collect(),
+            None => Vec::new(),
+        };
+        RebaseStop::Reopened {
+            base,
+            commit: reopen_commit,
+            subject,
+            message,
+            made,
+        }
+    } else {
+        RebaseStop::Other
+    };
+    let branch = read("head-name")
+        .trim()
+        .strip_prefix("refs/heads/")
+        .map(str::to_string);
+    let status = run(
+        path,
+        &[
+            "status".into(),
+            "--porcelain".into(),
+            "--untracked-files=no".into(),
+        ],
+        false,
+    )?;
+    let tracked_changes = String::from_utf8_lossy(&status.stdout)
+        .lines()
+        .filter(|line| !line.is_empty())
+        .count();
+    Ok(Some(RebaseProgress {
+        branch,
+        done,
+        todo,
+        stop,
+        tracked_changes,
+    }))
+}
+
+/// `(action, commit)` for each commit-bearing todo line, with abbreviations
+/// expanded and options such as `fixup -C` skipped.
+fn commit_lines(text: &str) -> Vec<(String, String)> {
+    text.lines()
+        .filter_map(|line| {
+            let mut words = line.split_whitespace();
+            let action = match words.next()? {
+                "p" | "pick" => "pick",
+                "r" | "reword" => "reword",
+                "e" | "edit" => "edit",
+                "s" | "squash" => "squash",
+                "f" | "fixup" => "fixup",
+                "d" | "drop" => "drop",
+                _ => return None,
+            };
+            let commit = words.find(|word| !word.starts_with('-'))?;
+            Some((action.to_string(), commit.to_string()))
+        })
+        .collect()
+}
+
+/// Full IDs and subjects for the given commits.
+fn subjects<'a>(
+    path: &Path,
+    commits: impl Iterator<Item = &'a str>,
+) -> Result<Vec<(String, String)>, String> {
+    let mut args = vec![
+        "--no-walk=unsorted".to_string(),
+        "--format=%H%x1f%s".to_string(),
+    ];
+    args.extend(commits.map(str::to_string));
+    if args.len() == 2 {
+        return Ok(Vec::new());
+    }
+    Ok(
+        log(path, &args.iter().map(String::as_str).collect::<Vec<_>>())?
+            .lines()
+            .filter_map(|line| line.split_once('\x1f'))
+            .map(|(id, subject)| (id.to_string(), subject.to_string()))
+            .collect(),
+    )
+}
+
+fn log(path: &Path, args: &[&str]) -> Result<String, String> {
+    let mut all = vec!["log".to_string()];
+    all.extend(args.iter().map(|arg| arg.to_string()));
+    let output = run(path, &all, false)?;
+    if !output.status.success() {
+        return Err(failure("Read rebase commits", &output));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// Absolute path of `name` inside the Git directory.
+fn git_path(path: &Path, name: &str) -> Result<Option<std::path::PathBuf>, String> {
+    let output = run(
+        path,
+        &["rev-parse".into(), "--git-path".into(), name.into()],
+        false,
+    )?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    let found = std::path::PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+    Ok(Some(if found.is_absolute() {
+        found
+    } else {
+        path.join(found)
+    }))
 }
 
 pub fn cherry_pick(path: &Path, commit: &str) -> Result<MutationReceipt, String> {

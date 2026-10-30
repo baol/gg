@@ -497,14 +497,23 @@ fn rewrite_drops_a_commit() -> Result {
 }
 
 #[test]
-fn rewrite_edit_stops_after_the_commit_and_continues() -> Result {
+fn rewrite_reopen_stages_the_commit_and_reports_progress() -> Result {
+    use gg_engine::mutation::RebaseStop;
     use gg_engine::rewrite::Action;
     let (dir, first, second, third) = rewrite_commits()?;
     let p = dir.path();
+    git(p, &["commit", "-q", "--amend", "-m", "three", "-m", "body"])?;
+    let third_amended = head(p)?;
+    git(p, &["reset", "-q", "--hard", &third_amended])?;
+    let _ = third;
+    commit(p, "four", "four\n", "four")?;
+    let four = head(p)?;
+    // Reword "two" so the plan carries one more line; reopen "three".
     let steps = vec![
         step(Action::Pick, &first),
-        step(Action::Edit, &second),
-        step(Action::Pick, &third),
+        step(Action::Pick, &second),
+        step(Action::Edit, &third_amended),
+        step(Action::Pick, &four),
     ];
     let receipt = gg_git::rewrite::rewrite(p, &first, &steps, false)?;
     assert!(!receipt.applied);
@@ -518,26 +527,122 @@ fn rewrite_edit_stops_after_the_commit_and_continues() -> Result {
         "{:?}",
         receipt.warnings
     );
+    assert_eq!(head(p)?, second, "HEAD is the reopened commit's parent");
     assert_eq!(
-        gg_git::mutation::state(p)?.map(|state| state.operation),
-        Some(gg_engine::mutation::Operation::Rebase)
+        String::from_utf8(git(p, &["diff", "--cached", "--name-only"])?)?.trim(),
+        "three",
+        "the reopened commit's changes are staged"
     );
-    assert_eq!(head(p)?, second, "stops with the commit itself at HEAD");
 
-    // Split the reopened commit: undo it into the worktree and commit twice.
-    git(p, &["reset", "-q", "HEAD^"])?;
+    let progress = gg_git::mutation::rebase_progress(p)?.ok_or("no rebase progress")?;
+    assert_eq!(progress.branch.as_deref(), Some("main"));
+    assert_eq!(progress.position(), (3, 4));
+    assert_eq!(
+        progress
+            .done
+            .iter()
+            .map(|step| (step.action.as_str(), step.subject.as_str()))
+            .collect::<Vec<_>>(),
+        [("pick", "one"), ("pick", "two"), ("pick", "three")]
+    );
+    assert_eq!(progress.todo[0].commit, four);
+    assert_eq!(progress.todo[0].subject, "four");
+    assert_eq!(progress.tracked_changes, 1);
+    match &progress.stop {
+        RebaseStop::Reopened {
+            base,
+            commit,
+            subject,
+            message,
+            made,
+        } => {
+            assert_eq!(base.as_deref(), Some(second.as_str()));
+            assert_eq!(commit, &third_amended);
+            assert_eq!(subject, "three");
+            assert_eq!(message, "three\n\nbody");
+            assert!(made.is_empty());
+        }
+        other => return Err(format!("expected a reopened stop, got {other:?}").into()),
+    }
+
+    // Split the reopened commit into two commits.
     std::fs::write(p.join("extra"), b"extra\n")?;
-    git(p, &["add", "two"])?;
-    git(p, &["commit", "-qm", "two, part 1"])?;
+    git(p, &["commit", "-qm", "three, part 1"])?;
     git(p, &["add", "extra"])?;
-    git(p, &["commit", "-qm", "two, part 2"])?;
+    git(p, &["commit", "-qm", "three, part 2"])?;
+    let progress = gg_git::mutation::rebase_progress(p)?.ok_or("no rebase progress")?;
+    assert_eq!(progress.tracked_changes, 0);
+    let RebaseStop::Reopened { made, .. } = &progress.stop else {
+        return Err("expected a reopened stop".into());
+    };
+    assert_eq!(
+        made.iter()
+            .map(|step| step.subject.as_str())
+            .collect::<Vec<_>>(),
+        ["three, part 1", "three, part 2"]
+    );
     let done = gg_git::mutation::continue_operation(p, gg_engine::mutation::Operation::Rebase)?;
     assert!(done.applied, "{done:?}");
-    assert!(!done.in_progress);
     assert_eq!(
         subjects(p)?,
-        vec!["base", "one", "two, part 1", "two, part 2", "three"]
+        vec![
+            "base",
+            "one",
+            "two",
+            "three, part 1",
+            "three, part 2",
+            "four"
+        ]
     );
+    assert_eq!(gg_git::mutation::rebase_progress(p)?, None);
+    Ok(())
+}
+
+#[test]
+fn rebase_progress_reports_a_conflict_stop() -> Result {
+    use gg_engine::mutation::RebaseStop;
+    let dir = repo()?;
+    let p = dir.path();
+    std::fs::write(p.join("a"), b"base\n")?;
+    git(p, &["add", "a"])?;
+    git(p, &["commit", "-qm", "add a"])?;
+    let first = commit(p, "a", "one\n", "one")?;
+    let second = commit(p, "a", "two\n", "two")?;
+    let reorder = vec![
+        gg_engine::rewrite::Step::new(gg_engine::rewrite::Action::Pick, &second),
+        gg_engine::rewrite::Step::new(gg_engine::rewrite::Action::Pick, &first),
+    ];
+    gg_git::rewrite::rewrite(p, &first, &reorder, false)?;
+    let progress = gg_git::mutation::rebase_progress(p)?.ok_or("no rebase progress")?;
+    assert_eq!(progress.stop, RebaseStop::Conflict);
+    assert_eq!(progress.position(), (1, 2));
+    assert_eq!(progress.done[0].subject, "two");
+    assert_eq!(progress.todo[0].subject, "one");
+    gg_git::mutation::abort_operation(p, gg_engine::mutation::Operation::Rebase)?;
+    assert_eq!(gg_git::mutation::rebase_progress(p)?, None);
+    Ok(())
+}
+
+#[test]
+fn rewrite_reopen_of_a_root_commit_stays_at_head() -> Result {
+    use gg_engine::mutation::RebaseStop;
+    use gg_engine::rewrite::Action;
+    let dir = repo()?;
+    let p = dir.path();
+    let root = head(p)?;
+    let second = commit(p, "one", "one\n", "one")?;
+    let steps = vec![step(Action::Edit, &root), step(Action::Pick, &second)];
+    let receipt = gg_git::rewrite::rewrite(p, &root, &steps, false)?;
+    assert!(receipt.in_progress);
+    assert_eq!(head(p)?, root, "a root commit cannot be staged on a parent");
+    let progress = gg_git::mutation::rebase_progress(p)?.ok_or("no rebase progress")?;
+    assert!(
+        matches!(&progress.stop, RebaseStop::Reopened { base: None, .. }),
+        "{:?}",
+        progress.stop
+    );
+    gg_git::mutation::continue_operation(p, gg_engine::mutation::Operation::Rebase)?;
+    assert_eq!(subjects(p)?, vec!["base", "one"]);
     Ok(())
 }
 

@@ -34,6 +34,7 @@ mod reader;
 mod rebase_cli;
 mod rebase_dialog;
 mod rebase_plan;
+mod rebase_stop;
 mod records;
 mod reflog_cli;
 mod reflog_view;
@@ -375,6 +376,8 @@ struct LocalSummary {
     stashes: Vec<gg_engine::stash::StashEntry>,
     /// First commit of the current branch's own work and its commit count.
     branch_start: Option<(String, usize)>,
+    /// Steps and stop of an interactive rebase in progress.
+    rebase: Option<gg_engine::mutation::RebaseProgress>,
 }
 
 impl LocalSummary {
@@ -385,6 +388,7 @@ impl LocalSummary {
                 .map(|list| list.entries)
                 .unwrap_or_default(),
             branch_start: gg_git::rewrite::branch_start(&path).ok().flatten(),
+            rebase: gg_git::mutation::rebase_progress(&path).ok().flatten(),
         }
     }
 }
@@ -1157,6 +1161,8 @@ struct Browser {
     open_local: bool,
     /// Debug: `GG_REBASE=<commit>` opens the interactive rebase from there.
     open_rebase: Option<String>,
+    /// The reopened commit Local Changes was last opened for.
+    reopen_seen: Option<String>,
     operation_worker: Option<std::sync::mpsc::Receiver<Result<OperationOutcome, String>>>,
     operation_repo: Option<PathBuf>,
     operation_restore_row: Option<usize>,
@@ -1263,6 +1269,7 @@ impl Browser {
             screenshot_requested: false,
             #[cfg(debug_assertions)]
             open_local: std::env::var_os("GG_LOCAL_CHANGES").is_some(),
+            reopen_seen: None,
             open_rebase: if cfg!(debug_assertions) {
                 std::env::var("GG_REBASE").ok()
             } else {
@@ -2554,6 +2561,50 @@ impl Browser {
         command
     }
 
+    /// The interactive rebase in progress, when the summary has read one.
+    fn rebase_progress(&self) -> Option<&gg_engine::mutation::RebaseProgress> {
+        self.mutation
+            .as_ref()
+            .filter(|state| state.operation == gg_engine::mutation::Operation::Rebase)?;
+        self.local_summary.as_ref()?.rebase.as_ref()
+    }
+
+    /// Open Local Changes once for each newly reopened commit, with its
+    /// message in the commit box; a root commit opens in amend mode.
+    fn open_reopened_commit(&mut self, ctx: &egui::Context) {
+        let Some(gg_engine::mutation::RebaseStop::Reopened {
+            base,
+            commit,
+            message,
+            ..
+        }) = self.rebase_progress().map(|progress| progress.stop.clone())
+        else {
+            return;
+        };
+        if self.reopen_seen.as_deref() == Some(commit.as_str()) || self.rewrite_dialog.is_some() {
+            return;
+        }
+        self.reopen_seen = Some(commit);
+        self.open_working(ctx);
+        if let Some(working) = &mut self.working {
+            if base.is_some() {
+                working.prefill_message(&message);
+            } else if let Err(error) = working.start_amend(ctx) {
+                self.mutation_error = Some(error);
+            }
+        }
+    }
+
+    /// `feature · rebase 3/6` while an interactive rebase is stopped.
+    fn rebase_step_label(&self) -> Option<String> {
+        let progress = self.rebase_progress()?;
+        let (step, total) = progress.position();
+        Some(format!(
+            "{} · rebase {step}/{total}",
+            progress.branch.as_deref().unwrap_or("detached HEAD")
+        ))
+    }
+
     /// The toolbar current-branch button and its filterable switcher popup.
     fn branch_switcher_button(
         &mut self,
@@ -2562,10 +2613,14 @@ impl Browser {
         compact: bool,
     ) -> Option<BranchPick> {
         let head = self.state.refs.head.as_ref();
-        let name = match head.and_then(|head| head.name.as_deref()) {
-            Some(full) => full.strip_prefix("refs/heads/").unwrap_or(full).to_string(),
-            None if head.is_some_and(|head| head.detached) => "detached HEAD".into(),
-            None => "no branch".into(),
+        let name = match (
+            self.rebase_step_label(),
+            head.and_then(|head| head.name.as_deref()),
+        ) {
+            (Some(step), _) => step,
+            (None, Some(full)) => full.strip_prefix("refs/heads/").unwrap_or(full).to_string(),
+            (None, None) if head.is_some_and(|head| head.detached) => "detached HEAD".into(),
+            (None, None) => "no branch".into(),
         };
         let tracking = self
             .state
@@ -3352,6 +3407,7 @@ impl Browser {
 
     fn finish_operation(&mut self, ctx: &egui::Context, outcome: OperationOutcome) {
         let restore_row = self.operation_restore_row.take();
+        self.refresh_local_summary(ctx);
         match outcome {
             OperationOutcome::Merge(receipt) => {
                 let summary = match receipt.kind {
@@ -3605,6 +3661,7 @@ impl Browser {
         receipt: gg_engine::rewrite::Receipt,
         restore_row: Option<usize>,
     ) -> u64 {
+        self.refresh_local_summary(ctx);
         self.mutation_error = None;
         let conflicts = receipt.in_progress || !receipt.conflicts.is_empty();
         let summary = if receipt.in_progress {
@@ -5570,6 +5627,7 @@ impl Browser {
             self.open_local = false;
             self.open_working(ctx);
         }
+        self.open_reopened_commit(ctx);
         #[cfg(debug_assertions)]
         if self.state.history.is_some()
             && let Some(from) = self.open_rebase.take()
@@ -6357,12 +6415,17 @@ impl Browser {
                 ui.separator();
                 let identity_width = ui.available_width().max(80.0);
                 let (identity, path) = if let Some(history) = &self.state.history {
-                    let tracking = self
-                        .state
-                        .refs
-                        .current_tracking()
-                        .map(|tracking| format!("  ·  {}", refs_view::tracking_label(tracking)))
-                        .unwrap_or_default();
+                    let tracking = match self.rebase_step_label() {
+                        Some(step) => format!("  ·  {step}"),
+                        None => self
+                            .state
+                            .refs
+                            .current_tracking()
+                            .map(|tracking| {
+                                format!("  ·  {}", refs_view::tracking_label(tracking))
+                            })
+                            .unwrap_or_default(),
+                    };
                     (
                         format!(
                             "{}  ·  {}{}",
@@ -6617,8 +6680,42 @@ impl Browser {
         let mut mutation_action = None;
         let mut resolve_conflicts = false;
         let mut cancel_network = false;
+        let rebase_progress = self.rebase_progress().cloned();
         if let Some(area) = self.operation_area() {
             egui::Panel::top("operation-area").show(ui, |ui| {
+                if let (
+                    OperationArea::Mutation {
+                        operation: gg_engine::mutation::Operation::Rebase,
+                        conflicts,
+                        pending,
+                        ..
+                    },
+                    Some(progress),
+                ) = (&area, &rebase_progress)
+                {
+                    let keyed = !pending
+                        && rebase_stop::continue_reason(progress, *conflicts).is_none()
+                        && crate::navigation::available(ui.ctx())
+                        && !ui.ctx().egui_wants_keyboard_input()
+                        && ui.ctx().input_mut(|i| {
+                            i.consume_key(egui::Modifiers::COMMAND, egui::Key::Enter)
+                        });
+                    match rebase_stop::show(ui, progress, *conflicts, *pending) {
+                        Some(rebase_stop::Command::Continue) => {
+                            mutation_action = Some(MutationAction::Continue);
+                        }
+                        Some(rebase_stop::Command::Skip) => {
+                            mutation_action = Some(MutationAction::Skip);
+                        }
+                        Some(rebase_stop::Command::Abort) => {
+                            mutation_action = Some(MutationAction::Abort);
+                        }
+                        Some(rebase_stop::Command::ResolveConflicts) => resolve_conflicts = true,
+                        None if keyed => mutation_action = Some(MutationAction::Continue),
+                        None => {}
+                    }
+                    return;
+                }
                 ui.horizontal_wrapped(|ui| {
                     match &area {
                         OperationArea::Mutation {
@@ -8048,6 +8145,9 @@ impl Browser {
                 .and_then(|working| working.take_commit());
             if let Some(id) = committed {
                 self.pending_commit = Some(id);
+                // A commit at a rebase stop changes what remains to continue.
+                self.refresh_local_summary(ctx);
+                self.refresh_mutation();
             }
             if close {
                 self.close_to_history(ctx);
@@ -9644,6 +9744,122 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    fn reopened_stop(made: usize, tracked_changes: usize) -> gg_engine::mutation::RebaseProgress {
+        let step = |action: &str, id: char, subject: &str| gg_engine::mutation::RebaseStep {
+            action: action.into(),
+            commit: id.to_string().repeat(40),
+            subject: subject.into(),
+        };
+        gg_engine::mutation::RebaseProgress {
+            branch: Some("feature".into()),
+            done: vec![
+                step("pick", 'a', "first change"),
+                step("pick", 'b', "second change"),
+            ],
+            todo: vec![step("pick", 'c', "third change")],
+            stop: gg_engine::mutation::RebaseStop::Reopened {
+                base: Some("a".repeat(40)),
+                commit: "b".repeat(40),
+                subject: "second change".into(),
+                message: "second change\n\nwith a body".into(),
+                made: (0..made)
+                    .map(|index| step("commit", 'd', &format!("part {index}")))
+                    .collect(),
+            },
+            tracked_changes,
+        }
+    }
+
+    fn stopped_app(progress: gg_engine::mutation::RebaseProgress) -> Browser {
+        let mut app = layout_fixture();
+        app.mutation = Some(gg_engine::mutation::OperationState {
+            operation: gg_engine::mutation::Operation::Rebase,
+            commit: None,
+            conflicts: Vec::new(),
+        });
+        app.local_summary = Some(LocalSummary {
+            rebase: Some(progress),
+            ..Default::default()
+        });
+        app
+    }
+
+    #[test]
+    fn reopened_commit_opens_local_changes_with_its_message_and_waits_to_continue() {
+        for width in [720.0, 1120.0] {
+            let ctx = egui::Context::default();
+            crate::phosphor::install(&ctx);
+            let mut app = stopped_app(reopened_stop(0, 2));
+            let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let output = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let working = app.working.as_ref();
+            assert!(working.is_some(), "Local Changes opens at the stop");
+            assert_eq!(
+                working.map(|working| working.draft()),
+                Some("second change\n\nwith a body"),
+                "the commit box holds the reopened commit's message"
+            );
+            let text = shown_text(&output);
+            for expected in [
+                "Rebase 2/3",
+                "Reopened bbbbbbb · second change",
+                "Continue",
+                "Skip commit",
+                "Abort and restore",
+                "Commit or stash the 2 remaining changed files first.",
+                "third change",
+            ] {
+                assert!(
+                    text.iter().any(|line| line.contains(expected)),
+                    "width {width}: missing {expected:?} in {text:?}"
+                );
+            }
+            assert!(
+                text.iter()
+                    .any(|line| line.contains("feature · rebase 2/3")),
+                "the window identity names the rebase step: {text:?}"
+            );
+            // Ctrl+Enter does nothing while changes remain.
+            let _ = crate::tests::run_ui(
+                &ctx,
+                frame_input(
+                    width,
+                    740.0,
+                    vec![key(egui::Key::Enter, egui::Modifiers::COMMAND)],
+                ),
+                |ctx| app.draw_ui(ctx),
+            );
+            assert!(app.operation_worker.is_none());
+        }
+    }
+
+    #[test]
+    fn commits_made_at_a_stop_are_listed_and_continue_is_ready() {
+        let ctx = egui::Context::default();
+        crate::phosphor::install(&ctx);
+        let mut app = stopped_app(reopened_stop(2, 0));
+        app.reopen_seen = Some("b".repeat(40));
+        let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        assert!(
+            app.working.is_none(),
+            "a stop already seen does not reopen Local Changes"
+        );
+        let text = shown_text(&output);
+        assert!(text.iter().any(|line| line == "Commits made at this stop:"));
+        assert!(text.iter().any(|line| line == "part 0"));
+        assert!(text.iter().any(|line| line == "part 1"));
+        assert!(!text.iter().any(|line| line.contains("remaining changed")));
     }
 
     #[test]
@@ -12319,6 +12535,7 @@ mod tests {
                 })
                 .collect(),
             branch_start: None,
+            rebase: None,
         });
         let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
             app.draw_ui(ctx)
@@ -12626,6 +12843,7 @@ mod tests {
             changes: Some(0),
             stashes: Vec::new(),
             branch_start: None,
+            rebase: None,
         });
         let ready = app.frame_readiness();
         assert_eq!(ready.stash_reason, Some("No local changes to stash"));
@@ -12640,6 +12858,7 @@ mod tests {
                 message: "WIP on main".into(),
             }],
             branch_start: Some(("e".repeat(40), 2)),
+            rebase: None,
         });
         let ready = app.frame_readiness();
         assert_eq!(ready.stash_reason, None);
