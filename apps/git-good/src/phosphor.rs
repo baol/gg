@@ -27,10 +27,17 @@ pub const DOTS_SIX_VERTICAL: &str = "\u{EAE2}";
 pub const PAUSE: &str = "\u{E39E}";
 pub const ARROW_RIGHT: &str = "\u{E06C}";
 pub const ARROW_SQUARE_OUT: &str = "\u{E5DE}";
+pub const CARET_LEFT: &str = "\u{E138}";
+pub const CARET_RIGHT: &str = "\u{E13A}";
+pub const DOTS_THREE: &str = "\u{E1FE}";
 
 /// Glyphs used by the interactive rebase dialog.
 #[cfg(test)]
 pub const REBASE: [&str; 4] = [DOTS_SIX_VERTICAL, PAUSE, ARROW_SQUARE_OUT, ARROW_RIGHT];
+
+/// Glyphs used by the reader header.
+#[cfg(test)]
+pub const READER: [&str; 3] = [CARET_LEFT, CARET_RIGHT, DOTS_THREE];
 
 /// Glyphs used by the window toolbar, checked against the vendored font.
 #[cfg(test)]
@@ -92,6 +99,7 @@ mod tests {
             .into_iter()
             .chain(TOOLBAR)
             .chain(REBASE)
+            .chain(READER)
         {
             assert!(
                 ctx.fonts_mut(|fonts| fonts.has_glyphs(&font, glyph)),

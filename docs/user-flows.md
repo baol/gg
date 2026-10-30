@@ -190,9 +190,9 @@ flowchart TD
 
 ### F12 · Attribute and trace a line or range · M7
 
-**Entry:** line/range selection in Reading → **Show attribution** or `B`, then **Line history**. Attribution on either committed side, line/range mapping, **Open commit**, and deleted-line Before anchoring are implemented. **Contract:** anchor exact path bytes, revision, and inclusive lines; map single lines through blame and ranges through diff hunks.
+**Entry:** line/range selection in Reading → **Blame** or `B`, then **Line history**. Attribution on either committed side, line/range mapping, **Open commit**, and deleted-line Before anchoring are implemented. **Contract:** anchor exact path bytes, revision, and inclusive lines; map single lines through blame and ranges through diff hunks.
 
-1. Show attribution beside source lines: origin commit, author, and date; selecting a line shows its complete metadata and Open commit/Line history actions. Keep the selected place visible when toggling attribution.
+1. Blame shows attribution beside source lines: origin commit, author, and date; selecting a line shows its complete metadata and Open commit/Line history actions. Keep the selected place visible when toggling attribution.
 2. Line history opens the same version timeline anchored to the place. Follow renames and remap line numbers; name both the current path/range and old path when changed.
 3. A deleted range explicitly anchors Before. If the range spans divergent hunks, ask which predecessor to follow and show candidate ranges; do not silently shrink the selection or invent a common boundary.
 4. Back returns through timeline → blame → reader with selection restored. A cancelled/stale worker result never replaces a newer place.

@@ -2128,7 +2128,7 @@ mod tests {
                 _ => None,
             })
             .collect::<Vec<_>>();
-        assert!(text.contains(&"File actions"));
+        assert!(text.contains(&crate::phosphor::DOTS_THREE));
         assert!(text.contains(&"index → working file"));
         assert!(!text.contains(&"View diff"));
         assert!(!text.iter().any(|line| line.starts_with("Unstaged:")));
@@ -2141,7 +2141,7 @@ mod tests {
             "object identity is not a permanent row"
         );
 
-        let menu = text_pos(&output, "File actions").ok_or("missing File actions")?;
+        let menu = text_pos(&output, crate::phosphor::DOTS_THREE).ok_or("missing File actions")?;
         click(&ctx, &mut view, 1120.0, menu + egui::vec2(5.0, 0.0));
         let output = run(&ctx, &mut view, 1120.0, vec![]);
         let details =
@@ -2445,7 +2445,7 @@ mod tests {
         let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
         let menu = loop {
             let output = run(ctx, view, width, vec![]);
-            if let Some(menu) = text_pos(&output, "File actions") {
+            if let Some(menu) = text_pos(&output, crate::phosphor::DOTS_THREE) {
                 break menu;
             }
             if std::time::Instant::now() > until {
@@ -2555,7 +2555,8 @@ mod tests {
         ready(&ctx, &mut view, 1120.0);
         let output = run(&ctx, &mut view, 1120.0, vec![]);
         for _ in 0..2 {
-            let next = text_pos(&output, "Next >").ok_or("missing next change")?;
+            let next =
+                text_pos(&output, crate::phosphor::CARET_RIGHT).ok_or("missing next change")?;
             click(&ctx, &mut view, 1120.0, next + egui::vec2(5.0, 0.0));
         }
         let output = run(&ctx, &mut view, 1120.0, vec![]);
@@ -2815,7 +2816,7 @@ mod tests {
         ready(&ctx, &mut view, 1120.0);
         view.set_external_busy(Some("Wait for the history rewrite to finish".into()));
         let output = run(&ctx, &mut view, 1120.0, vec![]);
-        let menu = text_pos(&output, "File actions").ok_or("missing File actions")?;
+        let menu = text_pos(&output, crate::phosphor::DOTS_THREE).ok_or("missing File actions")?;
         click(&ctx, &mut view, 1120.0, menu + egui::vec2(5.0, 0.0));
         let output = run(&ctx, &mut view, 1120.0, vec![]);
         let text = output
@@ -3490,7 +3491,8 @@ mod tests {
         ready(&ctx, &mut view, 1120.0);
         let output = run(&ctx, &mut view, 1120.0, vec![]);
         for _ in 0..2 {
-            let next = text_pos(&output, "Next >").ok_or("missing next change")?;
+            let next =
+                text_pos(&output, crate::phosphor::CARET_RIGHT).ok_or("missing next change")?;
             click(&ctx, &mut view, 1120.0, next + egui::vec2(5.0, 0.0));
         }
         let output = run(&ctx, &mut view, 1120.0, vec![]);

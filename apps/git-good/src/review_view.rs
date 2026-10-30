@@ -1493,8 +1493,8 @@ mod tests {
                 "Diff",
                 "Full file",
                 "No changes",
-                "< Prev",
-                "Next >",
+                crate::phosphor::CARET_LEFT,
+                crate::phosphor::CARET_RIGHT,
             ] {
                 assert!(
                     text.iter().any(|line| line.contains(label)),

@@ -1527,7 +1527,7 @@ impl DiffView {
                     self.stage_edit = Some(self.file_edit(false));
                 }
             }
-            ui.menu_button("File actions", |ui| {
+            ui.menu_button(crate::phosphor::icon(crate::phosphor::DOTS_THREE), |ui| {
                 let capabilities = self.capabilities();
                 for (label, side, enabled) in [
                     (
@@ -1601,7 +1601,9 @@ impl DiffView {
                     self.details_open = !self.details_open;
                     ui.close();
                 }
-            });
+            })
+            .response
+            .on_hover_text("File actions");
         });
         if !self.details_open {
             return;
@@ -1819,9 +1821,9 @@ impl DiffView {
             if self.mode == Mode::Full {
                 let available = self.attribution_available();
                 let label = if self.attribution {
-                    "Hide attribution"
+                    "Hide blame"
                 } else {
-                    "Show attribution"
+                    "Blame"
                 };
                 let response = ui
                     .add_enabled(available, egui::Button::new(label))
@@ -1853,8 +1855,14 @@ impl DiffView {
             ui.separator();
             if !self.edge_known {
                 ui.weak("Earlier version not loaded");
-                ui.add_enabled(false, egui::Button::new("< Prev"));
-                ui.add_enabled(false, egui::Button::new("Next >"));
+                ui.add_enabled(
+                    false,
+                    egui::Button::new(crate::phosphor::icon(crate::phosphor::CARET_LEFT)),
+                );
+                ui.add_enabled(
+                    false,
+                    egui::Button::new(crate::phosphor::icon(crate::phosphor::CARET_RIGHT)),
+                );
             } else {
                 let (index, total) = self.change_position();
                 if total == 0 {
@@ -1876,15 +1884,21 @@ impl DiffView {
                 let previous = self.previous_change().is_some();
                 let next = self.next_change().is_some();
                 if ui
-                    .add_enabled(previous, egui::Button::new("< Prev"))
-                    .on_hover_text("Previous change")
+                    .add_enabled(
+                        previous,
+                        egui::Button::new(crate::phosphor::icon(crate::phosphor::CARET_LEFT)),
+                    )
+                    .on_hover_text("Previous change  [")
                     .clicked()
                 {
                     actions.push(Action::Change(-1));
                 }
                 if ui
-                    .add_enabled(next, egui::Button::new("Next >"))
-                    .on_hover_text("Next change")
+                    .add_enabled(
+                        next,
+                        egui::Button::new(crate::phosphor::icon(crate::phosphor::CARET_RIGHT)),
+                    )
+                    .on_hover_text("Next change  ]")
                     .clicked()
                 {
                     actions.push(Action::Change(1));
