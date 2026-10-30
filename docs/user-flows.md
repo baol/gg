@@ -157,7 +157,7 @@ flowchart TD
 
 1. Name operation, unresolved count, and operation commit. Select an unresolved path; load Base/Ours/Theirs on workers.
 2. Explain side identities for that operation. For rebase, Ours is the rebased destination/current replay state and Theirs the commit being replayed; never equate Ours with 'my branch' universally.
-3. Choose Base, Ours, Theirs, or the working file to change only the Result preview. Edit externally and use Refresh external edits to preview it. **Stage resolution** is the single publication step; it validates the original stages and working bytes and stages the previewed result. State those consequences next to the controls. Select the next unresolved path after success.
+3. For a text file, choose per conflict block: Ours, Theirs, Ours + theirs, or Theirs + ours (keys 1–4). The Result preview keeps markers for open blocks; Stage resolution is enabled once every block has a choice. Otherwise, or in Whole file mode, choose Base, Ours, Theirs, or the working file to change only the Result preview. Edit externally and use Refresh external edits to preview it. **Stage resolution** is the single publication step; it validates the original stages and working bytes and stages the previewed result. State those consequences next to the controls. Select the next unresolved path after success.
 4. Keep Continue disabled until unresolved paths reach zero; then run it on the operation worker. A later conflict returns to this flow.
 5. Abort requests Git's recovery and refreshes; report any failure rather than promise removal of all user edits. Skip exists only for supporting operations (rebase/cherry-pick/revert), never merge. Narrow layouts show side tabs with bounded content.
 

@@ -9,6 +9,7 @@ mod branding;
 mod clipboard;
 mod colors;
 mod commit_cli;
+mod conflict_blocks;
 mod conflict_cli;
 mod details_view;
 mod diff_view;
@@ -718,6 +719,7 @@ enum ConflictUpdate {
     Content {
         content: Box<gg_engine::conflict::Content>,
         snapshot: Box<gg_engine::conflict::Snapshot>,
+        blocks: Result<Vec<gg_engine::conflict::Segment>, String>,
     },
 }
 
@@ -742,6 +744,12 @@ struct ConflictView {
     preview: gg_engine::conflict::Resolution,
     tab: ConflictTab,
     placed: bool,
+    /// Per-block choices for a text conflict.
+    blocks: Option<conflict_blocks::Blocks>,
+    /// Why this file has no text blocks.
+    blocks_note: Option<String>,
+    /// Resolve the whole file from one source instead of block by block.
+    whole_file: bool,
 }
 
 fn next_conflict_selection(paths: &[String], keep: Option<&str>, previous: usize) -> usize {
@@ -756,7 +764,7 @@ fn conflict_side_hint(operation: Option<gg_engine::mutation::Operation>) -> &'st
             "Ours is the current branch. Theirs is the branch being merged."
         }
         Some(gg_engine::mutation::Operation::Rebase) => {
-            "Ours is the base being rebased onto. Theirs is the commit being replayed."
+            "Ours is the rewritten branch so far. Theirs is the commit being replayed."
         }
         Some(gg_engine::mutation::Operation::CherryPick) => {
             "Ours is the current branch. Theirs is the cherry-picked commit."
@@ -833,7 +841,7 @@ fn conflict_side_label(
     match (operation, side) {
         (_, ConflictSide::Base) => "Base",
         (Some(gg_engine::mutation::Operation::Rebase), ConflictSide::Ours) => {
-            "Ours · base being rebased onto (stage 2)"
+            "Ours · rewritten branch (stage 2)"
         }
         (Some(gg_engine::mutation::Operation::Rebase), ConflictSide::Theirs) => {
             "Theirs · replayed commit (stage 3)"
@@ -4109,6 +4117,9 @@ impl Browser {
             preview: gg_engine::conflict::Resolution::Working,
             tab: ConflictTab::Ours,
             placed: false,
+            blocks: None,
+            blocks_note: None,
+            whole_file: false,
         });
         view.keep = keep.map(str::to_string);
         view.previous_selected = view.selected;
@@ -4157,12 +4168,28 @@ impl Browser {
                     view.paths = paths;
                     view.content = None;
                     view.snapshot = None;
+                    view.blocks = None;
+                    view.blocks_note = None;
                     view.error = None;
                     load_content = !view.paths.is_empty();
                 }
-                Ok(ConflictUpdate::Content { content, snapshot }) => {
+                Ok(ConflictUpdate::Content {
+                    content,
+                    snapshot,
+                    blocks,
+                }) => {
                     view.content = Some(*content);
                     view.snapshot = Some(*snapshot);
+                    match blocks {
+                        Ok(segments) => {
+                            view.blocks = Some(conflict_blocks::Blocks::new(segments));
+                            view.blocks_note = None;
+                        }
+                        Err(note) => {
+                            view.blocks = None;
+                            view.blocks_note = Some(note);
+                        }
+                    }
                     view.preview = gg_engine::conflict::Resolution::Working;
                     view.tab = ConflictTab::Result;
                     view.error = None;
@@ -4193,6 +4220,8 @@ impl Browser {
         };
         view.content = None;
         view.snapshot = None;
+        view.blocks = None;
+        view.blocks_note = None;
         view.preview = gg_engine::conflict::Resolution::Working;
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         let repaint = ctx.clone();
@@ -4202,9 +4231,15 @@ impl Browser {
                 let result = (|| {
                     let content = gg_git::conflict::read(&path, &file)?;
                     let snapshot = gg_git::conflict::snapshot(&path, &file)?;
+                    let blocks = if content.binary {
+                        Err("This file is binary. Choose a whole side.".into())
+                    } else {
+                        gg_git::conflict::blocks(&path, &file)
+                    };
                     Ok(ConflictUpdate::Content {
                         content: Box::new(content),
                         snapshot: Box::new(snapshot),
+                        blocks,
                     })
                 })();
                 let _ = tx.send(result);
@@ -4241,9 +4276,20 @@ impl Browser {
             .as_ref()
             .map(|view| view.preview)
             .unwrap_or(gg_engine::conflict::Resolution::Working);
+        let composed = match self.conflict_view.as_ref() {
+            Some(view) if !view.whole_file => match &view.blocks {
+                Some(blocks) if blocks.complete() => Some(blocks.text()),
+                Some(_) => return Err("Choose a resolution for every block first.".into()),
+                None => None,
+            },
+            _ => None,
+        };
         let label = format!("Staging {file}…");
         self.start_operation(ctx, label, move || {
-            gg_git::conflict::publish(&path, &file, &snapshot, resolution)?;
+            match composed {
+                Some(text) => gg_git::conflict::publish_text(&path, &file, &snapshot, &text)?,
+                None => gg_git::conflict::publish(&path, &file, &snapshot, resolution)?,
+            }
             Ok(OperationOutcome::Conflict { file })
         })
     }
@@ -6696,7 +6742,7 @@ impl Browser {
                     let keyed = !pending
                         && rebase_stop::continue_reason(progress, *conflicts).is_none()
                         && crate::navigation::available(ui.ctx())
-                        && !ui.ctx().egui_wants_keyboard_input()
+                        && !ui.ctx().text_edit_focused()
                         && ui.ctx().input_mut(|i| {
                             i.consume_key(egui::Modifiers::COMMAND, egui::Key::Enter)
                         });
@@ -7485,6 +7531,14 @@ impl Browser {
         let mut stage_resolution = false;
         let mut refresh_content = false;
         let mut conflict_open = true;
+        if let Some(view) = &mut self.conflict_view
+            && !view.whole_file
+            && let Some(blocks) = &mut view.blocks
+            && crate::navigation::available(ctx)
+            && !ctx.text_edit_focused()
+        {
+            blocks.keys(ctx);
+        }
         if let Some(view) = &mut self.conflict_view {
             let operation = conflict_mutation.as_ref().map(|state| state.operation);
             let unresolved = conflict_mutation
@@ -7553,6 +7607,80 @@ impl Browser {
                                 }
                                 return;
                             };
+                            ui.horizontal(|ui| {
+                                ui.weak("Resolve");
+                                let blocks = view.blocks.is_some();
+                                if ui
+                                    .add_enabled(
+                                        blocks,
+                                        egui::Button::selectable(
+                                            !view.whole_file && blocks,
+                                            "Block by block",
+                                        ),
+                                    )
+                                    .on_disabled_hover_text(
+                                        view.blocks_note.as_deref().unwrap_or("No text blocks."),
+                                    )
+                                    .clicked()
+                                {
+                                    view.whole_file = false;
+                                }
+                                if ui
+                                    .add(egui::Button::selectable(
+                                        view.whole_file || !blocks,
+                                        "Whole file",
+                                    ))
+                                    .clicked()
+                                {
+                                    view.whole_file = true;
+                                }
+                                if let Some(note) = &view.blocks_note {
+                                    ui.weak(note);
+                                }
+                            });
+                            if !view.whole_file
+                                && let Some(blocks) = &mut view.blocks
+                            {
+                                let labels = conflict_blocks::Labels {
+                                    base: conflict_side_label(operation, ConflictSide::Base),
+                                    ours: conflict_side_label(operation, ConflictSide::Ours),
+                                    theirs: conflict_side_label(operation, ConflictSide::Theirs),
+                                };
+                                blocks.show(ui, &labels);
+                                ui.separator();
+                                ui.horizontal(|ui| {
+                                    ui.strong(format!(
+                                        "Result · {}/{} blocks chosen · preview, not staged",
+                                        blocks.chosen(),
+                                        blocks.count()
+                                    ));
+                                    let enabled = !conflict_pending && blocks.complete();
+                                    let response = ui.add_enabled(
+                                        enabled,
+                                        egui::Button::new("Stage resolution"),
+                                    );
+                                    let response = if conflict_pending {
+                                        response.on_disabled_hover_text(
+                                            "Wait for the current operation to finish.",
+                                        )
+                                    } else {
+                                        response.on_disabled_hover_text(
+                                            "Choose a resolution for every block first.",
+                                        )
+                                    };
+                                    if response.clicked() {
+                                        stage_resolution = true;
+                                    }
+                                });
+                                let text = blocks.text();
+                                egui::ScrollArea::both()
+                                    .id_salt("conflict-block-result")
+                                    .max_height(150.0)
+                                    .show(ui, |ui| {
+                                        ui.monospace(text);
+                                    });
+                                return;
+                            }
                             let snapshot = view.snapshot.clone();
                             let preview_text = snapshot
                                 .as_ref()
@@ -9545,6 +9673,9 @@ mod tests {
                 preview: gg_engine::conflict::Resolution::Working,
                 tab: ConflictTab::Ours,
                 placed: false,
+                blocks: None,
+                blocks_note: None,
+                whole_file: false,
             });
             let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
                 app.draw_ui(ctx)
@@ -9965,6 +10096,30 @@ mod tests {
         );
         assert!(app.rewrite_dialog.is_none());
         assert!(app.rewrite_job.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn rebase_dialog_keys_still_work_after_a_button_took_focus() -> Result<(), String> {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        app.rewrite_dialog = Some(rebase_fixture(&app)?);
+        let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        // Clicking a button gives it keyboard focus; only text fields should block keys.
+        ctx.memory_mut(|m| m.request_focus(egui::Id::unique("a-clicked-button")));
+        let _ = crate::tests::run_ui(
+            &ctx,
+            frame_input(
+                1120.0,
+                740.0,
+                vec![key(egui::Key::D, egui::Modifiers::NONE)],
+            ),
+            |ctx| app.draw_ui(ctx),
+        );
+        let dialog = app.rewrite_dialog.as_ref().ok_or("dialog closed")?;
+        assert_eq!(dialog.plan.rows[0].action, gg_engine::rewrite::Action::Drop);
         Ok(())
     }
 
@@ -10392,6 +10547,9 @@ mod tests {
             preview: gg_engine::conflict::Resolution::Working,
             tab: ConflictTab::Ours,
             placed: false,
+            blocks: None,
+            blocks_note: None,
+            whole_file: false,
         });
         let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
             app.draw_ui(ctx)
@@ -10415,6 +10573,7 @@ mod tests {
                     working_hash: None,
                     working_note: None,
                 }),
+                blocks: Err("whole file only".into()),
             }))
             .is_ok()
         );
@@ -10517,8 +10676,50 @@ mod tests {
         assert!(working_text.contains("<<<<<<<"));
         assert_eq!(std::fs::read(path.join("a"))?, original);
 
+        // Block by block is the default for text; key 2 chooses Theirs.
+        let _ = crate::tests::run_ui(
+            &ctx,
+            frame_input(
+                1120.0,
+                740.0,
+                vec![key(egui::Key::Num2, egui::Modifiers::NONE)],
+            ),
+            |ctx| app.draw_ui(ctx),
+        );
+        let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        {
+            let view = app.conflict_view.as_ref().ok_or("missing conflict view")?;
+            let blocks = view.blocks.as_ref().ok_or("missing blocks")?;
+            assert_eq!(blocks.count(), 1);
+            assert_eq!(
+                blocks.choices[0],
+                Some(gg_engine::conflict::BlockChoice::Theirs)
+            );
+            assert_eq!(blocks.text(), "feature\n");
+        }
+        let text = shown_text(&output);
+        for expected in [
+            "Block by block",
+            "Conflict 1 of 1",
+            "4 Theirs + ours",
+            "Result · 1/1 blocks chosen · preview, not staged",
+        ] {
+            assert!(
+                text.iter().any(|line| line.contains(expected)),
+                "missing {expected:?} in {text:?}"
+            );
+        }
+        assert_eq!(
+            std::fs::read(path.join("a"))?,
+            original,
+            "choosing is read-only"
+        );
+
         {
             let view = app.conflict_view.as_mut().ok_or("missing conflict view")?;
+            view.whole_file = true;
             view.preview = gg_engine::conflict::Resolution::Ours;
         }
         let ours = {
@@ -10570,6 +10771,9 @@ mod tests {
             loading: false,
             worker: None,
             placed: false,
+            blocks: None,
+            blocks_note: None,
+            whole_file: false,
             snapshot: Some(gg_engine::conflict::Snapshot {
                 base: Some("1".repeat(40)),
                 ours: Some("2".repeat(40)),
@@ -10977,6 +11181,9 @@ mod tests {
             preview: gg_engine::conflict::Resolution::Working,
             tab: ConflictTab::Base,
             placed: false,
+            blocks: None,
+            blocks_note: None,
+            whole_file: false,
         });
         let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
             app.draw_ui(ctx)

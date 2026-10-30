@@ -319,3 +319,94 @@ fn oversized_sides_publish_and_changed_bytes_are_detected() -> Result {
     );
     Ok(())
 }
+
+/// Two conflicting hunks separated by an unchanged line.
+fn two_block_conflict(p: &Path) -> Result {
+    std::fs::write(p.join("b"), b"top\nx\nmiddle\ny\nend\n")?;
+    git(p, &["add", "b"])?;
+    git(p, &["commit", "-qm", "add b"])?;
+    git(p, &["switch", "-qc", "feature"])?;
+    std::fs::write(p.join("b"), b"top\nx feature\nmiddle\ny feature\nend\n")?;
+    git(p, &["commit", "-qam", "feature b"])?;
+    git(p, &["switch", "-q", "main"])?;
+    std::fs::write(p.join("b"), b"top\nx main\nmiddle\ny main\nend\n")?;
+    git(p, &["commit", "-qam", "main b"])?;
+    gg_git::merge::merge(p, "feature", false)?;
+    Ok(())
+}
+
+#[test]
+fn blocks_split_the_conflict_and_compose_a_staged_resolution() -> Result {
+    use gg_engine::conflict::{BlockChoice, Segment, block_count, compose};
+    let dir = repo()?;
+    let p = dir.path();
+    // The user's conflict style does not change the blocks.
+    git(p, &["config", "merge.conflictStyle", "merge"])?;
+    two_block_conflict(p)?;
+    let segments = gg_git::conflict::blocks(p, "b")?;
+    assert_eq!(block_count(&segments), 2);
+    assert_eq!(
+        segments[1],
+        Segment::Block {
+            ours: "x main\n".into(),
+            base: "x\n".into(),
+            theirs: "x feature\n".into(),
+        }
+    );
+    let snapshot = gg_git::conflict::snapshot(p, "b")?;
+    let text = compose(
+        &segments,
+        &[Some(BlockChoice::Theirs), Some(BlockChoice::OursThenTheirs)],
+    );
+    assert_eq!(text, "top\nx feature\nmiddle\ny main\ny feature\nend\n");
+    gg_git::conflict::publish_text(p, "b", &snapshot, &text)?;
+    assert_eq!(std::fs::read(p.join("b"))?, text.as_bytes());
+    assert!(gg_git::conflict::unmerged(p)?.is_empty());
+    assert_eq!(
+        String::from_utf8(git(p, &["show", ":b"])?)?,
+        text,
+        "the composed text is staged"
+    );
+    Ok(())
+}
+
+#[test]
+fn composed_resolution_refuses_a_changed_working_file() -> Result {
+    use gg_engine::conflict::{BlockChoice, compose};
+    let dir = repo()?;
+    let p = dir.path();
+    two_block_conflict(p)?;
+    let segments = gg_git::conflict::blocks(p, "b")?;
+    let snapshot = gg_git::conflict::snapshot(p, "b")?;
+    std::fs::write(p.join("b"), b"edited elsewhere\n")?;
+    let text = compose(
+        &segments,
+        &[Some(BlockChoice::Ours), Some(BlockChoice::Ours)],
+    );
+    let error = match gg_git::conflict::publish_text(p, "b", &snapshot, &text) {
+        Ok(()) => return Err("a stale preview was published".into()),
+        Err(error) => error,
+    };
+    assert!(error.contains("working file changed"), "{error}");
+    assert_eq!(gg_git::conflict::unmerged(p)?, vec!["b".to_string()]);
+    Ok(())
+}
+
+#[test]
+fn blocks_name_why_a_file_needs_a_whole_side() -> Result {
+    let dir = repo()?;
+    let p = dir.path();
+    git(p, &["switch", "-qc", "feature"])?;
+    git(p, &["rm", "-q", "a"])?;
+    git(p, &["commit", "-qm", "delete a"])?;
+    git(p, &["switch", "-q", "main"])?;
+    std::fs::write(p.join("a"), b"main\n")?;
+    git(p, &["commit", "-qam", "main"])?;
+    gg_git::merge::merge(p, "feature", false)?;
+    let error = match gg_git::conflict::blocks(p, "a") {
+        Ok(_) => return Err("delete/modify produced blocks".into()),
+        Err(error) => error,
+    };
+    assert!(error.contains("Choose a whole side"), "{error}");
+    Ok(())
+}

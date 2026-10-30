@@ -157,7 +157,7 @@ impl Dialog {
         if start && !blocked {
             return self.start();
         }
-        if ctx.egui_wants_keyboard_input() || egui::Popup::is_any_open(ctx) {
+        if ctx.text_edit_focused() || egui::Popup::is_any_open(ctx) {
             return None;
         }
         let pressed = |key, modifiers| ctx.input_mut(|i| i.consume_key(modifiers, key));
