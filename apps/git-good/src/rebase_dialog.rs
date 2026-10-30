@@ -321,9 +321,11 @@ impl Dialog {
         let mut rects = Vec::with_capacity(count);
         let mut chosen = None;
         let mut moved = None;
+        let base = self.base.clone();
         egui::ScrollArea::vertical()
             .id_salt("rebase-plan")
             .auto_shrink([false, false])
+            .max_height((ui.available_height() - 22.0).max(ROW))
             .show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 0.0;
                 for index in 0..count {
@@ -351,7 +353,32 @@ impl Dialog {
                         },
                     );
                 }
+                // The commit the plan is replayed onto, as in the mockup.
+                let (rect, _) = ui.allocate_exact_size(
+                    egui::vec2(ui.available_width(), ROW),
+                    egui::Sense::hover(),
+                );
+                let base = base.as_deref().map_or("the root".to_string(), |base| {
+                    format!("{} base · unchanged", rebase_plan::short(base))
+                });
+                ui.painter().text(
+                    rect.left_center() + egui::vec2(64.0, 0.0),
+                    egui::Align2::LEFT_CENTER,
+                    base,
+                    egui::FontId::proportional(12.0),
+                    ui.visuals().weak_text_color(),
+                );
             });
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(
+                    "Keys on the selected row: P pick · R reword · E reopen · S squash · F fixup · D drop",
+                )
+                .small()
+                .weak(),
+            )
+            .truncate(),
+        );
         if let Some((index, action)) = chosen {
             self.selected = index;
             self.set_action(action);
