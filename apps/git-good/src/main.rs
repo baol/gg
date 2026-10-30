@@ -15,6 +15,7 @@ mod density;
 mod details_view;
 mod diff_view;
 mod diff_worker;
+mod editor;
 mod export;
 mod file_history_view;
 mod file_history_worker;
@@ -1928,15 +1929,20 @@ impl Browser {
         let mut show_shortcuts = false;
         let default_folder = self.folders.default_folder();
         let offline_override = std::env::var_os("GG_OFFLINE").is_some();
-        egui::Window::new("Preferences")
-            .id(egui::Id::unique("preferences"))
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(false)
-            // A fixed size keeps the window in place while folders come and go.
-            .fixed_size([620.0, 400.0])
-            .default_pos(ctx.content_rect().center() - egui::vec2(310.0, 210.0))
-            .show(ctx, |ui| {
+        // Modal, as in the mockup: a fixed size keeps it in place while
+        // folders come and go; Esc, a click outside, × or Close dismiss it.
+        let modal = egui::Modal::new(egui::Id::unique("preferences")).show(ctx, |ui| {
+                ui.set_width(620.0);
+                ui.horizontal(|ui| {
+                    ui.heading("Preferences");
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("×").on_hover_text("Close (Esc)").clicked() {
+                            open = false;
+                        }
+                    });
+                });
+                ui.separator();
+                ui.set_height(430.0);
                 ui.horizontal_top(|ui| {
                     ui.vertical(|ui| {
                         ui.set_width(130.0);
@@ -2094,6 +2100,16 @@ impl Browser {
                                 "Remove remote-tracking branches deleted on the remote",
                             );
                             ui.separator();
+                            ui.strong("Editor");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut prefs.editor)
+                                    .hint_text("System default app")
+                                    .desired_width(320.0),
+                            );
+                            ui.weak(
+                                "Command for Open in editor; {file} is the file's path (added at the end when absent). Empty opens the file with the system's default app.",
+                            );
+                            ui.separator();
                             ui.strong("Dialog defaults");
                             ui.weak(
                                 "Forms start with these choices and remember the last one you submitted; each still asks.",
@@ -2192,9 +2208,32 @@ impl Browser {
                     }));
                 });
                 ui.add_space(4.0);
-                ui.weak("Changes apply now and are saved for the next launch.");
+                ui.separator();
+                ui.horizontal(|ui| {
+                    let saved = settings::path()
+                        .map(|path| path.display().to_string())
+                        .unwrap_or_else(|| "no configuration folder".into());
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(format!("Changes apply now · saved to {saved}"))
+                                .small()
+                                .weak(),
+                        )
+                        .truncate(),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("Close").clicked() {
+                            open = false;
+                        }
+                    });
+                });
             });
+        if modal.should_close() {
+            open = false;
+        }
         if show_shortcuts {
+            // The shortcuts window would sit under the modal: close it first.
+            open = false;
             self.help_shortcuts = true;
         }
         if prefs != self.prefs {
@@ -5559,6 +5598,8 @@ impl Browser {
         let mut stage_resolution = false;
         let mut refresh_content = false;
         let mut conflict_open = true;
+        let workdir = self.stash_path();
+        let editor_command = self.prefs.editor.clone();
         if let Some(view) = &mut self.conflict_view
             && !view.whole_file
             && let Some(blocks) = &mut view.blocks
@@ -5673,6 +5714,24 @@ impl Browser {
                                 if let Some(note) = &view.blocks_note {
                                     ui.weak(note);
                                 }
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        let file = workdir.as_ref().zip(view.paths.get(view.selected));
+                                        if ui
+                                            .add_enabled(file.is_some(), egui::Button::new("Open in editor"))
+                                            .on_hover_text(if editor_command.trim().is_empty() {
+                                                "Open the working file with the system's default app (set an editor in Preferences)"
+                                            } else {
+                                                "Open the working file with the editor from Preferences"
+                                            })
+                                            .clicked()
+                                            && let Some((workdir, path)) = file
+                                        {
+                                            view.error = editor::open(&editor_command, &workdir.join(path)).err();
+                                        }
+                                    },
+                                );
                             });
                             if !view.whole_file
                                 && let Some(blocks) = &mut view.blocks

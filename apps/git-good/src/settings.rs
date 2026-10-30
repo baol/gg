@@ -224,6 +224,9 @@ pub struct Prefs {
     pub branch_switch: bool,
     /// Fetch also prunes remote-tracking branches deleted on the remote.
     pub fetch_prune: bool,
+    /// Command for Open in editor, such as `code --wait {file}`; empty opens
+    /// the file with the system's default app.
+    pub editor: String,
     path: Option<PathBuf>,
 }
 
@@ -243,6 +246,7 @@ impl Default for Prefs {
             merge_no_ff: false,
             branch_switch: true,
             fetch_prune: false,
+            editor: String::new(),
             path: None,
         }
     }
@@ -272,6 +276,7 @@ impl Prefs {
             merge_no_ff: read(path, "merge_no_ff").unwrap_or(defaults.merge_no_ff),
             branch_switch: read(path, "branch_switch").unwrap_or(defaults.branch_switch),
             fetch_prune: read(path, "fetch_prune").unwrap_or(defaults.fetch_prune),
+            editor: read(path, "editor").unwrap_or(defaults.editor),
             path: Some(path.to_path_buf()),
         }
     }
@@ -297,7 +302,8 @@ impl Prefs {
         write(path, "stash_keep_index", &self.stash_keep_index)?;
         write(path, "merge_no_ff", &self.merge_no_ff)?;
         write(path, "branch_switch", &self.branch_switch)?;
-        write(path, "fetch_prune", &self.fetch_prune)
+        write(path, "fetch_prune", &self.fetch_prune)?;
+        write(path, "editor", &self.editor)
     }
 
     /// The theme to show: `GG_THEME` (debug builds) wins over the saved one
@@ -360,6 +366,7 @@ mod tests {
         prefs.merge_no_ff = true;
         prefs.branch_switch = false;
         prefs.fetch_prune = true;
+        prefs.editor = "code --wait {file}".into();
         prefs.save()?;
         assert_eq!(Prefs::load_from(&path), prefs);
         assert_eq!(read::<u32>(&path, "future_option"), Some(7));
