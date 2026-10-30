@@ -7519,8 +7519,11 @@ impl Browser {
             .show(ui, |ui| {
                 ui.horizontal_centered(|ui| {
                     ui.spacing_mut().item_spacing.x = 2.0;
-                    branding::toolbar(ui, &mut self.logo);
-                    ui.add_space(4.0);
+                    // Narrow windows give the logo's slot to the tools.
+                    if ctx.content_rect().width() >= 900.0 {
+                        branding::toolbar(ui, &mut self.logo);
+                        ui.add_space(4.0);
+                    }
                     let has_repo = self.state.history.is_some();
                     let local_selected = self.working.is_some();
                     let sidebar_available = ctx.content_rect().width() >= 1120.0;
@@ -13774,8 +13777,8 @@ mod tests {
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 assert!(
-                    xs.windows(2).all(|pair| pair[0] < pair[1]),
-                    "toolbar order at {width}: {xs:?}"
+                    xs.windows(2).all(|pair| pair[0] + 17.0 <= pair[1]),
+                    "toolbar icons keep their order without overlapping at {width}: {xs:?}"
                 );
                 assert!(xs.iter().all(|x| *x + 17.0 <= width), "{xs:?} at {width}");
                 positions.push(xs);
