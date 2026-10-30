@@ -173,6 +173,8 @@ pub struct StatusView {
     message_expanded: bool,
     pending_selection: Option<Comparison>,
     last_amended: bool,
+    /// Staged files the last commit or amend recorded.
+    last_files: usize,
     worker: Option<Worker>,
     pending: Option<Worker>,
     staged: Option<Update>,
@@ -220,6 +222,7 @@ impl StatusView {
             message_expanded: false,
             pending_selection: None,
             last_amended: false,
+            last_files: 0,
             worker: None,
             pending: None,
             staged: None,
@@ -981,6 +984,9 @@ impl StatusView {
                     self.last_commit = Some(receipt.id.get(..7).unwrap_or(&receipt.id).to_string());
                     self.last_amended = receipt.amended;
                     self.last_signed = receipt.signed;
+                    // Staged still lists what the commit recorded until the
+                    // refresh below replaces it.
+                    self.last_files = self.lists[1].count;
                     if receipt.amended {
                         self.amend_draft.clear();
                     } else {
@@ -1660,6 +1666,22 @@ impl StatusView {
         self.draw_commit_form(ui, ctx);
     }
 
+    /// The last commit's result: `Committed 4e7b21c · 3 files` or
+    /// `Amended HEAD → 4e7b21c · 3 files`.
+    fn commit_result(&self) -> Option<String> {
+        let id = self.last_commit.as_deref()?;
+        let signed = if self.last_signed { " (signed)" } else { "" };
+        let files = match self.last_files {
+            1 => "1 file".to_string(),
+            count => format!("{count} files"),
+        };
+        Some(if self.last_amended {
+            format!("Amended HEAD → {id}{signed} · {files}")
+        } else {
+            format!("Committed {id}{signed} · {files}")
+        })
+    }
+
     fn status_text(&self) -> String {
         if let Some(reason) = &self.external_busy {
             return format!(
@@ -1678,19 +1700,10 @@ impl StatusView {
                 error
             );
         }
-        if let Some(warning) = &self.commit_warning {
-            return format!(
-                "{} {}{} · {warning}",
-                if self.last_amended {
-                    "Amended"
-                } else {
-                    "Committed"
-                },
-                self.last_commit.as_deref().unwrap_or(""),
-                if self.last_signed { " (signed)" } else { "" }
-            );
-        }
-        if let Some(id) = &self.last_commit {
+        if let Some(result) = self.commit_result() {
+            if let Some(warning) = &self.commit_warning {
+                return format!("{result} · {warning}");
+            }
             let remaining = if self.complete && self.total == 0 {
                 "Clean working tree".to_string()
             } else {
@@ -1699,15 +1712,7 @@ impl StatusView {
                     self.lists[0].count, self.lists[1].count
                 )
             };
-            return format!(
-                "{} {id}{} · {remaining}",
-                if self.last_amended {
-                    "Amended"
-                } else {
-                    "Committed"
-                },
-                if self.last_signed { " (signed)" } else { "" }
-            );
+            return format!("{result} · {remaining}");
         }
         if self.replacing {
             return format!(
@@ -2010,6 +2015,7 @@ mod tests {
             message_expanded: false,
             pending_selection: None,
             last_amended: false,
+            last_files: 0,
             worker: None,
             pending: None,
             staged: None,
@@ -3349,7 +3355,7 @@ mod tests {
             output.shapes.iter().any(|shape| matches!(
                 &shape.shape,
                 egui::epaint::Shape::Text(text)
-                    if text.galley.job.text.starts_with("Amended ")
+                    if text.galley.job.text.starts_with("Amended HEAD → ")
             )),
             "missing amended status line"
         );
@@ -3594,10 +3600,19 @@ mod tests {
         pump(&ctx, &mut view, 1120.0, |view| {
             !view.busy() && view.complete && !view.replacing && view.commit_done.is_some()
         });
-        assert!(view.take_commit().is_some());
+        let id = view.take_commit().ok_or("missing commit id")?;
         assert_eq!(
             file(dir.path(), &["show", "-s", "--format=%s", "HEAD"])?,
             b"UI commit\n"
+        );
+        assert_eq!(
+            view.status_text(),
+            format!(
+                "Committed {}{} · 1 file · Clean working tree",
+                id.get(..7).unwrap_or(&id),
+                if view.last_signed { " (signed)" } else { "" }
+            ),
+            "the status line names the result"
         );
         assert!(scan_is_clean(dir.path())?);
         assert_eq!(std::fs::read(dir.path().join(".git/index"))?, index);
