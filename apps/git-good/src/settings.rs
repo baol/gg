@@ -429,7 +429,8 @@ impl Default for Prefs {
             image_layout: ImageLayout::default(),
             sign_commits: SignCommits::default(),
             details_visible: true,
-            stash_include_untracked: false,
+            // On by default: "stash my changes" usually means new files too.
+            stash_include_untracked: true,
             stash_keep_index: false,
             merge_no_ff: false,
             branch_switch: true,
@@ -627,7 +628,7 @@ mod tests {
         prefs.image_layout = ImageLayout::Onion;
         prefs.sign_commits = SignCommits::Never;
         prefs.details_visible = false;
-        prefs.stash_include_untracked = true;
+        prefs.stash_include_untracked = false;
         prefs.stash_keep_index = true;
         prefs.merge_no_ff = true;
         prefs.branch_switch = false;
