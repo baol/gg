@@ -764,6 +764,36 @@ fn paint_badge(ui: &egui::Ui, rect: egui::Rect, count: u64) {
         .galley(badge.center() - galley.size() / 2.0, galley, ink);
 }
 
+/// The OS window title, as in the mockups: `gg — ~/path`, and the rebase
+/// step while one is stopped.
+fn window_title(
+    path: &str,
+    home: Option<&str>,
+    rebase: Option<&gg_engine::mutation::RebaseProgress>,
+) -> String {
+    let shown = match home.filter(|home| !home.is_empty()) {
+        Some(home) if path == home => "~".to_string(),
+        Some(home) => match path.strip_prefix(home) {
+            Some(rest) if rest.starts_with('/') => format!("~{rest}"),
+            _ => path.to_string(),
+        },
+        None => path.to_string(),
+    };
+    let mut title = format!("gg — {shown}");
+    if let Some(progress) = rebase {
+        let (step, total) = progress.position();
+        if progress.stop == gg_engine::mutation::RebaseStop::Conflict {
+            title.push_str(&format!(" — rebase conflict · step {step} of {total}"));
+        } else {
+            title.push_str(&format!(
+                " — rebasing {} · step {step} of {total}",
+                progress.branch.as_deref().unwrap_or("detached HEAD")
+            ));
+        }
+    }
+    title
+}
+
 /// The `Ctrl+K` chip at the right end of the empty toolbar search field.
 fn search_key_chip(ui: &egui::Ui, field: egui::Rect) {
     let visuals = ui.visuals();
@@ -1298,6 +1328,8 @@ struct Browser {
     pending_commit: Option<String>,
     branch: Option<std::sync::mpsc::Receiver<Result<gg_git::branch::Receipt, String>>>,
     branch_label: Option<String>,
+    /// The OS window title last sent, so it is only sent on change.
+    window_title: String,
     branch_error: Option<String>,
     branch_warning: Option<String>,
     branch_target: Option<(String, bool)>,
@@ -1423,6 +1455,7 @@ impl Browser {
             pending_commit: None,
             branch: None,
             branch_label: None,
+            window_title: String::new(),
             branch_error: None,
             branch_warning: None,
             branch_target: None,
@@ -7346,6 +7379,16 @@ impl Browser {
     }
 
     fn draw_ui(&mut self, ui: &mut egui::Ui) {
+        let title = window_title(
+            &self.path,
+            std::env::var("HOME").ok().as_deref(),
+            self.rebase_progress(),
+        );
+        if title != self.window_title {
+            ui.ctx()
+                .send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
+            self.window_title = title;
+        }
         self.sync_mutation();
         let ctx = ui.ctx().clone();
         let ctx = &ctx;
@@ -13863,6 +13906,39 @@ mod tests {
         let _ = crate::tests::run_ui(&ctx, input, |ctx| app.draw_ui(ctx));
         assert_eq!(app.state.count, 100_000);
         assert!((app.scroll_offset - offset).abs() < 0.1);
+    }
+
+    #[test]
+    fn window_title_names_the_folder_and_a_stopped_rebase() {
+        assert_eq!(
+            window_title("/home/me/src/gg", Some("/home/me"), None),
+            "gg — ~/src/gg"
+        );
+        assert_eq!(
+            window_title("/home/meow/gg", Some("/home/me"), None),
+            "gg — /home/meow/gg"
+        );
+        let step = |id: char| gg_engine::mutation::RebaseStep {
+            action: "pick".into(),
+            commit: id.to_string().repeat(40),
+            subject: "s".into(),
+        };
+        let mut progress = gg_engine::mutation::RebaseProgress {
+            branch: Some("feature".into()),
+            done: vec![step('a'), step('b')],
+            todo: vec![step('c'), step('d')],
+            stop: gg_engine::mutation::RebaseStop::Other,
+            tracked_changes: 0,
+        };
+        assert_eq!(
+            window_title("/r", None, Some(&progress)),
+            "gg — /r — rebasing feature · step 2 of 4"
+        );
+        progress.stop = gg_engine::mutation::RebaseStop::Conflict;
+        assert_eq!(
+            window_title("/r", None, Some(&progress)),
+            "gg — /r — rebase conflict · step 2 of 4"
+        );
     }
 
     #[test]
