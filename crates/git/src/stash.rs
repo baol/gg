@@ -5,7 +5,10 @@ use std::{
     process::{Command, Output, Stdio},
 };
 
-const LIST_FORMAT: &str = "%gd%x00%H%x00%gs";
+const LIST_FORMAT: &str = "%gd%x00%H%x00%gs%x00%cr";
+
+/// Entries whose files [`list_with_files`] counts; older ones keep `None`.
+pub const COUNTED_ENTRIES: usize = 50;
 
 pub fn list(path: &Path) -> Result<StashList, String> {
     let output = run(
@@ -29,6 +32,7 @@ pub fn list(path: &Path) -> Result<StashList, String> {
         let reference = fields.next().unwrap_or_default().to_string();
         let commit = fields.next().unwrap_or_default().to_string();
         let message = fields.next().unwrap_or_default().to_string();
+        let age = fields.next().unwrap_or_default().to_string();
         let index = reference
             .strip_prefix("stash@{")
             .and_then(|value| value.strip_suffix('}'))
@@ -38,10 +42,71 @@ pub fn list(path: &Path) -> Result<StashList, String> {
             index,
             reference,
             commit,
+            branch: gg_engine::stash::subject_branch(&message),
             message,
+            age,
+            files: None,
         });
     }
     Ok(StashList { entries })
+}
+
+/// List stashes and count the files of the newest [`COUNTED_ENTRIES`]
+/// entries. Run it off the UI thread: each counted entry costs up to three
+/// Git reads.
+pub fn list_with_files(path: &Path) -> Result<StashList, String> {
+    let mut list = list(path)?;
+    for entry in list.entries.iter_mut().take(COUNTED_ENTRIES) {
+        entry.files = file_count(path, &entry.commit).ok();
+    }
+    Ok(list)
+}
+
+/// Paths a stash entry changes: its working tree against the commit it was
+/// made on, plus untracked files stored in its third parent.
+pub fn file_count(path: &Path, commit: &str) -> Result<usize, String> {
+    let names = |args: &[String]| -> Result<Vec<String>, String> {
+        let output = run(path, args)?;
+        if !output.status.success() {
+            return Err(failure("Count stash files", &output));
+        }
+        Ok(output
+            .stdout
+            .split(|byte| *byte == 0)
+            .filter(|name| !name.is_empty())
+            .map(|name| String::from_utf8_lossy(name).into_owned())
+            .collect())
+    };
+    let mut files = names(&[
+        "diff-tree".into(),
+        "-r".into(),
+        "-z".into(),
+        "--name-only".into(),
+        "--no-commit-id".into(),
+        format!("{commit}^1"),
+        commit.to_string(),
+    ])?;
+    let untracked = run(
+        path,
+        &[
+            "rev-parse".into(),
+            "--verify".into(),
+            "--quiet".into(),
+            format!("{commit}^3"),
+        ],
+    )?;
+    if untracked.status.success() {
+        files.extend(names(&[
+            "ls-tree".into(),
+            "-r".into(),
+            "-z".into(),
+            "--name-only".into(),
+            format!("{commit}^3"),
+        ])?);
+    }
+    files.sort();
+    files.dedup();
+    Ok(files.len())
 }
 
 /// Whether the worktree has anything to stash: staged, unstaged, or untracked changes.

@@ -110,7 +110,7 @@ Differences between the [final design](final-design.md) and what shipped, plus p
 Design not yet implemented:
 
 1. **Shortcuts:** `Ctrl+1` (Local Changes), `Ctrl+2` (History), and `Ctrl+\` (refs sidebar) do not exist; the View menu lacks the Local Changes and History items. **Repository › Quit** is missing, and macOS has no gg › Settings… (`Cmd+,` already works).
-2. **Stashes picker:** rows show the ref and message only; the design adds branch, age, and file count.
+2. **Stashes picker · fixed.** Rows show ref, message, branch, age, and file count in fixed slots; the picker keeps a fixed size.
 3. **Search:** the Files group is missing; the toolbar has a Search button rather than a field.
 4. **Conflict stop:** blocks live in the floating Resolve conflicts window, not in the main workspace beside the operation area.
 5. **Preferences:** no Diff or Commit sections yet; the Settings panel plan's layout memory and operation defaults (increments 4–5) remain.

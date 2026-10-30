@@ -423,7 +423,7 @@ impl LocalSummary {
     fn read(path: PathBuf) -> Self {
         Self {
             changes: gg_git::stash::change_count(&path).ok(),
-            stashes: gg_git::stash::list(&path)
+            stashes: gg_git::stash::list_with_files(&path)
                 .map(|list| list.entries)
                 .unwrap_or_default(),
             branch_start: gg_git::rewrite::branch_start(&path).ok().flatten(),
@@ -3158,77 +3158,195 @@ impl Browser {
             .id(stash_picker_popup_id())
             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
             .show(|ui| {
-                ui.set_width(420.0);
+                ui.set_width(STASH_PICKER_WIDTH);
                 ui.label(egui::RichText::new("STASHES").small().weak());
-                for (index, entry) in entries.iter().enumerate() {
-                    let text = format!("{}   {}", entry.reference, entry.message);
-                    if ui
-                        .add(
-                            egui::Button::selectable(picker.selected == index, text)
-                                .truncate()
-                                .min_size(egui::vec2(410.0, 24.0)),
-                        )
-                        .clicked()
-                    {
-                        picker.selected = index;
-                        picker.confirm_drop = false;
-                    }
-                }
-                let Some(entry) = entries.get(picker.selected) else {
-                    return;
-                };
+                // A fixed-height list with fixed column slots, so the popup
+                // never changes size as entries or counts arrive.
+                egui::ScrollArea::vertical()
+                    .id_salt("stash-picker-list")
+                    .max_height(STASH_PICKER_LIST)
+                    .min_scrolled_height(STASH_PICKER_LIST)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing.y = 0.0;
+                        for (index, entry) in entries.iter().enumerate() {
+                            if stash_picker_row(ui, entry, picker.selected == index).clicked() {
+                                picker.selected = index;
+                                picker.confirm_drop = false;
+                            }
+                        }
+                    });
                 ui.separator();
-                if picker.confirm_drop {
-                    ui.label(format!(
-                        "Drop {}? This removes the stash entry, not working files.",
-                        entry.reference
-                    ));
-                    ui.horizontal(|ui| {
-                        if ui.button("Drop").clicked() {
-                            pick = Some(StashPick::Drop(entry.reference.clone()));
-                            picker.confirm_drop = false;
-                        }
-                        if ui.button("Cancel").clicked() {
-                            picker.confirm_drop = false;
-                        }
-                    });
-                } else {
-                    ui.horizontal(|ui| {
-                        if ui
-                            .button(format!("Apply {}", entry.reference))
-                            .on_hover_text("Restore the changes and keep the stash entry")
-                            .clicked()
-                        {
-                            pick = Some(StashPick::Apply(entry.reference.clone()));
-                        }
-                        if ui
-                            .button("Pop")
-                            .on_hover_text("Restore the changes, then remove the stash entry")
-                            .clicked()
-                        {
-                            pick = Some(StashPick::Pop(entry.reference.clone()));
-                        }
-                        if ui.button("Show changes").clicked() {
-                            pick = Some(StashPick::Show {
-                                commit: entry.commit.clone(),
-                                message: entry.message.clone(),
-                            });
-                        }
-                        if ui.button("Drop…").clicked() {
-                            picker.confirm_drop = true;
-                        }
-                    });
-                }
-                if let Some(error) = &picker.error {
-                    ui.colored_label(ui.visuals().error_fg_color, error);
-                }
+                ui.allocate_ui_with_layout(
+                    egui::vec2(STASH_PICKER_WIDTH, STASH_PICKER_ACTIONS),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        ui.set_min_size(egui::vec2(STASH_PICKER_WIDTH, STASH_PICKER_ACTIONS));
+                        ui.set_max_height(STASH_PICKER_ACTIONS);
+                        let Some(entry) = entries.get(picker.selected) else {
+                            return;
+                        };
+                        stash_picker_actions(ui, entry, picker, &mut pick);
+                    },
+                );
             });
         if pick.is_some() {
             egui::Popup::close_all(ui.ctx());
         }
         pick
     }
+}
 
+/// Width of the Stashes picker popup.
+const STASH_PICKER_WIDTH: f32 = 560.0;
+/// Height of the picker's entry list: six rows.
+const STASH_PICKER_LIST: f32 = 6.0 * 24.0;
+/// Height reserved for the picker's actions, its drop confirmation, and an error.
+const STASH_PICKER_ACTIONS: f32 = 64.0;
+
+/// Display message without the `WIP on <branch>: ` or `On <branch>: ` prefix
+/// that the branch column already shows.
+fn stash_display_message(entry: &gg_engine::stash::StashEntry) -> &str {
+    match &entry.branch {
+        Some(_) => entry
+            .message
+            .split_once(": ")
+            .map_or(entry.message.as_str(), |(_, rest)| rest),
+        None => entry.message.as_str(),
+    }
+}
+
+/// One picker row: ref, message, branch, age, and file count in fixed slots.
+fn stash_picker_row(
+    ui: &mut egui::Ui,
+    entry: &gg_engine::stash::StashEntry,
+    selected: bool,
+) -> egui::Response {
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 24.0), egui::Sense::click());
+    if selected {
+        ui.painter()
+            .rect_filled(rect, 3.0, colors::selection(ui.visuals()));
+    } else if response.hovered() {
+        ui.painter()
+            .rect_filled(rect, 3.0, ui.visuals().widgets.hovered.weak_bg_fill);
+    }
+    let font = egui::FontId::proportional(12.5);
+    let weak = ui.visuals().weak_text_color();
+    let strong = ui.visuals().strong_text_color();
+    let inner = rect.shrink2(egui::vec2(6.0, 0.0));
+    // Slots from the right: files 64, age 96, branch 110; ref 72 on the left.
+    let files = egui::Rect::from_min_max(egui::pos2(inner.right() - 64.0, inner.top()), inner.max);
+    let age = egui::Rect::from_min_max(
+        egui::pos2(files.left() - 100.0, inner.top()),
+        egui::pos2(files.left() - 4.0, inner.bottom()),
+    );
+    let branch = egui::Rect::from_min_max(
+        egui::pos2(age.left() - 114.0, inner.top()),
+        egui::pos2(age.left() - 4.0, inner.bottom()),
+    );
+    let reference =
+        egui::Rect::from_min_max(inner.min, egui::pos2(inner.left() + 72.0, inner.bottom()));
+    let message = egui::Rect::from_min_max(
+        egui::pos2(reference.right() + 4.0, inner.top()),
+        egui::pos2(branch.left() - 6.0, inner.bottom()),
+    );
+    bounded_text::paint(
+        ui,
+        reference,
+        &entry.reference,
+        egui::FontId::monospace(11.5),
+        weak,
+    );
+    bounded_text::paint(
+        ui,
+        message,
+        stash_display_message(entry),
+        font.clone(),
+        strong,
+    );
+    bounded_text::paint(
+        ui,
+        branch,
+        entry.branch.as_deref().unwrap_or("detached"),
+        font.clone(),
+        weak,
+    );
+    bounded_text::paint(ui, age, &entry.age, font.clone(), weak);
+    let count = match entry.files {
+        Some(1) => "1 file".to_string(),
+        Some(count) => format!("{count} files"),
+        None => String::new(),
+    };
+    bounded_text::paint(ui, files, &count, font, weak);
+    response.on_hover_text(format!(
+        "{} · {}\n{}{}",
+        entry.reference,
+        entry.message,
+        entry.age,
+        if count.is_empty() {
+            String::new()
+        } else {
+            format!(" · {count}")
+        }
+    ))
+}
+
+/// Apply, Pop, Show changes, and Drop… for the selected stash, or the drop
+/// confirmation, in the picker's fixed action area.
+fn stash_picker_actions(
+    ui: &mut egui::Ui,
+    entry: &gg_engine::stash::StashEntry,
+    picker: &mut StashPicker,
+    pick: &mut Option<StashPick>,
+) {
+    if picker.confirm_drop {
+        ui.label(format!(
+            "Drop {}? This removes the stash entry, not working files.",
+            entry.reference
+        ));
+        ui.horizontal(|ui| {
+            if ui.button("Drop").clicked() {
+                *pick = Some(StashPick::Drop(entry.reference.clone()));
+                picker.confirm_drop = false;
+            }
+            if ui.button("Cancel").clicked() {
+                picker.confirm_drop = false;
+            }
+        });
+    } else {
+        ui.horizontal(|ui| {
+            if ui
+                .button(format!("Apply {}", entry.reference))
+                .on_hover_text("Restore the changes and keep the stash entry")
+                .clicked()
+            {
+                *pick = Some(StashPick::Apply(entry.reference.clone()));
+            }
+            if ui
+                .button("Pop")
+                .on_hover_text("Restore the changes, then remove the stash entry")
+                .clicked()
+            {
+                *pick = Some(StashPick::Pop(entry.reference.clone()));
+            }
+            if ui.button("Show changes").clicked() {
+                *pick = Some(StashPick::Show {
+                    commit: entry.commit.clone(),
+                    message: entry.message.clone(),
+                });
+            }
+            if ui.button("Drop…").clicked() {
+                picker.confirm_drop = true;
+            }
+        });
+    }
+    if let Some(error) = &picker.error {
+        ui.colored_label(ui.visuals().error_fg_color, error);
+    }
+}
+
+impl Browser {
     fn apply_stash_pick(&mut self, ctx: &egui::Context, pick: StashPick) {
         let result = match pick {
             StashPick::Apply(reference) => self.restore_stash_inner(ctx, &reference, false, false),
@@ -9963,6 +10081,7 @@ mod tests {
                     reference: "stash@{0}".into(),
                     commit: "abc123".into(),
                     message: "On main: work in progress".into(),
+                    ..Default::default()
                 }],
                 error: None,
                 notice: None,
@@ -13482,7 +13601,10 @@ mod tests {
                     index,
                     reference: format!("stash@{{{index}}}"),
                     commit: format!("{index:040x}"),
-                    message: format!("WIP {index}"),
+                    message: format!("WIP on main: abc123 work {index}"),
+                    branch: (index == 0).then(|| "main".to_string()),
+                    age: format!("{} hours ago", index + 2),
+                    files: Some(index as usize * 2 + 1),
                 })
                 .collect(),
             branch_start: None,
@@ -13533,7 +13655,21 @@ mod tests {
                 _ => None,
             })
             .collect::<Vec<_>>();
-        for expected in ["2", "Apply stash@{0}", "Pop", "Show changes", "Drop…"] {
+        for expected in [
+            "2",
+            "Apply stash@{0}",
+            "Pop",
+            "Show changes",
+            "Drop…",
+            // Ref, message without the branch prefix, branch, age, file count.
+            "stash@{0}",
+            "abc123 work 0",
+            "main",
+            "2 hours ago",
+            "1 file",
+            "detached",
+            "3 files",
+        ] {
             assert!(
                 texts.iter().any(|text| text == expected),
                 "missing {expected:?} in {texts:?}"
@@ -13543,6 +13679,56 @@ mod tests {
             texts.iter().any(|text| text.contains("stash@{1}")),
             "both entries are listed"
         );
+
+        // The popup keeps its size when Drop… swaps in the confirmation.
+        let before = ctx
+            .memory(|memory| memory.area_rect(stash_picker_popup_id()))
+            .ok_or("the picker popup has no area")?;
+        let drop = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) if text.galley.job.text == "Drop…" => {
+                    Some(text.pos + text.galley.size() / 2.0)
+                }
+                _ => None,
+            })
+            .ok_or("missing Drop…")?;
+        let click = |pos| {
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]
+        };
+        let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, click(drop)), |ctx| {
+            app.draw_ui(ctx)
+        });
+        let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        assert!(app.stash_picker.confirm_drop, "Drop… asks for confirmation");
+        assert!(
+            output.shapes.iter().any(|shape| matches!(
+                &shape.shape,
+                egui::epaint::Shape::Text(text) if text.galley.job.text.starts_with("Drop stash@{0}?")
+            )),
+            "the confirmation names the entry"
+        );
+        let after = ctx
+            .memory(|memory| memory.area_rect(stash_picker_popup_id()))
+            .ok_or("the picker popup closed")?;
+        assert_eq!(before, after, "the popup does not resize");
         Ok(())
     }
 
@@ -13853,6 +14039,7 @@ mod tests {
                 reference: "stash@{0}".into(),
                 commit: "f".repeat(40),
                 message: "WIP on main".into(),
+                ..Default::default()
             }],
             branch_start: Some(("e".repeat(40), 2)),
             rebase: None,

@@ -222,3 +222,35 @@ fn has_changes_sees_staged_unstaged_and_untracked_work() -> Result {
     );
     Ok(())
 }
+
+#[test]
+fn entries_name_their_branch_age_and_file_count() -> Result {
+    let dir = repo()?;
+    let p = dir.path();
+    // Tracked and untracked changes on main.
+    std::fs::write(p.join("a"), b"changed\n")?;
+    std::fs::write(p.join("b"), b"new\n")?;
+    git(p, &["add", "b"])?;
+    std::fs::write(p.join("untracked"), b"u\n")?;
+    git(p, &["stash", "push", "-q", "-u", "-m", "work on main"])?;
+    // One tracked change on a detached HEAD.
+    git(p, &["switch", "-q", "--detach"])?;
+    std::fs::write(p.join("a"), b"detached\n")?;
+    git(p, &["stash", "push", "-q"])?;
+
+    let list = gg_git::stash::list_with_files(p)?;
+    assert_eq!(list.entries.len(), 2);
+    let detached = &list.entries[0];
+    let main = &list.entries[1];
+    assert_eq!(main.branch.as_deref(), Some("main"));
+    assert_eq!(main.files, Some(3), "a, b, and the untracked file");
+    assert!(!main.age.is_empty(), "{main:?}");
+    assert_eq!(detached.branch, None);
+    assert_eq!(detached.files, Some(1));
+
+    // The plain list stays cheap and leaves the counts out.
+    let plain = gg_git::stash::list(p)?;
+    assert_eq!(plain.entries[1].branch.as_deref(), Some("main"));
+    assert_eq!(plain.entries[1].files, None);
+    Ok(())
+}

@@ -742,6 +742,7 @@ mod tests {
                 reference: format!("stash@{{{index}}}"),
                 commit: format!("{index:040x}"),
                 message: format!("WIP on main: work {index}"),
+                ..Default::default()
             })
             .collect::<Vec<_>>();
         let frame = |filter: &mut String, events: Vec<egui::Event>| {

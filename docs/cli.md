@@ -50,6 +50,8 @@ git good stash apply|pop [STASH] [--index] [--repo PATH]
 git good stash drop [STASH] [--repo PATH]
 ```
 
+`git good stash list` entries carry `index`, `reference`, `commit`, `message`, `branch` (`null` for a detached HEAD), and `age` (relative, such as `3 days ago`); `files` is `null` there because counting files reads each entry.
+
 ## Merge, rebase, rewrite, and conflicts
 
 ```sh
