@@ -4,9 +4,20 @@
 //! without threading a context through every geometry calculation. Tests keep
 //! the compact default.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 
 static COMFORTABLE: AtomicBool = AtomicBool::new(false);
+/// Code font size in tenths of a pixel.
+static CODE_FONT: AtomicU16 = AtomicU16::new(125);
+
+pub fn set_code_font(tenths: u16) {
+    CODE_FONT.store(tenths, Ordering::Relaxed);
+}
+
+/// The reader's code font size, from Preferences › Appearance.
+pub fn code_font() -> f32 {
+    f32::from(CODE_FONT.load(Ordering::Relaxed)) / 10.0
+}
 
 /// List row height in compact density.
 pub const COMPACT_ROW: f32 = 22.0;

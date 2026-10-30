@@ -339,6 +339,30 @@ enum PrefSection {
 }
 
 impl PrefSection {
+    /// Words the Preferences search matches for this section.
+    fn keywords(self) -> &'static str {
+        match self {
+            Self::General => {
+                "general clone folders avatars network fetch prune editor open dialog defaults stash merge branch"
+            }
+            Self::Appearance => {
+                "appearance theme dark light system density compact comfortable zoom font size code"
+            }
+            Self::Diff => "diff open files full file layout inline side by side images compare",
+            Self::Commit => "commit identity name email signing sign tags subject length guide",
+            Self::Rebase => "rebase recovery stash autostash backup",
+            Self::Keyboard => "keyboard shortcuts keys",
+        }
+    }
+
+    fn matches(self, query: &str) -> bool {
+        let haystack = format!("{} {}", self.label(), self.keywords()).to_lowercase();
+        query
+            .to_lowercase()
+            .split_whitespace()
+            .all(|word| haystack.contains(word))
+    }
+
     const ALL: [Self; 6] = [
         Self::General,
         Self::Appearance,
@@ -363,6 +387,10 @@ impl PrefSection {
 /// The Preferences window (Repository › Preferences…), non-modal.
 struct FoldersDialog {
     section: PrefSection,
+    /// Search preferences: sections without a match are hidden.
+    search: String,
+    /// `user.name <user.email>` from Git config, read when the window opens.
+    identity: Option<String>,
     new_root: String,
     error: Option<String>,
     /// Repository count per clone folder; `None` for a missing folder.
@@ -373,6 +401,8 @@ impl FoldersDialog {
     fn new(section: PrefSection) -> Self {
         Self {
             section,
+            search: String::new(),
+            identity: None,
             new_root: String::new(),
             error: None,
             counts: Vec::new(),
@@ -800,6 +830,28 @@ fn window_title(
         }
     }
     title
+}
+
+/// `Name <email>` from the repository's Git config, for Preferences ›
+/// Commit; `None` when Git has no identity.
+fn git_identity(repo: &Path) -> Option<String> {
+    let read = |key: &str| {
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["config", "--get", key])
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+            .filter(|value| !value.is_empty())
+    };
+    match (read("user.name"), read("user.email")) {
+        (Some(name), Some(email)) => Some(format!("{name} <{email}>")),
+        (Some(name), None) => Some(name),
+        (None, Some(email)) => Some(format!("<{email}>")),
+        (None, None) => None,
+    }
 }
 
 /// The `Ctrl+K` chip at the right end of the empty toolbar search field.
@@ -1445,7 +1497,18 @@ impl Browser {
             } else {
                 settings::Prefs::load()
             },
-            folders_dialog: None,
+            // Debug builds open Preferences with `GG_PREFS=<section>` for
+            // native review (general, appearance, diff, commit, rebase, keyboard).
+            folders_dialog: if cfg!(debug_assertions) {
+                std::env::var("GG_PREFS").ok().and_then(|name| {
+                    PrefSection::ALL
+                        .into_iter()
+                        .find(|section| section.label().to_lowercase().starts_with(&name))
+                        .map(FoldersDialog::new)
+                })
+            } else {
+                None
+            },
             force_push: None,
             force_push_pending: false,
             track_dialog: None,
@@ -1876,6 +1939,9 @@ impl Browser {
         settings::set_reader_mode(ctx, self.prefs.reader_mode);
         settings::set_image_layout(ctx, self.prefs.image_layout);
         settings::set_diff_layout(ctx, self.prefs.diff_layout);
+        settings::set_subject_guide(ctx, self.prefs.subject_guide);
+        ctx.set_zoom_factor(f32::from(self.prefs.zoom) / 100.0);
+        density::set_code_font(self.prefs.code_font);
     }
 
     /// Save a remembered starting value when it changes. A save failure only
@@ -1904,13 +1970,45 @@ impl Browser {
     fn open_preferences(&mut self, section: PrefSection) {
         match &mut self.folders_dialog {
             Some(dialog) => dialog.section = section,
-            None => self.folders_dialog = Some(FoldersDialog::new(section)),
+            None => {
+                let mut dialog = FoldersDialog::new(section);
+                dialog.identity = git_identity(Path::new(&self.path));
+                self.folders_dialog = Some(dialog);
+            }
         }
     }
 
-    /// Repository › Preferences…: a non-modal window whose changes apply and
+    /// Repository › Preferences…: a modal window whose changes apply and
     /// save immediately.
     fn draw_folders_dialog(&mut self, ctx: &egui::Context) {
+        if self.folders_dialog.is_none() {
+            return;
+        }
+        let shortcuts = {
+            let ready = self.frame_readiness();
+            let mut list = menus::flatten(&self.menu_table(&ready))
+                .into_iter()
+                .filter(|(_, item)| !item.key.is_empty())
+                .map(|(path, item)| (format!("{path} › {}", item.label), item.key.to_string()))
+                .collect::<Vec<_>>();
+            list.extend(
+                [
+                    ("Search", "Ctrl+K"),
+                    ("Search, starting from the History filter", "Ctrl+F"),
+                    ("Commit actions", "Alt+A"),
+                    ("History: move · page", "j k / Up Down · PgUp PgDn"),
+                    ("Local Changes: stage · unstage the selected file", "S · U"),
+                    (
+                        "Reader: change · file · history · blame",
+                        "[ ] · Alt+Up/Down · H · B",
+                    ),
+                    ("Conflict blocks: choose · move", "1–4 · [ ]"),
+                    ("Close a view or popup", "Esc"),
+                ]
+                .map(|(action, key)| (action.to_string(), key.to_string())),
+            );
+            list
+        };
         let Some(dialog) = &mut self.folders_dialog else {
             return;
         };
@@ -1943,26 +2041,58 @@ impl Browser {
         // folders come and go; Esc, a click outside, × or Close dismiss it.
         let modal = egui::Modal::new(egui::Id::unique("preferences")).show(ctx, |ui| {
                 ui.set_width(620.0);
-                ui.horizontal(|ui| {
+                // A fixed header row: title, search, and ×.
+                ui.allocate_ui_with_layout(
+                    egui::vec2(620.0, 30.0),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                    ui.set_min_size(egui::vec2(620.0, 30.0));
                     ui.heading("Preferences");
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.button("×").on_hover_text("Close (Esc)").clicked() {
                             open = false;
                         }
+                        ui.add(
+                            egui::TextEdit::singleline(&mut dialog.search)
+                                .hint_text("Search preferences")
+                                .desired_width(220.0),
+                        );
                     });
-                });
+                    },
+                );
+                let visible = PrefSection::ALL
+                    .into_iter()
+                    .filter(|section| section.matches(&dialog.search))
+                    .collect::<Vec<_>>();
+                if let Some(first) = visible.first()
+                    && !visible.contains(&dialog.section)
+                {
+                    dialog.section = *first;
+                }
                 ui.separator();
-                ui.set_height(430.0);
-                ui.horizontal_top(|ui| {
+                // The body has one fixed size, so adding folders or switching
+                // sections never resizes or moves the window.
+                ui.allocate_ui_with_layout(
+                    egui::vec2(620.0, 430.0),
+                    egui::Layout::left_to_right(egui::Align::Min),
+                    |ui| {
+                    ui.set_min_size(egui::vec2(620.0, 430.0));
+                    ui.set_max_height(430.0);
                     ui.vertical(|ui| {
                         ui.set_width(130.0);
                         for section in PrefSection::ALL {
-                            if ui
-                                .selectable_label(dialog.section == section, section.label())
-                                .clicked()
-                            {
+                            // Sections without a match keep their slot, empty.
+                            let shown = visible.contains(&section);
+                            let response = ui.add_visible(
+                                shown,
+                                egui::Button::selectable(dialog.section == section, section.label()),
+                            );
+                            if shown && response.clicked() {
                                 dialog.section = section;
                             }
+                        }
+                        if visible.is_empty() {
+                            ui.weak("No matching settings");
                         }
                     });
                     ui.separator();
@@ -2139,27 +2269,58 @@ impl Browser {
                             );
                         }
                         PrefSection::Appearance => {
-                            ui.strong("Theme");
-                            ui.horizontal(|ui| {
-                                for theme in settings::Theme::ALL {
-                                    ui.radio_value(&mut prefs.theme, theme, theme.label());
-                                }
-                            });
-                            ui.separator();
-                            ui.strong("Density");
-                            ui.radio_value(
-                                &mut prefs.density,
-                                settings::Density::Compact,
-                                "Compact · 22 px rows",
-                            );
-                            ui.radio_value(
-                                &mut prefs.density,
-                                settings::Density::Comfortable,
-                                "Comfortable · 28 px rows",
-                            );
-                            ui.weak("History, file, and refs rows.");
+                            egui::Grid::new("prefs-appearance")
+                                .num_columns(2)
+                                .spacing([16.0, 10.0])
+                                .show(ui, |ui| {
+                                    ui.label("Theme");
+                                    ui.horizontal(|ui| {
+                                        for theme in settings::Theme::ALL {
+                                            ui.selectable_value(&mut prefs.theme, theme, theme.label());
+                                        }
+                                    });
+                                    ui.end_row();
+                                    ui.label("Density");
+                                    ui.horizontal(|ui| {
+                                        ui.selectable_value(&mut prefs.density, settings::Density::Compact, "Compact")
+                                            .on_hover_text("22 px rows");
+                                        ui.selectable_value(&mut prefs.density, settings::Density::Comfortable, "Comfortable")
+                                            .on_hover_text("28 px rows");
+                                    });
+                                    ui.end_row();
+                                    ui.label("Interface zoom");
+                                    egui::ComboBox::from_id_salt("prefs-zoom")
+                                        .selected_text(format!("{}%", prefs.zoom))
+                                        .show_ui(ui, |ui| {
+                                            for zoom in settings::ZOOMS {
+                                                ui.selectable_value(&mut prefs.zoom, zoom, format!("{zoom}%"));
+                                            }
+                                        });
+                                    ui.end_row();
+                                    ui.label("Code font size");
+                                    let px = |tenths: u16| format!("{} px", f32::from(tenths) / 10.0);
+                                    egui::ComboBox::from_id_salt("prefs-code-font")
+                                        .selected_text(px(prefs.code_font))
+                                        .show_ui(ui, |ui| {
+                                            for size in settings::CODE_FONTS {
+                                                ui.selectable_value(&mut prefs.code_font, size, px(size));
+                                            }
+                                        });
+                                    ui.end_row();
+                                });
                         }
                         PrefSection::Diff => {
+                            ui.strong("Default layout");
+                            ui.horizontal(|ui| {
+                                ui.selectable_value(&mut prefs.diff_layout, settings::DiffLayout::Inline, "Inline");
+                                ui.selectable_value(
+                                    &mut prefs.diff_layout,
+                                    settings::DiffLayout::SideBySide,
+                                    "Side by side",
+                                );
+                            });
+                            ui.weak("Also View › Inline diff / Side-by-side diff and the reader's toggle.");
+                            ui.separator();
                             ui.strong("Open files in");
                             ui.horizontal(|ui| {
                                 ui.radio_value(
@@ -2184,6 +2345,35 @@ impl Browser {
                             ui.weak("Also remembered from the last choice in the reader.");
                         }
                         PrefSection::Commit => {
+                            ui.strong("Identity");
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    dialog
+                                        .identity
+                                        .as_deref()
+                                        .map_or("No user.name or user.email in Git config".to_string(), |identity| {
+                                            format!("From Git config: {identity}")
+                                        }),
+                                );
+                            });
+                            ui.weak("Set with git config user.name and user.email.");
+                            ui.separator();
+                            ui.strong("Subject length guide");
+                            ui.horizontal(|ui| {
+                                for guide in settings::SUBJECT_GUIDES {
+                                    let label = if guide == 0 {
+                                        "Off".to_string()
+                                    } else {
+                                        format!("{guide} characters")
+                                    };
+                                    ui.selectable_value(&mut prefs.subject_guide, guide, label);
+                                }
+                            });
+                            ui.weak("The commit box counts the subject and warns past the guide.");
+                            ui.separator();
+                            ui.strong("Sign tags");
+                            ui.checkbox(&mut prefs.sign_tags, "Create tag starts with Sign checked");
+                            ui.separator();
                             ui.strong("Sign commits");
                             for sign in settings::SignCommits::ALL {
                                 ui.radio_value(&mut prefs.sign_commits, sign, sign.label());
@@ -2211,12 +2401,24 @@ impl Browser {
                             ui.weak(
                                 "Single letters act on the focused list and never fire while typing; Ctrl chords are global.",
                             );
-                            if ui.button("Show keyboard shortcuts…").clicked() {
+                            egui::Grid::new("prefs-keyboard")
+                                .num_columns(2)
+                                .striped(true)
+                                .spacing([16.0, 4.0])
+                                .show(ui, |ui| {
+                                    for (action, key) in &shortcuts {
+                                        ui.label(action);
+                                        ui.monospace(key);
+                                        ui.end_row();
+                                    }
+                                });
+                            if ui.button("Show keyboard shortcuts window…").clicked() {
                                 show_shortcuts = true;
                             }
                         }
                     }));
-                });
+                    },
+                );
                 ui.add_space(4.0);
                 ui.separator();
                 ui.horizontal(|ui| {
@@ -5374,7 +5576,7 @@ impl Browser {
             name: String::new(),
             target,
             message: String::new(),
-            sign: config.tag_signing,
+            sign: config.tag_signing || self.prefs.sign_tags,
             signing_ready: ready,
             signing_note: if ready {
                 None
@@ -14069,6 +14271,21 @@ mod tests {
         let _ = crate::tests::run_ui(&ctx, input, |ctx| app.draw_ui(ctx));
         assert_eq!(app.state.count, 100_000);
         assert!((app.scroll_offset - offset).abs() < 0.1);
+    }
+
+    #[test]
+    fn preferences_search_keeps_sections_with_a_match() {
+        let shown = |query: &str| {
+            PrefSection::ALL
+                .into_iter()
+                .filter(|section| section.matches(query))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(shown(""), PrefSection::ALL.to_vec());
+        assert_eq!(shown("zoom"), [PrefSection::Appearance]);
+        assert_eq!(shown("SIGN"), [PrefSection::Commit]);
+        assert_eq!(shown("side by"), [PrefSection::Diff]);
+        assert!(shown("nothing like this").is_empty());
     }
 
     #[test]

@@ -73,6 +73,29 @@ fn lines(count: usize) -> String {
     }
 }
 
+/// The subject length against the guide from Preferences › Commit, painted
+/// in the message field's lower-right corner so nothing moves; past the
+/// guide it turns to the warning color.
+fn subject_counter(ui: &egui::Ui, field: egui::Rect, message: &str) {
+    let guide = crate::settings::subject_guide(ui.ctx());
+    let length = message.lines().next().unwrap_or("").chars().count();
+    if guide == 0 || length == 0 {
+        return;
+    }
+    let color = if length > usize::from(guide) {
+        ui.visuals().warn_fg_color
+    } else {
+        ui.visuals().weak_text_color()
+    };
+    ui.painter().text(
+        field.right_bottom() - egui::vec2(6.0, 4.0),
+        egui::Align2::RIGHT_BOTTOM,
+        format!("{length}/{guide}"),
+        egui::FontId::proportional(10.5),
+        color,
+    );
+}
+
 /// Width of the per-row stage/unstage button slot.
 const ROW_BUTTON: f32 = 24.0;
 
@@ -1552,12 +1575,13 @@ impl StatusView {
         ui.horizontal(|ui| {
             let button_width = if self.amend { 112.0 } else { 88.0 };
             let width = (ui.available_width() - button_width - 150.0).max(160.0);
-            ui.add_sized(
+            let field = ui.add_sized(
                 [width, message_height],
                 egui::TextEdit::multiline(&mut self.message)
                     .hint_text("Commit message (first line is the subject)")
                     .desired_rows(2),
             );
+            subject_counter(ui, field.rect, &self.message);
             ui.vertical(|ui| {
                 ui.horizontal(|ui| {
                     let mut amend = self.amend;

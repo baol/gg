@@ -8,6 +8,13 @@
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::path::{Path, PathBuf};
 
+/// Interface zoom choices, in percent.
+pub const ZOOMS: [u16; 3] = [100, 110, 125];
+/// Code font sizes, in tenths of a pixel.
+pub const CODE_FONTS: [u16; 3] = [125, 130, 140];
+/// Subject length guides, in characters; 0 is off.
+pub const SUBJECT_GUIDES: [u16; 3] = [72, 50, 0];
+
 /// `gg/settings.json` under the OS configuration directory.
 pub fn path() -> Option<PathBuf> {
     config_dir().map(|dir| dir.join("settings.json"))
@@ -96,7 +103,8 @@ pub enum Theme {
 }
 
 impl Theme {
-    pub const ALL: [Self; 3] = [Self::System, Self::Light, Self::Dark];
+    /// In the mockup's order: System, Dark, Light.
+    pub const ALL: [Self; 3] = [Self::System, Self::Dark, Self::Light];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -196,6 +204,20 @@ fn image_layout_id() -> eframe::egui::Id {
     eframe::egui::Id::unique("gg-image-layout")
 }
 
+/// The commit subject length guide (0 is off); 72 until Preferences sets it.
+pub fn subject_guide(ctx: &eframe::egui::Context) -> u16 {
+    ctx.data(|data| data.get_temp(subject_guide_id()))
+        .unwrap_or(72)
+}
+
+pub fn set_subject_guide(ctx: &eframe::egui::Context, guide: u16) {
+    ctx.data_mut(|data| data.insert_temp(subject_guide_id(), guide));
+}
+
+fn subject_guide_id() -> eframe::egui::Id {
+    eframe::egui::Id::unique("gg-subject-guide")
+}
+
 /// The diff layout every reader in the window follows.
 pub fn diff_layout(ctx: &eframe::egui::Context) -> DiffLayout {
     ctx.data(|data| data.get_temp(diff_layout_id()))
@@ -254,6 +276,14 @@ pub struct Prefs {
     /// Command for Open in editor, such as `code --wait {file}`; empty opens
     /// the file with the system's default app.
     pub editor: String,
+    /// Interface zoom in percent: 100, 110, or 125.
+    pub zoom: u16,
+    /// Code font size in the reader, in tenths of a pixel: 125, 130, or 140.
+    pub code_font: u16,
+    /// Create tag starts with Sign checked.
+    pub sign_tags: bool,
+    /// Commit subject length guide in characters; 0 is off.
+    pub subject_guide: u16,
     path: Option<PathBuf>,
 }
 
@@ -275,6 +305,10 @@ impl Default for Prefs {
             branch_switch: true,
             fetch_prune: false,
             editor: String::new(),
+            zoom: 100,
+            code_font: 125,
+            sign_tags: false,
+            subject_guide: 72,
             path: None,
         }
     }
@@ -306,6 +340,16 @@ impl Prefs {
             branch_switch: read(path, "branch_switch").unwrap_or(defaults.branch_switch),
             fetch_prune: read(path, "fetch_prune").unwrap_or(defaults.fetch_prune),
             editor: read(path, "editor").unwrap_or(defaults.editor),
+            zoom: read(path, "zoom")
+                .filter(|zoom| ZOOMS.contains(zoom))
+                .unwrap_or(defaults.zoom),
+            code_font: read(path, "code_font")
+                .filter(|size| CODE_FONTS.contains(size))
+                .unwrap_or(defaults.code_font),
+            sign_tags: read(path, "sign_tags").unwrap_or(defaults.sign_tags),
+            subject_guide: read(path, "subject_guide")
+                .filter(|guide| SUBJECT_GUIDES.contains(guide))
+                .unwrap_or(defaults.subject_guide),
             path: Some(path.to_path_buf()),
         }
     }
@@ -333,7 +377,11 @@ impl Prefs {
         write(path, "merge_no_ff", &self.merge_no_ff)?;
         write(path, "branch_switch", &self.branch_switch)?;
         write(path, "fetch_prune", &self.fetch_prune)?;
-        write(path, "editor", &self.editor)
+        write(path, "editor", &self.editor)?;
+        write(path, "zoom", &self.zoom)?;
+        write(path, "code_font", &self.code_font)?;
+        write(path, "sign_tags", &self.sign_tags)?;
+        write(path, "subject_guide", &self.subject_guide)
     }
 
     /// The theme to show: `GG_THEME` (debug builds) wins over the saved one
@@ -398,6 +446,10 @@ mod tests {
         prefs.branch_switch = false;
         prefs.fetch_prune = true;
         prefs.editor = "code --wait {file}".into();
+        prefs.zoom = 125;
+        prefs.code_font = 140;
+        prefs.sign_tags = true;
+        prefs.subject_guide = 50;
         prefs.save()?;
         assert_eq!(Prefs::load_from(&path), prefs);
         assert_eq!(read::<u32>(&path, "future_option"), Some(7));

@@ -2223,7 +2223,7 @@ impl DiffView {
                 if let Some(discard) = chosen {
                     hunk_action = Some((index, discard));
                 }
-                let font = egui::FontId::monospace(12.0);
+                let font = egui::FontId::monospace(crate::density::code_font());
                 for (x, text) in [
                     (0.0, row.old_line.map(|n| n.to_string()).unwrap_or_default()),
                     (
@@ -2437,7 +2437,7 @@ impl DiffView {
             .hscroll(false)
             .id_salt(("file-diff-split", self.displayed_generation));
         ui.spacing_mut().item_spacing.y = 0.0;
-        let font = egui::FontId::monospace(12.0);
+        let font = egui::FontId::monospace(crate::density::code_font());
         let char_width = ui.fonts_mut(|fonts| fonts.glyph_width(&font, '0'));
         // Number gutter, sign column, and text, per side.
         let (number, sign_width) = (44.0, 14.0);
@@ -2805,7 +2805,7 @@ impl DiffView {
                         ui.visuals().weak_text_color(),
                     );
                 }
-                let font = egui::FontId::monospace(12.0);
+                let font = egui::FontId::monospace(crate::density::code_font());
                 ui.painter().text(
                     rect.min + egui::vec2(40.0 + gutter, HEIGHT / 2.0),
                     egui::Align2::RIGHT_CENTER,
