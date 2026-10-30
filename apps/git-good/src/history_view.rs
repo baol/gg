@@ -64,22 +64,65 @@ pub fn sort_labels(refs: &mut [gg_engine::refs::RefItem], head_name: Option<&str
     });
 }
 
-pub fn header(ui: &mut egui::Ui) {
+/// Column titles, as in the History mockup: `Commit · 164`, and the active
+/// filter as a chip with a clear button. Returns true when the filter is
+/// cleared.
+pub fn header(ui: &mut egui::Ui, count: &str, filter: &str) -> bool {
     let (rect, _) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), crate::density::row()),
         egui::Sense::hover(),
     );
-    for (cell, label) in columns(rect)
+    let cells = columns(rect);
+    let commit = format!("Commit · {count}");
+    for (cell, label) in cells
         .into_iter()
-        .zip(["", "Commit", "Author", "Hash", "Date"])
+        .zip(["", commit.as_str(), "Author", "Hash", "Date"])
     {
-        text(ui, cell, label, ui.visuals().text_color(), false);
+        text(ui, cell, label, ui.visuals().weak_text_color(), false);
+    }
+    let mut cleared = false;
+    if !filter.is_empty() {
+        let width = ui
+            .painter()
+            .layout_no_wrap(
+                commit,
+                egui::FontId::proportional(12.0),
+                egui::Color32::PLACEHOLDER,
+            )
+            .size()
+            .x;
+        let slot = egui::Rect::from_min_max(
+            egui::pos2(cells[1].left() + width + 12.0, rect.top() + 1.0),
+            egui::pos2(cells[1].right() - 4.0, rect.bottom() - 1.0),
+        );
+        if slot.width() > 60.0 {
+            let mut chip = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(slot)
+                    .layout(egui::Layout::left_to_right(egui::Align::Center)),
+            );
+            chip.spacing_mut().item_spacing.x = 4.0;
+            chip.add(
+                egui::Label::new(
+                    egui::RichText::new(format!("filter “{filter}”"))
+                        .small()
+                        .background_color(ui.visuals().faint_bg_color),
+                )
+                .truncate(),
+            )
+            .on_hover_text("Ctrl+F or Ctrl+K changes the filter");
+            cleared = chip
+                .small_button("×")
+                .on_hover_text("Clear the filter")
+                .clicked();
+        }
     }
     ui.painter().hline(
         rect.x_range(),
         rect.bottom(),
         ui.visuals().widgets.noninteractive.bg_stroke,
     );
+    cleared
 }
 
 fn paint_refs_and_subject(

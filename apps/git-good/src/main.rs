@@ -7732,7 +7732,6 @@ impl Browser {
         self.poll_conflict_view(ctx);
         let narrow = ctx.content_rect().width() < 1040.0;
         let wide_refs = !narrow && self.refs_visible && ctx.content_rect().width() >= 1120.0;
-        let filter_id = egui::Id::unique("history-filter");
         if self.working.is_none() && self.review.is_none() {
             self.state.viewport = self.viewport.clone();
             let (hovering_history, interacting, now) = ctx.input(|i| {
@@ -7842,12 +7841,6 @@ impl Browser {
                 ctx,
                 !hovering_history && !interacting && now - self.last_scroll > 0.2,
             );
-            let focus_filter =
-                ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::F));
-            if focus_filter {
-                self.narrow_details = false;
-                ctx.memory_mut(|m| m.request_focus(filter_id));
-            }
             if crate::navigation::available(ctx) {
                 if ctx.input_mut(|i| {
                     i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)
@@ -8250,7 +8243,16 @@ impl Browser {
                 .map_or(PrefSection::General, |dialog| dialog.section);
             self.open_preferences(section);
         }
-        let toggle = ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::K));
+        // Ctrl+F opens search with the History filter, whose first result
+        // filters History (there is no separate filter row).
+        let filter = ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::F))
+            && self.search.is_none();
+        if filter {
+            self.narrow_details = false;
+            self.search_text = self.state.query.clone();
+        }
+        let toggle =
+            filter || ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::K));
         match search_field {
             // Wide: Ctrl+K focuses the toolbar field; typing there opens results.
             Some((rect, active)) => {
@@ -8276,7 +8278,14 @@ impl Browser {
                     if self.search.is_some() && !open_search {
                         self.close_search(ctx);
                     } else {
-                        self.search = Some(SearchPalette::default());
+                        self.search = Some(SearchPalette {
+                            query: if filter {
+                                self.state.query.clone()
+                            } else {
+                                String::new()
+                            },
+                            ..Default::default()
+                        });
                     }
                 }
             }
@@ -9833,46 +9842,6 @@ impl Browser {
                 self.outcome_details_open = false;
             }
         }
-        if !narrow || !self.narrow_details {
-            egui::Panel::top("filter").exact_size(40.0).show(ui, |ui| {
-                ui.add_space(5.0);
-                ui.horizontal(|ui| {
-                    ui.strong("History");
-                    if self.rewrite_refresh.is_some() {
-                        ui.weak("Refreshing · showing previous history");
-                    }
-                    let count = format!(
-                        "{}{}",
-                        self.state.count,
-                        if self.state.finished { "" } else { "+" }
-                    );
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(90.0, 20.0),
-                        egui::Layout::left_to_right(egui::Align::Center),
-                        |ui| {
-                            ui.set_min_width(90.0);
-                            bounded_text::field(ui, &count, egui::FontId::proportional(12.0), 20.0);
-                        },
-                    )
-                    .response
-                    .on_hover_text(
-                        "Discovered matches; + means counting or searching is in progress.",
-                    );
-                    let response = ui.add(
-                        egui::TextEdit::singleline(&mut self.state.query)
-                            .id(filter_id)
-                            .hint_text("Filter by message, author, or ID")
-                            .desired_width(ui.available_width()),
-                    );
-                    if response.changed() {
-                        self.filter_changed();
-                    }
-                    if response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                        response.surrender_focus();
-                    }
-                });
-            });
-        }
         self.details_rect = egui::Rect::NOTHING;
         if !narrow && self.details_visible {
             let reserved_refs = if wide_refs { self.refs_width } else { 0.0 };
@@ -9956,7 +9925,20 @@ impl Browser {
                     .id_salt("history-columns")
                     .show(ui, |ui| {
                         ui.set_min_width(history_view::MIN_WIDTH);
-                        history_view::header(ui);
+                        let count = format!(
+                            "{}{}{}",
+                            self.state.count,
+                            if self.state.finished { "" } else { "+" },
+                            if self.rewrite_refresh.is_some() {
+                                " · refreshing, showing previous history"
+                            } else {
+                                ""
+                            }
+                        );
+                        if history_view::header(ui, &count, &self.state.query) {
+                            self.state.query.clear();
+                            self.filter_changed();
+                        }
                         let mut scroll = egui::ScrollArea::vertical().id_salt("history-rows");
                         if self.scroll_to_selection
                             && let Some(index) = self.state.selected_row
@@ -13843,28 +13825,25 @@ mod tests {
     }
 
     #[test]
-    fn filter_focus_keeps_arrow_keys_in_the_editor() {
+    fn ctrl_f_opens_search_with_the_history_filter() {
         let ctx = egui::Context::default();
         let mut app = Browser::new(".".into());
-        let _ = crate::tests::run_ui(&ctx, egui::RawInput::default(), |ctx| app.draw_ui(ctx));
+        app.state.query = "alpha".into();
+        let input = |events| frame_input(1120.0, 740.0, events);
+        let _ = crate::tests::run_ui(&ctx, input(vec![]), |ctx| app.draw_ui(ctx));
         let _ = crate::tests::run_ui(
             &ctx,
-            egui::RawInput {
-                events: vec![key(egui::Key::F, egui::Modifiers::COMMAND)],
-                ..Default::default()
-            },
+            input(vec![key(egui::Key::F, egui::Modifiers::COMMAND)]),
             |ctx| app.draw_ui(ctx),
         );
-        assert!(ctx.memory(|m| m.has_focus(egui::Id::unique("history-filter"))));
+        assert!(ctx.memory(|m| m.has_focus(search_field_id())));
+        assert_eq!(app.search_text, "alpha", "search starts from the filter");
         let _ = crate::tests::run_ui(
             &ctx,
-            egui::RawInput {
-                events: vec![key(egui::Key::Escape, egui::Modifiers::NONE)],
-                ..Default::default()
-            },
+            input(vec![key(egui::Key::Escape, egui::Modifiers::NONE)]),
             |ctx| app.draw_ui(ctx),
         );
-        assert!(!ctx.memory(|m| m.has_focus(egui::Id::unique("history-filter"))));
+        assert!(app.search.is_none());
     }
 
     #[test]

@@ -52,7 +52,7 @@ Rules:
 
 ## Search
 
-`Ctrl+K` or the toolbar's Search button opens one search field; `Ctrl+F` keeps focusing the History filter field. Results are grouped: **Filter** (filter history by the text, first and default; this is also how commits are found), **Actions** (named with their menu home), **Branches**, **Remotes**, **Tags**, and later **Files**. Search runs commands through the same definitions and readiness as the toolbar and menus.
+`Ctrl+K` or the toolbar's Search button opens one search field; `Ctrl+F` opens the same search starting from the current History filter; there is no separate filter row. Results are grouped: **Filter** (filter history by the text, first and default; this is also how commits are found), **Actions** (named with their menu home), **Branches**, **Remotes**, **Tags**, and later **Files**. Search runs commands through the same definitions and readiness as the toolbar and menus.
 
 ## Density
 

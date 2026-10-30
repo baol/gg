@@ -244,8 +244,17 @@ fn edit_filter(h: &mut Harness, value: &str) {
         repeat: false,
         modifiers: egui::Modifiers::COMMAND,
     };
+    // Ctrl+F opens search with the current filter; Enter runs its first
+    // result, "Filter history by …".
     h.frame(vec![command(egui::Key::F)]);
     h.frame(vec![command(egui::Key::A), egui::Event::Text(value.into())]);
+    h.frame(vec![egui::Event::Key {
+        key: egui::Key::Enter,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    }]);
 }
 
 #[test]
@@ -508,7 +517,7 @@ fn navigation_bindings_preserve_text_focus_and_empty_selection() {
         let mut h = Harness::new(count);
         if count > 0 {
             h.ctx
-                .memory_mut(|m| m.request_focus(egui::Id::unique("history-filter")));
+                .memory_mut(|m| m.request_focus(crate::search_field_id()));
             h.frame(vec![]);
         }
         let selected = h.app.state.selected_row;
