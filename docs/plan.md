@@ -87,7 +87,7 @@ Contracts: [repository clone and branch switching](architecture.md#branch-switch
 
 ### Increments
 
-1. **Clone setup and input editing.** Seed Clone's URL only from clipboard text recognized as a repository URL; preserve native paste in every text field. Replace the single destination path input with a root selector and project-slug field. Default to current working directory plus URL slug, and persist configurable clone roots/favorites.
+1. **Clone setup and input editing.** Seed Clone's URL only from clipboard text recognized as a repository URL; preserve native paste in every text field. Replace the single destination path input with a root selector and project-slug field. Default to the marked development base folder plus URL slug, list the launch folder last, and persist the base folders and their default.
 2. **Branch list clarity.** Make the refs sidebar user-resizable; bold the selected branch and use a stable per-ref color shared with its history lane for branch glyph and dot. Double-click a branch to request the ordinary safe switch, never to bypass validation.
 3. **Recoverable integration.** When local changes block a requested switch/rebase, retain the target and offer explicitly submitted stash-and-switch or rebase autostash. Expose **Pull --rebase** for upstream integration and the existing ref-scoped rebase actions through operation and recovery paths.
 
@@ -95,12 +95,34 @@ Contracts: [repository clone and branch switching](architecture.md#branch-switch
 
 | Scenario | Expected result | Method |
 | --- | --- | --- |
-| Clone destination | URL can be pasted; recognized clipboard URL seeds the field; root plus slug defaults to current directory plus repository name; configured/favorite roots persist and can be selected | Clipboard/UI tests, settings tests, native review |
+| Clone destination | URL can be pasted; recognized clipboard URL seeds the field; root plus slug defaults to the marked development base folder (else the first saved one, else the current directory) plus repository name; base folders and the default persist and can be selected | Clipboard/UI tests, settings tests, native review |
 | Text entry | Paste works in every single-line and multiline text input without replacing normal editing | Input-event tests and native review |
 | Resizable refs and Details | Divider drag changes widths within bounds; idle frames and normal interaction preserve both axes of history geometry | egui geometry/interaction and native review |
 | Branch identity | Current branch is bold; branch glyph and dot match its stable history-lane color | egui paint/geometry and native review |
 | Branch double-click | Double-click requests ordinary checked-out switch; current branch is inert; dirty state does not bypass validation | egui interaction and Git oracle |
 | Dirty integration | Blocked switch/rebase offers explicit stash and retains target; no automatic stash/retry; post-switch pull-rebase and rebase-onto remain explicit and recoverable | Git oracle, operation worker tests, native review |
+
+## Settings panel · planned
+
+Goal: gather user preferences in one Settings window and keep them across launches.
+
+### Increments
+
+1. **Settings store.** Persist preferences in `gg/settings.json` under the OS configuration directory; read `gg/roots.json` once and fold it in. Unknown or malformed values fall back to defaults without losing the rest.
+2. **General.** Theme (system, light, dark) and network avatars (on, or cached avatars and initials). Promote the `GG_THEME` and `GG_OFFLINE` debug switches to these settings; keep the variables as overrides.
+3. **Repositories.** Move Development base folders and the default clone folder into Settings; keep Repository → Clone's **Folders…** shortcut.
+4. **Layout.** Remember Commit details visibility and the binary preview layout.
+5. **Operation defaults.** Remember the last choices for stash (include untracked, keep staged), stash restore (restore staged, remove after restore), merge (always create a merge commit), new branch (switch after creation), and fetch prune. Dialogs open with these values; every operation stays explicitly submitted.
+
+### Acceptance
+
+| Scenario | Expected result | Method |
+| --- | --- | --- |
+| Round trip | Each setting survives relaunch; a malformed file resets only the affected values | Settings tests |
+| Migration | An existing `gg/roots.json` appears in Settings with its default intact | Settings tests |
+| Overrides | Debug environment variables win over saved values without rewriting them | Settings tests |
+| Settings window | Sections fit at 720 and 1120 widths and apply changes immediately | egui geometry and native review |
+| Operation defaults | Dialogs open with remembered values; nothing runs without explicit submission | egui interaction and Git oracle |
 
 ## UI-flow consolidation · pre-M7
 

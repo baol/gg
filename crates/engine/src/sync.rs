@@ -75,6 +75,9 @@ pub fn repository_url(text: &str) -> Option<String> {
             if host.is_empty() || path.is_empty() {
                 return None;
             }
+            if matches!(scheme, "https" | "http") && !web_repository_path(host, path) {
+                return None;
+            }
         }
     } else {
         let (authority, path) = text.split_once(':')?;
@@ -83,6 +86,38 @@ pub fn repository_url(text: &str) -> Option<String> {
         }
     }
     repository_name(text).map(|_| text.to_string())
+}
+
+/// True when a web URL names a repository rather than an ordinary page.
+///
+/// Accept paths ending in `.git`, and plain repository paths on known forges
+/// or on hosts named `git.*`, `gitlab.*`, `gitea.*`, or `forgejo.*`.
+fn web_repository_path(host: &str, path: &str) -> bool {
+    if path.contains(['?', '#']) {
+        return false;
+    }
+    let path = path.trim_end_matches('/');
+    if path.ends_with(".git") {
+        return true;
+    }
+    let host = host.rsplit('@').next().unwrap_or(host);
+    let host = host.split(':').next().unwrap_or(host).to_ascii_lowercase();
+    let segments: Vec<&str> = path.split('/').collect();
+    if segments.iter().any(|segment| segment.is_empty()) {
+        return false;
+    }
+    match host.as_str() {
+        "github.com" | "bitbucket.org" | "codeberg.org" | "gitea.com" | "git.sr.ht" => {
+            segments.len() == 2
+        }
+        _ => {
+            let forge = host == "gitlab.com"
+                || ["git.", "gitlab.", "gitea.", "forgejo."]
+                    .iter()
+                    .any(|prefix| host.starts_with(prefix));
+            forge && segments.len() >= 2 && !segments.contains(&"-")
+        }
+    }
 }
 
 /// Derive the directory name for a clone URL.
@@ -119,7 +154,13 @@ mod tests {
     fn detects_clone_urls_without_treating_paths_as_urls() {
         for url in [
             "https://github.com/baol/gg.git",
-            "http://example.org/team/repo",
+            "http://example.org/team/repo.git",
+            "https://github.com/baol/gg",
+            "https://gitlab.com/group/subgroup/repo",
+            "https://codeberg.org/team/repo/",
+            "https://git.example.org/team/repo",
+            "https://gitlab.example.org/group/repo",
+            "https://git.sr.ht/~owner/repo",
             "ssh://git@example.org/team/repo.git",
             "git://example.org/team/repo.git",
             "file:///srv/git/repo.git",
@@ -142,6 +183,15 @@ mod tests {
             "C:\\Users\\me\\repo",
             "https://example.org/a b",
             "ftp://example.org/repo.git",
+            "http://example.org/team/repo",
+            "https://news.example.org/2026/10/an-article",
+            "https://docs.rs/egui/latest/egui",
+            "https://github.com/baol/gg/issues/3",
+            "https://github.com/baol/gg/pull/12/files",
+            "https://github.com/baol",
+            "https://gitlab.com/group/repo/-/merge_requests/4",
+            "https://git.example.org/team/repo?tab=readme",
+            "https://example.org/repo.git#readme",
         ] {
             assert_eq!(
                 repository_url(text),

@@ -962,7 +962,8 @@ struct Browser {
     network_error: Option<String>,
     network_notice: Option<String>,
     clone_dialog: Option<CloneDialog>,
-    clone_folder: PathBuf,
+    /// Parent folder chosen in the clone dialog for this session only.
+    clone_folder: Option<PathBuf>,
     folders: folders::Roots,
     folders_dialog: Option<FoldersDialog>,
     force_push: Option<ForcePushDialog>,
@@ -1062,7 +1063,7 @@ impl Browser {
             network_error: None,
             network_notice: None,
             clone_dialog: None,
-            clone_folder: folders::starting_folder(),
+            clone_folder: None,
             folders: folders::Roots::load(),
             folders_dialog: None,
             force_push: None,
@@ -1463,8 +1464,10 @@ impl Browser {
         let mut open = true;
         let mut add = None;
         let mut remove = None;
+        let mut prefer = None;
         let mut add_current = false;
-        egui::Window::new("Clone folders")
+        let default_folder = self.folders.default_folder();
+        egui::Window::new("Development base folders")
             .id(egui::Id::unique("clone-folders"))
             .open(&mut open)
             .collapsible(false)
@@ -1475,7 +1478,7 @@ impl Browser {
             .default_pos(ctx.content_rect().center() - egui::vec2(230.0, 160.0))
             .show(ctx, |ui| {
                 ui.label(
-                    "Parent folders offered as clone destinations. The launch folder is always available.",
+                    "Folders where you keep repositories. Clone offers them in this order, then the launch folder. The selected folder is the default.",
                 );
                 ui.add_space(4.0);
                 egui::ScrollArea::vertical()
@@ -1495,6 +1498,15 @@ impl Browser {
                                     |ui| {
                                         if ui.small_button("Remove").clicked() {
                                             remove = Some(index);
+                                        }
+                                        if ui
+                                            .radio(root == &default_folder, "Default")
+                                            .on_hover_text(
+                                                "Start new clones in this folder at every launch",
+                                            )
+                                            .clicked()
+                                        {
+                                            prefer = Some(index);
                                         }
                                         let width = ui.available_width().max(0.0);
                                         let (rect, _) = ui.allocate_exact_size(
@@ -1525,7 +1537,7 @@ impl Browser {
                         .on_hover_text("Choose a folder with the desktop dialog")
                         .clicked()
                         && let Some(path) = folder_picker::pick_folder(
-                            "Clone folders",
+                            "Development base folder",
                             Some(Path::new(dialog.new_root.trim())),
                         )
                     {
@@ -1545,6 +1557,12 @@ impl Browser {
                 }
                 ui.weak("Changes are saved for the next launch.");
             });
+        if let Some(index) = prefer {
+            let error = self.prefer_clone_folder(index);
+            if let Some(dialog) = &mut self.folders_dialog {
+                dialog.error = error;
+            }
+        }
         if remove.is_some() || add.is_some() || add_current {
             let adding = add.is_some() || add_current;
             let error = if let Some(index) = remove {
@@ -1621,12 +1639,34 @@ impl Browser {
         }
     }
 
-    /// Remember the chosen parent folder for the rest of the session.
+    /// Keep the chosen parent folder for later clones in this session.
     fn choose_clone_folder(&mut self, folder: PathBuf) {
         if let Some(dialog) = &mut self.clone_dialog {
             dialog.folder = folder.to_string_lossy().into_owned();
         }
-        self.clone_folder = folder;
+        self.clone_folder = Some(folder);
+    }
+
+    /// The parent folder a new clone starts in: this session's choice, else
+    /// the saved default.
+    fn clone_start_folder(&self) -> PathBuf {
+        self.clone_folder
+            .clone()
+            .unwrap_or_else(|| self.folders.default_folder())
+    }
+
+    /// Mark a saved folder as the default for this and later launches.
+    fn prefer_clone_folder(&mut self, index: usize) -> Option<String> {
+        if !self.folders.set_preferred(index) {
+            return None;
+        }
+        let error = self.folders.save().err();
+        self.clone_folder = None;
+        let folder = self.folders.default_folder();
+        if let Some(dialog) = &mut self.clone_dialog {
+            dialog.folder = folder.to_string_lossy().into_owned();
+        }
+        error
     }
 
     fn start_clone(&mut self, ctx: &egui::Context, url: String, destination: Option<PathBuf>) {
@@ -5015,13 +5055,15 @@ impl Browser {
                     {
                         self.clone_dialog = Some(CloneDialog::from_url(
                             clipboard::repository_url(),
-                            self.clone_folder.clone(),
+                            self.clone_start_folder(),
                         ));
                         ui.close();
                     }
                     if ui
-                        .button("Clone folders…")
-                        .on_hover_text("Choose parent folders offered as clone destinations")
+                        .button("Development base folders…")
+                        .on_hover_text(
+                            "Choose the folders where you keep repositories and the default clone folder",
+                        )
                         .clicked()
                     {
                         self.folders_dialog = Some(FoldersDialog {
@@ -5579,16 +5621,8 @@ impl Browser {
             let mut field_lost_focus = false;
             let mut open =
                 !ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
-            let default_folder = self.clone_folder.clone();
-            let mut candidates = vec![folders::starting_folder()];
-            for root in self.folders.entries() {
-                if !candidates.iter().any(|candidate| candidate == root) {
-                    candidates.push(root.clone());
-                }
-            }
-            if !candidates.contains(&default_folder) {
-                candidates.push(default_folder.clone());
-            }
+            let default_folder = self.folders.default_folder();
+            let candidates = self.folders.candidates();
             egui::Window::new("Clone repository")
                 .id(egui::Id::unique("clone-repository"))
                 .open(&mut open)
@@ -5663,7 +5697,7 @@ impl Browser {
                         }
                         if ui
                             .button("Folders…")
-                            .on_hover_text("Configure the folders offered here")
+                            .on_hover_text("Edit the development base folders and the default")
                             .clicked()
                         {
                             open_folders = true;
@@ -7439,10 +7473,12 @@ mod tests {
     }
 
     #[test]
-    fn the_default_clone_folder_is_marked_and_kept_for_the_session()
+    fn the_preferred_clone_folder_is_marked_and_kept_across_launches()
     -> Result<(), Box<dyn std::error::Error>> {
         let folder = tempfile::tempdir()?;
         let other = tempfile::tempdir()?;
+        let config = tempfile::tempdir()?;
+        let settings = config.path().join("roots.json");
         assert_eq!(
             clone_folder_label(folder.path(), folder.path()),
             format!("{} {}", phosphor::CHECK, folder.path().display())
@@ -7453,18 +7489,33 @@ mod tests {
         );
 
         let mut app = layout_fixture();
-        assert_eq!(app.clone_folder, folders::starting_folder());
-        app.clone_dialog = Some(CloneDialog::from_url(None, app.clone_folder.clone()));
-        app.choose_clone_folder(folder.path().to_path_buf());
-        assert_eq!(app.clone_folder, folder.path());
+        app.folders = folders::Roots::load_from(&settings);
+        assert_eq!(app.clone_start_folder(), folders::starting_folder());
+        app.folders.add(&other.path().to_string_lossy())?;
+        app.folders.add(&folder.path().to_string_lossy())?;
+        assert_eq!(app.clone_start_folder(), other.path());
+
+        // Marking a saved folder makes it the default at every launch.
+        app.clone_dialog = Some(CloneDialog::from_url(None, app.clone_start_folder()));
+        assert_eq!(app.prefer_clone_folder(1), None);
+        assert_eq!(app.clone_start_folder(), folder.path());
         assert_eq!(
             app.clone_dialog
                 .as_ref()
                 .map(|dialog| dialog.folder.clone()),
             Some(folder.path().to_string_lossy().into_owned())
         );
-        let reopened = CloneDialog::from_url(None, app.clone_folder.clone());
-        assert_eq!(reopened.folder, folder.path().to_string_lossy());
+        let relaunched = folders::Roots::load_from(&settings);
+        assert_eq!(relaunched.default_folder(), folder.path());
+
+        // A folder picked in the clone dialog lasts for the session only.
+        let picked = tempfile::tempdir()?;
+        app.choose_clone_folder(picked.path().to_path_buf());
+        assert_eq!(app.clone_start_folder(), picked.path());
+        assert_eq!(
+            folders::Roots::load_from(&settings).default_folder(),
+            folder.path()
+        );
         Ok(())
     }
 
