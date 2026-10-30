@@ -9627,7 +9627,7 @@ impl Browser {
                 let hints = if narrow {
                     "j/k: select · Enter: review · Space: details · Esc: history · Ctrl/Cmd+F: filter"
                 } else {
-                    "Up/Down / j k: select   ·   PgUp/PgDn: page   ·   Enter: review   ·   Space: details   ·   Esc: history   ·   Ctrl/Cmd+F: filter   ·   Ctrl/Cmd+C: copy ID"
+                    "j k: select   ·   Enter: review   ·   Space: details   ·   R: rebase from here   ·   Ctrl+K: search   ·   Ctrl/Cmd+F: filter   ·   Ctrl/Cmd+C: copy ID"
                 };
                 (format!("{tracking}{hints}"), ui.visuals().weak_text_color())
             };
@@ -10465,7 +10465,8 @@ mod tests {
                     assert!(hint.contains("j/k: select"), "{hint}");
                     assert!(!hint.contains("copy ID"), "{hint}");
                 } else {
-                    assert!(hint.contains("Up/Down / j k: select"), "{hint}");
+                    assert!(hint.contains("j k: select"), "{hint}");
+                    assert!(hint.contains("R: rebase from here"), "{hint}");
                     assert!(hint.contains("copy ID"), "{hint}");
                 }
             }

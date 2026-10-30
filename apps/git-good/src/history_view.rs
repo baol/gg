@@ -49,14 +49,16 @@ fn text(ui: &egui::Ui, rect: egui::Rect, value: &str, color: egui::Color32, mono
 }
 
 pub fn sort_labels(refs: &mut [gg_engine::refs::RefItem], head_name: Option<&str>) {
+    // Tags first, then branches (the checked-out one first), then remotes,
+    // as in the History mockup.
     refs.sort_by_key(|item| {
         (
-            Some(item.full_name.as_str()) != head_name,
             match item.kind {
                 gg_engine::refs::RefKind::Tag => 0,
                 gg_engine::refs::RefKind::Branch => 1,
                 gg_engine::refs::RefKind::Remote => 2,
             },
+            Some(item.full_name.as_str()) != head_name,
             item.name.clone(),
         )
     });
@@ -210,6 +212,24 @@ fn ref_label_colors(
         gg_engine::refs::RefKind::Remote => egui::Color32::from_rgb(160, 164, 176),
         gg_engine::refs::RefKind::Tag => egui::Color32::from_rgb(224, 178, 96),
     };
+    // Dark mode uses the mockup's pill colors: gold tags, blue branches.
+    if visuals.dark_mode {
+        match kind {
+            gg_engine::refs::RefKind::Tag => {
+                return (
+                    egui::Color32::from_rgb(0x4d, 0x3a, 0x14),
+                    egui::Color32::from_rgb(0xf0, 0xc3, 0x5a),
+                );
+            }
+            gg_engine::refs::RefKind::Branch => {
+                return (
+                    egui::Color32::from_rgb(0x1d, 0x3a, 0x57),
+                    egui::Color32::from_rgb(0x9c, 0xca, 0xf5),
+                );
+            }
+            gg_engine::refs::RefKind::Remote => {}
+        }
+    }
     let foreground = if selected {
         visuals.strong_text_color()
     } else {
@@ -547,7 +567,7 @@ mod tests {
     }
 
     #[test]
-    fn current_branch_sorts_before_tags_and_other_refs() {
+    fn tags_sort_first_then_the_current_branch() {
         let id = "a".repeat(40);
         let mut refs = [
             gg_engine::refs::RefItem {
@@ -570,8 +590,8 @@ mod tests {
             },
         ];
         sort_labels(&mut refs, Some("refs/heads/main"));
-        assert_eq!(refs[0].name, "main");
-        assert_eq!(refs[1].name, "v1.0");
+        assert_eq!(refs[0].name, "v1.0");
+        assert_eq!(refs[1].name, "main");
         assert_eq!(refs[2].name, "zzz");
     }
 
