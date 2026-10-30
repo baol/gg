@@ -71,10 +71,14 @@ pub struct Review {
     embedded: bool,
     /// File to select and read once its row arrives.
     pending_path: Option<String>,
+    /// The commit's parents, kept while comparing against HEAD (that
+    /// comparison does not list them) so Compare with can return to one.
+    known_parents: Vec<String>,
 }
 impl Review {
     pub fn new(request: ReviewRequest, subject: String, ctx: &egui::Context) -> Self {
         let mut view = Self {
+            known_parents: Vec::new(),
             request,
             subject,
             worker: None,
@@ -344,7 +348,7 @@ impl Review {
         let Some(comparison) = &self.comparison else {
             return;
         };
-        if parent == 0 || parent > comparison.parents.len() {
+        if parent == 0 || parent > self.known_parents.len().max(comparison.parents.len()) {
             return;
         }
         let path = comparison.path.clone();
@@ -353,6 +357,22 @@ impl Review {
         self.request.path = path;
         self.request.revision = commit;
         self.request.parent = Some(parent);
+        self.request.against = None;
+        self.retry(ctx);
+    }
+
+    /// Compare the commit against HEAD instead of a parent.
+    fn compare_with_head(&mut self, ctx: &egui::Context) {
+        let Some(comparison) = &self.comparison else {
+            return;
+        };
+        let path = comparison.path.clone();
+        let commit = comparison.commit.clone();
+        self.abandon_history();
+        self.request.path = path;
+        self.request.revision = commit;
+        self.request.parent = None;
+        self.request.against = Some("HEAD".into());
         self.retry(ctx);
     }
     fn adopt_replacement(&mut self) {
@@ -533,6 +553,9 @@ impl Review {
                 self.subject = update.comparison.subject.clone();
                 self.request.revision = update.comparison.commit.clone();
                 self.request.path = update.comparison.path.clone();
+                if !update.comparison.parents.is_empty() {
+                    self.known_parents = update.comparison.parents.clone();
+                }
                 self.comparison = Some(update.comparison.clone());
                 if self.selected.is_none() && self.count > 0 && pinned.is_none() {
                     self.selected = Some(0);
@@ -682,33 +705,70 @@ impl Review {
                         // Every control keeps its slot; ones that do not apply are
                         // hidden rather than removed, so nothing shifts when the
                         // comparison loads, fails, or the reading mode changes.
-                        let parents = self
-                            .comparison
-                            .as_ref()
-                            .map(|comparison| comparison.parents.clone())
-                            .unwrap_or_default();
-                        visible_scope(ui, parents.len() > 1, |ui| {
-                            let mut parent = self.request.parent.unwrap_or(1);
-                            let before = parent;
+                        // Compare with: each parent, or HEAD, as in the
+                        // Review mockup. Hidden (slot kept) until loaded.
+                        let parents = if self.known_parents.is_empty() {
+                            self.comparison
+                                .as_ref()
+                                .map(|comparison| comparison.parents.clone())
+                                .unwrap_or_default()
+                        } else {
+                            self.known_parents.clone()
+                        };
+                        let against_head = self.request.against.as_deref() == Some("HEAD");
+                        visible_scope(ui, self.comparison.is_some() && !self.embedded, |ui| {
+                            let short = |id: &str| id[..id.len().min(8)].to_string();
+                            let current = if against_head {
+                                "HEAD".to_string()
+                            } else {
+                                let parent = self.request.parent.unwrap_or(1);
+                                parents.get(parent - 1).map_or_else(
+                                    || "parent".to_string(),
+                                    |id| {
+                                        if parents.len() > 1 {
+                                            format!("parent {parent} {}", short(id))
+                                        } else {
+                                            format!("parent {}", short(id))
+                                        }
+                                    },
+                                )
+                            };
+                            let mut choice = None;
                             egui::ComboBox::from_id_salt("review-parent")
                                 .width(150.0)
-                                .selected_text(format!("Parent {parent} of {}", parents.len()))
+                                .selected_text(current)
                                 .show_ui(ui, |ui| {
                                     for (index, id) in parents.iter().enumerate() {
-                                        ui.selectable_value(
-                                            &mut parent,
-                                            index + 1,
-                                            format!(
-                                                "Parent {} · {}",
-                                                index + 1,
-                                                &id[..id.len().min(8)]
-                                            ),
-                                        )
-                                        .on_hover_text(id);
+                                        let label = if parents.len() > 1 {
+                                            format!("parent {} {}", index + 1, short(id))
+                                        } else {
+                                            format!("parent {}", short(id))
+                                        };
+                                        let selected = !against_head
+                                            && self.request.parent.unwrap_or(1) == index + 1;
+                                        if ui
+                                            .selectable_label(selected, label)
+                                            .on_hover_text(id)
+                                            .clicked()
+                                        {
+                                            choice = Some(Some(index + 1));
+                                        }
+                                    }
+                                    if ui.selectable_label(against_head, "HEAD").clicked() {
+                                        choice = Some(None);
                                     }
                                 });
-                            if parent != before {
-                                self.switch_parent(parent, ctx);
+                            ui.weak("Compare with");
+                            match choice {
+                                Some(Some(parent))
+                                    if against_head
+                                        || self.request.parent.unwrap_or(1) != parent =>
+                                {
+                                    self.request.against = None;
+                                    self.switch_parent(parent, ctx);
+                                }
+                                Some(None) if !against_head => self.compare_with_head(ctx),
+                                _ => {}
                             }
                         });
                         let label = format!(
@@ -1406,6 +1466,29 @@ mod tests {
         }
         Ok(())
     }
+    #[test]
+    fn compare_with_switches_between_head_and_a_parent() -> Result<(), String> {
+        let ctx = egui::Context::default();
+        let mut view = Review::fixture(&ctx);
+        let _ = crate::tests::run_ui(
+            &ctx,
+            crate::tests::frame_input(1120.0, 740.0, vec![]),
+            |ui| {
+                view.draw_ui(ui);
+            },
+        );
+        let comparison = view.comparison.as_mut().ok_or("comparison missing")?;
+        comparison.parents = vec!["first".into()];
+        view.known_parents = vec!["first".into()];
+        view.compare_with_head(&ctx);
+        assert_eq!(view.request.against.as_deref(), Some("HEAD"));
+        assert_eq!(view.request.parent, None);
+        view.switch_parent(1, &ctx);
+        assert_eq!(view.request.against, None, "a parent replaces HEAD");
+        assert_eq!(view.request.parent, Some(1));
+        Ok(())
+    }
+
     #[test]
     fn parent_replacement_retains_identity_until_pointer_leaves_and_resets_selection()
     -> Result<(), String> {
