@@ -40,7 +40,7 @@ Every command has exactly one menu home. The toolbar, shortcuts, context menus, 
 | View | Local Changes (`Ctrl+1`) · History (`Ctrl+2`) · Refs sidebar (`Ctrl+\`) · Commit inspector (`Space`) · Inline diff · Side-by-side diff · Compact density · Theme ▸ |
 | Help | Keyboard shortcuts (`?`) · Documentation · About gg |
 
-The menus come from one command table that search also lists, so a command has one label, shortcut, and disabled reason everywhere. Reword, Reopen, Fixup, and Drop open the interactive rebase with the selected commit preset. There is no Refresh command: the window refreshes when files change and before each command (see the architecture). Still to decide (see the canvas page **Review · as built**): Track remote branch is kept from before the mockups; Submodules…, LFS…, and Side-by-side diff are listed but not built; F10 menu focus is not available in egui.
+The menus come from one command table that search also lists, so a command has one label, shortcut, and disabled reason everywhere. Reword, Reopen, Fixup, and Drop open the interactive rebase with the selected commit preset. There is no Refresh command: the window refreshes when files change and before each command (see the architecture). Still to decide (see the canvas page **Review · as built**): Track remote branch is kept from before the mockups; Submodules… and LFS… are listed but not built; F10 menu focus is not available in egui.
 
 About gg shows the logo, version, author (people only, from the workspace `authors`), license with a link, source link, and a note that parts of gg were written with AI coding assistants and come with no warranty.
 

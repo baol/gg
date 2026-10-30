@@ -54,6 +54,7 @@ mod search;
 mod settings;
 mod signature_cli;
 mod signature_worker;
+mod split_rows;
 mod stage_view;
 mod stash_cli;
 mod state;
@@ -670,6 +671,7 @@ enum FrameCommand {
     ResolveConflicts,
     ToggleDetails,
     SetDensity(settings::Density),
+    SetDiffLayout(settings::DiffLayout),
     SetTheme(settings::Theme),
     Documentation,
     About,
@@ -1868,6 +1870,7 @@ impl Browser {
         avatars::set_network(self.prefs.effective_network_avatars());
         settings::set_reader_mode(ctx, self.prefs.reader_mode);
         settings::set_image_layout(ctx, self.prefs.image_layout);
+        settings::set_diff_layout(ctx, self.prefs.diff_layout);
     }
 
     /// Save a remembered starting value when it changes. A save failure only
@@ -1885,9 +1888,11 @@ impl Browser {
     fn remember_layout(&mut self, ctx: &egui::Context) {
         let details = self.details_visible;
         let layout = settings::image_layout(ctx);
+        let diff_layout = settings::diff_layout(ctx);
         self.remember(|prefs| {
             prefs.details_visible = details;
             prefs.image_layout = layout;
+            prefs.diff_layout = diff_layout;
         });
     }
 
@@ -2791,6 +2796,10 @@ impl Browser {
                 self.prefs.density = density;
                 self.save_prefs(ctx);
             }
+            FrameCommand::SetDiffLayout(layout) => {
+                settings::set_diff_layout(ctx, layout);
+                self.remember(|prefs| prefs.diff_layout = layout);
+            }
             FrameCommand::SetTheme(theme) => {
                 self.prefs.theme = theme;
                 self.save_prefs(ctx);
@@ -3615,12 +3624,20 @@ impl Browser {
                     .checked(details)
                     .entry(),
                 Entry::Separator,
-                item("Inline diff", "", FrameCommand::Unavailable)
-                    .checked(true)
-                    .entry(),
-                item("Side-by-side diff", "", FrameCommand::Unavailable)
-                    .unless(Some("Not built yet: the reader shows inline diffs only"))
-                    .entry(),
+                item(
+                    "Inline diff",
+                    "",
+                    FrameCommand::SetDiffLayout(settings::DiffLayout::Inline),
+                )
+                .checked(self.prefs.diff_layout == settings::DiffLayout::Inline)
+                .entry(),
+                item(
+                    "Side-by-side diff",
+                    "",
+                    FrameCommand::SetDiffLayout(settings::DiffLayout::SideBySide),
+                )
+                .checked(self.prefs.diff_layout == settings::DiffLayout::SideBySide)
+                .entry(),
                 Entry::Separator,
                 item(
                     "Compact density",

@@ -819,3 +819,12 @@ Linux x86_64 · Rust 1.99.1 · Xvfb/llvmpipe · disposable Git fixtures · `orig
 - `cargo clippy --workspace --all-targets --locked -- -D warnings` passed.
 - Nested `--repo` fixtures preserve unrelated nested files, identify the containing worktree as current, and keep blame on the requested repository-relative path. Recovery failures return Git's error instead of a success receipt.
 - Native X11 at 1120×740 with a five-second `pre-commit` hook showed **Committing…** and disabled History. Clicking History left Local Changes open with the pending worker until completion.
+
+## Side-by-side diff · 2026-10-30
+
+Linux x86_64 · Rust 1.97.0 · Xvfb/llvmpipe · this repository's own history and working changes.
+
+- `cargo fmt --all --check` and `cargo clippy --workspace --all-targets --locked -- -D warnings` passed; `cargo test --workspace --locked` passed 615 tests (4 ignored opt-in performance checks).
+- `split_rows` unit tests cover pairing, padding, unpaired changes, run boundaries, the display/unified mapping in both directions, and paging; egui tests at 720 and 1120 widths find the Inline | Side by side toggle and both line number columns, and keep `[`/`]` navigation; settings tests round-trip `diff_layout`.
+- Native X11 at 1280×740: a commit review in Side by side (paired deletions and additions, context in both columns, hunk header across both) and Local Changes in Side by side with **Stage hunk** and **Discard hunk** on each header and padded cells beside longer additions. Only the dark theme was inspected natively.
+- Limitation: the two columns share one horizontal offset driven by sideways scrolling; there is no horizontal scroll bar in Side by side.

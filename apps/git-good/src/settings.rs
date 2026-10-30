@@ -146,6 +146,17 @@ pub enum ReaderMode {
     Full,
 }
 
+/// How Diff mode lays out a text comparison.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DiffLayout {
+    /// One column with both line numbers.
+    #[default]
+    Inline,
+    /// Before on the left and After on the right.
+    SideBySide,
+}
+
 /// Whether Local Changes starts with **Sign** checked.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -185,6 +196,20 @@ fn image_layout_id() -> eframe::egui::Id {
     eframe::egui::Id::unique("gg-image-layout")
 }
 
+/// The diff layout every reader in the window follows.
+pub fn diff_layout(ctx: &eframe::egui::Context) -> DiffLayout {
+    ctx.data(|data| data.get_temp(diff_layout_id()))
+        .unwrap_or_default()
+}
+
+pub fn set_diff_layout(ctx: &eframe::egui::Context, layout: DiffLayout) {
+    ctx.data_mut(|data| data.insert_temp(diff_layout_id(), layout));
+}
+
+fn diff_layout_id() -> eframe::egui::Id {
+    eframe::egui::Id::unique("gg-diff-layout")
+}
+
 pub fn reader_mode(ctx: &eframe::egui::Context) -> ReaderMode {
     ctx.data(|data| data.get_temp(reader_mode_id()))
         .unwrap_or_default()
@@ -210,6 +235,8 @@ pub struct Prefs {
     pub rebase_autostash: bool,
     /// Reader presentation for newly opened files.
     pub reader_mode: ReaderMode,
+    /// Inline or side-by-side Diff; remembered from the last choice.
+    pub diff_layout: DiffLayout,
     /// Image comparison layout; remembered from the last choice.
     pub image_layout: ImageLayout,
     pub sign_commits: SignCommits,
@@ -238,6 +265,7 @@ impl Default for Prefs {
             network_avatars: true,
             rebase_autostash: false,
             reader_mode: ReaderMode::default(),
+            diff_layout: DiffLayout::default(),
             image_layout: ImageLayout::default(),
             sign_commits: SignCommits::default(),
             details_visible: true,
@@ -267,6 +295,7 @@ impl Prefs {
             network_avatars: read(path, "network_avatars").unwrap_or(defaults.network_avatars),
             rebase_autostash: read(path, "rebase_autostash").unwrap_or(defaults.rebase_autostash),
             reader_mode: read(path, "reader_mode").unwrap_or(defaults.reader_mode),
+            diff_layout: read(path, "diff_layout").unwrap_or(defaults.diff_layout),
             image_layout: read(path, "image_layout").unwrap_or(defaults.image_layout),
             sign_commits: read(path, "sign_commits").unwrap_or(defaults.sign_commits),
             details_visible: read(path, "details_visible").unwrap_or(defaults.details_visible),
@@ -291,6 +320,7 @@ impl Prefs {
         write(path, "network_avatars", &self.network_avatars)?;
         write(path, "rebase_autostash", &self.rebase_autostash)?;
         write(path, "reader_mode", &self.reader_mode)?;
+        write(path, "diff_layout", &self.diff_layout)?;
         write(path, "image_layout", &self.image_layout)?;
         write(path, "sign_commits", &self.sign_commits)?;
         write(path, "details_visible", &self.details_visible)?;
@@ -358,6 +388,7 @@ mod tests {
         prefs.network_avatars = false;
         prefs.rebase_autostash = true;
         prefs.reader_mode = ReaderMode::Full;
+        prefs.diff_layout = DiffLayout::SideBySide;
         prefs.image_layout = ImageLayout::Onion;
         prefs.sign_commits = SignCommits::Never;
         prefs.details_visible = false;
@@ -388,6 +419,11 @@ mod tests {
         assert!(prefs.branch_switch, "absent keys keep their defaults");
         assert!(prefs.details_visible);
         assert_eq!(prefs.sign_commits, SignCommits::Git);
+        assert_eq!(
+            prefs.diff_layout,
+            DiffLayout::Inline,
+            "inline is the default"
+        );
         std::fs::write(&path, b"{not json")?;
         assert_eq!(Prefs::load_from(&path).density, Density::Compact);
         Ok(())

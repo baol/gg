@@ -54,6 +54,8 @@ pub struct Update {
     pub full: Option<Result<FileText, String>>,
     /// Row indices of diff hunks, so change navigation can reach any page.
     pub hunks: Vec<usize>,
+    /// Side-by-side pairing of the whole document's rows.
+    pub split: Arc<crate::split_rows::Layout>,
 }
 
 pub struct Worker {
@@ -114,6 +116,7 @@ impl Worker {
                 let mut loaded = 0;
                 let mut max_columns = 0;
                 let mut hunks: Vec<usize> = vec![];
+                let mut split = Arc::new(crate::split_rows::Layout::default());
                 let mut preview = None;
                 let mut full: Option<(u64, ReadingSide, Result<FileText, String>)> = None;
                 while !s.load(Ordering::Relaxed) {
@@ -126,6 +129,7 @@ impl Worker {
                         document = None;
                         full = None;
                         hunks.clear();
+                        split = Arc::default();
                         let cancelled = || {
                             s.load(Ordering::Relaxed)
                                 || g.load(Ordering::Relaxed) != request.generation
@@ -169,6 +173,9 @@ impl Worker {
                                 .filter(|(_, row)| row.kind == gg_engine::diff::RowKind::Hunk)
                                 .map(|(index, _)| index)
                                 .collect();
+                            split = Arc::new(crate::split_rows::Layout::from_kinds(
+                                doc.rows.iter().map(|row| row.kind),
+                            ));
                         }
                         document = Some(result);
                         loaded = request.generation;
@@ -191,6 +198,7 @@ impl Worker {
                                 result: Err(error.clone()),
                                 full: None,
                                 hunks: vec![],
+                                split: Arc::default(),
                             });
                             ctx.request_repaint();
                         }
@@ -250,6 +258,7 @@ impl Worker {
                             result,
                             full: Some(body),
                             hunks: hunks.clone(),
+                            split: split.clone(),
                         }
                     } else {
                         let start = match request.line {
@@ -293,6 +302,7 @@ impl Worker {
                             result: Ok(page),
                             full: None,
                             hunks: hunks.clone(),
+                            split: split.clone(),
                         }
                     };
                     if g.load(Ordering::Relaxed) != request.generation {
