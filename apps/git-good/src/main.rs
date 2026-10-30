@@ -2000,6 +2000,7 @@ impl Browser {
         });
         density::set(self.prefs.density);
         avatars::set_network(self.prefs.effective_network_avatars());
+        avatars::set_sources(&self.prefs.avatar_sources);
         settings::set_reader_mode(ctx, self.prefs.reader_mode);
         settings::set_image_layout(ctx, self.prefs.image_layout);
         settings::set_diff_layout(ctx, self.prefs.diff_layout);
@@ -2386,6 +2387,32 @@ impl Browser {
                                         } else {
                                             "Avatars are hidden."
                                         });
+                                        // Sources, tried in this order; each
+                                        // names what it learns.
+                                        let network = !offline_override
+                                            && prefs.history_avatars
+                                            && prefs.network_avatars;
+                                        for source in settings::AvatarSource::ALL {
+                                            let mut on = prefs.avatar_sources.contains(&source);
+                                            let changed = ui
+                                                .add_enabled(
+                                                    network,
+                                                    egui::Checkbox::new(&mut on, source.label()),
+                                                )
+                                                .on_hover_text(source.note())
+                                                .changed();
+                                            if changed {
+                                                prefs.avatar_sources.retain(|kept| *kept != source);
+                                                if on {
+                                                    prefs.avatar_sources.push(source);
+                                                }
+                                                prefs.avatar_sources.sort_by_key(|kept| {
+                                                    settings::AvatarSource::ALL
+                                                        .iter()
+                                                        .position(|candidate| candidate == kept)
+                                                });
+                                            }
+                                        }
                                         ui.checkbox(&mut prefs.history_tags, "Show tags in rows");
                                         ui.checkbox(&mut prefs.relative_dates, "Relative dates");
                                     });
