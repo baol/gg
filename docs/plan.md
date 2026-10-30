@@ -138,7 +138,7 @@ Still to build (medium):
 2. Changes: per-row stage/unstage buttons; line selection bar with Clear; S/U keys.
 3. Conflict workspace: files panel with resolved list and blocks left; Open in editor; result line numbers.
 4. Rebase stop: **Commits made at this stop** section in Local Changes.
-5. Stash picker: two-line rows and Up/Down/Enter/Del keys.
+5. Stash picker: two-line rows (Up/Down/Enter/Del keys are done).
 6. Preferences: footer with the config path and Close; search field; the settings listed on the Final page that are not built yet.
 7. Refs sidebar: **Worktrees** group and branch tracking counts.
 

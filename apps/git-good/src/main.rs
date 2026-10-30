@@ -4069,7 +4069,26 @@ impl Browser {
             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
             .show(|ui| {
                 ui.set_width(STASH_PICKER_WIDTH);
-                ui.label(egui::RichText::new("STASHES").small().weak());
+                if let Some(entry) = stash_picker_keys(ui.ctx(), picker, entries.len())
+                    .and_then(|apply| apply.then(|| entries.get(picker.selected)).flatten())
+                {
+                    pick = Some(if picker.confirm_drop {
+                        picker.confirm_drop = false;
+                        StashPick::Drop(entry.reference.clone())
+                    } else {
+                        StashPick::Apply(entry.reference.clone())
+                    });
+                }
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("STASHES").small().weak());
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(
+                            egui::RichText::new("Up/Down: select · Enter: apply · Del: drop")
+                                .small()
+                                .weak(),
+                        );
+                    });
+                });
                 // A fixed-height list with fixed column slots, so the popup
                 // never changes size as entries or counts arrive.
                 egui::ScrollArea::vertical()
@@ -4204,6 +4223,30 @@ fn stash_picker_row(
 
 /// Apply, Pop, Show changes, and Drop… for the selected stash, or the drop
 /// confirmation, in the picker's fixed action area.
+/// Keys in the open Stashes picker: Up/Down select, Del asks to drop, Esc
+/// cancels the drop question. Returns `Some(true)` when Enter runs the
+/// default action (Apply, or Drop while the drop question shows).
+fn stash_picker_keys(ctx: &egui::Context, picker: &mut StashPicker, count: usize) -> Option<bool> {
+    if count == 0 || ctx.text_edit_focused() {
+        return None;
+    }
+    let presses = |key| ctx.input_mut(|i| i.count_and_consume_key(egui::Modifiers::NONE, key));
+    let pressed = |key| presses(key) > 0;
+    let down = presses(egui::Key::ArrowDown);
+    let up = presses(egui::Key::ArrowUp);
+    if down + up > 0 {
+        picker.selected = (picker.selected + down).saturating_sub(up).min(count - 1);
+        picker.confirm_drop = false;
+    }
+    if pressed(egui::Key::Delete) {
+        picker.confirm_drop = true;
+    }
+    if picker.confirm_drop && pressed(egui::Key::Escape) {
+        picker.confirm_drop = false;
+    }
+    pressed(egui::Key::Enter).then_some(true)
+}
+
 fn stash_picker_actions(
     ui: &mut egui::Ui,
     entry: &gg_engine::stash::StashEntry,
@@ -14585,6 +14628,48 @@ mod tests {
             "the branch's own commits through HEAD"
         );
         Ok(())
+    }
+
+    #[test]
+    fn stash_picker_keys_select_ask_to_drop_and_apply() {
+        let ctx = egui::Context::default();
+        let key = |key| egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let mut picker = StashPicker::default();
+        let press = |picker: &mut StashPicker, keys: Vec<egui::Key>| {
+            let mut result = None;
+            let input = egui::RawInput {
+                events: keys.into_iter().map(key).collect(),
+                ..Default::default()
+            };
+            let _ = crate::tests::run_ui(&ctx, input, |ui| {
+                result = stash_picker_keys(ui.ctx(), picker, 3);
+            });
+            result
+        };
+        assert_eq!(
+            press(
+                &mut picker,
+                vec![
+                    egui::Key::ArrowDown,
+                    egui::Key::ArrowDown,
+                    egui::Key::ArrowDown
+                ]
+            ),
+            None
+        );
+        assert_eq!(picker.selected, 2, "stops at the last entry");
+        press(&mut picker, vec![egui::Key::ArrowUp, egui::Key::Delete]);
+        assert_eq!(picker.selected, 1);
+        assert!(picker.confirm_drop);
+        press(&mut picker, vec![egui::Key::Escape]);
+        assert!(!picker.confirm_drop);
+        assert_eq!(press(&mut picker, vec![egui::Key::Enter]), Some(true));
     }
 
     #[test]
