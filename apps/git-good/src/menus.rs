@@ -100,7 +100,8 @@ pub fn show<C: Clone>(ui: &mut egui::Ui, menus: &[Menu<C>]) -> Option<C> {
     chosen
 }
 
-fn entries<C: Clone>(ui: &mut egui::Ui, list: &[Entry<C>], chosen: &mut Option<C>) {
+/// Draw a list of entries (a menu's body, or a popup that mirrors a menu).
+pub fn entries<C: Clone>(ui: &mut egui::Ui, list: &[Entry<C>], chosen: &mut Option<C>) {
     ui.set_min_width(240.0);
     for entry in list {
         match entry {

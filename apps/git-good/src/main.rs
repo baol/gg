@@ -1108,8 +1108,8 @@ enum CommitAction {
 }
 
 enum CommitCommand {
-    Action(CommitAction),
-    CopyHash,
+    /// An item of the Commit menu, mirrored in the Commit actions popup.
+    Menu(FrameCommand),
     CopySubject,
     OpenRecovery,
     OpenSignature,
@@ -1154,81 +1154,22 @@ fn recovery_label(action: RecoveryAction) -> &'static str {
     }
 }
 
+/// The Commit actions popup: the Commit menu's own entries (one command
+/// table), then the popup-only extras.
 fn commit_action_menu(
     ui: &mut egui::Ui,
-    id: &str,
-    can_mutate: bool,
-    mutate_reason: Option<&str>,
+    menu: &[menus::Entry<FrameCommand>],
 ) -> Option<CommitCommand> {
-    let short: String = id.chars().take(7).collect();
-    let mut command = None;
-    ui.label(egui::RichText::new("Inspect").weak());
-    if ui.button(format!("Review {short}")).clicked() {
-        command = Some(CommitCommand::Action(CommitAction::Review));
-    }
-    if ui
-        .button(format!("Compare {short} with current HEAD"))
-        .clicked()
-    {
-        command = Some(CommitCommand::Action(CommitAction::Compare));
-    }
-    if ui.button("Copy hash").clicked() {
-        command = Some(CommitCommand::CopyHash);
-    }
+    let mut chosen = None;
+    menus::entries(ui, menu, &mut chosen);
+    let mut command = chosen.map(CommitCommand::Menu);
+    ui.separator();
     if ui.button("Copy subject").clicked() {
         command = Some(CommitCommand::CopySubject);
     }
     if ui.button("Signature details…").clicked() {
         command = Some(CommitCommand::OpenSignature);
     }
-    ui.separator();
-    ui.label(egui::RichText::new("Integrate").weak());
-    if ui
-        .add_enabled(
-            can_mutate,
-            egui::Button::new(format!("Cherry-pick {short}")),
-        )
-        .on_hover_text(mutate_reason.unwrap_or("Apply this commit to the current branch"))
-        .clicked()
-    {
-        command = Some(CommitCommand::Action(CommitAction::CherryPick));
-    }
-    if ui
-        .add_enabled(can_mutate, egui::Button::new(format!("Revert {short}")))
-        .on_hover_text(mutate_reason.unwrap_or("Invert this commit on the current branch"))
-        .clicked()
-    {
-        command = Some(CommitCommand::Action(CommitAction::Revert));
-    }
-    ui.separator();
-    ui.label(egui::RichText::new("Rewrite and destructive").weak());
-    ui.menu_button(format!("Reset {short} here"), |ui| {
-        for (label, mode) in [
-            ("Soft", gg_engine::reset::Mode::Soft),
-            ("Mixed", gg_engine::reset::Mode::Mixed),
-            ("Hard", gg_engine::reset::Mode::Hard),
-        ] {
-            if ui
-                .add_enabled(can_mutate, egui::Button::new(label))
-                .on_hover_text(mutate_reason.unwrap_or("Reset the current branch here"))
-                .clicked()
-            {
-                command = Some(CommitCommand::Action(CommitAction::Reset(mode)));
-            }
-        }
-    });
-    if ui
-        .add_enabled(
-            can_mutate,
-            egui::Button::new("Interactive rebase from here…"),
-        )
-        .on_hover_text(mutate_reason.unwrap_or("Rewrite commits from this commit through HEAD"))
-        .clicked()
-    {
-        command = Some(CommitCommand::Action(CommitAction::Rewrite));
-    }
-    ui.separator();
-    ui.label(egui::RichText::new("Recovery").weak());
     if ui.button("Recovery…").clicked() {
         command = Some(CommitCommand::OpenRecovery);
     }
@@ -2759,10 +2700,7 @@ impl Browser {
                     self.delete_pick = Some(DeletePick { name });
                 }
             }
-            FrameCommand::ReviewSelected => {
-                let location = self.capture_return_location();
-                self.open_review(ctx, location);
-            }
+            FrameCommand::ReviewSelected => self.on_selected(ctx, CommitAction::Review),
             FrameCommand::CompareHead => self.on_selected(ctx, CommitAction::Compare),
             FrameCommand::CherryPick => self.on_selected(ctx, CommitAction::CherryPick),
             FrameCommand::Revert => self.on_selected(ctx, CommitAction::Revert),
@@ -3132,6 +3070,16 @@ impl Browser {
         if reload {
             self.load(ctx);
         }
+    }
+
+    /// The Commit menu's entries, which the Commit actions popup mirrors.
+    fn commit_menu_entries(&self) -> Vec<menus::Entry<FrameCommand>> {
+        let ready = self.frame_readiness();
+        self.menu_table(&ready)
+            .into_iter()
+            .find(|menu| menu.title == "Commit")
+            .map(|menu| menu.entries)
+            .unwrap_or_default()
     }
 
     /// The checked-out branch, unless HEAD is detached.
@@ -4735,13 +4683,6 @@ impl Browser {
         }
     }
 
-    fn mutation_ready(&self) -> bool {
-        self.mutation.is_none()
-            && !self.operation_busy()
-            && self.branch.is_none()
-            && self.network.is_none()
-    }
-
     fn mutation_reason(&self) -> Option<&'static str> {
         if self.mutation.is_some() {
             Some("Recover the operation in progress first.")
@@ -4791,8 +4732,13 @@ impl Browser {
         command: CommitCommand,
     ) {
         match command {
-            CommitCommand::Action(action) => self.run_commit_action(ctx, id.to_string(), action),
-            CommitCommand::CopyHash => ctx.copy_text(id.to_string()),
+            CommitCommand::Menu(command) => {
+                let (mut local, mut history) = (false, false);
+                self.run_frame_command(ctx, command, &mut local, &mut history);
+                if local {
+                    self.open_working(ctx);
+                }
+            }
             CommitCommand::CopySubject => ctx.copy_text(subject.to_string()),
             CommitCommand::OpenRecovery => {
                 if let Some(history) = &self.state.history {
@@ -9837,13 +9783,10 @@ impl Browser {
                     ui.add_space(8.0);
                     let commit = self.state.displayed_details();
                     let loading = self.state.details.is_none();
-                    let ready = self.mutation_ready();
-                    let reason = self.mutation_reason();
+                    let menu = self.commit_menu_entries();
                     let command =
                         details_view::show(ui, commit, loading, &mut self.avatars, |ui| {
-                            commit.and_then(|commit| {
-                                commit_action_menu(ui, &commit.id, ready, reason)
-                            })
+                            commit.and_then(|_| commit_action_menu(ui, &menu))
                         });
                     if let Some(command) = command
                         && let Some(commit) = commit
@@ -9856,6 +9799,7 @@ impl Browser {
             self.details_rect = details.response.rect;
         }
         let mut pending_commit_command: Option<(String, String, CommitCommand)> = None;
+        let mut right_clicked_row: Option<usize> = None;
         egui::CentralPanel::default().show(ui, |ui| {
             if narrow && self.narrow_details {
                 self.history_rect = egui::Rect::NOTHING;
@@ -9866,10 +9810,9 @@ impl Browser {
                 ui.add_space(8.0);
                 let commit = self.state.displayed_details();
                 let loading = self.state.details.is_none();
-                let ready = self.mutation_ready();
-                let reason = self.mutation_reason();
+                let menu = self.commit_menu_entries();
                 let command = details_view::show(ui, commit, loading, &mut self.avatars, |ui| {
-                    commit.and_then(|commit| commit_action_menu(ui, &commit.id, ready, reason))
+                    commit.and_then(|_| commit_action_menu(ui, &menu))
                 });
                 if let Some(command) = command
                     && let Some(commit) = commit
@@ -9891,6 +9834,7 @@ impl Browser {
                     });
                 }
                 self.history_rect = ui.available_rect_before_wrap();
+                let row_menu = self.commit_menu_entries();
                 egui::ScrollArea::horizontal()
                     .id_salt("history-columns")
                     .show(ui, |ui| {
@@ -9959,14 +9903,15 @@ impl Browser {
                                             })
                                             .inner;
                                         self.row_rects.push((row, response.rect));
+                                        // The menu's commands act on the selected
+                                        // commit, so a right-click selects the row.
+                                        if response.secondary_clicked() {
+                                            right_clicked_row = Some(row);
+                                        }
                                         response.context_menu(|ui| {
                                             let id = commit.id.clone();
-                                            if let Some(command) = commit_action_menu(
-                                                ui,
-                                                &id,
-                                                self.mutation_ready(),
-                                                self.mutation_reason(),
-                                            ) {
+                                            if let Some(command) = commit_action_menu(ui, &row_menu)
+                                            {
                                                 pending_commit_command = Some((
                                                     id.clone(),
                                                     commit.subject().to_owned(),
@@ -10021,6 +9966,12 @@ impl Browser {
                 ui.label("Choose Open… to enter a repository path.");
             }
         });
+        if let Some(row) = right_clicked_row {
+            self.state.select_row(row);
+            if self.worker.is_none() {
+                self.state.details = self.state.rows.get(&row).cloned();
+            }
+        }
         if let Some((id, subject, command)) = pending_commit_command {
             self.apply_commit_command(ctx, &id, &subject, command);
         }
@@ -12494,19 +12445,25 @@ mod tests {
                     _ => None,
                 })
                 .collect::<Vec<_>>();
+            // The popup mirrors the Commit menu, then its own extras.
             for label in [
-                "Inspect",
-                "Integrate",
-                "Rewrite and destructive",
-                "Recovery",
+                "Review changes",
+                "Compare with HEAD",
+                "Copy ID",
+                "Cherry-pick onto HEAD",
+                "Revert",
+                "Interactive rebase from here…",
+                "Reword…",
+                "Reopen for editing…",
+                "Fixup into…",
+                "Drop…",
+                "Reset current branch to here…",
+                "Copy subject",
+                "Signature details…",
                 "Recovery…",
             ] {
                 assert!(text.contains(&label), "missing {label} at {width}");
             }
-            assert!(
-                text.iter().any(|line| line.starts_with("Cherry-pick ")),
-                "missing target-aware cherry-pick at {width}"
-            );
             assert_eq!(
                 text.iter()
                     .filter(|line| **line == "Commit actions")
@@ -12535,64 +12492,44 @@ mod tests {
         });
         assert!(output.shapes.iter().any(|shape| matches!(
             &shape.shape,
-            egui::epaint::Shape::Text(text) if text.galley.job.text == "Integrate"
+            egui::epaint::Shape::Text(text) if text.galley.job.text == "Cherry-pick onto HEAD"
         )));
     }
 
     #[test]
     fn commit_action_menu_returns_the_clicked_command() {
         let ctx = egui::Context::default();
-        let id = "a".repeat(40);
+        let app = layout_fixture();
+        let menu = app.commit_menu_entries();
         let command = std::cell::RefCell::new(None);
-        let first = crate::tests::run_ui(&ctx, frame_input(360.0, 600.0, vec![]), |ui| {
-            command
-                .borrow_mut()
-                .replace(commit_action_menu(ui, &id, true, None));
-        });
-        let compare = first.shapes.iter().find_map(|shape| match &shape.shape {
-            egui::epaint::Shape::Text(text)
-                if text.galley.job.text == "Compare aaaaaaa with current HEAD" =>
-            {
-                Some(text.pos)
-            }
-            _ => None,
-        });
-        let Some(compare) = compare else {
-            return;
+        let draw = |events: Vec<egui::Event>| {
+            crate::tests::run_ui(&ctx, frame_input(360.0, 600.0, events), |ui| {
+                command.borrow_mut().replace(commit_action_menu(ui, &menu));
+            })
         };
-        let press = egui::Event::PointerButton {
-            pos: compare + egui::vec2(5.0, 0.0),
+        let first = draw(vec![]);
+        let copy = first
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) if text.galley.job.text == "Copy subject" => {
+                    Some(text.pos)
+                }
+                _ => None,
+            })
+            .unwrap_or_default()
+            + egui::vec2(5.0, 4.0);
+        let button = |pressed| egui::Event::PointerButton {
+            pos: copy,
             button: egui::PointerButton::Primary,
-            pressed: true,
+            pressed,
             modifiers: egui::Modifiers::NONE,
         };
-        let release = egui::Event::PointerButton {
-            pos: compare + egui::vec2(5.0, 0.0),
-            button: egui::PointerButton::Primary,
-            pressed: false,
-            modifiers: egui::Modifiers::NONE,
-        };
-        let _ = crate::tests::run_ui(
-            &ctx,
-            frame_input(
-                360.0,
-                600.0,
-                vec![egui::Event::PointerMoved(compare), press],
-            ),
-            |ui| {
-                command
-                    .borrow_mut()
-                    .replace(commit_action_menu(ui, &id, true, None));
-            },
-        );
-        let _ = crate::tests::run_ui(&ctx, frame_input(360.0, 600.0, vec![release]), |ui| {
-            command
-                .borrow_mut()
-                .replace(commit_action_menu(ui, &id, true, None));
-        });
+        draw(vec![egui::Event::PointerMoved(copy), button(true)]);
+        draw(vec![button(false)]);
         assert!(matches!(
             command.borrow().as_ref(),
-            Some(Some(CommitCommand::Action(CommitAction::Compare)))
+            Some(Some(CommitCommand::CopySubject))
         ));
     }
 
