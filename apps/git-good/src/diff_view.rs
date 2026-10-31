@@ -2167,7 +2167,15 @@ impl DiffView {
         let capabilities = self.capabilities();
         // One header row, as in the mockups: path and endpoints, then the
         // mode controls; narrow readers wrap the controls to a second line.
-        let path_width = (ui.available_width() - self.header_controls - 8.0).clamp(140.0, 560.0);
+        // When the controls leave the path less than 220 px, the path takes
+        // the first line and the controls wrap below it.
+        let spare = ui.available_width() - self.header_controls - 8.0;
+        let fits = spare >= 220.0;
+        let path_width = if fits {
+            spare.min(560.0)
+        } else {
+            (ui.available_width() - 8.0).max(140.0)
+        };
         let header = ui.horizontal_wrapped(|ui| {
             self.draw_header(ui, &change, path_width);
             let diff = ui
@@ -2315,7 +2323,9 @@ impl DiffView {
         // Learn the controls' width so the path slot leaves room for them;
         // a wrapped row widens the estimate for the next frame.
         let row = header.response.rect;
-        if row.height() > 34.0 {
+        if !fits {
+            // Wrapped on purpose; keep the last single-line measurement.
+        } else if row.height() > 34.0 {
             self.header_controls += 60.0;
             ui.ctx().request_repaint();
         } else {
