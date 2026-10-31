@@ -612,7 +612,8 @@ impl RecoveryView {
                                 return_location::RecoverySource::Backups,
                                 return_location::RecoverySource::Reflog,
                             ] {
-                                ui.selectable_value(
+                                crate::menus::choose(
+                                    ui,
                                     &mut source,
                                     candidate,
                                     recovery_source_label(candidate),
@@ -1285,13 +1286,13 @@ fn commit_action_menu(
     menus::entries(ui, menu, &mut chosen);
     let mut command = chosen.map(CommitCommand::Menu);
     ui.separator();
-    if ui.button("Copy subject").clicked() {
+    if ui.add(menus::row(false, "Copy subject")).clicked() {
         command = Some(CommitCommand::CopySubject);
     }
-    if ui.button("Signature details…").clicked() {
+    if ui.add(menus::row(false, "Signature details…")).clicked() {
         command = Some(CommitCommand::OpenSignature);
     }
-    if ui.button("Recovery…").clicked() {
+    if ui.add(menus::row(false, "Recovery…")).clicked() {
         command = Some(CommitCommand::OpenRecovery);
     }
     command
@@ -2367,7 +2368,7 @@ impl Browser {
                                         .selected_text(format!("{}%", prefs.zoom))
                                         .show_ui(ui, |ui| {
                                             for zoom in settings::ZOOMS {
-                                                ui.selectable_value(&mut prefs.zoom, zoom, format!("{zoom}%"));
+                                                crate::menus::choose(ui, &mut prefs.zoom, zoom, format!("{zoom}%"));
                                             }
                                         });
                                     ui.end_row();
@@ -2423,7 +2424,7 @@ impl Browser {
                                         .selected_text(px(prefs.code_font))
                                         .show_ui(ui, |ui| {
                                             for size in settings::CODE_FONTS {
-                                                ui.selectable_value(&mut prefs.code_font, size, px(size));
+                                                crate::menus::choose(ui, &mut prefs.code_font, size, px(size));
                                             }
                                         });
                                     ui.end_row();
@@ -2465,7 +2466,7 @@ impl Browser {
                                         )
                                         .show_ui(ui, |ui| {
                                             for (choice, label) in settings::WHITESPACE {
-                                                ui.selectable_value(&mut prefs.diff_whitespace, choice, label);
+                                                crate::menus::choose(ui, &mut prefs.diff_whitespace, choice, label);
                                             }
                                         })
                                         .response
@@ -3379,9 +3380,9 @@ impl Browser {
                             dialog.upstream.clone()
                         })
                         .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut dialog.upstream, String::new(), "None");
+                            crate::menus::choose(ui, &mut dialog.upstream, String::new(), "None");
                             for name in &remotes {
-                                ui.selectable_value(&mut dialog.upstream, name.clone(), name);
+                                crate::menus::choose(ui, &mut dialog.upstream, name.clone(), name);
                             }
                         });
                     ui.weak("Pull, push, and the ahead/behind counts follow the upstream.");
@@ -3451,7 +3452,7 @@ impl Browser {
                         .selected_text(pick.name.clone())
                         .show_ui(ui, |ui| {
                             for name in &branches {
-                                ui.selectable_value(&mut pick.name, name.clone(), name);
+                                crate::menus::choose(ui, &mut pick.name, name.clone(), name);
                             }
                         });
                     ui.weak("The current branch cannot be deleted. The next step confirms.");
@@ -4547,9 +4548,9 @@ impl Browser {
                         };
                         let response = ui.add_enabled(
                             reason.is_none(),
-                            egui::Button::selectable(*current, label)
+                            menus::row(*current, label)
                                 .truncate()
-                                .min_size(egui::vec2(ui.available_width(), 24.0)),
+                                .min_size(egui::vec2(ui.available_width(), menus::ROW_HEIGHT)),
                         );
                         let response = match reason {
                             Some(reason) => response.on_disabled_hover_text(reason),
@@ -4566,8 +4567,8 @@ impl Browser {
                 if ui
                     .add_enabled(
                         ready.branch_idle,
-                        egui::Button::new("New branch from HEAD…")
-                            .min_size(egui::vec2(ui.available_width(), 24.0)),
+                        menus::row(false, "New branch from HEAD…")
+                            .min_size(egui::vec2(ui.available_width(), menus::ROW_HEIGHT)),
                     )
                     .clicked()
                 {
@@ -7222,7 +7223,12 @@ impl Browser {
                             .width(260.0)
                             .show_ui(ui, |ui| {
                                 for branch in &branches {
-                                    ui.selectable_value(&mut dialog.branch, branch.clone(), branch);
+                                    crate::menus::choose(
+                                        ui,
+                                        &mut dialog.branch,
+                                        branch.clone(),
+                                        branch,
+                                    );
                                 }
                             });
                     }
@@ -9302,8 +9308,7 @@ impl Browser {
                                 for candidate in &candidates {
                                     let label = candidate.to_string_lossy().into_owned();
                                     let text = clone_folder_label(candidate, &default_folder);
-                                    if ui
-                                        .selectable_label(dialog.folder.trim() == label, text)
+                                    if crate::menus::choice(ui, dialog.folder.trim() == label, text)
                                         .clicked()
                                     {
                                         dialog.folder = label;

@@ -24,7 +24,7 @@ Dialogs that ask for a decision or start a change are modal; tool and informatio
 
 The old navigation strip is merged into the toolbar; no other row repeats the tabs.
 
-Menus are egui's in-window menu bar on every platform. gg does not create native OS menus (the macOS menu bar and KDE's global menu stay empty) and uses no Tauri or Tauri-ecosystem crates such as `muda`.
+Menus are egui's in-window menu bar on every platform. Every menu and dropdown (menu bar menus, submenus, the branch switcher, the rebase action chip, Commit actions, and every choice list) draws the same 24 px rows: a 14 px check column, the label, then the shortcut. The chosen or active item shows a checkmark in that column; no item gets a selected fill. Rows have no frame until hovered. gg does not create native OS menus (the macOS menu bar and KDE's global menu stay empty) and uses no Tauri or Tauri-ecosystem crates such as `muda`.
 
 ## Command placement
 

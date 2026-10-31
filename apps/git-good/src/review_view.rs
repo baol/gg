@@ -1006,15 +1006,14 @@ impl Review {
                                         };
                                         let selected = !against_head
                                             && self.request.parent.unwrap_or(1) == index + 1;
-                                        if ui
-                                            .selectable_label(selected, label)
+                                        if crate::menus::choice(ui, selected, label)
                                             .on_hover_text(id)
                                             .clicked()
                                         {
                                             choice = Some(Some(index + 1));
                                         }
                                     }
-                                    if ui.selectable_label(against_head, "HEAD").clicked() {
+                                    if crate::menus::choice(ui, against_head, "HEAD").clicked() {
                                         choice = Some(None);
                                     }
                                 });
