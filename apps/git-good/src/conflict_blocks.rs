@@ -143,31 +143,50 @@ impl Blocks {
                                 if let Some(line) = starts.get(index) {
                                     ui.weak(format!("line {line}"));
                                 }
-                                for (key, choice) in BlockChoice::ALL.into_iter().enumerate() {
-                                    let selected = self.choices[index] == Some(choice);
-                                    let response =
-                                        ui.selectable_label(
-                                            selected,
-                                            format!("{} {}", key + 1, choice.label()),
-                                        )
-                                        .on_hover_text(
-                                            format!("Key {} on the current block", key + 1),
-                                        );
-                                    if response.clicked() {
-                                        chosen = Some((index, choice));
-                                    }
-                                }
                                 if self.choices[index].is_none() {
                                     ui.colored_label(ui.visuals().warn_fg_color, "unresolved");
                                 }
+                                // The choices at the right, as in the mockup;
+                                // the chosen one is filled.
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        for (key, choice) in
+                                            BlockChoice::ALL.into_iter().enumerate().rev()
+                                        {
+                                            let selected = self.choices[index] == Some(choice);
+                                            let mut button = egui::Button::new(choice.label())
+                                                .min_size(egui::vec2(0.0, 20.0));
+                                            if selected {
+                                                button = button
+                                                    .fill(egui::Color32::from_rgb(11, 85, 119));
+                                            }
+                                            let response = ui.add(button).on_hover_text(format!(
+                                                "Key {} on the current block",
+                                                key + 1
+                                            ));
+                                            if response.clicked() {
+                                                chosen = Some((index, choice));
+                                            }
+                                        }
+                                    },
+                                );
                             });
                             let columns = [
                                 (labels.base, base),
                                 (labels.ours, ours),
                                 (labels.theirs, theirs),
                             ];
+                            // Ours in blue and Theirs in amber, as in the mockup.
                             let side = |ui: &mut egui::Ui, title: &str, text: &str| {
-                                ui.weak(title);
+                                let color = if title.starts_with("Ours") {
+                                    egui::Color32::from_rgb(156, 202, 245)
+                                } else if title.starts_with("Theirs") {
+                                    egui::Color32::from_rgb(240, 166, 78)
+                                } else {
+                                    ui.visuals().weak_text_color()
+                                };
+                                ui.label(egui::RichText::new(title).small().color(color));
                                 let text = if text.is_empty() { "(no lines)" } else { text };
                                 ui.add(
                                     egui::Label::new(

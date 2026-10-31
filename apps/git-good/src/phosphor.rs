@@ -25,6 +25,7 @@ pub const SIDEBAR_SIMPLE: &str = "\u{EC24}";
 pub const TAG: &str = "\u{E478}";
 pub const DOTS_SIX_VERTICAL: &str = "\u{EAE2}";
 pub const PAUSE: &str = "\u{E39E}";
+pub const WARNING: &str = "\u{E4E0}";
 pub const ARROW_RIGHT: &str = "\u{E06C}";
 pub const ARROW_SQUARE_OUT: &str = "\u{E5DE}";
 pub const CARET_LEFT: &str = "\u{E138}";
@@ -33,7 +34,13 @@ pub const DOTS_THREE: &str = "\u{E1FE}";
 
 /// Glyphs used by the interactive rebase dialog.
 #[cfg(test)]
-pub const REBASE: [&str; 4] = [DOTS_SIX_VERTICAL, PAUSE, ARROW_SQUARE_OUT, ARROW_RIGHT];
+pub const REBASE: [&str; 5] = [
+    DOTS_SIX_VERTICAL,
+    PAUSE,
+    ARROW_SQUARE_OUT,
+    ARROW_RIGHT,
+    WARNING,
+];
 
 /// Glyphs used by the reader header.
 #[cfg(test)]

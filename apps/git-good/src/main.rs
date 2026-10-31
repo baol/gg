@@ -789,7 +789,7 @@ const SEARCH_FILE_LIMIT: usize = 50_000;
 const SEARCH_RESULTS_HEIGHT: f32 = 360.0;
 
 /// Width of the conflicted-paths list in the conflict workspace.
-const CONFLICT_PATHS_WIDTH: f32 = 220.0;
+const CONFLICT_PATHS_WIDTH: f32 = 300.0;
 
 /// Fixed height of the operation area: two lines.
 const OPERATION_AREA_HEIGHT: f32 = 44.0;
@@ -4464,7 +4464,7 @@ impl Browser {
     /// Whether the refs sidebar shows in the current view: History keeps it
     /// open by default; Changes and Review hide it until toggled.
     fn refs_shown(&self) -> bool {
-        if self.working.is_some() || self.review.is_some() {
+        if self.working.is_some() || self.review.is_some() || self.conflict_view.is_some() {
             self.refs_visible_elsewhere
         } else {
             self.refs_visible
@@ -4472,7 +4472,7 @@ impl Browser {
     }
 
     fn toggle_refs(&mut self) {
-        if self.working.is_some() || self.review.is_some() {
+        if self.working.is_some() || self.review.is_some() || self.conflict_view.is_some() {
             self.refs_visible_elsewhere = !self.refs_visible_elsewhere;
         } else {
             self.refs_visible = !self.refs_visible;
@@ -4501,10 +4501,25 @@ impl Browser {
             (None, None) if head.is_some_and(|head| head.detached) => "detached HEAD".into(),
             (None, None) => "no branch".into(),
         };
+        // While rebasing, the counts give way to the step, as in the stop
+        // mockups (`main  rebasing 2/5`).
+        let step = self.rebase_progress().map(|progress| {
+            let (step, total) = progress.position();
+            let verb = if progress.stop == gg_engine::mutation::RebaseStop::Conflict {
+                "conflict"
+            } else {
+                "rebasing"
+            };
+            (
+                format!("{verb} {step}/{total}"),
+                rebase_stop::palette(progress).ink,
+            )
+        });
         let tracking = self
             .state
             .refs
             .current_tracking()
+            .filter(|_| step.is_none())
             .map(|tracking| {
                 format!(
                     "{}{} {}{}",
@@ -4515,23 +4530,25 @@ impl Browser {
                 )
             })
             .unwrap_or_default();
+        let detail = match &step {
+            Some((step, ink)) => egui::RichText::new(step).color(*ink),
+            None => egui::RichText::new(&tracking).small().weak(),
+        };
         let icon = crate::phosphor::icon(crate::phosphor::GIT_BRANCH).size(15.0);
         let caret = crate::phosphor::icon(crate::phosphor::CARET_DOWN).size(10.0);
         let button = if compact {
             egui::Button::new((icon, caret))
         } else {
-            egui::Button::new((
-                icon,
-                egui::RichText::new(&name),
-                egui::RichText::new(&tracking).small().weak(),
-                caret,
-            ))
-            .truncate()
+            egui::Button::new((icon, egui::RichText::new(&name), detail, caret)).truncate()
         }
         .min_size(egui::vec2(28.0, 24.0));
         let response = ui
             .add_enabled(ready.has_repo, button)
-            .on_hover_text(format!("{name} {tracking}\nSwitch branch"));
+            .on_hover_text(format!(
+                "{name} {}\nSwitch branch",
+                step.as_ref()
+                    .map_or(tracking.as_str(), |(step, _)| step.as_str())
+            ));
         if response.clicked() {
             self.branch_filter.clear();
         }
@@ -6171,10 +6188,6 @@ impl Browser {
         let ctx = ui.ctx().clone();
         let ctx = &ctx;
         let conflict_mutation = self.mutation.clone();
-        let conflict_commit = conflict_mutation
-            .as_ref()
-            .and_then(|state| state.commit.as_deref())
-            .map(|id| self.commit_summary(id));
         let conflict_pending =
             self.operation_busy() || self.network.is_some() || self.branch.is_some();
         let mut conflict_select = None;
@@ -6197,40 +6210,17 @@ impl Browser {
                 .as_ref()
                 .map(|state| state.conflicts.len())
                 .unwrap_or(view.paths.len());
+            // No heading, as in the conflict mockup: the operation band names
+            // the stop. Close (Esc) sits in the file header; the side hint and
+            // any error sit under the file list.
+            let _ = unresolved;
+            let side_hint = conflict_side_hint(operation);
+            let note = match (&view.error, view.paths.is_empty() && !view.loading) {
+                (Some(error), _) => Some((error.clone(), true)),
+                (None, true) => Some(("No unmerged paths.".to_string(), false)),
+                (None, false) => None,
+            };
             ui.scope(|ui| {
-                    ui.horizontal(|ui| {
-                        ui.strong(
-                            operation
-                                .map(gg_engine::mutation::Operation::as_str)
-                                .unwrap_or("operation"),
-                        );
-                        ui.label(format!("· {unresolved} unresolved"));
-                        if let Some(commit) = &conflict_commit {
-                            ui.add(egui::Label::new(format!("· {commit}")).truncate());
-                        }
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui
-                                .button("Close")
-                                .on_hover_text("Return to the previous view (Esc)")
-                                .clicked()
-                            {
-                                conflict_open = false;
-                            }
-                        });
-                    });
-                    ui.label(conflict_side_hint(operation));
-                    // One fixed line for the error or the empty state.
-                    let note = match (&view.error, view.paths.is_empty() && !view.loading) {
-                        (Some(error), _) => (error.clone(), ui.visuals().error_fg_color),
-                        (None, true) => ("No unmerged paths.".into(), ui.visuals().text_color()),
-                        (None, false) => (String::new(), ui.visuals().text_color()),
-                    };
-                    let (rect, _) = ui.allocate_exact_size(
-                        egui::vec2(ui.available_width(), 20.0),
-                        egui::Sense::hover(),
-                    );
-                    bounded_text::paint(ui, rect, &note.0, egui::FontId::proportional(13.0), note.1);
-                    ui.separator();
                     ui.horizontal_top(|ui| {
                         ui.vertical(|ui| {
                             ui.set_width(CONFLICT_PATHS_WIDTH);
@@ -6276,10 +6266,22 @@ impl Browser {
                                                 },
                                             );
                                         }
+                                        // Full-width 22 px rows, as in the mockup.
+                                        let selected = index == view.selected;
                                         if ui
                                             .add(
-                                                egui::Button::selectable(index == view.selected, text)
-                                                    .truncate(),
+                                                egui::Button::new(text)
+                                                    .fill(if selected {
+                                                        colors::selection(ui.visuals())
+                                                    } else {
+                                                        egui::Color32::TRANSPARENT
+                                                    })
+                                                    .frame_when_inactive(selected)
+                                                    .truncate()
+                                                    .min_size(egui::vec2(
+                                                        ui.available_width(),
+                                                        crate::density::row(),
+                                                    )),
                                             )
                                             .on_hover_text(path)
                                             .clicked()
@@ -6308,6 +6310,31 @@ impl Browser {
                                         )
                                         .on_hover_text(path);
                                     }
+                                    // The side hint (and an error or empty
+                                    // note) at the bottom of the list.
+                                    ui.with_layout(
+                                        egui::Layout::bottom_up(egui::Align::Min),
+                                        |ui| {
+                                            ui.add(
+                                                egui::Label::new(
+                                                    egui::RichText::new(side_hint).small().weak(),
+                                                )
+                                                .wrap(),
+                                            );
+                                            if let Some((text, error)) = &note {
+                                                ui.add(
+                                                    egui::Label::new(egui::RichText::new(text).color(
+                                                        if *error {
+                                                            ui.visuals().error_fg_color
+                                                        } else {
+                                                            ui.visuals().text_color()
+                                                        },
+                                                    ))
+                                                    .wrap(),
+                                                );
+                                            }
+                                        },
+                                    );
                                 });
                         });
                         ui.separator();
@@ -6351,6 +6378,13 @@ impl Browser {
                                 ui.with_layout(
                                     egui::Layout::right_to_left(egui::Align::Center),
                                     |ui| {
+                                        if ui
+                                            .button(("Close", egui::RichText::new("Esc").small().weak()))
+                                            .on_hover_text("Return to the previous view")
+                                            .clicked()
+                                        {
+                                            conflict_open = false;
+                                        }
                                         let file = workdir.as_ref().zip(view.paths.get(view.selected));
                                         if ui
                                             .add_enabled(file.is_some(), egui::Button::new("Open in editor"))
@@ -10247,6 +10281,20 @@ impl Browser {
         self.draw_tag_create(ctx);
         self.draw_force_push(ctx);
         if self.conflict_view.is_some() {
+            // The workspace's own footer: its keys, as in the conflict mockup.
+            egui::Panel::bottom("conflict-status")
+                .exact_size(25.0)
+                .show(ui, |ui| {
+                    ui.horizontal_centered(|ui| {
+                        ui.label(
+                            egui::RichText::new(
+                                "1 / 2 / 3 / 4: ours · theirs · ours+theirs · theirs+ours   ·   [ ]: next conflict   ·   Esc: close",
+                            )
+                            .size(11.0)
+                            .weak(),
+                        );
+                    });
+                });
             egui::CentralPanel::default().show(ui, |ui| self.draw_conflict_workspace(ui));
             return;
         }
@@ -13033,7 +13081,7 @@ mod tests {
         for expected in [
             "Block by block",
             "Conflict 1 of 1",
-            "4 Theirs + ours",
+            "Theirs + ours",
             "Result · 1/1 blocks chosen · preview, not staged",
         ] {
             assert!(
