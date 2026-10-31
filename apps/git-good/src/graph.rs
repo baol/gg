@@ -27,6 +27,20 @@ pub struct Graph {
     lanes: Vec<Option<String>>,
 }
 
+impl Row {
+    /// Lanes this row draws in: its own and every line passing through.
+    pub fn lanes_used(&self) -> u8 {
+        let lines = 64 - (self.before | self.after).leading_zeros();
+        (lines as u8).max(self.lane.saturating_add(1))
+    }
+}
+
+/// Width of the history graph column for `lanes`: 56 px (four lanes, as in
+/// the History mockup) up to 92 px.
+pub fn column_width(lanes: u8) -> f32 {
+    (9.0 + f32::from(lanes) * 11.0 + 3.0).clamp(56.0, 92.0)
+}
+
 impl Graph {
     pub fn push(&mut self, commit: &Commit) -> Row {
         let lane = self
@@ -268,5 +282,22 @@ mod tests {
         assert!(merge.after & (1 << side) != 0);
         assert!(!starts_below(&merge, side));
         assert!(starts_below(&merge, merge.lane));
+    }
+
+    #[test]
+    fn the_column_fits_four_lanes_at_56_px_and_grows_to_92() {
+        let row = |lane, mask| Row {
+            lane,
+            before: mask,
+            after: mask,
+            parents: vec![],
+        };
+        assert_eq!(row(0, 0b1).lanes_used(), 1);
+        assert_eq!(row(1, 0b1001).lanes_used(), 4);
+        assert_eq!(row(5, 0b1).lanes_used(), 6);
+        assert_eq!(column_width(1), 56.0);
+        assert_eq!(column_width(4), 56.0);
+        assert_eq!(column_width(5), 67.0);
+        assert_eq!(column_width(20), 92.0);
     }
 }

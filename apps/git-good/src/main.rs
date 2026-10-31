@@ -8385,6 +8385,7 @@ impl Browser {
         self.poll_conflict_view(ctx);
         let narrow = ctx.content_rect().width() < 1040.0;
         let wide_refs = !narrow && self.refs_shown() && ctx.content_rect().width() >= 1120.0;
+        history_view::set_graph_width(graph::column_width(self.state.graph_lanes));
         if self.working.is_none() && self.review.is_none() {
             self.state.viewport = self.viewport.clone();
             let (hovering_history, interacting, now) = ctx.input(|i| {

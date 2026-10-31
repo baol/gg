@@ -13,10 +13,20 @@ pub enum RefAction {
     Select,
 }
 
+thread_local! {
+    static GRAPH_WIDTH: std::cell::Cell<f32> = const { std::cell::Cell::new(56.0) };
+}
+
+/// Set the graph column's width for this frame (see [`crate::graph::column_width`]).
+pub fn set_graph_width(width: f32) {
+    GRAPH_WIDTH.with(|cell| cell.set(width));
+}
+
 pub fn columns(rect: egui::Rect) -> [egui::Rect; 5] {
+    let graph = GRAPH_WIDTH.with(std::cell::Cell::get);
     let widths = [
-        92.0,
-        (rect.width() - 92.0 - 150.0 - 66.0 - 92.0).max(0.0),
+        graph,
+        (rect.width() - graph - 150.0 - 66.0 - 92.0).max(0.0),
         150.0,
         66.0,
         92.0,
@@ -609,7 +619,7 @@ mod tests {
             (row_rect, action)
         };
         let (row_rect, _) = run(vec![], 1.0);
-        let point = egui::pos2(row_rect.left() + 110.0, row_rect.center().y);
+        let point = egui::pos2(columns(row_rect)[1].left() + 18.0, row_rect.center().y);
         run(vec![egui::Event::PointerMoved(point)], 1.05);
         run(
             vec![egui::Event::PointerButton {

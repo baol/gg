@@ -8,6 +8,9 @@ pub struct State {
     pub history: Option<History>,
     pub rows: BTreeMap<usize, Commit>,
     pub graphs: BTreeMap<usize, crate::graph::Row>,
+    /// The most graph lanes any loaded row of this repository used; sizes
+    /// the graph column and never shrinks while the repository stays open.
+    pub graph_lanes: u8,
     /// History lane for each ref tip, keyed by full ref name.
     pub ref_lanes: BTreeMap<String, u8>,
     pub refs: gg_engine::refs::Snapshot,
@@ -87,6 +90,9 @@ impl State {
             .start
             .saturating_add(update.request.range.len() / 2);
         if replace {
+            if self.history.as_ref().map(|history| &history.path) != Some(&update.identity.path) {
+                self.graph_lanes = 0;
+            }
             self.rows.clear();
             self.graphs.clear();
             self.ref_lanes.clear();
@@ -125,6 +131,7 @@ impl State {
             }
         }
         for (row, graph) in update.graphs {
+            self.graph_lanes = self.graph_lanes.max(graph.lanes_used());
             self.graphs.entry(row).or_insert(graph);
         }
         for (name, lane) in update.ref_lanes {
