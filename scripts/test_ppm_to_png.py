@@ -3,7 +3,7 @@ import struct
 import unittest
 import zlib
 
-from ppm_to_png import ppm_to_png
+from ppm_to_png import png_text, ppm_to_png
 
 
 def chunks(data: bytes):
@@ -68,6 +68,15 @@ class PpmToPngTest(unittest.TestCase):
     def test_rejects_wide_channel_values(self) -> None:
         with self.assertRaisesRegex(ValueError, "8-bit"):
             ppm_to_png(b"P6\n1 1\n65535\n\x00\x00\x00")
+
+    def test_text_entries_round_trip_before_the_pixels(self) -> None:
+        png = ppm_to_png(b"P6\n1 1\n255\n\x01\x02\x03", {"b": "2", "a": "1"})
+        kinds = [kind for kind, _ in chunks(png)]
+        self.assertEqual(kinds, [b"IHDR", b"tEXt", b"tEXt", b"IDAT", b"IEND"])
+        self.assertEqual(png_text(png), {"a": "1", "b": "2"})
+
+    def test_text_of_a_non_png_is_empty(self) -> None:
+        self.assertEqual(png_text(b"not a png"), {})
 
 
 if __name__ == "__main__":

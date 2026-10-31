@@ -52,6 +52,8 @@ The hook skips during merge, rebase, cherry-pick, and revert operations and when
 python3 scripts/capture_native_screenshot.py --force
 ```
 
+The PNG carries a `gg-sources` text entry: a fingerprint of the Git object IDs of those UI files in the index at capture time. CI runs `python3 scripts/capture_native_screenshot.py --check`, which recomputes the fingerprint from the commit and fails when the screenshot was not captured from its UI sources. Fix a failure by capturing again from a clean, staged tree and committing the PNG.
+
 Measure a packed 100,000-commit fixture:
 
 ```sh

@@ -53,8 +53,9 @@ def _chunk(kind: bytes, payload: bytes) -> bytes:
     )
 
 
-def ppm_to_png(data: bytes) -> bytes:
-    """Return a PNG encoding of the given P6 image bytes."""
+def ppm_to_png(data: bytes, text: dict[str, str] | None = None) -> bytes:
+    """Return a PNG encoding of the given P6 image bytes, with optional
+    tEXt entries (Latin-1 keyword and value)."""
     width, height, offset = _header(data)
     expected = width * height * 3
     pixels = data[offset:]
@@ -65,12 +66,37 @@ def ppm_to_png(data: bytes) -> bytes:
         b"\x00" + pixels[row * stride : (row + 1) * stride] for row in range(height)
     )
     header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    texts = b"".join(
+        _chunk(b"tEXt", key.encode("latin-1") + b"\x00" + value.encode("latin-1"))
+        for key, value in sorted((text or {}).items())
+    )
     return (
         b"\x89PNG\r\n\x1a\n"
         + _chunk(b"IHDR", header)
+        + texts
         + _chunk(b"IDAT", zlib.compress(raw, 9))
         + _chunk(b"IEND", b"")
     )
+
+
+def png_text(data: bytes) -> dict[str, str]:
+    """Return the tEXt entries of a PNG; empty when it has none or is not a
+    PNG."""
+    if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return {}
+    entries: dict[str, str] = {}
+    offset = 8
+    while offset + 8 <= len(data):
+        (length,) = struct.unpack(">I", data[offset : offset + 4])
+        kind = data[offset + 4 : offset + 8]
+        payload = data[offset + 8 : offset + 8 + length]
+        if kind == b"tEXt" and b"\x00" in payload:
+            key, value = payload.split(b"\x00", 1)
+            entries[key.decode("latin-1")] = value.decode("latin-1")
+        if kind == b"IEND":
+            break
+        offset += length + 12
+    return entries
 
 
 def main(argv: list[str]) -> int:

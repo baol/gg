@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
-"""Regenerate the README's native screenshot from the current UI sources."""
+"""Regenerate the README's native screenshot from the current UI sources.
+
+The PNG carries a `gg-sources` text entry: a fingerprint of the UI sources it
+was captured from (the Git object IDs of the files under RELEVANT). `--check`
+recomputes the fingerprint from HEAD's tree and fails when it differs, so CI
+catches a UI change committed without a fresh screenshot."""
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import shutil
 import subprocess
@@ -10,9 +16,10 @@ import sys
 import tempfile
 from pathlib import Path
 
-from ppm_to_png import ppm_to_png
+from ppm_to_png import png_text, ppm_to_png
 
 SCREENSHOT = "docs/screenshots/gg-native-wide.png"
+STAMP = "gg-sources"
 WINDOW_SIZE = "1120x740"
 RELEVANT = (
     "apps/git-good/src",
@@ -77,6 +84,65 @@ def operation_in_progress(root: Path) -> str | None:
     return None
 
 
+def _fingerprint(entries: list[tuple[str, str, str]]) -> str:
+    digest = hashlib.sha256()
+    for path, mode, oid in sorted(entries):
+        digest.update(f"{mode} {oid} {path}\n".encode())
+    return digest.hexdigest()
+
+
+def sources_fingerprint(root: Path, tree: str | None = None) -> str:
+    """Fingerprint the UI sources in the index, or in `tree` (such as HEAD).
+    The index after staging and the commit's tree give the same value."""
+    entries: list[tuple[str, str, str]] = []
+    if tree is None:
+        output = subprocess.check_output(
+            ["git", "ls-files", "-s", "-z", "--", *RELEVANT], cwd=root
+        )
+        for record in output.split(b"\0"):
+            if not record:
+                continue
+            meta, path = record.split(b"\t", 1)
+            mode, oid, stage = meta.split()
+            if stage == b"0":
+                entries.append((path.decode(), mode.decode(), oid.decode()))
+    else:
+        output = subprocess.check_output(
+            ["git", "ls-tree", "-r", "-z", tree, "--", *RELEVANT], cwd=root
+        )
+        for record in output.split(b"\0"):
+            if not record:
+                continue
+            meta, path = record.split(b"\t", 1)
+            mode, _kind, oid = meta.split()
+            entries.append((path.decode(), mode.decode(), oid.decode()))
+    return _fingerprint(entries)
+
+
+def check(root: Path, tree: str = "HEAD") -> int:
+    """Fail when the committed screenshot was not captured from `tree`'s UI
+    sources."""
+    path = root / SCREENSHOT
+    stamp = png_text(path.read_bytes()).get(STAMP) if path.is_file() else None
+    expected = sources_fingerprint(root, tree)
+    if stamp == expected:
+        print(f"screenshot: {SCREENSHOT} matches the UI sources")
+        return 0
+    reason = (
+        "has no source stamp"
+        if stamp is None
+        else f"was captured from other UI sources than {tree}"
+    )
+    print(
+        f"screenshot: {SCREENSHOT} {reason}.\n"
+        "Refresh it with `python3 scripts/capture_native_screenshot.py --force`\n"
+        "and commit the PNG, or enable the pre-commit hook that does it:\n"
+        "`git config core.hooksPath .githooks` (see docs/development.md).",
+        file=sys.stderr,
+    )
+    return 1
+
+
 def build(root: Path) -> Path:
     subprocess.run(
         ["cargo", "build", "-p", "git-good", "--locked"], cwd=root, check=True
@@ -126,7 +192,9 @@ def capture(root: Path, binary: Path) -> Path:
             raise SystemExit("screenshot: the app did not write a capture")
         target = root / SCREENSHOT
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(ppm_to_png(ppm.read_bytes()))
+        # Stamped with the staged sources: the commit that takes this PNG.
+        stamp = {STAMP: sources_fingerprint(root)}
+        target.write_bytes(ppm_to_png(ppm.read_bytes(), stamp))
         return target
 
 
@@ -144,7 +212,15 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="capture even when no UI files are staged",
     )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="fail unless the screenshot was captured from HEAD's UI sources (CI)",
+    )
     arguments = parser.parse_args(argv)
+
+    if arguments.check:
+        return check(repo_root())
 
     if os.environ.get("GG_SKIP_SCREENSHOT") or os.environ.get("CI"):
         print("screenshot: skipped by environment", file=sys.stderr)
@@ -181,6 +257,12 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 1
 
+    if arguments.force and (unstaged_ui(root) or untracked_ui(root)):
+        print(
+            "screenshot: unstaged or untracked UI edits are captured but not in the stamp;\n"
+            "screenshot: stage them and capture again before committing, or CI will fail",
+            file=sys.stderr,
+        )
     binary = build(root)
     target = capture(root, binary)
     subprocess.run(["git", "add", "--", SCREENSHOT], cwd=root, check=True)

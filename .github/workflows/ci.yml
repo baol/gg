@@ -27,6 +27,8 @@ jobs:
         with:
           fetch-depth: 0
       - run: python3 -m unittest discover -s scripts -p 'test_*.py'
+      - name: README screenshot matches the UI sources
+        run: python3 scripts/capture_native_screenshot.py --check
       - id: version
         run: python3 scripts/release_version.py
 
