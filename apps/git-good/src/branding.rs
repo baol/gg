@@ -17,10 +17,6 @@ pub fn icon() -> Result<&'static egui::IconData, String> {
     .map_err(|error| format!("Load embedded gg icon: {error}"))
 }
 
-pub fn toolbar(ui: &mut egui::Ui, texture: &mut Option<egui::TextureHandle>) {
-    logo(ui, texture, 30.0);
-}
-
 /// The gg logo at `points` square, cached in `texture` per physical size.
 pub fn logo(ui: &mut egui::Ui, texture: &mut Option<egui::TextureHandle>, points: f32) {
     let Ok(icon) = icon() else {

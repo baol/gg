@@ -184,6 +184,8 @@ pub struct DiffView {
     sides: Option<WorkingSides>,
     side_request: Option<bool>,
     details_open: bool,
+    /// Width the header's mode controls took on the last single-line frame.
+    header_controls: f32,
     /// Context and whitespace of the requested comparison.
     options: gg_engine::diff::Options,
     /// Displayed characters of every diff row, for wrapping unloaded rows.
@@ -265,6 +267,7 @@ impl Default for DiffView {
             sides: None,
             side_request: None,
             details_open: false,
+            header_controls: 560.0,
             options: gg_engine::diff::Options::default(),
             widths: Arc::default(),
             wrap: None,
@@ -1789,7 +1792,10 @@ impl DiffView {
 
     /// One file header: exact path, one scoped action menu, and the exact
     /// endpoints. Low-frequency identity and commands are not permanent rows.
-    fn draw_header(&mut self, ui: &mut egui::Ui, _ctx: &egui::Context, change: &FileChange) {
+    /// The start of the reader's one header row: path and exact endpoints in
+    /// a slot of `width`, then the Unstaged | Staged toggle and whole-file
+    /// staging when they apply. The mode controls follow on the same row.
+    fn draw_header(&mut self, ui: &mut egui::Ui, change: &FileChange, width: f32) {
         let displayed_working = self
             .displayed_working
             .clone()
@@ -1807,10 +1813,7 @@ impl DiffView {
         } else {
             None
         };
-        ui.horizontal(|ui| {
-            let stage_width = if self.stage.is_some() { 78.0 } else { 0.0 };
-            let sides_width = if self.sides.is_some() { 136.0 } else { 0.0 };
-            let width = (ui.available_width() - 104.0 - stage_width - sides_width).max(80.0);
+        {
             let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 24.0), egui::Sense::hover());
             // Path and exact comparison endpoints share one line.
             let path_font = egui::FontId::proportional(14.0);
@@ -1866,10 +1869,18 @@ impl DiffView {
                     self.stage_edit = Some(self.file_edit(false));
                 }
             }
-        });
+        }
+    }
+
+    /// The optional File details line under the header row.
+    fn draw_header_details(&self, ui: &mut egui::Ui, change: &FileChange) {
         if !self.details_open {
             return;
         }
+        let displayed_working = self
+            .displayed_working
+            .clone()
+            .or_else(|| self.working.clone());
         let side = |side: &Option<gg_engine::review::FileSide>| {
             side.as_ref()
                 .map(|side| format!("{:06o} {}", side.mode, side.id))
@@ -2152,10 +2163,21 @@ impl DiffView {
             ui.weak("Select a file to read its diff");
             return;
         };
-        self.draw_header(ui, &ctx, &change);
         let mut actions = vec![];
         let capabilities = self.capabilities();
-        ui.horizontal_wrapped(|ui| {
+        // One header row, as in the mockups: path and endpoints, then the
+        // mode controls; narrow readers wrap the controls to a second line.
+        // When the controls leave the path less than 220 px, the path takes
+        // the first line and the controls wrap below it.
+        let spare = ui.available_width() - self.header_controls - 8.0;
+        let fits = spare >= 220.0;
+        let path_width = if fits {
+            spare.min(560.0)
+        } else {
+            (ui.available_width() - 8.0).max(140.0)
+        };
+        let header = ui.horizontal_wrapped(|ui| {
+            self.draw_header(ui, &change, path_width);
             let diff = ui
                 .add_enabled(
                     capabilities.diff,
@@ -2298,6 +2320,18 @@ impl DiffView {
             }
             self.file_actions_menu(ui, &ctx, &change);
         });
+        // Learn the controls' width so the path slot leaves room for them;
+        // a wrapped row widens the estimate for the next frame.
+        let row = header.response.rect;
+        if !fits {
+            // Wrapped on purpose; keep the last single-line measurement.
+        } else if row.height() > 34.0 {
+            self.header_controls += 60.0;
+            ui.ctx().request_repaint();
+        } else {
+            self.header_controls = (row.width() - path_width).max(self.header_controls.min(200.0));
+        }
+        self.draw_header_details(ui, &change);
         for action in actions {
             match action {
                 Action::Mode(mode) => self.set_mode(mode, &ctx),

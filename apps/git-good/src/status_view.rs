@@ -1719,10 +1719,16 @@ impl StatusView {
     fn draw_right(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, height: f32) {
         let form = self.commit_form_height();
         let reader_height = (height - form - 8.0).max(80.0);
+        // The reader keeps its full height even when empty, so the commit
+        // form always sits at the bottom, as in the mockup.
+        let width = ui.available_width();
         ui.allocate_ui_with_layout(
-            egui::vec2(ui.available_width(), reader_height),
+            egui::vec2(width, reader_height),
             egui::Layout::top_down(egui::Align::Min),
-            |ui| self.draw_reader(ui, ctx),
+            |ui| {
+                ui.set_min_size(egui::vec2(width, reader_height));
+                self.draw_reader(ui, ctx);
+            },
         );
         if self.amend {
             self.draw_amend_banner(ui);

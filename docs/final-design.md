@@ -56,7 +56,7 @@ Rules:
 
 ## Density
 
-Compact density is the default: history and file rows 22 px, diff rows 19 px, path and endpoints on one reader line, one-line commit identity, one-character change markers (`+ ~ − T ? !`) with the full kind in the tooltip. Comfortable density remains a preference.
+Compact density is the default: history and file rows 22 px, diff rows 19 px, one reader header row (path, endpoints, and the mode controls), one-line commit identity, one-character change markers (`+ ~ − T ? !`) with the full kind in the tooltip. Comfortable density remains a preference.
 
 ## Stashes
 
@@ -67,7 +67,7 @@ The Stashes toolbar button opens a picker listing each entry's ref, message, bra
 A large modal dialog over dimmed History, laid out like the file workspace.
 
 - **Header (operation bar):** branch, range (`<from>…HEAD onto <base>`), result count (`6 commits → 4 · 1 dropped`), **Cancel** (`Esc`), **Start rebase** (`Ctrl+Enter`).
-- **Left, the plan:** newest first, matching History. Each row has a drag handle, move up/down, hash, message, ref pills, a consequence badge (`↓ fixup into <hash>`, `absorbs <hash>`, `⏸ stops here · reopens staged in Changes`, `dropped · recoverable from the backup`), and an action chip. The chip shows the current action; clicking opens a menu of all six actions with a plain hint and key. Keys on the selected row: **P** pick, **R** reword, **E** reopen, **S** squash, **F** fixup, **D** drop.
+- **Left, the plan:** newest first, matching History. Each row has a drag handle, move up/down, hash, message, ref pills, a consequence badge (`↓ fixup into <hash>`, `absorbs <hash>`, `⏸ stops here · reopens staged in Changes`, `dropped · recoverable from the backup`), and an action chip: 24 px tall, rounded, with the mockup's glyph and colors (Pick neutral with a border, Reword blue, Reopen purple, Squash and Fixup amber, Drop red). The chip shows the current action; clicking opens a menu of all six actions with a plain hint and key. **Start rebase** is the filled primary button with its `Ctrl+Enter` hint; **Cancel** shows `Esc`. Keys on the selected row: **P** pick, **R** reword, **E** reopen, **S** squash, **F** fixup, **D** drop.
 - **Squash and Fixup** combine into the nearest kept commit **below** (older). Squash combines both messages; Fixup keeps only the older message. They are disabled with a reason when no kept commit lies below.
 - **Right, the selected commit:** hash, action, author, date, files, and diff in the shared reader. Reword edits the message here, showing the original. Drop dims the diff. **Open in Review** (`Enter`) opens the normal review; `Esc` returns to the plan unchanged.
 - **Footer:** stash working changes first, which refs stay on the original commits, and the private-backup notice.

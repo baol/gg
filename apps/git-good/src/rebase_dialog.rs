@@ -274,12 +274,30 @@ impl Dialog {
                 let reason = blocked
                     .map(str::to_string)
                     .or_else(|| steps.as_ref().err().cloned());
+                // The primary action, as in the mockup: filled, with its key.
+                let ready = reason.is_none();
                 let start = ui
                     .add_enabled(
-                        reason.is_none(),
-                        egui::Button::new(egui::RichText::new("Start rebase").strong()),
+                        ready,
+                        egui::Button::new((
+                            egui::RichText::new("Start rebase").color(if ready {
+                                egui::Color32::WHITE
+                            } else {
+                                ui.visuals().weak_text_color()
+                            }),
+                            egui::RichText::new("Ctrl+Enter").small().color(if ready {
+                                egui::Color32::from_rgb(184, 212, 230)
+                            } else {
+                                ui.visuals().weak_text_color()
+                            }),
+                        ))
+                        .fill(if ready {
+                            egui::Color32::from_rgb(11, 85, 119)
+                        } else {
+                            ui.visuals().widgets.inactive.weak_bg_fill
+                        }),
                     )
-                    .on_hover_text("Ctrl+Enter");
+                    .on_hover_text("Rewrite the branch as planned");
                 let start = match &reason {
                     Some(reason) => start.on_disabled_hover_text(reason),
                     None => start,
@@ -287,7 +305,10 @@ impl Dialog {
                 if start.clicked() {
                     outcome = self.start();
                 }
-                if ui.button("Cancel").on_hover_text("Esc").clicked() {
+                if ui
+                    .button(("Cancel", egui::RichText::new("Esc").small().weak()))
+                    .clicked()
+                {
                     outcome = Some(Outcome::Cancel);
                 }
                 // The identity takes the remaining width and truncates. The
@@ -486,15 +507,24 @@ impl Dialog {
         let subject = row.commit.subject.clone();
         let refs = row.refs.clone();
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let (fill, ink) = chip_colors(ui.visuals(), action);
+            let border = if action == Action::Pick {
+                ui.visuals().widgets.noninteractive.bg_stroke.color
+            } else {
+                fill
+            };
             let chip = ui
                 .add(
                     egui::Button::new((
-                        egui::RichText::new(rebase_plan::label(action))
-                            .strong()
-                            .color(action_color(ui.visuals(), action)),
-                        phosphor::icon(phosphor::CARET_DOWN).size(10.0),
+                        action_icon(action, ink),
+                        egui::RichText::new(rebase_plan::label(action)).color(ink),
+                        egui::Atom::grow(),
+                        phosphor::icon(phosphor::CARET_DOWN).size(10.0).color(ink),
                     ))
-                    .min_size(egui::vec2(82.0, 20.0)),
+                    .fill(fill)
+                    .stroke(egui::Stroke::new(1.0, border))
+                    .corner_radius(12.0)
+                    .min_size(egui::vec2(112.0, 24.0)),
                 )
                 .on_hover_text(rebase_plan::hint(action));
             egui::Popup::from_toggle_button_response(&chip)
@@ -690,6 +720,76 @@ impl Dialog {
             ui.colored_label(ui.visuals().error_fg_color, error);
         }
     }
+}
+
+/// A plan chip's fill and ink, as in the rebase mockup: Pick neutral,
+/// Reword blue, Reopen purple, Squash and Fixup amber, Drop red.
+fn chip_colors(visuals: &egui::Visuals, action: Action) -> (egui::Color32, egui::Color32) {
+    use egui::Color32 as C;
+    if !visuals.dark_mode {
+        let ink = action_color(visuals, action);
+        return (ink.gamma_multiply(0.15), ink);
+    }
+    match action {
+        Action::Pick => (C::from_rgb(58, 58, 58), C::from_rgb(230, 230, 230)),
+        Action::Reword => (C::from_rgb(29, 58, 87), C::from_rgb(156, 202, 245)),
+        Action::Edit => (C::from_rgb(58, 51, 96), C::from_rgb(200, 192, 245)),
+        Action::Squash | Action::Fixup => (C::from_rgb(77, 58, 20), C::from_rgb(240, 195, 90)),
+        Action::Drop => (C::from_rgb(74, 36, 36), C::from_rgb(245, 160, 160)),
+    }
+}
+
+/// The mockup's 13 px chip glyph for `action`, drawn from its 256-unit paths.
+fn action_icon<'a>(action: Action, ink: egui::Color32) -> egui::Atom<'a> {
+    let strokes: &'static [&'static [(f32, f32)]] = match action {
+        Action::Pick => &[&[(40.0, 144.0), (96.0, 200.0), (224.0, 72.0)]],
+        Action::Reword => &[
+            &[
+                (92.0, 216.0),
+                (48.0, 216.0),
+                (48.0, 172.0),
+                (168.0, 52.0),
+                (212.0, 96.0),
+                (92.0, 216.0),
+            ],
+            &[(136.0, 84.0), (180.0, 128.0)],
+        ],
+        Action::Edit => &[
+            &[(96.0, 56.0), (96.0, 200.0)],
+            &[(160.0, 56.0), (160.0, 200.0)],
+        ],
+        Action::Squash => &[
+            &[
+                (72.0, 40.0),
+                (72.0, 96.0),
+                (128.0, 152.0),
+                (184.0, 96.0),
+                (184.0, 40.0),
+            ],
+            &[(128.0, 152.0), (128.0, 216.0)],
+        ],
+        Action::Fixup => &[
+            &[(128.0, 40.0), (128.0, 160.0)],
+            &[(80.0, 112.0), (128.0, 160.0), (176.0, 112.0)],
+            &[(48.0, 208.0), (208.0, 208.0)],
+        ],
+        Action::Drop => &[
+            &[(40.0, 64.0), (216.0, 64.0)],
+            &[(96.0, 64.0), (96.0, 40.0), (160.0, 40.0), (160.0, 64.0)],
+            &[(64.0, 64.0), (76.0, 216.0), (180.0, 216.0), (192.0, 64.0)],
+        ],
+    };
+    egui::Atom::paint(egui::vec2(13.0, 13.0), move |ui, args| {
+        let scale = args.rect.width() / 256.0;
+        for stroke in strokes {
+            let points = stroke
+                .iter()
+                .map(|(x, y)| args.rect.min + egui::vec2(x * scale, y * scale))
+                .collect();
+            ui.painter()
+                .add(egui::Shape::line(points, egui::Stroke::new(1.3, ink)));
+        }
+    })
 }
 
 fn action_color(visuals: &egui::Visuals, action: Action) -> egui::Color32 {

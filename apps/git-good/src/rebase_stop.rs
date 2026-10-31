@@ -92,9 +92,79 @@ fn explanation(progress: &RebaseProgress) -> &'static str {
     }
 }
 
+/// The stop band's colors, as in the stop mockups: purple for a reopened
+/// or paused step, amber for a conflict.
+#[derive(Clone, Copy)]
+pub struct Palette {
+    pub band: egui::Color32,
+    pub edge: egui::Color32,
+    pub ink: egui::Color32,
+    pub note: egui::Color32,
+    pub chip: egui::Color32,
+    pub chip_edge: egui::Color32,
+}
+
+pub fn palette(progress: &RebaseProgress) -> Palette {
+    use egui::Color32 as C;
+    if progress.stop == RebaseStop::Conflict {
+        Palette {
+            band: C::from_rgb(51, 39, 15),
+            edge: C::from_rgb(106, 74, 20),
+            ink: C::from_rgb(240, 195, 90),
+            note: C::from_rgb(230, 230, 230),
+            chip: C::from_rgb(77, 58, 20),
+            chip_edge: C::from_rgb(192, 144, 46),
+        }
+    } else {
+        Palette {
+            band: C::from_rgb(36, 33, 58),
+            edge: C::from_rgb(58, 51, 96),
+            ink: C::from_rgb(200, 192, 245),
+            note: C::from_rgb(216, 212, 238),
+            chip: C::from_rgb(58, 51, 96),
+            chip_edge: C::from_rgb(125, 112, 208),
+        }
+    }
+}
+
+/// One bordered step chip.
+fn chip(
+    ui: &mut egui::Ui,
+    colors: Palette,
+    text: String,
+    current: bool,
+    done: bool,
+) -> egui::Response {
+    let (fill, edge, color) = if current {
+        (colors.chip, colors.chip_edge, egui::Color32::WHITE)
+    } else if done {
+        (
+            egui::Color32::TRANSPARENT,
+            egui::Color32::from_gray(58),
+            egui::Color32::from_gray(140),
+        )
+    } else {
+        (
+            egui::Color32::TRANSPARENT,
+            egui::Color32::from_gray(58),
+            egui::Color32::from_gray(200),
+        )
+    };
+    egui::Frame::new()
+        .fill(fill)
+        .stroke(egui::Stroke::new(1.0, edge))
+        .corner_radius(3.0)
+        .inner_margin(egui::Margin::symmetric(6, 0))
+        .show(ui, |ui| {
+            ui.label(egui::RichText::new(text).size(11.5).color(color))
+        })
+        .inner
+}
+
 /// Step chips: done (with a check), the current step, and the next steps,
 /// collapsing far steps into counts.
 fn chips(ui: &mut egui::Ui, progress: &RebaseProgress) {
+    let colors = palette(progress);
     let current = progress.done.len().saturating_sub(1);
     let steps = progress.done.iter().chain(progress.todo.iter());
     let total = progress.done.len() + progress.todo.len();
@@ -111,15 +181,13 @@ fn chips(ui: &mut egui::Ui, progress: &RebaseProgress) {
             step.action
         );
         let text = if index < current {
-            egui::RichText::new(format!("{} {label}", phosphor::CHECK)).weak()
+            format!("{} {label}", phosphor::CHECK)
         } else if index == current {
-            egui::RichText::new(label)
-                .strong()
-                .background_color(ui.visuals().selection.bg_fill)
+            format!("{} {label}", phosphor::PAUSE)
         } else {
-            egui::RichText::new(label).weak()
+            format!("· {label}")
         };
-        ui.add(egui::Label::new(text.small()).truncate())
+        chip(ui, colors, text, index == current, index < current)
             .on_hover_text(format!("{} · {}", step.commit, step.subject));
     }
     if last + 1 < total {
@@ -136,11 +204,32 @@ pub fn show(
     backup: Option<&str>,
 ) -> Option<Command> {
     let mut command = None;
+    // The purple band from the stop mockups, behind both lines.
+    let colors = palette(progress);
+    let band = ui.max_rect().expand2(egui::vec2(8.0, 4.0));
+    ui.painter().rect_filled(band, 0.0, colors.band);
+    ui.painter().hline(
+        band.x_range(),
+        band.bottom() - 0.5,
+        egui::Stroke::new(1.0, colors.edge),
+    );
+    let glyph = if progress.stop == RebaseStop::Conflict {
+        phosphor::WARNING
+    } else {
+        phosphor::PAUSE
+    };
     ui.horizontal(|ui| {
-        ui.add(egui::Label::new(egui::RichText::new(title(progress)).strong()).truncate());
+        ui.label(phosphor::icon(glyph).color(colors.ink));
+        ui.add(egui::Label::new(egui::RichText::new(title(progress)).color(colors.ink)).truncate());
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui
-                .add_enabled(!pending, egui::Button::new("Abort and restore"))
+                .add_enabled(
+                    !pending,
+                    egui::Button::new(
+                        egui::RichText::new("Abort and restore")
+                            .color(egui::Color32::from_rgb(245, 160, 160)),
+                    ),
+                )
                 .on_hover_text(match backup {
                     Some(backup) => format!(
                         "Stop the rebase and restore the branch as it was.\nBackup: {backup}"
@@ -159,8 +248,18 @@ pub fn show(
                 command = Some(Command::Skip);
             }
             let reason = continue_reason(progress, conflicts);
-            let button = egui::Button::new(egui::RichText::new("Continue").strong())
-                .selected(continue_highlighted(progress));
+            // Continue is the band's primary action: muted purple until the
+            // stop is done, then the primary blue, with its key.
+            let fill = if continue_highlighted(progress) {
+                egui::Color32::from_rgb(11, 85, 119)
+            } else {
+                egui::Color32::from_rgb(74, 69, 112)
+            };
+            let button = egui::Button::new((
+                egui::RichText::new("Continue").color(egui::Color32::WHITE),
+                egui::RichText::new("Ctrl+Enter").small().color(colors.ink),
+            ))
+            .fill(fill);
             let response = ui
                 .add_enabled(!pending && reason.is_none(), button)
                 .on_hover_text("Ctrl+Enter");
@@ -209,7 +308,7 @@ pub fn show(
             egui::Layout::left_to_right(egui::Align::Center),
             |ui| {
                 ui.set_min_width(width);
-                ui.add(egui::Label::new(egui::RichText::new(&note).weak()).truncate())
+                ui.add(egui::Label::new(egui::RichText::new(&note).color(colors.note)).truncate())
                     .on_hover_text(&note);
             },
         );
