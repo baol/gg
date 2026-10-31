@@ -8,6 +8,39 @@
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::path::{Path, PathBuf};
 
+/// Where gg looks for an author's avatar, tried in this order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AvatarSource {
+    Github,
+    Gitlab,
+    Gravatar,
+    Libravatar,
+}
+
+impl AvatarSource {
+    pub const ALL: [Self; 4] = [Self::Github, Self::Gitlab, Self::Gravatar, Self::Libravatar];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Github => "GitHub",
+            Self::Gitlab => "GitLab",
+            Self::Gravatar => "Gravatar",
+            Self::Libravatar => "Libravatar",
+        }
+    }
+
+    /// What each source learns, for Preferences.
+    pub fn note(self) -> &'static str {
+        match self {
+            Self::Github => "users.noreply.github.com addresses only; sends the GitHub user name",
+            Self::Gitlab => "sends the email address to gitlab.com",
+            Self::Gravatar => "sends a hash of the email address",
+            Self::Libravatar => "sends a hash of the email address",
+        }
+    }
+}
+
 /// What Pull does after fetching the upstream.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -402,6 +435,8 @@ pub struct Prefs {
     /// After rewriting a branch that has an upstream, offer Push with
     /// force-with-lease.
     pub offer_force_lease: bool,
+    /// Avatar sources that are on; tried in [`AvatarSource::ALL`] order.
+    pub avatar_sources: Vec<AvatarSource>,
     /// History rows: author avatars, tag pills, and relative dates.
     pub history_avatars: bool,
     pub history_tags: bool,
@@ -429,7 +464,8 @@ impl Default for Prefs {
             image_layout: ImageLayout::default(),
             sign_commits: SignCommits::default(),
             details_visible: true,
-            stash_include_untracked: false,
+            // On by default: "stash my changes" usually means new files too.
+            stash_include_untracked: true,
             stash_keep_index: false,
             merge_no_ff: false,
             branch_switch: true,
@@ -446,6 +482,7 @@ impl Default for Prefs {
             offer_force_lease: true,
             backup_days: 0,
             confirm_destructive: true,
+            avatar_sources: vec![AvatarSource::Github, AvatarSource::Gravatar],
             history_avatars: true,
             history_tags: true,
             relative_dates: false,
@@ -503,6 +540,7 @@ impl Prefs {
                 .unwrap_or(defaults.backup_days),
             confirm_destructive: read(path, "confirm_destructive")
                 .unwrap_or(defaults.confirm_destructive),
+            avatar_sources: read(path, "avatar_sources").unwrap_or(defaults.avatar_sources),
             history_avatars: read(path, "history_avatars").unwrap_or(defaults.history_avatars),
             history_tags: read(path, "history_tags").unwrap_or(defaults.history_tags),
             relative_dates: read(path, "relative_dates").unwrap_or(defaults.relative_dates),
@@ -554,6 +592,7 @@ impl Prefs {
         write(path, "offer_force_lease", &self.offer_force_lease)?;
         write(path, "backup_days", &self.backup_days)?;
         write(path, "confirm_destructive", &self.confirm_destructive)?;
+        write(path, "avatar_sources", &self.avatar_sources)?;
         write(path, "history_avatars", &self.history_avatars)?;
         write(path, "history_tags", &self.history_tags)?;
         write(path, "relative_dates", &self.relative_dates)?;
@@ -627,7 +666,7 @@ mod tests {
         prefs.image_layout = ImageLayout::Onion;
         prefs.sign_commits = SignCommits::Never;
         prefs.details_visible = false;
-        prefs.stash_include_untracked = true;
+        prefs.stash_include_untracked = false;
         prefs.stash_keep_index = true;
         prefs.merge_no_ff = true;
         prefs.branch_switch = false;
@@ -639,6 +678,7 @@ mod tests {
         prefs.run_hooks = false;
         prefs.subject_guide = 50;
         prefs.history_avatars = false;
+        prefs.avatar_sources = vec![AvatarSource::Gitlab, AvatarSource::Libravatar];
         prefs.pull_strategy = PullStrategy::FastForward;
         prefs.clone_named_after_repo = false;
         prefs.reopen_last = false;

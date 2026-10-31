@@ -2000,6 +2000,7 @@ impl Browser {
         });
         density::set(self.prefs.density);
         avatars::set_network(self.prefs.effective_network_avatars());
+        avatars::set_sources(&self.prefs.avatar_sources);
         settings::set_reader_mode(ctx, self.prefs.reader_mode);
         settings::set_image_layout(ctx, self.prefs.image_layout);
         settings::set_diff_layout(ctx, self.prefs.diff_layout);
@@ -2386,6 +2387,32 @@ impl Browser {
                                         } else {
                                             "Avatars are hidden."
                                         });
+                                        // Sources, tried in this order; each
+                                        // names what it learns.
+                                        let network = !offline_override
+                                            && prefs.history_avatars
+                                            && prefs.network_avatars;
+                                        for source in settings::AvatarSource::ALL {
+                                            let mut on = prefs.avatar_sources.contains(&source);
+                                            let changed = ui
+                                                .add_enabled(
+                                                    network,
+                                                    egui::Checkbox::new(&mut on, source.label()),
+                                                )
+                                                .on_hover_text(source.note())
+                                                .changed();
+                                            if changed {
+                                                prefs.avatar_sources.retain(|kept| *kept != source);
+                                                if on {
+                                                    prefs.avatar_sources.push(source);
+                                                }
+                                                prefs.avatar_sources.sort_by_key(|kept| {
+                                                    settings::AvatarSource::ALL
+                                                        .iter()
+                                                        .position(|candidate| candidate == kept)
+                                                });
+                                            }
+                                        }
                                         ui.checkbox(&mut prefs.history_tags, "Show tags in rows");
                                         ui.checkbox(&mut prefs.relative_dates, "Relative dates");
                                     });
@@ -3598,6 +3625,28 @@ impl Browser {
             .find(|menu| menu.title == "Commit")
             .map(|menu| menu.entries)
             .unwrap_or_default()
+    }
+
+    /// A commit named with more than its hash, wherever gg shows one:
+    /// `0f99a42b · subject · author · date` from the loaded history, or
+    /// just the 8-character ID when the commit is not loaded.
+    fn commit_summary(&self, id: &str) -> String {
+        let short = &id[..id.len().min(8)];
+        let commit = self
+            .state
+            .details
+            .as_ref()
+            .filter(|commit| commit.id == id)
+            .or_else(|| self.state.rows.values().find(|commit| commit.id == id));
+        match commit {
+            Some(commit) => format!(
+                "{short} · {} · {} · {}",
+                commit.subject(),
+                commit.author,
+                commit.time.split_whitespace().next().unwrap_or_default()
+            ),
+            None => short.to_string(),
+        }
     }
 
     /// The checked-out branch, unless HEAD is detached.
@@ -5085,7 +5134,7 @@ impl Browser {
         self.mutation_error = None;
         self.mutation_notice = Some(format!(
             "Reset to {}{}",
-            receipt.commit.chars().take(8).collect::<String>(),
+            self.commit_summary(&receipt.commit),
             if mode == gg_engine::reset::Mode::Hard {
                 " · hard"
             } else {
@@ -5145,7 +5194,7 @@ impl Browser {
         if let Some(state) = &self.mutation {
             return Some(OperationArea::Mutation {
                 operation: state.operation,
-                commit: state.commit.clone(),
+                commit: state.commit.as_deref().map(|id| self.commit_summary(id)),
                 conflicts: state.conflicts.len(),
                 pending: false,
             });
@@ -6096,6 +6145,10 @@ impl Browser {
         let ctx = ui.ctx().clone();
         let ctx = &ctx;
         let conflict_mutation = self.mutation.clone();
+        let conflict_commit = conflict_mutation
+            .as_ref()
+            .and_then(|state| state.commit.as_deref())
+            .map(|id| self.commit_summary(id));
         let conflict_pending =
             self.operation_busy() || self.network.is_some() || self.branch.is_some();
         let mut conflict_select = None;
@@ -6126,11 +6179,8 @@ impl Browser {
                                 .unwrap_or("operation"),
                         );
                         ui.label(format!("· {unresolved} unresolved"));
-                        if let Some(commit) = conflict_mutation
-                            .as_ref()
-                            .and_then(|state| state.commit.as_deref())
-                        {
-                            ui.label(format!("· {}", commit.chars().take(8).collect::<String>()));
+                        if let Some(commit) = &conflict_commit {
+                            ui.add(egui::Label::new(format!("· {commit}")).truncate());
                         }
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if ui
@@ -8947,10 +8997,10 @@ impl Browser {
                         } => {
                             ui.strong(format!("{} in progress", operation.as_str()));
                             if let Some(commit) = commit {
-                                ui.weak(format!(
-                                    "· {}",
-                                    commit.chars().take(8).collect::<String>()
-                                ));
+                                ui.add(
+                                    egui::Label::new(egui::RichText::new(format!("· {commit}")).weak())
+                                        .truncate(),
+                                );
                             }
                             if *conflicts > 0 {
                                 ui.label(format!(
@@ -9488,6 +9538,10 @@ impl Browser {
 
         let mut create_branch_submit = None;
         let mut create_branch_cancel = false;
+        let create_summary = self
+            .create_branch
+            .as_ref()
+            .map(|dialog| self.commit_summary(&dialog.commit));
         if let Some(dialog) = &mut self.create_branch {
             egui::Window::new(dialog.title())
                 .id(egui::Id::unique("create-branch-dialog"))
@@ -9497,11 +9551,13 @@ impl Browser {
                 .default_pos(ctx.content_rect().center())
                 .pivot(egui::Align2::CENTER_CENTER)
                 .show(ctx, |ui| {
-                    ui.label(format!(
-                        "Create a branch at {} ({})",
-                        dialog.commit.chars().take(8).collect::<String>(),
-                        dialog.selector
-                    ));
+                    ui.label(format!("Create a branch at {}", dialog.selector));
+                    if let Some(summary) = &create_summary {
+                        ui.add(
+                            egui::Label::new(egui::RichText::new(summary).monospace()).truncate(),
+                        )
+                        .on_hover_text(summary);
+                    }
                     ui.add(
                         egui::TextEdit::singleline(&mut dialog.name)
                             .hint_text("Branch name")
@@ -9546,7 +9602,7 @@ impl Browser {
                         let notice = format!(
                             "Created {} at {}",
                             receipt.branch,
-                            receipt.commit.chars().take(8).collect::<String>()
+                            self.commit_summary(&receipt.commit)
                         );
                         self.create_branch = None;
                         self.load(ctx);
@@ -9679,6 +9735,7 @@ impl Browser {
         let mut reset_cancel = false;
         let mut reset_mode = None;
         if let Some((commit, mode)) = self.reset_confirm.clone() {
+            let summary = self.commit_summary(&commit);
             egui::Window::new("Reset here")
                 .id(egui::Id::unique("reset-here"))
                 .modal(ctx, egui::Id::unique("reset-here"))
@@ -9688,10 +9745,11 @@ impl Browser {
                 .pivot(egui::Align2::CENTER_CENTER)
                 .show(ctx, |ui| {
                     ui.label(format!(
-                        "Reset the current branch to {} using {} reset?",
-                        commit.chars().take(8).collect::<String>(),
+                        "Reset the current branch using {} reset to",
                         mode.as_str()
                     ));
+                    ui.add(egui::Label::new(egui::RichText::new(&summary).monospace()).truncate())
+                        .on_hover_text(&summary);
                     ui.horizontal(|ui| {
                         for (choice, label, hint) in [
                             (
@@ -14631,6 +14689,24 @@ mod tests {
             .join("\n");
         assert!(numbered(&ten).starts_with(" 1  0\n"));
         assert!(numbered(&ten).ends_with("10  9"));
+    }
+
+    #[test]
+    fn commits_are_named_with_subject_author_and_date_beside_the_hash() {
+        let app = layout_fixture();
+        let commit = app.state.rows.values().next().cloned();
+        let Some(commit) = commit else {
+            unreachable!("the fixture has history rows");
+        };
+        let summary = app.commit_summary(&commit.id);
+        assert!(summary.starts_with(&commit.id[..8]), "{summary}");
+        assert!(summary.contains(commit.subject()), "{summary}");
+        assert!(summary.contains(&commit.author), "{summary}");
+        assert_eq!(
+            app.commit_summary("ffffffffffffffff"),
+            "ffffffff",
+            "unknown: the ID alone"
+        );
     }
 
     #[test]

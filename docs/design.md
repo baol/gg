@@ -26,3 +26,7 @@ Journey review and proposed M7 interfaces: [user flows](user-flows.md) and [inte
 Proposed consolidation across views: [coherent interaction model](ui-coherence.md), including the shared reader and the requested Local Changes layout. Increments 1–8 are complete; later increments remain proposals. Update the owning architecture contracts as each later increment is scheduled.
 
 Retain the labeled displayed diff while a newly selected file loads. Replace identity, metadata, preview, and rows together after interaction settles. An explicit new selection may publish immediately even when the resting pointer is already over the reader; asynchronous page replacement still waits for hover to clear. Keep loading and metadata slots fixed in height.
+
+## Commits are never a bare hash
+
+Wherever gg names a commit in a dialog, an operation area, or a status message, it shows more than the hash: `0f99a42b · subject · author · date`, from the loaded history. Only a commit that is not loaded falls back to the 8-character ID.

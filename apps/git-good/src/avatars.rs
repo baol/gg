@@ -18,7 +18,102 @@ static NETWORK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::n
 pub fn set_network(enabled: bool) {
     NETWORK.store(enabled, std::sync::atomic::Ordering::Relaxed);
 }
+
+/// The avatar sources that are on, as a bit per [`AvatarSource::ALL`] entry.
+static SOURCES: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0b0101);
+
+/// Turn avatar sources on or off, from Preferences.
+pub fn set_sources(sources: &[AvatarSource]) {
+    SOURCES.store(mask(sources), std::sync::atomic::Ordering::Relaxed);
+}
+
+fn mask(sources: &[AvatarSource]) -> u8 {
+    AvatarSource::ALL
+        .iter()
+        .enumerate()
+        .filter(|(_, source)| sources.contains(source))
+        .fold(0, |mask, (bit, _)| mask | (1 << bit))
+}
+
+use crate::settings::AvatarSource;
+
+/// One way to find an avatar.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Lookup {
+    /// An image URL; a 404 means "no avatar here".
+    Image(String),
+    /// GitLab's `/api/v4/avatar` answer names the image URL.
+    GitlabJson(String),
+}
+
+/// The lookups for `email`, in source order, for the sources in `mask`.
+fn lookups(email: &str, key: &str, mask: u8) -> Vec<Lookup> {
+    let email = email.trim();
+    let on = |source: AvatarSource| {
+        AvatarSource::ALL
+            .iter()
+            .position(|candidate| *candidate == source)
+            .is_some_and(|bit| mask & (1 << bit) != 0)
+    };
+    let mut out = Vec::new();
+    if on(AvatarSource::Github)
+        && let Some(local) = email
+            .to_lowercase()
+            .strip_suffix("@users.noreply.github.com")
+            .map(str::to_owned)
+    {
+        // `12345+name@…` names the account ID; older addresses name the user.
+        let id = local.split_once('+').map(|(id, _)| id.to_owned());
+        match id.filter(|id| !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit())) {
+            Some(id) => out.push(Lookup::Image(format!(
+                "https://avatars.githubusercontent.com/u/{id}?s=128"
+            ))),
+            None if !local.is_empty()
+                && local
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-') =>
+            {
+                out.push(Lookup::Image(format!(
+                    "https://avatars.githubusercontent.com/{local}?s=128"
+                )));
+            }
+            None => {}
+        }
+    }
+    if on(AvatarSource::Gitlab) && email.contains('@') {
+        out.push(Lookup::GitlabJson(format!(
+            "https://gitlab.com/api/v4/avatar?email={}&size=128",
+            percent_encode(email)
+        )));
+    }
+    if on(AvatarSource::Gravatar) {
+        out.push(Lookup::Image(format!(
+            "https://www.gravatar.com/avatar/{key}?s=128&d=404&r=g"
+        )));
+    }
+    if on(AvatarSource::Libravatar) {
+        out.push(Lookup::Image(format!(
+            "https://seccdn.libravatar.org/avatar/{key}?s=128&d=404"
+        )));
+    }
+    out
+}
+
+fn percent_encode(value: &str) -> String {
+    value
+        .bytes()
+        .map(|byte| {
+            if byte.is_ascii_alphanumeric() || b"-._~".contains(&byte) {
+                (byte as char).to_string()
+            } else {
+                format!("%{byte:02X}")
+            }
+        })
+        .collect()
+}
 type Reply = (String, Option<egui::ColorImage>);
+/// An avatar request: the email's cache key and the email itself.
+type Request = (String, String);
 
 struct Portrait {
     source: egui::ColorImage,
@@ -39,7 +134,7 @@ pub struct Avatars {
     entries: HashMap<String, (Option<Portrait>, u64)>,
     clock: u64,
     allow_updates: bool,
-    worker: Option<(mpsc::SyncSender<String>, mpsc::Receiver<Reply>)>,
+    worker: Option<(mpsc::SyncSender<Request>, mpsc::Receiver<Reply>)>,
     failed: bool,
 }
 
@@ -86,13 +181,8 @@ fn decode(bytes: &[u8]) -> Option<egui::ColorImage> {
 }
 
 // A successful response contains encoded image bytes; None is an authoritative 404.
-fn fetch(client: &reqwest::blocking::Client, key: &str) -> Result<Option<Vec<u8>>, ()> {
-    let response = client
-        .get(format!(
-            "https://www.gravatar.com/avatar/{key}?s=128&d=404&r=g"
-        ))
-        .send()
-        .map_err(|_| ())?;
+fn fetch_image(client: &reqwest::blocking::Client, url: &str) -> Result<Option<Vec<u8>>, ()> {
+    let response = client.get(url).send().map_err(|_| ())?;
     if response.status() == reqwest::StatusCode::NOT_FOUND {
         return Ok(None);
     }
@@ -106,6 +196,44 @@ fn fetch(client: &reqwest::blocking::Client, key: &str) -> Result<Option<Vec<u8>
         return Err(());
     }
     Ok(Some(bytes))
+}
+
+/// Try each lookup in order; the first image wins. `Ok(None)` only when
+/// every source answered that it has none, so a network error is retried
+/// on a later launch instead of being cached as "no avatar".
+fn fetch(client: &reqwest::blocking::Client, lookups: &[Lookup]) -> Result<Option<Vec<u8>>, ()> {
+    let mut failed = false;
+    for lookup in lookups {
+        let result = match lookup {
+            Lookup::Image(url) => fetch_image(client, url),
+            Lookup::GitlabJson(url) => gitlab_image(client, url),
+        };
+        match result {
+            Ok(Some(bytes)) => return Ok(Some(bytes)),
+            Ok(None) => {}
+            Err(()) => failed = true,
+        }
+    }
+    if failed { Err(()) } else { Ok(None) }
+}
+
+/// GitLab answers `{"avatar_url": …}`; its fallback to Gravatar is left to
+/// the Gravatar source, so only a GitLab-hosted image counts.
+fn gitlab_image(client: &reqwest::blocking::Client, url: &str) -> Result<Option<Vec<u8>>, ()> {
+    let response = client.get(url).send().map_err(|_| ())?;
+    let response = response.error_for_status().map_err(|_| ())?;
+    let mut bytes = Vec::new();
+    response
+        .take(16 * 1024)
+        .read_to_end(&mut bytes)
+        .map_err(|_| ())?;
+    let answer: serde_json::Value = serde_json::from_slice(&bytes).map_err(|_| ())?;
+    match answer.get("avatar_url").and_then(serde_json::Value::as_str) {
+        Some(image) if image.starts_with("https://") && !image.contains("gravatar.com") => {
+            fetch_image(client, image)
+        }
+        _ => Ok(None),
+    }
 }
 
 fn read_cache(path: &Path) -> Option<Option<egui::ColorImage>> {
@@ -247,7 +375,7 @@ impl Avatars {
             return None;
         }
         if self.worker.is_none() {
-            let (tx, requests) = mpsc::sync_channel::<String>(8);
+            let (tx, requests) = mpsc::sync_channel::<Request>(8);
             let (replies, rx) = mpsc::sync_channel::<Reply>(8);
             let ctx = ctx.clone();
             let spawned = std::thread::Builder::new()
@@ -255,7 +383,7 @@ impl Avatars {
                 .spawn(move || {
                     let Ok(client) = reqwest::blocking::Client::builder()
                         .timeout(Duration::from_secs(3))
-                        .redirect(reqwest::redirect::Policy::none())
+                        .redirect(reqwest::redirect::Policy::limited(3))
                         .user_agent("git-good")
                         .build()
                     else {
@@ -263,12 +391,16 @@ impl Avatars {
                     };
                     let root = cache_root();
                     let mut attempted = HashSet::new();
-                    while let Ok(key) = requests.recv() {
-                        let image = cached_image(root.as_deref(), &key, &mut attempted, || {
+                    while let Ok((key, email)) = requests.recv() {
+                        // The cache entry names the sources it was found with,
+                        // so turning a source on looks again.
+                        let mask = SOURCES.load(std::sync::atomic::Ordering::Relaxed);
+                        let entry = format!("{key}-{mask}");
+                        let image = cached_image(root.as_deref(), &entry, &mut attempted, || {
                             if !NETWORK.load(std::sync::atomic::Ordering::Relaxed) {
                                 Err(())
                             } else {
-                                fetch(&client, &key)
+                                fetch(&client, &lookups(&email, &key, mask))
                             }
                         });
                         if replies.send((key, image)).is_err() {
@@ -297,7 +429,7 @@ impl Avatars {
             }
         }
         if let Some((tx, _)) = &self.worker {
-            match tx.try_send(key.clone()) {
+            match tx.try_send((key.clone(), email.to_string())) {
                 Ok(()) => {
                     self.entries.insert(key, (None, self.clock));
                 }
@@ -312,6 +444,46 @@ impl Avatars {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lookups_follow_the_enabled_sources_in_order() {
+        let all = mask(&AvatarSource::ALL);
+        let urls = |email: &str, mask: u8| lookups(email, "k", mask);
+        assert_eq!(
+            urls("12345+octo@users.noreply.github.com", all),
+            [
+                Lookup::Image("https://avatars.githubusercontent.com/u/12345?s=128".into()),
+                Lookup::GitlabJson(
+                    "https://gitlab.com/api/v4/avatar?email=12345%2Bocto%40users.noreply.github.com&size=128".into()
+                ),
+                Lookup::Image("https://www.gravatar.com/avatar/k?s=128&d=404&r=g".into()),
+                Lookup::Image("https://seccdn.libravatar.org/avatar/k?s=128&d=404".into()),
+            ]
+        );
+        assert_eq!(
+            urls(
+                "octo@users.noreply.github.com",
+                mask(&[AvatarSource::Github])
+            ),
+            [Lookup::Image(
+                "https://avatars.githubusercontent.com/octo?s=128".into()
+            )]
+        );
+        assert!(
+            urls("ada@example.org", mask(&[AvatarSource::Github])).is_empty(),
+            "GitHub only covers its no-reply addresses"
+        );
+        assert_eq!(
+            urls(
+                "ada@example.org",
+                mask(&[AvatarSource::Github, AvatarSource::Gravatar])
+            ),
+            [Lookup::Image(
+                "https://www.gravatar.com/avatar/k?s=128&d=404&r=g".into()
+            )]
+        );
+        assert!(urls("ada@example.org", 0).is_empty());
+    }
     #[test]
     fn normalized_email_uses_stable_sha256_key() {
         assert_eq!(key(" User@Example.org "), key("user@example.org"));
