@@ -2147,15 +2147,21 @@ impl Browser {
         let offline_override = std::env::var_os("GG_OFFLINE").is_some();
         // Modal, as in the mockup: a fixed size keeps it in place while
         // folders come and go; Esc, a click outside, × or Close dismiss it.
-        let modal = egui::Modal::new(egui::Id::unique("preferences")).show(ctx, |ui| {
-                ui.set_width(620.0);
+        // Sized like the mockup (about 900 × 720), within the window.
+        let screen = ctx.content_rect().size();
+        let width = (screen.x - 80.0).clamp(560.0, 900.0);
+        let body = (screen.y - 140.0).clamp(300.0, 600.0);
+        let modal = egui::Modal::new(egui::Id::unique("preferences"))
+            .backdrop_color(egui::Color32::from_black_alpha(140))
+            .show(ctx, |ui| {
+                ui.set_width(width);
                 // A fixed header row: title, search, and ×.
                 ui.allocate_ui_with_layout(
-                    egui::vec2(620.0, 30.0),
+                    egui::vec2(width, 36.0),
                     egui::Layout::left_to_right(egui::Align::Center),
                     |ui| {
-                    ui.set_min_size(egui::vec2(620.0, 30.0));
-                    ui.heading("Preferences");
+                    ui.set_min_size(egui::vec2(width, 36.0));
+                    ui.label(egui::RichText::new("Preferences").size(18.0));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.button("×").on_hover_text("Close (Esc)").clicked() {
                             open = false;
@@ -2181,19 +2187,21 @@ impl Browser {
                 // The body has one fixed size, so adding folders or switching
                 // sections never resizes or moves the window.
                 ui.allocate_ui_with_layout(
-                    egui::vec2(620.0, 430.0),
+                    egui::vec2(width, body),
                     egui::Layout::left_to_right(egui::Align::Min),
                     |ui| {
-                    ui.set_min_size(egui::vec2(620.0, 430.0));
-                    ui.set_max_height(430.0);
+                    ui.set_min_size(egui::vec2(width, body));
+                    ui.set_max_height(body);
                     ui.vertical(|ui| {
-                        ui.set_width(130.0);
+                        ui.set_width(190.0);
+                        ui.spacing_mut().item_spacing.y = 2.0;
                         for section in PrefSection::ALL {
                             // Sections without a match keep their slot, empty.
                             let shown = visible.contains(&section);
                             let response = ui.add_visible(
                                 shown,
-                                egui::Button::selectable(dialog.section == section, section.label()),
+                                egui::Button::selectable(dialog.section == section, section.label())
+                                    .min_size(egui::vec2(190.0, 30.0)),
                             );
                             if shown && response.clicked() {
                                 dialog.section = section;
@@ -2206,7 +2214,7 @@ impl Browser {
                     ui.separator();
                     egui::ScrollArea::vertical()
                         .id_salt("preferences-section")
-                        .max_height(370.0)
+                        .max_height(body)
                         .auto_shrink([false, false])
                         .show(ui, |ui| ui.vertical(|ui| match dialog.section {
                         PrefSection::General => {
@@ -2654,11 +2662,19 @@ impl Browser {
                 ui.separator();
                 ui.horizontal(|ui| {
                     let saved = settings::path()
-                        .map(|path| path.display().to_string())
+                        .map(|path| {
+                            let folder = path.parent().unwrap_or(&path).display().to_string();
+                            match std::env::var("HOME") {
+                                Ok(home) if !home.is_empty() && folder.starts_with(&home) => {
+                                    format!("~{}/", &folder[home.len()..])
+                                }
+                                _ => format!("{folder}/"),
+                            }
+                        })
                         .unwrap_or_else(|| "no configuration folder".into());
                     ui.add(
                         egui::Label::new(
-                            egui::RichText::new(format!("Changes apply now · saved to {saved}"))
+                            egui::RichText::new(format!("Changes apply immediately. Saved to {saved}"))
                                 .small()
                                 .weak(),
                         )

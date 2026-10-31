@@ -56,7 +56,7 @@ Rules:
 
 ## Density
 
-Compact density is the default: history and file rows 22 px, diff rows 19 px, path and endpoints on one reader line, one-line commit identity, one-character change markers (`+ ~ − T ? !`) with the full kind in the tooltip. Comfortable density remains a preference.
+Compact density is the default: history and file rows 22 px, diff rows 19 px, one reader header row (path, endpoints, and the mode controls), one-line commit identity, one-character change markers (`+ ~ − T ? !`) with the full kind in the tooltip. Comfortable density remains a preference.
 
 ## Stashes
 
