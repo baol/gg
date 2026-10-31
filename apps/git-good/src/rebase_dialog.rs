@@ -504,17 +504,19 @@ impl Dialog {
                     ui.set_min_width(300.0);
                     for option in rebase_plan::ACTIONS {
                         let reason = self.plan.unavailable(index, option);
-                        let button = egui::Button::new((
-                            egui::RichText::new(rebase_plan::label(option))
-                                .strong()
-                                .color(action_color(ui.visuals(), option)),
-                            egui::RichText::new(rebase_plan::hint(option))
-                                .weak()
-                                .small(),
-                        ))
+                        let button = crate::menus::row(
+                            option == action,
+                            (
+                                egui::RichText::new(rebase_plan::label(option))
+                                    .strong()
+                                    .color(action_color(ui.visuals(), option)),
+                                egui::RichText::new(rebase_plan::hint(option))
+                                    .weak()
+                                    .small(),
+                            ),
+                        )
                         .right_text(rebase_plan::key(option).to_string())
-                        .selected(option == action)
-                        .min_size(egui::vec2(ui.available_width(), 22.0));
+                        .min_size(egui::vec2(ui.available_width(), crate::menus::ROW_HEIGHT));
                         let response = ui.add_enabled(reason.is_none(), button);
                         let response = match reason {
                             Some(reason) => response.on_disabled_hover_text(reason),

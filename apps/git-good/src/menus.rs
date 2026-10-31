@@ -100,6 +100,67 @@ pub fn show<C: Clone>(ui: &mut egui::Ui, menus: &[Menu<C>]) -> Option<C> {
     chosen
 }
 
+/// Menu row height, as in the design's menus.
+pub const ROW_HEIGHT: f32 = 24.0;
+const CHECK_WIDTH: f32 = 14.0;
+
+/// A menu row as the design draws it: a check column, then the label. A
+/// checked row shows a checkmark in the column; no row gets a selected fill.
+pub fn row<'a>(checked: bool, text: impl egui::IntoAtoms<'a>) -> egui::Button<'a> {
+    let check = egui::Atom::paint(egui::vec2(CHECK_WIDTH, CHECK_WIDTH), move |ui, args| {
+        if checked {
+            let r = args.rect.shrink(2.0);
+            let points = vec![
+                egui::pos2(r.left(), r.center().y),
+                egui::pos2(r.left() + r.width() * 0.38, r.bottom() - r.height() * 0.15),
+                egui::pos2(r.right(), r.top() + r.height() * 0.15),
+            ];
+            let color = ui.visuals().hyperlink_color;
+            ui.painter()
+                .add(egui::Shape::line(points, egui::Stroke::new(1.6, color)));
+        }
+    });
+    egui::Button::new((check, text))
+        .frame_when_inactive(false)
+        .gap(8.0)
+        .min_size(egui::vec2(0.0, ROW_HEIGHT))
+}
+
+/// One choice in a dropdown: a menu row that reports its checked state.
+pub fn choice(
+    ui: &mut egui::Ui,
+    checked: bool,
+    text: impl Into<egui::WidgetText>,
+) -> egui::Response {
+    let text = text.into();
+    let label = text.text().to_owned();
+    let response = ui.add(row(checked, text));
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(
+            egui::accesskit::Role::MenuItemRadio,
+            ui.is_enabled(),
+            checked,
+            &label,
+        )
+    });
+    response
+}
+
+/// [`choice`] bound to a value, like `selectable_value`.
+pub fn choose<V: PartialEq>(
+    ui: &mut egui::Ui,
+    current: &mut V,
+    value: V,
+    text: impl Into<egui::WidgetText>,
+) -> egui::Response {
+    let mut response = choice(ui, *current == value, text);
+    if response.clicked() && *current != value {
+        *current = value;
+        response.mark_changed();
+    }
+    response
+}
+
 /// Draw a list of entries (a menu's body, or a popup that mirrors a menu).
 pub fn entries<C: Clone>(ui: &mut egui::Ui, list: &[Entry<C>], chosen: &mut Option<C>) {
     ui.set_min_width(240.0);
@@ -109,7 +170,9 @@ pub fn entries<C: Clone>(ui: &mut egui::Ui, list: &[Entry<C>], chosen: &mut Opti
                 ui.separator();
             }
             Entry::Submenu(title, list) => {
-                ui.menu_button(title.as_str(), |ui| entries(ui, list, chosen));
+                use egui::containers::menu::SubMenuButton;
+                let button = row(false, title.as_str()).right_text(SubMenuButton::arrow_atom(None));
+                SubMenuButton::from_button(button).ui(ui, |ui| entries(ui, list, chosen));
             }
             Entry::Item(item) => {
                 let text = if item.danger {
@@ -117,11 +180,7 @@ pub fn entries<C: Clone>(ui: &mut egui::Ui, list: &[Entry<C>], chosen: &mut Opti
                 } else {
                     egui::RichText::new(&item.label)
                 };
-                let button = match item.checked {
-                    Some(on) => egui::Button::selectable(on, text),
-                    None => egui::Button::new(text),
-                }
-                .shortcut_text(item.key);
+                let button = row(item.checked == Some(true), text).shortcut_text(item.key);
                 let response = ui.add_enabled(item.disabled.is_none(), button);
                 let response = match &item.disabled {
                     Some(reason) => response.on_disabled_hover_text(reason),
@@ -140,6 +199,37 @@ pub fn entries<C: Clone>(ui: &mut egui::Ui, list: &[Entry<C>], chosen: &mut Opti
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn checked_rows_show_a_checkmark_and_no_selected_fill() {
+        let ctx = egui::Context::default();
+        let mut fill = None;
+        let mut current = 1;
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            fill = Some(ui.visuals().selection.bg_fill);
+            let list = vec![
+                item("Inline diff", "", 1).checked(true).entry(),
+                item("Side-by-side diff", "", 2).checked(false).entry(),
+            ];
+            entries(ui, &list, &mut None);
+            choose(ui, &mut current, 1, "Compact");
+        });
+        output.textures_delta.clear();
+        let Some(fill) = fill else {
+            unreachable!("the frame ran");
+        };
+        let mut rects = 0;
+        let mut lines = 0;
+        for shape in output.shapes.iter().map(|clipped| &clipped.shape) {
+            match shape {
+                egui::Shape::Rect(rect) if rect.fill == fill => rects += 1,
+                egui::Shape::Path(path) if path.points.len() == 3 => lines += 1,
+                _ => {}
+            }
+        }
+        assert_eq!(rects, 0, "no row is filled as selected");
+        assert_eq!(lines, 2, "one checkmark per checked row");
+    }
 
     #[test]
     fn flatten_names_each_item_with_its_menu_path() {

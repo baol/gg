@@ -132,7 +132,7 @@ impl ReflogView {
                 .width(200.0)
                 .show_ui(ui, |ui| {
                     for candidate in references {
-                        ui.selectable_value(&mut reference, candidate.clone(), candidate);
+                        crate::menus::choose(ui, &mut reference, candidate.clone(), candidate);
                     }
                 });
             if reference != self.reference {
