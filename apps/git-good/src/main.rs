@@ -9,6 +9,7 @@ mod branding;
 mod clipboard;
 mod colors;
 mod commit_cli;
+mod commit_stats;
 mod conflict_blocks;
 mod conflict_cli;
 mod density;
@@ -1511,6 +1512,9 @@ struct Browser {
     /// The refs sidebar in Changes and Review; hidden by default, as in
     /// their mockups.
     refs_visible_elsewhere: bool,
+    /// File and line counts for the inspected commit, and their worker.
+    commit_stats: Option<(String, commit_stats::Stats)>,
+    commit_stats_worker: Option<commit_stats::Worker>,
     refs_query: String,
     refs_width: f32,
     state: state::State,
@@ -1676,6 +1680,8 @@ impl Browser {
             signature_generation: 0,
             refs_visible: true,
             refs_visible_elsewhere: false,
+            commit_stats: None,
+            commit_stats_worker: None,
             refs_query: String::new(),
             refs_width: 0.0,
             state: state::State::default(),
@@ -10546,10 +10552,42 @@ impl Browser {
                 .show(ui, |ui| {
                     ui.add_space(4.0);
                     let commit = self.state.displayed_details();
-                    let menu = self.commit_menu_entries();
-                    let command = details_view::inspector(ui, commit, &mut self.avatars, |ui| {
-                        commit.and_then(|_| commit_action_menu(ui, &menu))
+                    let stats = commit.and_then(|commit| {
+                        if let Some(worker) = &self.commit_stats_worker
+                            && let Some(stats) = worker.poll()
+                        {
+                            self.commit_stats = Some((worker.commit.clone(), stats));
+                            self.commit_stats_worker = None;
+                        }
+                        let known = self
+                            .commit_stats
+                            .as_ref()
+                            .filter(|(id, _)| *id == commit.id)
+                            .map(|(_, stats)| stats.label());
+                        let running = self
+                            .commit_stats_worker
+                            .as_ref()
+                            .is_some_and(|worker| worker.commit == commit.id);
+                        if known.is_none()
+                            && !running
+                            && let Some(history) = &self.state.history
+                        {
+                            self.commit_stats_worker = Some(commit_stats::Worker::start(
+                                history.path.clone(),
+                                commit.id.clone(),
+                                ctx.clone(),
+                            ));
+                        }
+                        known
                     });
+                    let menu = self.commit_menu_entries();
+                    let command = details_view::inspector(
+                        ui,
+                        commit,
+                        stats.as_deref(),
+                        &mut self.avatars,
+                        |ui| commit.and_then(|_| commit_action_menu(ui, &menu)),
+                    );
                     if let Some(command) = command
                         && let Some(commit) = commit
                     {
