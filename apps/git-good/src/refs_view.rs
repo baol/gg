@@ -855,7 +855,10 @@ mod tests {
                 _ => None,
             })
             .collect::<Vec<_>>();
-        assert!(text.iter().any(|line| line.as_str() == "WORKTREES"), "{text:?}");
+        assert!(
+            text.iter().any(|line| line.as_str() == "WORKTREES"),
+            "{text:?}"
+        );
         let Some(row) = row else {
             unreachable!("the linked worktree row is drawn: {text:?}");
         };

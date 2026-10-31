@@ -1508,6 +1508,9 @@ struct Browser {
     signature_worker: Option<signature_worker::Worker>,
     signature_generation: u64,
     refs_visible: bool,
+    /// The refs sidebar in Changes and Review; hidden by default, as in
+    /// their mockups.
+    refs_visible_elsewhere: bool,
     refs_query: String,
     refs_width: f32,
     state: state::State,
@@ -1672,6 +1675,7 @@ impl Browser {
             signature_worker: None,
             signature_generation: 0,
             refs_visible: true,
+            refs_visible_elsewhere: false,
             refs_query: String::new(),
             refs_width: 0.0,
             state: state::State::default(),
@@ -3136,7 +3140,7 @@ impl Browser {
             FrameCommand::Shortcuts => self.help_shortcuts = true,
             FrameCommand::LocalChanges => *go_local = true,
             FrameCommand::History => *go_history = true,
-            FrameCommand::ToggleRefs => self.refs_visible = !self.refs_visible,
+            FrameCommand::ToggleRefs => self.toggle_refs(),
             FrameCommand::Filter(query) => {
                 self.state.query = query;
                 self.filter_changed();
@@ -4139,7 +4143,7 @@ impl Browser {
                         (!sidebar)
                             .then_some("Resize the window to at least 1120 px to show the sidebar"),
                     )
-                    .checked(self.refs_visible && sidebar)
+                    .checked(self.refs_shown() && sidebar)
                     .entry(),
                 item("Commit inspector", "Space", FrameCommand::ToggleDetails)
                     .checked(details)
@@ -4432,6 +4436,24 @@ impl Browser {
             } else if let Err(error) = working.start_amend(ctx) {
                 self.mutation_error = Some(error);
             }
+        }
+    }
+
+    /// Whether the refs sidebar shows in the current view: History keeps it
+    /// open by default; Changes and Review hide it until toggled.
+    fn refs_shown(&self) -> bool {
+        if self.working.is_some() || self.review.is_some() {
+            self.refs_visible_elsewhere
+        } else {
+            self.refs_visible
+        }
+    }
+
+    fn toggle_refs(&mut self) {
+        if self.working.is_some() || self.review.is_some() {
+            self.refs_visible_elsewhere = !self.refs_visible_elsewhere;
+        } else {
+            self.refs_visible = !self.refs_visible;
         }
     }
 
@@ -8340,7 +8362,7 @@ impl Browser {
         }
         self.poll_conflict_view(ctx);
         let narrow = ctx.content_rect().width() < 1040.0;
-        let wide_refs = !narrow && self.refs_visible && ctx.content_rect().width() >= 1120.0;
+        let wide_refs = !narrow && self.refs_shown() && ctx.content_rect().width() >= 1120.0;
         if self.working.is_none() && self.review.is_none() {
             self.state.viewport = self.viewport.clone();
             let (hovering_history, interacting, now) = ctx.input(|i| {
@@ -8564,7 +8586,7 @@ impl Browser {
             && ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::Backslash))
             && ctx.content_rect().width() >= 1120.0
         {
-            self.refs_visible = !self.refs_visible;
+            self.toggle_refs();
         }
         let table = self.menu_table(&ready);
         let mut menu_command = None;
@@ -8616,7 +8638,7 @@ impl Browser {
                         .add_enabled(
                             sidebar_available,
                             egui::Button::selectable(
-                                self.refs_visible && sidebar_available,
+                                self.refs_shown() && sidebar_available,
                                 crate::phosphor::icon(crate::phosphor::SIDEBAR_SIMPLE).size(17.0),
                             )
                             .min_size(egui::vec2(28.0, 26.0)),
@@ -8626,7 +8648,7 @@ impl Browser {
                             "Refs sidebar\nResize the window to at least 1120 px to show the sidebar",
                         );
                     if sidebar.clicked() {
-                        self.refs_visible = !self.refs_visible;
+                        self.toggle_refs();
                     }
                     ui.add_space(6.0);
                     let changes = ui
@@ -14973,11 +14995,39 @@ mod tests {
             vec![key(egui::Key::Num1, egui::Modifiers::COMMAND)],
         );
         assert!(app.working.is_some(), "Ctrl+1 opens Local Changes");
+        let has_sidebar = |output: &egui::FullOutput| {
+            output.shapes.iter().any(|shape| {
+                matches!(&shape.shape, egui::epaint::Shape::Text(text) if text.galley.job.text == "BRANCHES")
+            })
+        };
+        let changes = frame(&mut app, vec![]);
+        assert!(
+            !has_sidebar(&changes),
+            "Local Changes hides the refs sidebar"
+        );
+        let _ = frame(
+            &mut app,
+            vec![key(egui::Key::Backslash, egui::Modifiers::COMMAND)],
+        );
+        let changes = frame(&mut app, vec![]);
+        assert!(
+            has_sidebar(&changes),
+            "the toggle shows it in Local Changes"
+        );
+        let _ = frame(
+            &mut app,
+            vec![key(egui::Key::Backslash, egui::Modifiers::COMMAND)],
+        );
         let _ = frame(
             &mut app,
             vec![key(egui::Key::Num2, egui::Modifiers::COMMAND)],
         );
         assert!(app.working.is_none(), "Ctrl+2 returns to History");
+        let history = frame(&mut app, vec![]);
+        assert!(
+            has_sidebar(&history),
+            "History keeps its own sidebar choice"
+        );
         let shown = app.refs_visible;
         let _ = frame(
             &mut app,
