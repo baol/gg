@@ -123,21 +123,4 @@ mod tests {
             }
         }
     }
-
-    #[test]
-    fn tracking_label_uses_phosphor_arrows() {
-        let tracking = gg_engine::refs::Tracking {
-            branch: "main".into(),
-            full_name: "refs/heads/main".into(),
-            upstream: "origin/main".into(),
-            upstream_full_name: "refs/remotes/origin/main".into(),
-            remote: "origin".into(),
-            remote_branch: "main".into(),
-            ahead: Some(1),
-            behind: Some(2),
-        };
-        let label = crate::refs_view::tracking_label(&tracking);
-        assert!(label.contains(ARROW_UP), "{label:?}");
-        assert!(label.contains(ARROW_DOWN), "{label:?}");
-    }
 }

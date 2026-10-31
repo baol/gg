@@ -818,6 +818,29 @@ fn paint_badge(ui: &egui::Ui, rect: egui::Rect, count: u64) {
         .galley(badge.center() - galley.size() / 2.0, galley, ink);
 }
 
+/// An inline count badge after a tab label, as on the mockup's Changes
+/// tab; empty for zero.
+fn count_badge<'a>(count: u64) -> egui::Atom<'a> {
+    if count == 0 {
+        return egui::Atom::default();
+    }
+    let text = if count > 99 {
+        "99+".to_string()
+    } else {
+        count.to_string()
+    };
+    let width = 8.0 + 6.0 * text.chars().count() as f32;
+    egui::Atom::paint(egui::vec2(width.max(16.0), 16.0), move |ui, args| {
+        let font = egui::FontId::proportional(10.0);
+        let ink = egui::Color32::from_rgb(27, 27, 27);
+        let galley = ui.painter().layout_no_wrap(text.clone(), font, ink);
+        ui.painter()
+            .rect_filled(args.rect, 8.0, egui::Color32::from_rgb(237, 166, 78));
+        ui.painter()
+            .galley(args.rect.center() - galley.size() / 2.0, galley, ink);
+    })
+}
+
 /// The OS window title, as in the mockups: `gg — ~/path`, and the rebase
 /// step while one is stopped.
 fn window_title(
@@ -4410,48 +4433,6 @@ impl Browser {
                 self.mutation_error = Some(error);
             }
         }
-    }
-
-    /// What the operation area shows when nothing runs: the branch, its
-    /// tracking state, local changes, and stashes.
-    fn idle_summary(&self) -> String {
-        if self.state.history.is_none() {
-            return String::new();
-        }
-        let mut parts = Vec::new();
-        let head = self.state.refs.head.as_ref();
-        parts.push(match head.and_then(|head| head.name.as_deref()) {
-            Some(full) => format!("On {}", full.strip_prefix("refs/heads/").unwrap_or(full)),
-            None => "Detached HEAD".into(),
-        });
-        if let Some(tracking) = self.state.refs.current_tracking() {
-            parts.push(format!("tracking {}", refs_view::tracking_label(tracking)));
-        }
-        if let Some(summary) = &self.local_summary {
-            if let Some(changes) = summary.changes {
-                parts.push(match changes {
-                    0 => "no local changes".into(),
-                    1 => "1 changed file".into(),
-                    n => format!("{n} changed files"),
-                });
-            }
-            match summary.stashes.len() {
-                0 => {}
-                1 => parts.push("1 stash".into()),
-                n => parts.push(format!("{n} stashes")),
-            }
-        }
-        parts.join(" · ")
-    }
-
-    /// `feature · rebase 3/6` while an interactive rebase is stopped.
-    fn rebase_step_label(&self) -> Option<String> {
-        let progress = self.rebase_progress()?;
-        let (step, total) = progress.position();
-        Some(format!(
-            "{} · rebase {step}/{total}",
-            progress.branch.as_deref().unwrap_or("detached HEAD")
-        ))
     }
 
     /// The toolbar current-branch button and its filterable switcher popup.
@@ -8115,8 +8096,18 @@ impl Browser {
     }
 
     fn draw_ui(&mut self, ui: &mut egui::Ui) {
+        // The open repository's absolute path, else the requested one.
+        let shown_path = self
+            .state
+            .history
+            .as_ref()
+            .map(|history| {
+                let path = std::path::absolute(&history.path).unwrap_or(history.path.clone());
+                path.canonicalize().unwrap_or(path).display().to_string()
+            })
+            .unwrap_or_else(|| self.path.clone());
         let title = window_title(
-            &self.path,
+            &shown_path,
             std::env::var("HOME").ok().as_deref(),
             self.rebase_progress(),
         );
@@ -8582,51 +8573,27 @@ impl Browser {
             .exact_size(MENU_BAR_HEIGHT)
             .show(ui, |ui| {
                 egui::MenuBar::new().ui(ui, |ui| {
+                    branding::logo(ui, &mut self.logo, 16.0);
+                    ui.add_space(4.0);
                     menu_command = menus::show(ui, &table);
-                    ui.separator();
-                    let identity_width = ui.available_width().max(80.0);
-                    let (identity, path) = if let Some(history) = &self.state.history {
-                        let tracking = match self.rebase_step_label() {
-                            Some(step) => format!("  ·  {step}"),
-                            None => self
-                                .state
-                                .refs
-                                .current_tracking()
-                                .map(|tracking| {
-                                    format!("  ·  {}", refs_view::tracking_label(tracking))
-                                })
-                                .unwrap_or_default(),
-                        };
-                        (
-                            format!(
-                                "{}  ·  {}{}",
-                                history
-                                    .path
-                                    .file_name()
-                                    .unwrap_or_default()
-                                    .to_string_lossy(),
-                                if history.shallow {
-                                    format!("{} · shallow", history.head)
-                                } else {
-                                    history.head.clone()
-                                },
-                                tracking
-                            ),
-                            history.path.display().to_string(),
-                        )
-                    } else {
-                        ("Open a repository".into(), self.path.clone())
+                    // The window identity: repository and path, plus the
+                    // operation while one runs. The branch lives on the
+                    // toolbar's branch button only.
+                    let identity = match &self.state.history {
+                        Some(history) if history.shallow => {
+                            format!("{}  ·  shallow", self.window_title)
+                        }
+                        Some(_) => self.window_title.clone(),
+                        None => "gg — open a repository".into(),
                     };
+                    let width = ui.available_width();
                     ui.allocate_ui_with_layout(
-                        egui::vec2(identity_width, 26.0),
-                        egui::Layout::left_to_right(egui::Align::Center),
+                        egui::vec2(width, ui.available_height()),
+                        egui::Layout::right_to_left(egui::Align::Center),
                         |ui| {
-                            ui.set_min_width(identity_width);
-                            bounded_text::field(
-                                ui,
-                                &format!("{identity}  ·  {path}"),
-                                egui::FontId::proportional(13.0),
-                                26.0,
+                            ui.add_space(6.0);
+                            ui.add(
+                                egui::Label::new(egui::RichText::new(identity).weak()).truncate(),
                             );
                         },
                     );
@@ -8642,11 +8609,6 @@ impl Browser {
             .show(ui, |ui| {
                 ui.horizontal_centered(|ui| {
                     ui.spacing_mut().item_spacing.x = 2.0;
-                    // Narrow windows give the logo's slot to the tools.
-                    if ctx.content_rect().width() >= 900.0 {
-                        branding::toolbar(ui, &mut self.logo);
-                        ui.add_space(4.0);
-                    }
                     let has_repo = self.state.history.is_some();
                     let local_selected = self.working.is_some();
                     let sidebar_available = ctx.content_rect().width() >= 1120.0;
@@ -8670,15 +8632,17 @@ impl Browser {
                     let changes = ui
                         .add_enabled(
                             has_repo,
-                            egui::Button::selectable(local_selected, "Changes")
-                                .min_size(egui::vec2(96.0, 24.0)),
+                            egui::Button::selectable(
+                                local_selected,
+                                ("Changes", count_badge(ready.changes as u64)),
+                            )
+                            .min_size(egui::vec2(96.0, 24.0)),
                         )
                         .on_hover_text(match ready.changes {
                             0 => "Local Changes: stage, unstage, commit, and amend".to_string(),
                             1 => "Local Changes: 1 changed file".to_string(),
                             count => format!("Local Changes: {count} changed files"),
                         });
-                    paint_badge(ui, changes.rect, ready.changes as u64);
                     if changes.clicked() {
                         go_local = true;
                     }
@@ -8719,10 +8683,16 @@ impl Browser {
                         tool = Some(FrameCommand::Fetch);
                     }
                     let strategy = self.prefs.pull_strategy.menu_label();
+                    let upstream = self
+                        .state
+                        .refs
+                        .current_tracking()
+                        .map(|tracking| format!(" from {}", tracking.upstream))
+                        .unwrap_or_default();
                     let pull_tip = if ready.behind > 0 {
-                        format!("Pull {} ({strategy})  Ctrl+Shift+L", ready.behind)
+                        format!("Pull {}{upstream} ({strategy})  Ctrl+Shift+L", ready.behind)
                     } else {
-                        format!("Pull ({strategy})  Ctrl+Shift+L")
+                        format!("Pull{upstream} ({strategy})  Ctrl+Shift+L")
                     };
                     if toolbar_button(
                         ui,
@@ -8938,21 +8908,17 @@ impl Browser {
         let mut resolve_conflicts = false;
         let mut cancel_network = false;
         let rebase_progress = self.rebase_progress().cloned();
-        // The operation area is always present at a fixed height, so starting
-        // or finishing an operation never moves the panes below it.
-        let idle_summary = self.idle_summary();
-        {
-            let area = self.operation_area();
+        // The operation area appears only while a merge, rebase, cherry-pick,
+        // revert, or rewrite is in progress, as in the stop mockups. Short
+        // jobs (network, branch, workers) report in the footer instead, so
+        // they never move the panes.
+        if let Some(area) = self.operation_area().filter(|area| {
+            matches!(
+                area,
+                OperationArea::Mutation { .. } | OperationArea::Rewrite { .. }
+            )
+        }) {
             egui::Panel::top("operation-area").exact_size(OPERATION_AREA_HEIGHT).show(ui, |ui| {
-                let Some(area) = area else {
-                    ui.horizontal(|ui| {
-                        ui.add(
-                            egui::Label::new(egui::RichText::new(&idle_summary).weak())
-                                .truncate(),
-                        );
-                    });
-                    return;
-                };
                 ui.set_clip_rect(ui.max_rect());
                 if let (
                     OperationArea::Mutation {
@@ -9164,8 +9130,8 @@ impl Browser {
             let has_repo = self.state.history.is_some();
             let mut action = None;
             let refs_panel = egui::Panel::left("refs-sidebar")
-                .default_size(230.0)
-                .min_size(200.0)
+                .default_size(210.0)
+                .min_size(180.0)
                 .max_size(420.0)
                 .resizable(true)
                 .show_separator_line(false)
@@ -9218,7 +9184,6 @@ impl Browser {
                 Some(refs_view::Action::Track(name)) => {
                     self.track_dialog = Some(name);
                 }
-                Some(refs_view::Action::PullRebase) => self.start_pull_rebase(ctx),
                 Some(refs_view::Action::OpenStash(index)) => {
                     self.stash_picker.selected = index;
                     self.stash_picker.confirm_drop = false;
@@ -10357,8 +10322,20 @@ impl Browser {
             return;
         }
 
-        let operation_active = self.operation_area().is_some();
+        // Only a merge, rebase, or rewrite band takes over reporting; short
+        // jobs report here.
+        let operation_active = self.operation_area().is_some_and(|area| {
+            matches!(
+                area,
+                OperationArea::Mutation { .. } | OperationArea::Rewrite { .. }
+            )
+        });
+        let changes = self
+            .local_summary
+            .as_ref()
+            .and_then(|summary| summary.changes);
         egui::Panel::bottom("status").exact_size(25.0).show(ui, |ui| {
+            let mut idle = false;
             let (message, color) = if let Some(error) = &self.network_error {
                 (format!("Network · {error}"), ui.visuals().error_fg_color)
             } else if let Some(error) = &self.state.error {
@@ -10387,6 +10364,11 @@ impl Browser {
                         outcome.summary
                     ),
                     color,
+                )
+            } else if self.operation_worker.is_some() {
+                (
+                    self.mutation_notice.clone().unwrap_or_else(|| "Working…".into()),
+                    ui.visuals().text_color(),
                 )
             } else if !operation_active && let Some(worker) = &self.network {
                 if worker.is_cancelled() {
@@ -10417,18 +10399,13 @@ impl Browser {
             } else if !self.state.finished && self.worker.is_some() {
                 (format!("{} · {} commits examined", if self.state.query.is_empty() { "Counting history" } else { "Searching history" }, self.state.scanned), ui.visuals().text_color())
             } else {
-                let tracking = self
-                    .state
-                    .refs
-                    .current_tracking()
-                    .map(|tracking| format!("{}   ·   ", refs_view::tracking_label(tracking)))
-                    .unwrap_or_default();
                 let hints = if narrow {
                     "j/k: select · Enter: review · Space: details · Esc: history · Ctrl/Cmd+F: filter"
                 } else {
-                    "j k: select   ·   Enter: review   ·   Space: details   ·   R: rebase from here   ·   Ctrl+K: search   ·   Ctrl/Cmd+F: filter   ·   Ctrl/Cmd+C: copy ID"
+                    "j k: select   ·   Enter: review   ·   Alt+A: actions   ·   R: rebase from here   ·   Ctrl+K: search   ·   Ctrl/Cmd+F: filter   ·   Ctrl/Cmd+C: copy ID"
                 };
-                (format!("{tracking}{hints}"), ui.visuals().weak_text_color())
+                idle = true;
+                (hints.to_string(), ui.visuals().weak_text_color())
             };
             let outcome_active = !operation_active
                 && self.network_error.is_none()
@@ -10445,7 +10422,25 @@ impl Browser {
             let mut details_clicked = false;
             let mut recovery_clicked = None;
             let mut dismiss_clicked = false;
+            let network_running = !operation_active
+                && self.network.as_ref().is_some_and(|worker| !worker.is_cancelled());
+            let mut cancel_clicked = false;
             ui.horizontal(|ui| {
+                if idle && let Some(count) = changes.filter(|count| *count > 0) {
+                    let green = colors::diff(ui.visuals(), gg_engine::diff::RowKind::Added).1;
+                    let (dot, _) =
+                        ui.allocate_exact_size(egui::vec2(8.0, 18.0), egui::Sense::hover());
+                    ui.painter().circle_filled(dot.center(), 3.5, green);
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "{count} change{}",
+                            if count == 1 { "" } else { "s" }
+                        ))
+                        .size(11.0)
+                        .color(green),
+                    );
+                    ui.add_space(8.0);
+                }
                 let reserved = 70.0
                     + if recovery.is_some() {
                         130.0
@@ -10471,7 +10466,13 @@ impl Browser {
                 if outcome_active && ui.small_button("Dismiss").clicked() {
                     dismiss_clicked = true;
                 }
+                if network_running && ui.small_button("Cancel").clicked() {
+                    cancel_clicked = true;
+                }
             });
+            if cancel_clicked && let Some(worker) = &self.network {
+                worker.cancel();
+            }
             if details_clicked {
                 self.outcome_details_open = true;
             }
@@ -11104,7 +11105,7 @@ mod tests {
                 })
                 .collect::<Vec<_>>();
             assert_eq!(
-                text.iter().any(|line| line.contains("BRANCHES  0")),
+                text.contains(&"BRANCHES"),
                 visible,
                 "width={width}: {text:?}"
             );
@@ -11113,7 +11114,7 @@ mod tests {
     }
 
     #[test]
-    fn current_tracking_appears_in_sidebar_and_status_line() {
+    fn the_branch_and_its_tracking_show_only_on_the_branch_button() {
         for width in [720.0, 1120.0] {
             let ctx = egui::Context::default();
             crate::phosphor::install(&ctx);
@@ -11147,56 +11148,20 @@ mod tests {
                     _ => None,
                 })
                 .collect::<Vec<_>>();
-            let labels = text
+            assert!(
+                !text
+                    .iter()
+                    .any(|line| line.contains("origin/feature/a-long-branch-name")
+                        || line.contains("tracking")
+                        || line == &"Pull"),
+                "width={width}: {text:?}"
+            );
+            let named = text
                 .iter()
-                .filter(|line| line.contains("origin/feature/a-long-branch-name"))
+                .filter(|line| line.contains("feature/a-long-branch-name"))
                 .count();
-            assert!(labels >= 1, "width={width}: {text:?}");
-            if width >= 1120.0 {
-                assert!(labels >= 2, "width={width}: {text:?}");
-            }
+            assert!(named <= 1, "width={width}: {text:?}");
         }
-    }
-
-    #[test]
-    fn tracking_pull_button_stays_inside_the_refs_pane() {
-        let ctx = egui::Context::default();
-        crate::phosphor::install(&ctx);
-        let mut app = layout_fixture();
-        app.state.refs.head = Some(gg_engine::refs::Head {
-            name: Some("refs/heads/repo-and-branch-ux".into()),
-            detached: false,
-            commit: Some(format!("{:040x}", 99)),
-        });
-        app.state.refs.tracking = vec![gg_engine::refs::Tracking {
-            branch: "repo-and-branch-ux".into(),
-            full_name: "refs/heads/repo-and-branch-ux".into(),
-            upstream: "origin/repo-and-branch-ux".into(),
-            upstream_full_name: "refs/remotes/origin/repo-and-branch-ux".into(),
-            remote: "origin".into(),
-            remote_branch: "repo-and-branch-ux".into(),
-            ahead: Some(0),
-            behind: Some(0),
-        }];
-        let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
-            app.draw_ui(ctx)
-        });
-        let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
-            app.draw_ui(ctx)
-        });
-        assert!(app.refs_width > 0.0, "the refs pane did not render");
-        let button = output.shapes.iter().find_map(|shape| match &shape.shape {
-            egui::epaint::Shape::Text(text) if text.galley.job.text == "Pull" => {
-                Some(egui::Rect::from_min_size(text.pos, text.galley.size()))
-            }
-            _ => None,
-        });
-        assert!(button.is_some(), "the Pull button is missing");
-        assert!(
-            button.is_some_and(|rect| rect.max.x <= app.refs_width + 0.5),
-            "the Pull button is clipped by the {} point pane: {button:?}",
-            app.refs_width
-        );
     }
 
     #[test]
@@ -12146,7 +12111,7 @@ mod tests {
             }
             assert!(
                 text.iter()
-                    .any(|line| line.contains("feature · rebase 2/3")),
+                    .any(|line| line.contains("rebasing feature · step 2 of 3")),
                 "the window identity names the rebase step: {text:?}"
             );
             // Ctrl+Enter does nothing while changes remain.
@@ -12164,7 +12129,7 @@ mod tests {
     }
 
     #[test]
-    fn panes_hold_still_when_an_operation_starts_grows_and_ends() {
+    fn panes_hold_still_while_a_rebase_stop_changes() {
         let ctx = egui::Context::default();
         crate::phosphor::install(&ctx);
         let top = |app: &mut Browser| {
@@ -12181,14 +12146,14 @@ mod tests {
         let mut committed = stopped_app(reopened_stop(3, 0));
         committed.reopen_seen = Some("b".repeat(40));
         let idle = top(&mut idle);
-        assert_eq!(
-            top(&mut stopped),
-            idle,
-            "a rebase stop does not push History down"
+        let stopped = top(&mut stopped);
+        assert!(
+            idle < stopped,
+            "without an operation there is no band under the toolbar"
         );
         assert_eq!(
             top(&mut committed),
-            idle,
+            stopped,
             "commits made at the stop do not add a line"
         );
     }

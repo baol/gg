@@ -108,18 +108,6 @@ pub(crate) fn lane_color(lane: u8) -> egui::Color32 {
     color(lane)
 }
 
-/// A legible foreground for a glyph drawn on a lane-colored dot.
-pub(crate) fn on_lane_color(background: egui::Color32) -> egui::Color32 {
-    let [red, green, blue, _] = background.to_srgba_unmultiplied();
-    let luminance =
-        (0.299 * f32::from(red) + 0.587 * f32::from(green) + 0.114 * f32::from(blue)) / 255.0;
-    if luminance > 0.6 {
-        egui::Color32::from_rgb(18, 22, 28)
-    } else {
-        egui::Color32::from_rgb(245, 248, 252)
-    }
-}
-
 fn parent_color(row: &Row, parent: u8) -> egui::Color32 {
     if row.parents.len() == 1 {
         color(row.lane)
