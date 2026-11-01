@@ -15,9 +15,12 @@ The frame has two rows above every view. Both rows keep the same order and posit
    - Refs sidebar toggle (`Ctrl+\`), pressed while the sidebar is shown.
    - **Changes | History** tabs. Changes is always present; its count badge appears only when there are local changes.
    - Fetch · Pull (rebase) · Push. Pull is enabled whenever the current branch has an upstream and shows the cached behind count as a badge; without an upstream it is disabled with the reason. Pull fetches first and reports `Already up to date with origin/main.` when there is nothing to integrate.
+   - New branch (`Ctrl+B`).
+   - Stash changes (disabled on a clean worktree) · Stashes (count and caret; opens the stash picker under the button; disabled with *No stashes*).
+   - Interactive rebase from here (`R`): starts at the selected History commit; disabled with the reason when no commit is selected or it cannot be rebased · Recovery (backups and reflog).
    - Right-aligned: current-branch button (`name ↑ahead ↓behind`, opens the branch switcher) and the search field (`Ctrl+K`).
 
-The toolbar holds only everyday navigation and sync. New branch, New tag, Merge into current, Stash changes, Stashes, Interactive rebase of the current branch, and Recovery live in their menus and in search, so they stay reachable at every width, including 720×480.
+The toolbar holds navigation, sync, and the owner's everyday actions; New tag, Merge into current, and Interactive rebase of the current branch live in their menus and in search. Every toolbar command also has a menu home and a search entry, so it stays reachable at every width, including 720×480.
 
 Dialogs that ask for a decision or start a change are modal; tool and information windows are not. Toolbar buttons are icon-only Phosphor glyphs with tooltips naming the action and its shortcut. Disabled buttons stay in place with the same disable reason as their menu item.
 

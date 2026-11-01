@@ -15,6 +15,10 @@ pub const ARROW_LINE_UP: &str = "\u{E066}";
 pub const CARET_DOWN: &str = "\u{E136}";
 pub const DOWNLOAD_SIMPLE: &str = "\u{E20C}";
 pub const GIT_BRANCH: &str = "\u{E278}";
+pub const ARCHIVE: &str = "\u{E00C}";
+pub const BOX_ARROW_UP: &str = "\u{EE54}";
+pub const CLOCK_COUNTER_CLOCKWISE: &str = "\u{E1A0}";
+pub const LIST_NUMBERS: &str = "\u{E2F6}";
 pub const MAGNIFYING_GLASS: &str = "\u{E30C}";
 pub const SIDEBAR_SIMPLE: &str = "\u{EC24}";
 pub const DOTS_SIX_VERTICAL: &str = "\u{EAE2}";
@@ -42,13 +46,17 @@ pub const READER: [&str; 3] = [CARET_LEFT, CARET_RIGHT, DOTS_THREE];
 
 /// Glyphs used by the window toolbar, checked against the vendored font.
 #[cfg(test)]
-pub const TOOLBAR: [&str; 7] = [
+pub const TOOLBAR: [&str; 11] = [
     MAGNIFYING_GLASS,
     CARET_DOWN,
     ARROW_LINE_DOWN,
     ARROW_LINE_UP,
     DOWNLOAD_SIMPLE,
     GIT_BRANCH,
+    ARCHIVE,
+    BOX_ARROW_UP,
+    CLOCK_COUNTER_CLOCKWISE,
+    LIST_NUMBERS,
     SIDEBAR_SIMPLE,
 ];
 

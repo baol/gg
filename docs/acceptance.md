@@ -164,7 +164,7 @@ Covered by (interaction): `failed_switch_keeps_displayed_identity_and_retry_adop
 Fixture: `fx-linear` (Linux/Windows)
 Layer: visual
 - When the window is shown
-- Then a single 26 px row shows the gg logo, then **Repository · Branch · Commit · Changes · View · Help**; on macOS a **gg** menu comes first
+- Then a single 26 px row shows **Repository · Branch · Commit · Changes · View · Help**; on macOS a **gg** menu comes first
 Covered by (interaction): `menus_follow_the_final_design_mockup`, `menu_bar_is_one_row_and_view_shortcuts_switch_views` (apps/git-good/src/main.rs)
 
 ### FRM-17 Every menu's items, order and shortcuts

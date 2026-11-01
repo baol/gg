@@ -1589,7 +1589,6 @@ struct SignatureWindow {
 }
 
 struct Browser {
-    logo: Option<egui::TextureHandle>,
     /// The 36 px logo on the welcome view.
     welcome_logo: Option<egui::TextureHandle>,
     path: String,
@@ -1672,6 +1671,8 @@ struct Browser {
     local_summary_job: Option<std::sync::mpsc::Receiver<LocalSummary>>,
     window_focused: bool,
     stash_picker: StashPicker,
+    /// Where the toolbar's Stashes button sits, when it opened the picker.
+    stash_anchor: Option<egui::Pos2>,
     search: Option<SearchPalette>,
     branch_filter: String,
     help_shortcuts: bool,
@@ -1745,7 +1746,6 @@ struct Browser {
 impl Browser {
     fn new(path: PathBuf) -> Self {
         Self {
-            logo: None,
             welcome_logo: None,
             path: path.to_string_lossy().into_owned(),
             review: None,
@@ -1845,6 +1845,7 @@ impl Browser {
             local_summary_job: None,
             window_focused: true,
             stash_picker: StashPicker::default(),
+            stash_anchor: None,
             // Debug builds open search with `GG_SEARCH=<query>` for native review.
             branch_filter: String::new(),
             search: if cfg!(debug_assertions) {
@@ -4823,57 +4824,69 @@ impl Browser {
         let mut chosen = enter.then_some(palette.selected);
         let width = 520.0_f32.min(ctx.content_rect().width() - 32.0);
         // Results keep one fixed height however many match.
-        let results =
-            |ui: &mut egui::Ui, palette: &mut SearchPalette, chosen: &mut Option<usize>| {
-                let mut group = None;
-                egui::ScrollArea::vertical()
-                    .id_salt("search-results")
-                    .min_scrolled_height(SEARCH_RESULTS_HEIGHT)
-                    .max_height(SEARCH_RESULTS_HEIGHT)
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        if items.is_empty() {
-                            ui.weak("No matching commands, refs, or files");
+        let results = |ui: &mut egui::Ui,
+                       palette: &mut SearchPalette,
+                       chosen: &mut Option<usize>| {
+            let mut group = None;
+            egui::ScrollArea::vertical()
+                .id_salt("search-results")
+                // A fixed-height list keeps its bar track, so the popup
+                // never changes width as the bar would fade in and out.
+                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
+                .min_scrolled_height(SEARCH_RESULTS_HEIGHT)
+                .max_height(SEARCH_RESULTS_HEIGHT)
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    if items.is_empty() {
+                        ui.weak("No matching commands, refs, or files");
+                    }
+                    for (index, item) in items.iter().enumerate() {
+                        if group != Some(item.group) {
+                            group = Some(item.group);
+                            ui.add_space(4.0);
+                            ui.label(egui::RichText::new(item.group.title()).small().weak());
                         }
-                        for (index, item) in items.iter().enumerate() {
-                            if group != Some(item.group) {
-                                group = Some(item.group);
-                                ui.add_space(4.0);
-                                ui.label(egui::RichText::new(item.group.title()).small().weak());
-                            }
-                            let text = if item.context.is_empty() {
-                                item.label.clone()
-                            } else {
-                                format!("{}   ·   {}", item.label, item.context)
-                            };
-                            let response = ui.add_enabled(
-                                item.disabled.is_none(),
-                                egui::Button::selectable(palette.selected == index, text)
-                                    .truncate()
-                                    .right_text(item.key)
-                                    .min_size(egui::vec2(ui.available_width(), 24.0)),
-                            );
-                            let response = match &item.disabled {
-                                Some(reason) => response.on_disabled_hover_text(reason),
-                                None => response,
-                            };
-                            if response.clicked() {
-                                *chosen = Some(index);
-                            }
-                            if palette.selected == index && (down || up) {
-                                response.scroll_to_me(None);
-                            }
+                        let text = if item.context.is_empty() {
+                            item.label.clone()
+                        } else {
+                            format!("{}   ·   {}", item.label, item.context)
+                        };
+                        let response = ui.add_enabled(
+                            item.disabled.is_none(),
+                            egui::Button::selectable(palette.selected == index, text)
+                                .truncate()
+                                .right_text(item.key)
+                                .min_size(egui::vec2(ui.available_width(), 24.0)),
+                        );
+                        let response = match &item.disabled {
+                            Some(reason) => response.on_disabled_hover_text(reason),
+                            None => response,
+                        };
+                        if response.clicked() {
+                            *chosen = Some(index);
                         }
-                    });
-                ui.add_space(4.0);
-                ui.weak(
-                    "Enter: run · Up/Down: choose · Esc: close · every action also lives in a menu",
+                        if palette.selected == index && (down || up) {
+                            response.scroll_to_me(None);
+                        }
+                    }
+                });
+            ui.add_space(4.0);
+            ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(
+                            "Enter: run · Up/Down: choose · Esc: close · every action also lives in a menu",
+                        )
+                        .weak(),
+                    )
+                    .truncate(),
                 );
-            };
+        };
         let mut close = escape;
         if palette.in_field {
             let anchor = palette.anchor;
-            let left = (anchor.right() - width).max(ctx.content_rect().left() + 8.0);
+            // Right-aligned with the field, never past the window edge.
+            let right = anchor.right().min(ctx.content_rect().right());
+            let left = (right - width).max(ctx.content_rect().left() + 8.0);
             let area = egui::Area::new(egui::Id::unique("frame-search"))
                 .order(egui::Order::Foreground)
                 .fixed_pos(egui::pos2(left, anchor.bottom() + 4.0))
@@ -5238,6 +5251,7 @@ impl Browser {
     /// toolbar.
     fn stash_picker(&mut self, ctx: &egui::Context, layer: egui::LayerId) -> Option<StashPick> {
         if !egui::Popup::is_id_open(ctx, stash_picker_popup_id()) {
+            self.stash_anchor = None;
             return None;
         }
         let entries = self
@@ -5247,13 +5261,21 @@ impl Browser {
             .unwrap_or_default();
         let picker = &mut self.stash_picker;
         let mut pick = None;
-        let anchor = egui::pos2(
-            ctx.content_rect().center().x,
-            MENU_BAR_HEIGHT + TOOLBAR_HEIGHT + 4.0,
-        );
+        // Under the toolbar's Stashes button when it opened the picker,
+        // otherwise centred under the toolbar (menu and sidebar).
+        let (anchor, align) = match self.stash_anchor {
+            Some(corner) => (corner, egui::RectAlign::BOTTOM_START),
+            None => (
+                egui::pos2(
+                    ctx.content_rect().center().x,
+                    MENU_BAR_HEIGHT + TOOLBAR_HEIGHT + 4.0,
+                ),
+                egui::RectAlign::BOTTOM,
+            ),
+        };
         egui::Popup::new(stash_picker_popup_id(), ctx.clone(), anchor, layer)
             .open_memory(None)
-            .align(egui::RectAlign::BOTTOM)
+            .align(align)
             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
             .show(|ui| {
                 ui.set_width(STASH_PICKER_WIDTH);
@@ -9761,8 +9783,7 @@ impl Browser {
             .exact_size(MENU_BAR_HEIGHT)
             .show(ui, |ui| {
                 egui::MenuBar::new().ui(ui, |ui| {
-                    branding::logo(ui, &mut self.logo, 16.0);
-                    ui.add_space(4.0);
+                    // No logo beside the menus (owner): the titles start the bar.
                     menu_command = menus::show(ui, &table);
                     // The window identity: repository and path, plus the
                     // operation while one runs. The branch lives on the
@@ -9892,6 +9913,71 @@ impl Browser {
                     }
                     if toolbar_button(ui, icon::ARROW_LINE_UP, None, "Push  Ctrl+Shift+P", idle(ready.network_idle)) {
                         tool = Some(FrameCommand::Push);
+                    }
+                    // The owner's toolbar: sync, new branch, stash with its
+                    // picker, rebase from the selected commit, and recovery.
+                    // New tag and Merge live in the Branch menu and search.
+                    let separator = |ui: &mut egui::Ui| {
+                        ui.add_space(4.0);
+                        ui.separator();
+                        ui.add_space(4.0);
+                    };
+                    separator(ui);
+                    if toolbar_button(ui, icon::GIT_BRANCH, None, "New branch…  Ctrl+B", idle(ready.branch_idle)) {
+                        tool = Some(FrameCommand::NewBranch);
+                    }
+                    separator(ui);
+                    if toolbar_button(ui, icon::ARCHIVE, None, "Stash changes…  Ctrl+Shift+Z", ready.stash_reason) {
+                        tool = Some(FrameCommand::Stash);
+                    }
+                    let stashes_reason = if !ready.stash_idle {
+                        idle(false)
+                    } else if ready.stashes == 0 {
+                        Some("No stashes")
+                    } else {
+                        None
+                    };
+                    let stashes = ui
+                        .add_enabled(
+                            stashes_reason.is_none(),
+                            egui::Button::new((
+                                icon::icon(icon::BOX_ARROW_UP).size(17.0),
+                                egui::RichText::new(ready.stashes.to_string()).size(11.0),
+                                icon::icon(icon::CARET_DOWN).size(10.0),
+                            ))
+                            .min_size(egui::vec2(28.0, 26.0))
+                            .frame_when_inactive(false),
+                        );
+                    let stashes_tip =
+                        format!("Stashes ({}) · apply, pop, show, or drop", ready.stashes);
+                    let stashes = match stashes_reason {
+                        Some(reason) => {
+                            stashes.on_disabled_hover_text(format!("{stashes_tip}\n{reason}"))
+                        }
+                        None => stashes.on_hover_text(stashes_tip),
+                    };
+                    if stashes.clicked() {
+                        self.stash_anchor = Some(stashes.rect.left_bottom());
+                        tool = Some(FrameCommand::Stashes);
+                    }
+                    separator(ui);
+                    if toolbar_button(
+                        ui,
+                        icon::LIST_NUMBERS,
+                        None,
+                        "Interactive rebase from here…  R",
+                        ready.rewrite_reason,
+                    ) {
+                        tool = Some(FrameCommand::RewriteSelected);
+                    }
+                    if toolbar_button(
+                        ui,
+                        icon::CLOCK_COUNTER_CLOCKWISE,
+                        None,
+                        "Recovery…",
+                        idle(ready.has_repo),
+                    ) {
+                        tool = Some(FrameCommand::Recovery);
                     }
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -12125,8 +12211,17 @@ impl Browser {
                     .then_some(self.state.query.is_empty());
                 self.history_rect = ui.available_rect_before_wrap();
                 let row_menu = self.commit_menu_entries();
+                // The columns scroll sideways only below their minimum width;
+                // wider, the bar stays hidden so it never takes height and
+                // moves the rows.
+                let narrow = ui.available_width() < history_view::MIN_WIDTH;
                 egui::ScrollArea::horizontal()
                     .id_salt("history-columns")
+                    .scroll_bar_visibility(if narrow {
+                        egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded
+                    } else {
+                        egui::scroll_area::ScrollBarVisibility::AlwaysHidden
+                    })
                     .show(ui, |ui| {
                         ui.set_min_width(history_view::MIN_WIDTH);
                         let count = format!(
@@ -17927,14 +18022,20 @@ mod tests {
     }
 
     #[test]
-    fn window_toolbar_holds_navigation_and_sync_in_place_across_views_and_widths()
+    fn window_toolbar_keeps_the_owners_buttons_in_place_across_views_and_widths()
     -> Result<(), Box<dyn std::error::Error>> {
-        // Everyday navigation and sync only; the rest live in the menus.
+        // Sync, new branch, stash and its picker, rebase from here, and
+        // recovery; New tag and Merge live in the menus.
         let order = [
             crate::phosphor::SIDEBAR_SIMPLE,
             crate::phosphor::DOWNLOAD_SIMPLE,
             crate::phosphor::ARROW_LINE_DOWN,
             crate::phosphor::ARROW_LINE_UP,
+            crate::phosphor::GIT_BRANCH,
+            crate::phosphor::ARCHIVE,
+            crate::phosphor::BOX_ARROW_UP,
+            crate::phosphor::LIST_NUMBERS,
+            crate::phosphor::CLOCK_COUNTER_CLOCKWISE,
             crate::phosphor::MAGNIFYING_GLASS,
         ];
         // The branch button adds its own glyph and caret; nothing else.
@@ -17944,6 +18045,10 @@ mod tests {
             crate::phosphor::ARROW_LINE_DOWN,
             crate::phosphor::ARROW_LINE_UP,
             crate::phosphor::GIT_BRANCH,
+            crate::phosphor::ARCHIVE,
+            crate::phosphor::BOX_ARROW_UP,
+            crate::phosphor::LIST_NUMBERS,
+            crate::phosphor::CLOCK_COUNTER_CLOCKWISE,
             crate::phosphor::CARET_DOWN,
             crate::phosphor::MAGNIFYING_GLASS,
         ];
