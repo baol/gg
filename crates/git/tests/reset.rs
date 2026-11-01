@@ -105,3 +105,38 @@ fn rejects_option_shaped_and_missing_targets() -> Result {
     assert!(error.contains("was not found"), "{error}");
     Ok(())
 }
+
+#[test]
+fn hard_reset_refuses_to_overwrite_untracked_and_ignored_files() -> Result {
+    let dir = repo()?;
+    let p = dir.path();
+    std::fs::write(p.join("b"), b"tracked later\n")?;
+    std::fs::write(p.join("c"), b"tracked later\n")?;
+    git(p, &["add", "b", "c"])?;
+    git(p, &["commit", "-qm", "three"])?;
+    let target = head(p)?;
+    git(p, &["rm", "-q", "--cached", "b", "c"])?;
+    git(p, &["commit", "-qm", "four"])?;
+    let before = head(p)?;
+    std::fs::write(p.join("b"), b"my untracked notes\n")?;
+    std::fs::write(p.join(".gitignore"), b"c\n")?;
+    std::fs::write(p.join("c"), b"my ignored notes\n")?;
+    std::fs::write(p.join("d"), b"untracked, not in the target\n")?;
+    assert_eq!(
+        gg_git::reset::overwritten_untracked(p, &target)?,
+        vec!["b".to_string(), "c".to_string()]
+    );
+    let error = match gg_git::reset::reset(p, &target, gg_engine::reset::Mode::Hard) {
+        Ok(_) => return Err("hard reset unexpectedly overwrote untracked files".into()),
+        Err(error) => error,
+    };
+    assert!(error.contains("untracked"), "{error}");
+    assert!(error.contains("\nb\n") && error.ends_with("\nc"), "{error}");
+    assert_eq!(head(p)?, before, "nothing changed");
+    assert_eq!(std::fs::read(p.join("b"))?, b"my untracked notes\n");
+    assert_eq!(std::fs::read(p.join("c"))?, b"my ignored notes\n");
+    let receipt = gg_git::reset::reset(p, &target, gg_engine::reset::Mode::Mixed)?;
+    assert!(receipt.applied, "soft and mixed leave working files alone");
+    assert_eq!(std::fs::read(p.join("b"))?, b"my untracked notes\n");
+    Ok(())
+}

@@ -15,7 +15,8 @@ use eframe::egui;
 use gg_engine::rewrite::{Action, RangeCommit, Step};
 use std::path::PathBuf;
 
-const ROW: f32 = 28.0;
+/// Two-line plan rows, as in the rebase mockup: subject, then consequence.
+const ROW: f32 = 40.0;
 /// Height reserved for the selected commit's message or reword field.
 const MESSAGE_SLOT: f32 = 86.0;
 
@@ -222,47 +223,58 @@ impl Dialog {
         }
         self.selected = self.selected.min(self.plan.rows.len() - 1);
         let mut outcome = self.keys(ctx, blocked.is_some());
+        // Below the menu bar and toolbar, as in the rebase mockup: the
+        // frame stays visible above the pop-up.
         let screen = ctx.content_rect();
+        let top = screen.top() + 26.0 + 34.0 + 12.0;
         let size = egui::vec2(
             (screen.width() - 48.0).clamp(560.0, 1400.0),
-            (screen.height() - 64.0).clamp(420.0, 1000.0),
+            (screen.bottom() - top - 28.0).clamp(420.0, 1000.0),
         );
-        egui::Modal::new(egui::Id::unique("interactive-rebase")).show(ctx, |ui| {
-            ui.set_min_size(size);
-            ui.set_max_size(size);
-            if let Some(chosen) = self.header(ui, blocked) {
-                outcome = Some(chosen);
-            }
-            ui.separator();
-            let footer = 70.0;
-            let body = egui::Rect::from_min_size(
-                ui.cursor().min,
-                egui::vec2(size.x, (ui.available_height() - footer).max(160.0)),
-            );
-            let plan_width = (size.x * 0.48).clamp(320.0, 620.0);
-            let left =
-                egui::Rect::from_min_max(body.min, egui::pos2(body.min.x + plan_width, body.max.y));
-            let right =
-                egui::Rect::from_min_max(egui::pos2(left.max.x + 12.0, body.min.y), body.max);
-            ui.scope_builder(egui::UiBuilder::new().max_rect(left), |ui| {
-                ui.set_clip_rect(left);
-                self.draw_plan(ui);
-            });
-            ui.painter().vline(
-                left.max.x + 6.0,
-                body.y_range(),
-                ui.visuals().widgets.noninteractive.bg_stroke,
-            );
-            ui.scope_builder(egui::UiBuilder::new().max_rect(right), |ui| {
-                ui.set_clip_rect(right);
-                if let Some(chosen) = self.draw_selected(ui) {
+        let id = egui::Id::unique("interactive-rebase");
+        egui::Modal::new(id)
+            .area(egui::Modal::default_area(id).anchor(
+                egui::Align2::CENTER_TOP,
+                egui::vec2(0.0, top - screen.top()),
+            ))
+            .show(ctx, |ui| {
+                ui.set_min_size(size);
+                ui.set_max_size(size);
+                if let Some(chosen) = self.header(ui, blocked) {
                     outcome = Some(chosen);
                 }
+                ui.separator();
+                let footer = 70.0;
+                let body = egui::Rect::from_min_size(
+                    ui.cursor().min,
+                    egui::vec2(size.x, (ui.available_height() - footer).max(160.0)),
+                );
+                let plan_width = (size.x * 0.48).clamp(320.0, 620.0);
+                let left = egui::Rect::from_min_max(
+                    body.min,
+                    egui::pos2(body.min.x + plan_width, body.max.y),
+                );
+                let right =
+                    egui::Rect::from_min_max(egui::pos2(left.max.x + 12.0, body.min.y), body.max);
+                ui.scope_builder(egui::UiBuilder::new().max_rect(left), |ui| {
+                    ui.set_clip_rect(left);
+                    self.draw_plan(ui);
+                });
+                ui.painter().vline(
+                    left.max.x + 6.0,
+                    body.y_range(),
+                    ui.visuals().widgets.noninteractive.bg_stroke,
+                );
+                ui.scope_builder(egui::UiBuilder::new().max_rect(right), |ui| {
+                    ui.set_clip_rect(right);
+                    if let Some(chosen) = self.draw_selected(ui) {
+                        outcome = Some(chosen);
+                    }
+                });
+                ui.allocate_rect(body, egui::Sense::hover());
+                ui.separator();
+                self.footer(ui);
             });
-            ui.allocate_rect(body, egui::Sense::hover());
-            ui.separator();
-            self.footer(ui);
-        });
         outcome
     }
 
@@ -274,12 +286,30 @@ impl Dialog {
                 let reason = blocked
                     .map(str::to_string)
                     .or_else(|| steps.as_ref().err().cloned());
+                // The primary action, as in the mockup: filled, with its key.
+                let ready = reason.is_none();
                 let start = ui
                     .add_enabled(
-                        reason.is_none(),
-                        egui::Button::new(egui::RichText::new("Start rebase").strong()),
+                        ready,
+                        egui::Button::new((
+                            egui::RichText::new("Start rebase").color(if ready {
+                                egui::Color32::WHITE
+                            } else {
+                                ui.visuals().weak_text_color()
+                            }),
+                            egui::RichText::new("Ctrl+Enter").small().color(if ready {
+                                egui::Color32::from_rgb(184, 212, 230)
+                            } else {
+                                ui.visuals().weak_text_color()
+                            }),
+                        ))
+                        .fill(if ready {
+                            egui::Color32::from_rgb(11, 85, 119)
+                        } else {
+                            ui.visuals().widgets.inactive.weak_bg_fill
+                        }),
                     )
-                    .on_hover_text("Ctrl+Enter");
+                    .on_hover_text("Rewrite the branch as planned");
                 let start = match &reason {
                     Some(reason) => start.on_disabled_hover_text(reason),
                     None => start,
@@ -287,7 +317,10 @@ impl Dialog {
                 if start.clicked() {
                     outcome = self.start();
                 }
-                if ui.button("Cancel").on_hover_text("Esc").clicked() {
+                if ui
+                    .button(("Cancel", egui::RichText::new("Esc").small().weak()))
+                    .clicked()
+                {
                     outcome = Some(Outcome::Cancel);
                 }
                 // The identity takes the remaining width and truncates. The
@@ -337,6 +370,13 @@ impl Dialog {
                     if index == self.selected {
                         ui.painter()
                             .rect_filled(rect, 0.0, crate::colors::selection(ui.visuals()));
+                    } else if self.plan.rows[index].action == Action::Drop {
+                        // Dropped rows keep a faint red ground, as in the mockup.
+                        ui.painter().rect_filled(
+                            rect,
+                            0.0,
+                            ui.visuals().error_fg_color.gamma_multiply(0.08),
+                        );
                     }
                     if response.clicked() {
                         self.selected = index;
@@ -452,49 +492,58 @@ impl Dialog {
                 .frame_when_inactive(false)
                 .min_size(egui::vec2(18.0, 18.0))
         };
-        if ui
-            .add_enabled(index > 0, small(phosphor::ARROW_UP))
-            .on_hover_text(format!("Move up · Alt+{}", phosphor::ARROW_UP))
-            .clicked()
-        {
-            moved = Some(true);
-        }
-        if ui
-            .add_enabled(index + 1 < count, small(phosphor::ARROW_DOWN))
-            .on_hover_text(format!("Move down · Alt+{}", phosphor::ARROW_DOWN))
-            .clicked()
-        {
-            moved = Some(false);
-        }
+        // Up and down stacked, as in the mockup.
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            if ui
+                .add_enabled(index > 0, small(phosphor::ARROW_UP))
+                .on_hover_text(format!("Move up · Alt+{}", phosphor::ARROW_UP))
+                .clicked()
+            {
+                moved = Some(true);
+            }
+            if ui
+                .add_enabled(index + 1 < count, small(phosphor::ARROW_DOWN))
+                .on_hover_text(format!("Move down · Alt+{}", phosphor::ARROW_DOWN))
+                .clicked()
+            {
+                moved = Some(false);
+            }
+        });
         let row = &self.plan.rows[index];
         let action = row.action;
         // Combined rows sit 12 px in, under the commit they join (mockup).
         if matches!(action, Action::Squash | Action::Fixup) {
             ui.add_space(12.0);
         }
-        ui.label(
-            egui::RichText::new(rebase_plan::short(&row.commit.id))
-                .monospace()
-                .weak(),
-        )
-        .on_hover_text(if row.refs.is_empty() {
+        let short = rebase_plan::short(&row.commit.id).to_string();
+        let hover = if row.refs.is_empty() {
             row.commit.id.clone()
         } else {
             format!("{} · {}", row.commit.id, row.refs.join(", "))
-        });
+        };
         let badge = self.plan.badge(index);
         let subject = row.commit.subject.clone();
         let refs = row.refs.clone();
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let (fill, ink) = chip_colors(ui.visuals(), action);
+            let border = if action == Action::Pick {
+                ui.visuals().widgets.noninteractive.bg_stroke.color
+            } else {
+                fill
+            };
             let chip = ui
                 .add(
                     egui::Button::new((
-                        egui::RichText::new(rebase_plan::label(action))
-                            .strong()
-                            .color(action_color(ui.visuals(), action)),
-                        phosphor::icon(phosphor::CARET_DOWN).size(10.0),
+                        action_icon(action, ink),
+                        egui::RichText::new(rebase_plan::label(action)).color(ink),
+                        egui::Atom::grow(),
+                        phosphor::icon(phosphor::CARET_DOWN).size(10.0).color(ink),
                     ))
-                    .min_size(egui::vec2(82.0, 20.0)),
+                    .fill(fill)
+                    .stroke(egui::Stroke::new(1.0, border))
+                    .corner_radius(12.0)
+                    .min_size(egui::vec2(112.0, 24.0)),
                 )
                 .on_hover_text(rebase_plan::hint(action));
             egui::Popup::from_toggle_button_response(&chip)
@@ -527,34 +576,70 @@ impl Dialog {
                         }
                     }
                 });
-            if let Some(badge) = &badge {
-                let color = match action {
-                    Action::Drop => ui.visuals().error_fg_color,
-                    Action::Edit => ui.visuals().warn_fg_color,
-                    _ => ui.visuals().weak_text_color(),
+            // Two lines: hash, subject, and refs; then the consequence.
+            ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                ui.spacing_mut().item_spacing.y = 1.0;
+                let (line, color) = match &badge {
+                    Some(badge) => (
+                        badge.clone(),
+                        match action {
+                            Action::Drop => ui.visuals().error_fg_color,
+                            Action::Edit => egui::Color32::from_rgb(200, 192, 245),
+                            Action::Squash | Action::Fixup => egui::Color32::from_rgb(240, 195, 90),
+                            _ => ui.visuals().weak_text_color(),
+                        },
+                    ),
+                    None if action == Action::Reword => {
+                        ("reworded".to_string(), ui.visuals().hyperlink_color)
+                    }
+                    None => (String::new(), ui.visuals().weak_text_color()),
                 };
-                ui.add(
-                    egui::Label::new(egui::RichText::new(badge).small().color(color)).truncate(),
-                );
-            }
-            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                // Pills only where they fit; the hash hover names the refs too.
-                let pills = ui.available_width() > 220.0;
-                for name in refs.iter().filter(|_| pills) {
-                    ui.label(
-                        egui::RichText::new(name)
-                            .small()
-                            .background_color(ui.visuals().faint_bg_color),
+                // Centered on the chip: one line when there is no consequence.
+                let height = if line.is_empty() { 16.0 } else { 31.0 };
+                ui.add_space(((ui.available_height() - height) / 2.0).max(0.0));
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new(&short).monospace().weak())
+                        .on_hover_text(&hover);
+                    let mut text = egui::RichText::new(&subject);
+                    text = match action {
+                        Action::Drop => text.strikethrough().weak(),
+                        Action::Squash | Action::Fixup => text.weak(),
+                        _ => text,
+                    };
+                    // Pills only where they fit; the hash hover names the refs too.
+                    let pills = ui.available_width() > 320.0;
+                    // Room for the pills first, so a long subject truncates
+                    // before them instead of running under the chip.
+                    let reserved: f32 = if pills {
+                        refs.iter()
+                            .map(|name| name.chars().count() as f32 * 6.0 + 16.0)
+                            .sum()
+                    } else {
+                        0.0
+                    };
+                    let room = (ui.available_width() - reserved).max(40.0);
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(room, 16.0),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            ui.add(egui::Label::new(text).truncate())
+                                .on_hover_text(&subject);
+                        },
+                    );
+                    for name in refs.iter().filter(|_| pills) {
+                        ui.label(
+                            egui::RichText::new(format!(" {name} "))
+                                .small()
+                                .color(egui::Color32::from_rgb(156, 202, 245))
+                                .background_color(egui::Color32::from_rgb(29, 58, 87)),
+                        );
+                    }
+                });
+                if !line.is_empty() {
+                    ui.add(
+                        egui::Label::new(egui::RichText::new(line).small().color(color)).truncate(),
                     );
                 }
-                let mut text = egui::RichText::new(&subject);
-                text = match action {
-                    Action::Drop => text.strikethrough().weak(),
-                    Action::Squash | Action::Fixup => text.weak(),
-                    _ => text,
-                };
-                ui.add(egui::Label::new(text).truncate())
-                    .on_hover_text(&subject);
             });
         });
         (chosen.is_some() || moved.is_some()).then_some((chosen, moved))
@@ -690,6 +775,76 @@ impl Dialog {
             ui.colored_label(ui.visuals().error_fg_color, error);
         }
     }
+}
+
+/// A plan chip's fill and ink, as in the rebase mockup: Pick neutral,
+/// Reword blue, Reopen purple, Squash and Fixup amber, Drop red.
+fn chip_colors(visuals: &egui::Visuals, action: Action) -> (egui::Color32, egui::Color32) {
+    use egui::Color32 as C;
+    if !visuals.dark_mode {
+        let ink = action_color(visuals, action);
+        return (ink.gamma_multiply(0.15), ink);
+    }
+    match action {
+        Action::Pick => (C::from_rgb(58, 58, 58), C::from_rgb(230, 230, 230)),
+        Action::Reword => (C::from_rgb(29, 58, 87), C::from_rgb(156, 202, 245)),
+        Action::Edit => (C::from_rgb(58, 51, 96), C::from_rgb(200, 192, 245)),
+        Action::Squash | Action::Fixup => (C::from_rgb(77, 58, 20), C::from_rgb(240, 195, 90)),
+        Action::Drop => (C::from_rgb(74, 36, 36), C::from_rgb(245, 160, 160)),
+    }
+}
+
+/// The mockup's 13 px chip glyph for `action`, drawn from its 256-unit paths.
+fn action_icon<'a>(action: Action, ink: egui::Color32) -> egui::Atom<'a> {
+    let strokes: &'static [&'static [(f32, f32)]] = match action {
+        Action::Pick => &[&[(40.0, 144.0), (96.0, 200.0), (224.0, 72.0)]],
+        Action::Reword => &[
+            &[
+                (92.0, 216.0),
+                (48.0, 216.0),
+                (48.0, 172.0),
+                (168.0, 52.0),
+                (212.0, 96.0),
+                (92.0, 216.0),
+            ],
+            &[(136.0, 84.0), (180.0, 128.0)],
+        ],
+        Action::Edit => &[
+            &[(96.0, 56.0), (96.0, 200.0)],
+            &[(160.0, 56.0), (160.0, 200.0)],
+        ],
+        Action::Squash => &[
+            &[
+                (72.0, 40.0),
+                (72.0, 96.0),
+                (128.0, 152.0),
+                (184.0, 96.0),
+                (184.0, 40.0),
+            ],
+            &[(128.0, 152.0), (128.0, 216.0)],
+        ],
+        Action::Fixup => &[
+            &[(128.0, 40.0), (128.0, 160.0)],
+            &[(80.0, 112.0), (128.0, 160.0), (176.0, 112.0)],
+            &[(48.0, 208.0), (208.0, 208.0)],
+        ],
+        Action::Drop => &[
+            &[(40.0, 64.0), (216.0, 64.0)],
+            &[(96.0, 64.0), (96.0, 40.0), (160.0, 40.0), (160.0, 64.0)],
+            &[(64.0, 64.0), (76.0, 216.0), (180.0, 216.0), (192.0, 64.0)],
+        ],
+    };
+    egui::Atom::paint(egui::vec2(13.0, 13.0), move |ui, args| {
+        let scale = args.rect.width() / 256.0;
+        for stroke in strokes {
+            let points = stroke
+                .iter()
+                .map(|(x, y)| args.rect.min + egui::vec2(x * scale, y * scale))
+                .collect();
+            ui.painter()
+                .add(egui::Shape::line(points, egui::Stroke::new(1.3, ink)));
+        }
+    })
 }
 
 fn action_color(visuals: &egui::Visuals, action: Action) -> egui::Color32 {

@@ -137,6 +137,7 @@ pub const INSPECTOR_HEIGHT: f32 = 58.0;
 pub fn inspector(
     ui: &mut egui::Ui,
     commit: Option<&Commit>,
+    stats: Option<&str>,
     avatars: &mut Avatars,
     actions: impl FnOnce(&mut egui::Ui) -> Option<CommitCommand>,
 ) -> Option<CommitCommand> {
@@ -210,13 +211,36 @@ pub fn inspector(
                 .join(", ")
         ),
     };
-    ui.add(
-        egui::Label::new(
-            egui::RichText::new(format!("{} · {} · {parents}", commit.author, commit.time))
-                .small()
-                .weak(),
-        )
-        .truncate(),
+    // Second line: author, date, parents, then `· 5 files +86 −41` once
+    // counted, with the line counts in the diff colors as in the mockup.
+    let small = egui::TextStyle::Small.resolve(ui.style());
+    let weak = ui.visuals().weak_text_color();
+    let mut line = egui::text::LayoutJob::default();
+    let mut push = |text: &str, color: egui::Color32| {
+        line.append(
+            text,
+            0.0,
+            egui::TextFormat {
+                font_id: small.clone(),
+                color,
+                ..Default::default()
+            },
+        );
+    };
+    push(
+        &format!("{} · {} · {parents}", commit.author, commit.time),
+        weak,
     );
+    if let Some(stats) = stats {
+        let (files, counts) = stats.split_once(" +").unwrap_or((stats, ""));
+        push(&format!(" · {files}"), weak);
+        if let Some((added, deleted)) = counts.split_once(' ') {
+            let green = crate::colors::diff(ui.visuals(), gg_engine::diff::RowKind::Added).1;
+            let red = crate::colors::diff(ui.visuals(), gg_engine::diff::RowKind::Deleted).1;
+            push(&format!(" +{added}"), green);
+            push(&format!(" {deleted}"), red);
+        }
+    }
+    ui.add(egui::Label::new(line).truncate());
     command
 }

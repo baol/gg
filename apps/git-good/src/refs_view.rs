@@ -12,14 +12,26 @@ pub enum Action {
     Track(String),
     Merge(String),
     Rebase(String),
-    PullRebase,
     DeleteBranch(String),
     DeleteTag(String),
     VerifyTag(String),
-    /// Open the toolbar stash picker on the entry at this index.
+    /// Open the Stashes picker on the entry at this index.
     OpenStash(usize),
     /// Open another worktree of this repository.
     OpenWorktree(String),
+    /// Rename a local branch (dialog).
+    Rename(String),
+    /// Set a local branch's upstream (dialog).
+    SetUpstream(String),
+    /// New branch at a ref's commit (dialog): commit and ref name.
+    NewBranchAt(String, String),
+    /// Compare a ref's commit with HEAD.
+    Compare(String),
+    /// Push the current branch.
+    Push,
+    /// Delete a remote branch on its remote (confirmed): its short name
+    /// (`origin/feature`) and last fetched commit.
+    DeleteRemote(String, String),
 }
 
 #[derive(Default)]
@@ -54,10 +66,6 @@ pub fn show(
             .hint_text("Filter refs")
             .desired_width(f32::INFINITY),
     );
-    if let Some(tracking) = refs.current_tracking() {
-        ui.add_space(2.0);
-        tracking_row(ui, tracking, busy, &mut action);
-    }
     ui.add_space(2.0);
 
     let query = filter.trim().to_lowercase();
@@ -107,8 +115,14 @@ pub fn show(
         .iter()
         .filter_map(|tracking| {
             let parts = [
-                tracking.ahead.filter(|n| *n > 0).map(|n| format!("↑{n}")),
-                tracking.behind.filter(|n| *n > 0).map(|n| format!("↓{n}")),
+                tracking
+                    .ahead
+                    .filter(|n| *n > 0)
+                    .map(|n| format!("{}{n}", crate::phosphor::ARROW_UP)),
+                tracking
+                    .behind
+                    .filter(|n| *n > 0)
+                    .map(|n| format!("{}{n}", crate::phosphor::ARROW_DOWN)),
             ];
             let text = parts.into_iter().flatten().collect::<Vec<_>>().join(" ");
             (!text.is_empty()).then(|| (tracking.full_name.clone(), text))
@@ -131,11 +145,19 @@ pub fn show(
                     ui.weak(format!("Detached at {commit}"));
                 }
                 if branches.is_empty() {
-                    ui.weak(if query.is_empty() {
-                        "No local branches"
-                    } else {
-                        "No matching branches"
-                    });
+                    // No filler lines (proposal): an unborn branch is listed
+                    // as having no commits, so it agrees with the branch
+                    // button; a filter says it matched nothing.
+                    if !query.is_empty() {
+                        ui.weak("No matching branches");
+                    } else if let Some(name) = head_name
+                        && refs.head.as_ref().is_some_and(|head| head.commit.is_none())
+                    {
+                        ui.weak(format!(
+                            "{}  · no commits",
+                            name.strip_prefix("refs/heads/").unwrap_or(name)
+                        ));
+                    }
                 } else if query.is_empty() {
                     let mut tree = Tree::default();
                     for item in branches {
@@ -169,11 +191,9 @@ pub fn show(
 
             section(ui, "Remotes", remotes.len(), !query.is_empty(), |ui| {
                 if remotes.is_empty() {
-                    ui.weak(if query.is_empty() {
-                        "No remotes"
-                    } else {
-                        "No matching remotes"
-                    });
+                    if !query.is_empty() {
+                        ui.weak("No matching remotes");
+                    }
                 } else if query.is_empty() {
                     let mut tree = Tree::default();
                     for item in remotes {
@@ -207,11 +227,9 @@ pub fn show(
 
             section(ui, "Tags", tags.len(), !query.is_empty(), |ui| {
                 if tags.is_empty() {
-                    ui.weak(if query.is_empty() {
-                        "No tags"
-                    } else {
-                        "No matching tags"
-                    });
+                    if !query.is_empty() {
+                        ui.weak("No matching tags");
+                    }
                 } else if query.is_empty() {
                     let mut tree = Tree::default();
                     for item in tags {
@@ -244,12 +262,8 @@ pub fn show(
             });
 
             section(ui, "Stashes", stash_rows.len(), !query.is_empty(), |ui| {
-                if stash_rows.is_empty() {
-                    ui.weak(if query.is_empty() {
-                        "No stashes"
-                    } else {
-                        "No matching stashes"
-                    });
+                if stash_rows.is_empty() && !query.is_empty() {
+                    ui.weak("No matching stashes");
                 }
                 for (index, entry) in stash_rows {
                     let short = entry
@@ -344,20 +358,58 @@ fn section(
     filtering: bool,
     contents: impl FnOnce(&mut egui::Ui),
 ) {
-    ui.add_space(3.0);
-    egui::CollapsingHeader::new(
-        egui::RichText::new(format!("{}  {count}", title.to_uppercase()))
-            .size(11.0)
-            .color(ui.visuals().weak_text_color()),
-    )
-    .id_salt(("refs-section", title))
-    .default_open(!matches!(title, "Remotes" | "Tags" | "Worktrees"))
-    .open(filtering.then_some(true))
-    .show_background(false)
-    .show(ui, |ui| {
+    let id = ui.make_persistent_id(("refs-section", title));
+    let mut state = egui::collapsing_header::CollapsingState::load_with_default_open(
+        ui.ctx(),
+        id,
+        !matches!(title, "Remotes" | "Tags" | "Worktrees"),
+    );
+    if filtering {
+        state.set_open(true);
+    }
+    ui.add_space(if title == "Branches" { 2.0 } else { 6.0 });
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 18.0), egui::Sense::click());
+    let weak = ui.visuals().weak_text_color();
+    let font = egui::FontId::proportional(11.0);
+    let open = state.is_open();
+    ui.painter().text(
+        egui::pos2(rect.left() + 4.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        title.to_uppercase(),
+        font.clone(),
+        weak,
+    );
+    // Open groups show their count; collapsed ones `▸ 25`, as in the mockup.
+    ui.painter().text(
+        egui::pos2(rect.right() - 4.0, rect.center().y),
+        egui::Align2::RIGHT_CENTER,
+        if open {
+            count.to_string()
+        } else {
+            format!("{} {count}", crate::phosphor::CARET_RIGHT)
+        },
+        font,
+        weak,
+    );
+    let response = response
+        .on_hover_text(if open { "Collapse" } else { "Expand" })
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(
+            egui::Role::Button,
+            ui.is_enabled(),
+            format!("{title} {count}"),
+        )
+    });
+    if response.clicked() && !filtering {
+        state.toggle(ui);
+    }
+    state.show_body_unindented(ui, |ui| {
         ui.spacing_mut().item_spacing.y = 1.0;
         contents(ui);
     });
+    state.store(ui.ctx());
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -437,113 +489,259 @@ fn render_leaf(
     } else if response.clicked() {
         *action = Some(Action::Jump(item.commit.clone()));
     }
+    // The ref's menu (branch menus proposal): the shared 24 px menu rows; a
+    // label ends in "…" when it opens a dialog or confirmation.
     response.context_menu(|ui| {
+        ui.set_min_width(230.0);
+        let mut entry = |ui: &mut egui::Ui,
+                         label: String,
+                         key: &'static str,
+                         enabled: bool,
+                         reason: &str,
+                         danger: bool,
+                         chosen: Action| {
+            let text = if danger {
+                egui::RichText::new(label).color(ui.visuals().error_fg_color)
+            } else {
+                egui::RichText::new(label)
+            };
+            let response = ui
+                .add_enabled(enabled, crate::menus::row(false, text).shortcut_text(key))
+                .on_disabled_hover_text(reason);
+            if response.clicked() {
+                *action = Some(chosen);
+                ui.close();
+            }
+        };
+        let wait = "Wait for the current operation to finish.";
+        let here = "Already on this branch";
+        let idle = !busy;
         match item.kind {
             RefKind::Branch => {
-                if ui
-                    .add_enabled(
-                        !current && !busy,
-                        egui::Button::new(format!("Switch to {}", item.name)),
-                    )
-                    .on_hover_text(if current {
-                        "Already on this branch"
-                    } else if busy {
-                        "Wait for the current operation to finish."
+                let reason = if current { here } else { wait };
+                entry(
+                    ui,
+                    format!("Switch to {}", item.name),
+                    "",
+                    !current && idle,
+                    reason,
+                    false,
+                    Action::Switch(item.name.clone()),
+                );
+                entry(
+                    ui,
+                    "Merge into current…".into(),
+                    "",
+                    !current && idle,
+                    reason,
+                    false,
+                    Action::Merge(item.name.clone()),
+                );
+                entry(
+                    ui,
+                    "Rebase current onto this…".into(),
+                    "",
+                    !current && idle,
+                    reason,
+                    false,
+                    Action::Rebase(item.name.clone()),
+                );
+                entry(
+                    ui,
+                    "Compare with HEAD".into(),
+                    "",
+                    !current,
+                    here,
+                    false,
+                    Action::Compare(item.commit.clone()),
+                );
+                ui.separator();
+                entry(
+                    ui,
+                    "New branch here…".into(),
+                    "",
+                    idle,
+                    wait,
+                    false,
+                    Action::NewBranchAt(item.commit.clone(), item.name.clone()),
+                );
+                entry(
+                    ui,
+                    "Push".into(),
+                    "Ctrl+Shift+P",
+                    current && idle,
+                    if current {
+                        wait
                     } else {
-                        "Switch the worktree after a clean-worktree check"
-                    })
-                    .clicked()
-                {
-                    *action = Some(Action::Switch(item.name.clone()));
-                    ui.close();
-                }
-                if ui
-                    .add_enabled(!current && !busy, egui::Button::new("Merge into current"))
-                    .clicked()
-                {
-                    *action = Some(Action::Merge(item.name.clone()));
-                    ui.close();
-                }
-                if ui
-                    .add_enabled(
-                        !current && !busy,
-                        egui::Button::new("Rebase current onto this"),
-                    )
-                    .clicked()
-                {
-                    *action = Some(Action::Rebase(item.name.clone()));
-                    ui.close();
-                }
-                if ui
-                    .add_enabled(!current && !busy, egui::Button::new("Delete branch…"))
-                    .clicked()
-                {
-                    *action = Some(Action::DeleteBranch(item.name.clone()));
-                    ui.close();
-                }
+                        "Switch to the branch to push it"
+                    },
+                    false,
+                    Action::Push,
+                );
+                entry(
+                    ui,
+                    "Set upstream…".into(),
+                    "",
+                    idle,
+                    wait,
+                    false,
+                    Action::SetUpstream(item.name.clone()),
+                );
+                entry(
+                    ui,
+                    "Rename…".into(),
+                    "F2",
+                    idle,
+                    wait,
+                    false,
+                    Action::Rename(item.name.clone()),
+                );
             }
             RefKind::Remote => {
-                if ui
-                    .add_enabled(!busy, egui::Button::new("Create tracking branch…"))
-                    .clicked()
-                {
-                    *action = Some(Action::Track(item.name.clone()));
-                    ui.close();
-                }
-                if ui
-                    .add_enabled(!busy, egui::Button::new("Merge into current"))
-                    .clicked()
-                {
-                    *action = Some(Action::Merge(item.name.clone()));
-                    ui.close();
-                }
-                if ui
-                    .add_enabled(!busy, egui::Button::new("Rebase current onto this"))
-                    .clicked()
-                {
-                    *action = Some(Action::Rebase(item.name.clone()));
-                    ui.close();
-                }
+                entry(
+                    ui,
+                    "Create tracking branch…".into(),
+                    "",
+                    idle,
+                    wait,
+                    false,
+                    Action::Track(item.name.clone()),
+                );
+                entry(
+                    ui,
+                    "Merge into current…".into(),
+                    "",
+                    idle,
+                    wait,
+                    false,
+                    Action::Merge(item.name.clone()),
+                );
+                entry(
+                    ui,
+                    "Rebase current onto this…".into(),
+                    "",
+                    idle,
+                    wait,
+                    false,
+                    Action::Rebase(item.name.clone()),
+                );
+                entry(
+                    ui,
+                    "Compare with HEAD".into(),
+                    "",
+                    true,
+                    "",
+                    false,
+                    Action::Compare(item.commit.clone()),
+                );
+                entry(
+                    ui,
+                    "New branch here…".into(),
+                    "",
+                    idle,
+                    wait,
+                    false,
+                    Action::NewBranchAt(item.commit.clone(), item.name.clone()),
+                );
             }
             RefKind::Tag => {
-                if ui
-                    .add_enabled(!busy, egui::Button::new("Merge into current"))
-                    .clicked()
-                {
-                    *action = Some(Action::Merge(item.name.clone()));
-                    ui.close();
-                }
-                if ui
-                    .add_enabled(!busy, egui::Button::new("Rebase current onto this"))
-                    .clicked()
-                {
-                    *action = Some(Action::Rebase(item.name.clone()));
-                    ui.close();
-                }
-                if ui
-                    .add_enabled(!busy, egui::Button::new("Signature details…"))
-                    .clicked()
-                {
-                    *action = Some(Action::VerifyTag(item.full_name.clone()));
-                    ui.close();
-                }
-                if ui
-                    .add_enabled(!busy, egui::Button::new("Delete tag…"))
-                    .clicked()
-                {
-                    *action = Some(Action::DeleteTag(item.name.clone()));
-                    ui.close();
-                }
+                entry(
+                    ui,
+                    "Merge into current…".into(),
+                    "",
+                    idle,
+                    wait,
+                    false,
+                    Action::Merge(item.name.clone()),
+                );
+                entry(
+                    ui,
+                    "Rebase current onto this…".into(),
+                    "",
+                    idle,
+                    wait,
+                    false,
+                    Action::Rebase(item.name.clone()),
+                );
+                entry(
+                    ui,
+                    "Compare with HEAD".into(),
+                    "",
+                    true,
+                    "",
+                    false,
+                    Action::Compare(item.commit.clone()),
+                );
+                entry(
+                    ui,
+                    "New branch here…".into(),
+                    "",
+                    idle,
+                    wait,
+                    false,
+                    Action::NewBranchAt(item.commit.clone(), item.name.clone()),
+                );
+                entry(
+                    ui,
+                    "Signature details…".into(),
+                    "",
+                    idle,
+                    wait,
+                    false,
+                    Action::VerifyTag(item.full_name.clone()),
+                );
             }
         }
         ui.separator();
-        if ui.button("Copy name").clicked() {
+        if ui.add(crate::menus::row(false, "Copy name")).clicked() {
             ui.ctx().copy_text(item.name.clone());
             ui.close();
         }
-        if ui.button("Copy hash").clicked() {
+        if ui.add(crate::menus::row(false, "Copy ID")).clicked() {
             ui.ctx().copy_text(item.commit.clone());
             ui.close();
+        }
+        match item.kind {
+            RefKind::Branch => {
+                ui.separator();
+                entry(
+                    ui,
+                    "Delete branch…".into(),
+                    "Del",
+                    !current && idle,
+                    if current { here } else { wait },
+                    true,
+                    Action::DeleteBranch(item.name.clone()),
+                );
+            }
+            RefKind::Tag => {
+                ui.separator();
+                entry(
+                    ui,
+                    "Delete tag…".into(),
+                    "",
+                    idle,
+                    wait,
+                    true,
+                    Action::DeleteTag(item.name.clone()),
+                );
+            }
+            RefKind::Remote => {
+                ui.separator();
+                let remote = item
+                    .name
+                    .split_once('/')
+                    .map_or("the remote", |(remote, _)| remote);
+                entry(
+                    ui,
+                    format!("Delete on {remote}…"),
+                    "",
+                    idle,
+                    wait,
+                    true,
+                    Action::DeleteRemote(item.name.clone(), item.commit.clone()),
+                );
+            }
         }
     });
 }
@@ -590,14 +788,14 @@ fn row(
         egui::pos2(rect.left() + 9.0, rect.center().y),
         egui::vec2(ICON_SIZE, ICON_SIZE),
     );
-    let icon_color = if let Some(dot) = lane {
-        ui.painter()
-            .circle_filled(icon.center(), ICON_SIZE / 2.0, dot);
-        crate::graph::on_lane_color(dot)
+    // Branches get their graph lane's dot, as in the mockup; remotes and
+    // tags keep their glyph.
+    if kind == RefKind::Branch {
+        let dot = lane.unwrap_or_else(|| ui.visuals().weak_text_color());
+        ui.painter().circle_filled(icon.center(), 3.5, dot);
     } else {
-        color.gamma_multiply(0.9)
-    };
-    paint_icon(ui.painter(), icon, kind, icon_color);
+        paint_icon(ui.painter(), icon, kind, color.gamma_multiply(0.9));
+    }
     let mut text_right = rect.right() - if current { 20.0 } else { 6.0 };
     if let Some(count) = count {
         let galley = ui.painter().layout_no_wrap(
@@ -686,72 +884,6 @@ pub(crate) fn paint_icon(
             ));
             painter.circle_filled(p(4.5, 5.0), 1.0, color);
         }
-    }
-}
-
-fn tracking_row(
-    ui: &mut egui::Ui,
-    tracking: &gg_engine::refs::Tracking,
-    busy: bool,
-    action: &mut Option<Action>,
-) {
-    use crate::phosphor;
-    let weak = ui.visuals().weak_text_color();
-    ui.vertical(|ui| {
-        ui.spacing_mut().item_spacing.y = 2.0;
-        let info = ui
-            .horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 2.0;
-                ui.label(
-                    egui::RichText::new(&tracking.upstream)
-                        .size(11.0)
-                        .color(weak),
-                );
-                if let (Some(ahead), Some(behind)) = (tracking.ahead, tracking.behind) {
-                    ui.label(phosphor::icon(phosphor::ARROW_UP).size(10.0).color(weak));
-                    ui.label(
-                        egui::RichText::new(ahead.to_string())
-                            .size(11.0)
-                            .color(weak),
-                    );
-                    ui.label(phosphor::icon(phosphor::ARROW_DOWN).size(10.0).color(weak));
-                    ui.label(
-                        egui::RichText::new(behind.to_string())
-                            .size(11.0)
-                            .color(weak),
-                    );
-                } else {
-                    ui.label(egui::RichText::new("· unavailable").size(11.0).color(weak));
-                }
-            })
-            .response;
-        info.on_hover_text(format!(
-            "{} · {}\nAhead and behind the configured upstream.",
-            tracking.upstream_full_name, tracking.remote
-        ));
-        if ui
-            .add_enabled(!busy, egui::Button::new("Pull").small())
-            .on_hover_text(format!(
-                "Fetch {}, then update this branch from {} with the pull strategy from Preferences (rebase by default)",
-                tracking.remote, tracking.upstream
-            ))
-            .on_disabled_hover_text("Wait for the current operation to finish.")
-            .clicked()
-        {
-            *action = Some(Action::PullRebase);
-        }
-    });
-}
-
-pub(crate) fn tracking_label(tracking: &gg_engine::refs::Tracking) -> String {
-    match (tracking.ahead, tracking.behind) {
-        (Some(ahead), Some(behind)) => format!(
-            "{}  {}{ahead} {}{behind}",
-            tracking.upstream,
-            crate::phosphor::ARROW_UP,
-            crate::phosphor::ARROW_DOWN
-        ),
-        _ => format!("{} · upstream unavailable", tracking.upstream),
     }
 }
 
@@ -883,7 +1015,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
         assert!(
-            text.iter().any(|line| line.starts_with("WORKTREES  2")),
+            text.iter().any(|line| line.as_str() == "WORKTREES"),
             "{text:?}"
         );
         let Some(row) = row else {
@@ -935,9 +1067,9 @@ mod tests {
             "main",
             "REMOTES",
             "TAGS",
-            "origin/main",
+            "\u{E13A} 1",
             "2",
-            "↑2 ↓1",
+            "\u{E08E}2 \u{E03E}1",
         ] {
             assert!(
                 text.iter().any(|line| line.contains(expected)),
@@ -1084,7 +1216,7 @@ mod tests {
         let output = run(vec![], 1.0);
         let position = output.shapes.iter().find_map(|shape| match &shape.shape {
             egui::epaint::Shape::Text(text)
-                if text.galley.job.text == label && text.pos.y > 100.0 =>
+                if text.galley.job.text == label && text.pos.y > 40.0 =>
             {
                 Some(text.pos + egui::vec2(8.0, text.galley.size().y / 2.0))
             }

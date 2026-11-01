@@ -205,3 +205,47 @@ fn add_existing_branch_and_list_current_worktree() -> Result {
     assert_eq!(current.branch.as_deref(), Some("existing"));
     Ok(())
 }
+
+#[test]
+fn unlock_and_prune_keep_branches() -> Result {
+    let dir = repo()?;
+    let linked = tempfile::tempdir()?;
+    let locked = linked.path().join("locked");
+    let missing = linked.path().join("missing");
+    for (destination, branch) in [(&locked, "kept"), (&missing, "gone")] {
+        gg_git::worktree::add(
+            dir.path(),
+            &AddRequest {
+                destination: destination.clone(),
+                branch: None,
+                create: Some(branch.into()),
+                at: None,
+            },
+        )?;
+    }
+    let locked_path = locked.to_str().ok_or("non-UTF-8 path")?;
+    git(
+        dir.path(),
+        &["worktree", "lock", "--reason", "usb", locked_path],
+    )?;
+    gg_git::worktree::unlock(dir.path(), &locked)?;
+    let snapshot = gg_git::worktree::list(dir.path())?;
+    assert!(
+        snapshot
+            .worktrees
+            .iter()
+            .all(|worktree| worktree.locked.is_none()),
+        "unlocked"
+    );
+
+    std::fs::remove_dir_all(&missing)?;
+    gg_git::worktree::prune(dir.path())?;
+    let snapshot = gg_git::worktree::list(dir.path())?;
+    assert_eq!(
+        snapshot.worktrees.len(),
+        2,
+        "the missing worktree is forgotten"
+    );
+    git(dir.path(), &["rev-parse", "--verify", "refs/heads/gone"])?;
+    Ok(())
+}

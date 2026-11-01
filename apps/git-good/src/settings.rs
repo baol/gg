@@ -427,7 +427,8 @@ pub struct Prefs {
     /// Launched without a path outside a repository: open the last one.
     pub reopen_last: bool,
     /// Drop… and Reset current branch to here… ask first; off runs them at
-    /// once (Reset as Mixed, never Hard), still saving a backup.
+    /// once (Soft and Mixed reset as chosen; Hard still asks), still saving
+    /// a backup.
     pub confirm_destructive: bool,
     /// Delete gg's private backups older than this many days; 0 keeps
     /// them forever (the default, so upgrading never deletes backups).
@@ -483,7 +484,8 @@ impl Default for Prefs {
             backup_days: 0,
             confirm_destructive: true,
             avatar_sources: vec![AvatarSource::Github, AvatarSource::Gravatar],
-            history_avatars: true,
+            // Off by default, as in the History mockup (plain author names).
+            history_avatars: false,
             history_tags: true,
             relative_dates: false,
             diff_context: 3,
@@ -677,7 +679,7 @@ mod tests {
         prefs.sign_tags = true;
         prefs.run_hooks = false;
         prefs.subject_guide = 50;
-        prefs.history_avatars = false;
+        prefs.history_avatars = true;
         prefs.avatar_sources = vec![AvatarSource::Gitlab, AvatarSource::Libravatar];
         prefs.pull_strategy = PullStrategy::FastForward;
         prefs.clone_named_after_repo = false;

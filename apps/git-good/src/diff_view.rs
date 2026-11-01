@@ -65,6 +65,39 @@ pub struct StageEdit {
     pub changes: Vec<(RowKind, usize)>,
 }
 
+/// One run of adjacent changed lines that a line discard reverts whole:
+/// the index-side numbers of its deleted lines and the working-file numbers
+/// of its added lines.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ChangeBlock {
+    pub deleted: Vec<usize>,
+    pub added: Vec<usize>,
+}
+
+impl ChangeBlock {
+    /// Changed lines in the block, deleted and added.
+    pub fn lines(&self) -> usize {
+        self.deleted.len() + self.added.len()
+    }
+
+    /// Where the block is: `line 12`, `lines 12–14` of the working file, or
+    /// `deleted lines 4–5` (index numbering) when nothing was added.
+    pub fn range(&self) -> String {
+        let (prefix, lines) = if self.added.is_empty() {
+            ("deleted ", &self.deleted)
+        } else {
+            ("", &self.added)
+        };
+        let first = lines.iter().min().copied().unwrap_or(0);
+        let last = lines.iter().max().copied().unwrap_or(0);
+        if first == last {
+            format!("{prefix}line {first}")
+        } else {
+            format!("{prefix}lines {first}–{last}")
+        }
+    }
+}
+
 /// The Unstaged | Staged toggle in a Local Changes reader header. Each side
 /// carries the reason it is unavailable for the selected path, if any.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -106,6 +139,9 @@ struct StageConfig {
     can_discard: bool,
     pending: bool,
 }
+
+/// Readers narrower than this fold Blame and File history into the ⋯ menu.
+const FOLD_TOOLS_BELOW: f32 = 760.0;
 
 pub struct DiffView {
     worker: Option<Worker>,
@@ -184,6 +220,12 @@ pub struct DiffView {
     sides: Option<WorkingSides>,
     side_request: Option<bool>,
     details_open: bool,
+    /// Width the header's mode controls took on the last single-line frame.
+    header_controls: f32,
+    /// A narrow reader folds Blame and File history into ⋯.
+    fold_tools: bool,
+    /// Blame chosen from the ⋯ menu.
+    blame_request: bool,
     /// Context and whitespace of the requested comparison.
     options: gg_engine::diff::Options,
     /// Displayed characters of every diff row, for wrapping unloaded rows.
@@ -265,6 +307,9 @@ impl Default for DiffView {
             sides: None,
             side_request: None,
             details_open: false,
+            header_controls: 560.0,
+            fold_tools: false,
+            blame_request: false,
             options: gg_engine::diff::Options::default(),
             widths: Arc::default(),
             wrap: None,
@@ -933,6 +978,66 @@ impl DiffView {
         }
     }
 
+    /// The change blocks (runs of adjacent added and deleted rows) within
+    /// `bounds` that hold a picked row, each as its changed lines.
+    fn touched_blocks(&self, bounds: Range<usize>) -> Vec<Vec<(RowKind, usize)>> {
+        type Block = (Vec<usize>, Vec<(RowKind, usize)>);
+        let mut blocks: Vec<Block> = vec![];
+        let mut current: Block = (vec![], vec![]);
+        let mut last: Option<usize> = None;
+        for (row, data) in self.rows.range(bounds) {
+            let line = match data.kind {
+                RowKind::Added => data.new_line.map(|line| (data.kind, line)),
+                RowKind::Deleted => data.old_line.map(|line| (data.kind, line)),
+                _ => None,
+            };
+            match line {
+                Some(line) => {
+                    if !last.is_some_and(|last| *row == last + 1) && !current.0.is_empty() {
+                        blocks.push(std::mem::take(&mut current));
+                    }
+                    current.0.push(*row);
+                    current.1.push(line);
+                    last = Some(*row);
+                }
+                None => {
+                    if !current.0.is_empty() {
+                        blocks.push(std::mem::take(&mut current));
+                    }
+                    last = None;
+                }
+            }
+        }
+        if !current.0.is_empty() {
+            blocks.push(current);
+        }
+        blocks
+            .into_iter()
+            .filter(|(rows, _)| rows.iter().any(|row| self.stage_selected.contains_key(row)))
+            .map(|(_, lines)| lines)
+            .collect()
+    }
+
+    /// The whole change blocks a discard of the picked lines reverts.
+    pub fn discard_blocks(&self) -> Vec<ChangeBlock> {
+        self.hunks
+            .iter()
+            .flat_map(|header| self.touched_blocks(self.hunk_bounds(*header)))
+            .map(|lines| ChangeBlock {
+                deleted: lines
+                    .iter()
+                    .filter(|(kind, _)| *kind == RowKind::Deleted)
+                    .map(|(_, line)| *line)
+                    .collect(),
+                added: lines
+                    .iter()
+                    .filter(|(kind, _)| *kind == RowKind::Added)
+                    .map(|(_, line)| *line)
+                    .collect(),
+            })
+            .collect()
+    }
+
     fn hunk_edit(&self, header: usize, discard: bool) -> StageEdit {
         let bounds = self.hunk_bounds(header);
         let chosen: Vec<(usize, RowKind, usize)> = self
@@ -946,43 +1051,7 @@ impl DiffView {
         } else if discard {
             // Expand each touched block so a discard cannot remove half of a
             // replacement that shares the block.
-            let picked: std::collections::BTreeSet<usize> =
-                chosen.iter().map(|(row, _, _)| *row).collect();
-            type Block = (Vec<usize>, Vec<(RowKind, usize)>);
-            let mut blocks: Vec<Block> = vec![];
-            let mut current: (Vec<usize>, Vec<(RowKind, usize)>) = (vec![], vec![]);
-            let mut last: Option<usize> = None;
-            for (row, data) in self.rows.range(bounds.clone()) {
-                let line = match data.kind {
-                    RowKind::Added => data.new_line.map(|line| (data.kind, line)),
-                    RowKind::Deleted => data.old_line.map(|line| (data.kind, line)),
-                    _ => None,
-                };
-                match line {
-                    Some(line) => {
-                        if !last.is_some_and(|last| *row == last + 1) && !current.0.is_empty() {
-                            blocks.push(std::mem::take(&mut current));
-                        }
-                        current.0.push(*row);
-                        current.1.push(line);
-                        last = Some(*row);
-                    }
-                    None => {
-                        if !current.0.is_empty() {
-                            blocks.push(std::mem::take(&mut current));
-                        }
-                        last = None;
-                    }
-                }
-            }
-            if !current.0.is_empty() {
-                blocks.push(current);
-            }
-            blocks
-                .into_iter()
-                .filter(|(rows, _)| rows.iter().any(|row| picked.contains(row)))
-                .flat_map(|(_, lines)| lines)
-                .collect()
+            self.touched_blocks(bounds).into_iter().flatten().collect()
         } else {
             chosen
                 .into_iter()
@@ -1789,7 +1858,10 @@ impl DiffView {
 
     /// One file header: exact path, one scoped action menu, and the exact
     /// endpoints. Low-frequency identity and commands are not permanent rows.
-    fn draw_header(&mut self, ui: &mut egui::Ui, _ctx: &egui::Context, change: &FileChange) {
+    /// The start of the reader's one header row: path and exact endpoints in
+    /// a slot of `width`, then the Unstaged | Staged toggle and whole-file
+    /// staging when they apply. The mode controls follow on the same row.
+    fn draw_header(&mut self, ui: &mut egui::Ui, change: &FileChange, width: f32) {
         let displayed_working = self
             .displayed_working
             .clone()
@@ -1807,10 +1879,7 @@ impl DiffView {
         } else {
             None
         };
-        ui.horizontal(|ui| {
-            let stage_width = if self.stage.is_some() { 78.0 } else { 0.0 };
-            let sides_width = if self.sides.is_some() { 136.0 } else { 0.0 };
-            let width = (ui.available_width() - 104.0 - stage_width - sides_width).max(80.0);
+        {
             let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 24.0), egui::Sense::hover());
             // Path and exact comparison endpoints share one line.
             let path_font = egui::FontId::proportional(14.0);
@@ -1866,10 +1935,18 @@ impl DiffView {
                     self.stage_edit = Some(self.file_edit(false));
                 }
             }
-        });
+        }
+    }
+
+    /// The optional File details line under the header row.
+    fn draw_header_details(&self, ui: &mut egui::Ui, change: &FileChange) {
         if !self.details_open {
             return;
         }
+        let displayed_working = self
+            .displayed_working
+            .clone()
+            .or_else(|| self.working.clone());
         let side = |side: &Option<gg_engine::review::FileSide>| {
             side.as_ref()
                 .map(|side| format!("{:06o} {}", side.mode, side.id))
@@ -1925,6 +2002,25 @@ impl DiffView {
     fn file_actions_menu(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, change: &FileChange) {
         ui.menu_button(crate::phosphor::icon(crate::phosphor::DOTS_THREE), |ui| {
             let capabilities = self.capabilities();
+            if self.fold_tools {
+                let blame = self.attribution_available();
+                if ui
+                    .add_enabled(blame, crate::menus::row(self.attribution, "Blame").shortcut_text("B"))
+                    .clicked()
+                {
+                    self.blame_request = true;
+                    ui.close();
+                }
+                if let Some(available) = self.history_button
+                    && ui
+                        .add_enabled(available, crate::menus::row(false, "File history").shortcut_text("H"))
+                        .clicked()
+                {
+                    self.history_request = true;
+                    ui.close();
+                }
+                ui.separator();
+            }
             for (label, side, enabled) in [
                 (
                     "Export before…",
@@ -1950,7 +2046,14 @@ impl DiffView {
                     ui.close();
                 }
             }
-            if self.can_drop_whole() && ui.button("Discard file…").clicked() {
+            if self.can_drop_whole()
+                && ui
+                    .button("Discard unstaged changes…")
+                    .on_hover_text(
+                        "Restore the working file from the index (an untracked file is removed); the index is unchanged",
+                    )
+                    .clicked()
+            {
                 self.stage_edit = Some(self.file_edit(true));
                 ui.close();
             }
@@ -2152,10 +2255,22 @@ impl DiffView {
             ui.weak("Select a file to read its diff");
             return;
         };
-        self.draw_header(ui, &ctx, &change);
         let mut actions = vec![];
         let capabilities = self.capabilities();
-        ui.horizontal_wrapped(|ui| {
+        // One header row, as in the mockups: path and endpoints, then the
+        // mode controls; narrow readers wrap the controls to a second line.
+        self.fold_tools = ui.available_width() < FOLD_TOOLS_BELOW;
+        // When the controls leave the path less than 220 px, the path takes
+        // the first line and the controls wrap below it.
+        let spare = ui.available_width() - self.header_controls - 8.0;
+        let fits = spare >= 220.0;
+        let path_width = if fits {
+            spare.min(560.0)
+        } else {
+            (ui.available_width() - 8.0).max(140.0)
+        };
+        let header = ui.horizontal_wrapped(|ui| {
+            self.draw_header(ui, &change, path_width);
             let diff = ui
                 .add_enabled(
                     capabilities.diff,
@@ -2175,25 +2290,45 @@ impl DiffView {
             {
                 actions.push(Action::Mode(Mode::Full));
             }
-            // Inline | Side by side keeps its slot in both presentations.
+            // One slot: Inline | Side by side in Diff, Before | After in Full
+            // file (accepted reader proposal).
             ui.separator();
-            for (layout, label) in [
-                (DiffLayout::Inline, "Inline"),
-                (DiffLayout::SideBySide, "Side by side"),
-            ] {
-                let response = ui
-                    .add_enabled(
-                        self.mode == Mode::Diff,
-                        egui::Button::new(label).selected(self.layout == layout),
-                    )
-                    .on_disabled_hover_text("Full file shows one side; choose Diff to compare");
-                if response.clicked() {
-                    actions.push(Action::Layout(layout));
+            if self.mode == Mode::Full {
+                for side in [ReadingSide::Before, ReadingSide::After] {
+                    let available = self.edge_known
+                        && match side {
+                            ReadingSide::Before => capabilities.full_before,
+                            ReadingSide::After => capabilities.full_after,
+                        };
+                    let response = ui
+                        .add_enabled(
+                            available,
+                            egui::Button::new(self.side_label(side)).selected(side == self.side),
+                        )
+                        .on_disabled_hover_text(if self.edge_known {
+                            "This side does not exist in this comparison"
+                        } else {
+                            "Earlier version not loaded"
+                        });
+                    if response.clicked() && side != self.side {
+                        actions.push(Action::Side(side));
+                    }
+                }
+            } else {
+                for (layout, label) in [
+                    (DiffLayout::Inline, "Inline"),
+                    (DiffLayout::SideBySide, "Side by side"),
+                ] {
+                    let response = ui.add(egui::Button::new(label).selected(self.layout == layout));
+                    if response.clicked() {
+                        actions.push(Action::Layout(layout));
+                    }
                 }
             }
             // Blame and History sit on this row in both presentations, as in
-            // the mockup; Blame from Diff opens Full file with blame on.
-            {
+            // the mockup; Blame from Diff opens Full file with blame on. A
+            // narrow reader folds them into ⋯ (accepted proposal).
+            if !self.fold_tools {
                 let available = self.attribution_available();
                 let label = if self.attribution && self.mode == Mode::Full {
                     "Hide blame"
@@ -2219,29 +2354,13 @@ impl DiffView {
                     }
                 }
             }
-            if let Some(available) = self.history_button {
+            if let Some(available) = self.history_button.filter(|_| !self.fold_tools) {
                 let response = ui
                     .add_enabled(available, egui::Button::new("History"))
                     .on_hover_text("File history · H")
                     .on_disabled_hover_text("Select a file to follow its history");
                 if response.clicked() {
                     self.history_request = true;
-                }
-            }
-            if self.mode == Mode::Full && self.edge_known {
-                ui.separator();
-                for side in [ReadingSide::Before, ReadingSide::After] {
-                    let available = match side {
-                        ReadingSide::Before => capabilities.full_before,
-                        ReadingSide::After => capabilities.full_after,
-                    };
-                    let response = ui.add_enabled(
-                        side != self.side && available,
-                        egui::Button::new(self.side_label(side)),
-                    );
-                    if response.clicked() {
-                        actions.push(Action::Side(side));
-                    }
                 }
             }
             ui.separator();
@@ -2298,6 +2417,28 @@ impl DiffView {
             }
             self.file_actions_menu(ui, &ctx, &change);
         });
+        // Learn the controls' width so the path slot leaves room for them;
+        // a wrapped row widens the estimate for the next frame.
+        let row = header.response.rect;
+        if !fits {
+            // Wrapped on purpose; keep the last single-line measurement.
+        } else if row.height() > 34.0 {
+            self.header_controls += 60.0;
+            ui.ctx().request_repaint();
+        } else {
+            self.header_controls = (row.width() - path_width).max(self.header_controls.min(200.0));
+        }
+        self.draw_header_details(ui, &change);
+        if std::mem::take(&mut self.blame_request) {
+            if self.mode != Mode::Full {
+                actions.push(Action::Mode(Mode::Full));
+                if !self.attribution {
+                    actions.push(Action::Attribution);
+                }
+            } else {
+                actions.push(Action::Attribution);
+            }
+        }
         for action in actions {
             match action {
                 Action::Mode(mode) => self.set_mode(mode, &ctx),
@@ -4841,6 +4982,38 @@ mod tests {
         draw(&mut view);
         assert!(view.wrap.is_none());
         assert_eq!(top(&view), 41, "unwrapping keeps the top row");
+    }
+
+    #[test]
+    fn a_narrow_reader_folds_blame_into_the_file_actions_menu()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for (width, shown) in [(720.0, false), (1120.0, true)] {
+            let ctx = egui::Context::default();
+            let mut view = DiffView {
+                change: Some(file("a", true, true)),
+                generation: 1,
+                ..Default::default()
+            };
+            view.accept(diff_update(1, split_fixture()), None);
+            view.change = None;
+            let mut output = None;
+            for _ in 0..3 {
+                output = Some(crate::tests::run_ui(
+                    &ctx,
+                    crate::tests::frame_input(width, 480.0, vec![]),
+                    |ctx| {
+                        egui::CentralPanel::default().show(ctx, |ui| view.draw_reading(ui));
+                    },
+                ));
+            }
+            let output = output.ok_or("no frame")?;
+            let blame = output.shapes.iter().any(|shape| {
+                matches!(&shape.shape, egui::epaint::Shape::Text(text) if text.galley.job.text == "Blame")
+            });
+            assert_eq!(blame, shown, "Blame on the header row at {width}");
+            assert_eq!(view.fold_tools, !shown);
+        }
+        Ok(())
     }
 
     #[test]

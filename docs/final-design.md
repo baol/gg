@@ -4,7 +4,7 @@ Purpose: define gg's window frame, command placement, interactive rebase, rebase
 
 Status: agreed design. Delivery order and acceptance live in the [plan](plan.md#final-interface--staged); shipped behavior lives in [architecture](architecture.md). This document extends the [coherent interaction model](ui-coherence.md) and keeps its rules: one command definition per action, read-only ref selection, one operation area, one file workspace.
 
-The reviewed mockups are the **Final design** page of the gg App Flows design canvas (claude.ai artifact); its **Exploration** page keeps the rejected variants.
+The reviewed mockups are the **Final design** page of the gg App Flows design canvas (claude.ai artifact); its **Exploration** page keeps the rejected variants. The canvas mockups still show the earlier toolbar with branch, tag, merge, stash, rebase, and recovery buttons; the toolbar described here supersedes them.
 
 ## Window frame
 
@@ -14,11 +14,10 @@ The frame has two rows above every view. Both rows keep the same order and posit
 2. **Toolbar**, 34 px, left to right:
    - Refs sidebar toggle (`Ctrl+\`), pressed while the sidebar is shown.
    - **Changes | History** tabs. Changes is always present; its count badge appears only when there are local changes.
-   - Fetch · Pull (rebase) · Push. Pull is enabled only when the current branch is behind its upstream and shows the behind count as a badge; otherwise it is disabled with the reason.
-   - New branch · New tag · Merge into current.
-   - Stash changes (disabled on a clean worktree) · Stashes (picker with count and caret; disabled when there are none).
-   - Interactive rebase of the current branch (the commits its upstream lacks, else the commits the default branch lacks; independent of the selection) · Recovery. **Commit › Interactive rebase from here…** starts at the selected commit.
+   - Fetch · Pull (rebase) · Push. Pull is enabled whenever the current branch has an upstream and shows the cached behind count as a badge; without an upstream it is disabled with the reason. Pull fetches first and reports `Already up to date with origin/main.` when there is nothing to integrate.
    - Right-aligned: current-branch button (`name ↑ahead ↓behind`, opens the branch switcher) and the search field (`Ctrl+K`).
+
+The toolbar holds only everyday navigation and sync. New branch, New tag, Merge into current, Stash changes, Stashes, Interactive rebase of the current branch, and Recovery live in their menus and in search, so they stay reachable at every width, including 720×480.
 
 Dialogs that ask for a decision or start a change are modal; tool and information windows are not. Toolbar buttons are icon-only Phosphor glyphs with tooltips naming the action and its shortcut. Disabled buttons stay in place with the same disable reason as their menu item.
 
@@ -33,22 +32,22 @@ Every command has exactly one menu home. The toolbar, shortcuts, context menus, 
 | Menu | Commands |
 | --- | --- |
 | gg (macOS only) | Settings… (`Cmd+,`) · Quit (`Cmd+Q`) |
-| Repository | Open… (`Ctrl+O`) · Clone… · Open recent ▸ · Fetch (`Ctrl+Shift+F`) · Pull (rebase) (`Ctrl+Shift+L`) · Push (`Ctrl+Shift+P`) · Push with force-with-lease… · Worktrees… · Submodules… · LFS… · Backups… · Reflog… · Preferences… (`Ctrl+,`) · Quit (`Ctrl+Q`) |
-| Branch | New branch… (`Ctrl+B`) · New tag… · Switch to… (`Ctrl+Shift+B`) · Merge into current… · Rebase current onto… · Set upstream… · Track remote branch… · Rename… (`F2`) · Delete… (`Del`) |
+| Repository | Open… (`Ctrl+O`) · Clone… · Open recent ▸ · Fetch (`Ctrl+Shift+F`) · Pull (rebase) (`Ctrl+Shift+L`) · Push (`Ctrl+Shift+P`) · Push with force-with-lease… · Worktrees… · Recovery… · Preferences… (`Ctrl+,`) · Quit (`Ctrl+Q`) |
+| Branch | New branch… (`Ctrl+B`) · New tag… · Switch to… (`Ctrl+Shift+B`) · Merge into current… · Rebase current onto… · Interactive rebase of current branch… · Set upstream… · Track remote branch… · Rename… (`F2`) · Delete… (`Del`) |
 | Commit | Review changes (`Enter`) · Compare with HEAD · Copy ID (`Ctrl+C`) · Cherry-pick onto HEAD · Revert · Interactive rebase from here… (`R`) · Reword… (`Ctrl+R`) · Reopen for editing… (`E`) · Fixup into… (`F`) · Drop… (`D`) · Reset current branch to here… — acts on the selected commit |
-| Changes | Stage all (`Ctrl+Shift+S`) · Unstage all (`Ctrl+Shift+U`) · Discard all… · Commit (`Ctrl+Enter`) · Amend HEAD (`Ctrl+Shift+Enter`) · Stash changes (`Ctrl+Shift+Z`) · Stashes… · Resolve conflicts… |
+| Changes | Stage all (`Ctrl+Shift+S`) · Unstage all (`Ctrl+Shift+U`) · Discard all tracked changes… · Commit (`Ctrl+Enter`) · Amend HEAD (`Ctrl+Shift+Enter`) · Stash changes… (`Ctrl+Shift+Z`) · Stashes… · Resolve conflicts… |
 | View | Local Changes (`Ctrl+1`) · History (`Ctrl+2`) · Refs sidebar (`Ctrl+\`) · Commit inspector (`Space`) · Inline diff · Side-by-side diff · Compact density · Theme ▸ |
 | Help | Keyboard shortcuts (`?`) · Documentation · About gg |
 
-The menus come from one command table that search also lists, so a command has one label, shortcut, and disabled reason everywhere. Reword, Reopen, Fixup, and Drop open the interactive rebase with the selected commit preset. There is no Refresh command: the window refreshes when files change and before each command (see the architecture). Still to decide (see the canvas page **Review · as built**): Track remote branch is kept from before the mockups; Submodules… and LFS… are listed but not built; F10 menu focus is not available in egui.
+The menus come from one command table that search also lists, so a command has one label, shortcut, and disabled reason everywhere. Reword, Reopen, Fixup, and Drop open the interactive rebase with the selected commit preset. **Interactive rebase of current branch…** covers the commits its upstream lacks, else the commits the default branch lacks, independent of the selection; **Commit › Interactive rebase from here…** starts at the selected commit. **Recovery…** opens one window whose source selector holds **Backups** and **Reflog**; outcome buttons that offer backups open it on Backups. **Stashes…** opens the stash picker centered under the toolbar; the refs sidebar's stash rows open it on their entry. **Discard all tracked changes…** restores every tracked file, staged and unstaged, to HEAD and keeps untracked files; the per-file **Discard unstaged changes…**, **Discard hunk**, and **Discard N lines** touch only unstaged working changes and leave the index unchanged. There is no Refresh command: the window refreshes when files change and before each command (see the architecture). Still to decide (see the canvas page **Review · as built**): Track remote branch is kept from before the mockups; F10 menu focus is not available in egui.
 
 About gg shows the logo, version, author (people only, from the workspace `authors`), license with a link, source link, and a note that parts of gg were written with AI coding assistants and come with no warranty.
 
 Rules:
 
-- The toolbar holds only frequent commands that need no selection. Commands on a selected commit, file, or hunk stay beside that selection.
+- The toolbar holds only everyday navigation and sync: the refs sidebar toggle, Changes, History, Fetch, Pull, Push, the branch button, and search. Commands on a selected commit, file, or hunk stay beside that selection.
 - Single-letter shortcuts act on the focused list and never fire while typing. Ctrl and Ctrl+Shift chords are global.
-- Unavailable items stay visible and disabled with a reason.
+- Unavailable items stay visible and disabled with a reason that names the repository state. Commands that are not built are not listed.
 
 ## Search
 
@@ -56,18 +55,18 @@ Rules:
 
 ## Density
 
-Compact density is the default: history and file rows 22 px, diff rows 19 px, path and endpoints on one reader line, one-line commit identity, one-character change markers (`+ ~ − T ? !`) with the full kind in the tooltip. Comfortable density remains a preference.
+Compact density is the default: history and file rows 22 px, diff rows 19 px, one reader header row (path, endpoints, and the mode controls), one-line commit identity, one-character change markers (`+ ~ − T ? !`) with the full kind in the tooltip. Comfortable density remains a preference.
 
 ## Stashes
 
-The Stashes toolbar button opens a picker listing each entry's ref, message, branch, age, and file count. The selected entry offers **Apply**, **Pop**, **Show changes**, and **Drop…** (confirmed). The sidebar lists stash entries; selecting one opens the picker on it.
+**Changes › Stashes…** opens a picker, centered under the toolbar, listing each entry's ref, message, branch, age, and file count. The selected entry offers **Apply**, **Pop**, **Show changes**, and **Drop…** (confirmed). The sidebar lists stash entries; selecting one opens the picker on it.
 
 ## Interactive rebase
 
-A large modal dialog over dimmed History, laid out like the file workspace.
+A large modal dialog over dimmed History, laid out like the file workspace. It opens 12 px below the toolbar, centered, so the menu bar and toolbar stay in view.
 
 - **Header (operation bar):** branch, range (`<from>…HEAD onto <base>`), result count (`6 commits → 4 · 1 dropped`), **Cancel** (`Esc`), **Start rebase** (`Ctrl+Enter`).
-- **Left, the plan:** newest first, matching History. Each row has a drag handle, move up/down, hash, message, ref pills, a consequence badge (`↓ fixup into <hash>`, `absorbs <hash>`, `⏸ stops here · reopens staged in Changes`, `dropped · recoverable from the backup`), and an action chip. The chip shows the current action; clicking opens a menu of all six actions with a plain hint and key. Keys on the selected row: **P** pick, **R** reword, **E** reopen, **S** squash, **F** fixup, **D** drop.
+- **Left, the plan:** newest first, matching History. Rows are 40 px with two lines: hash, message, and ref pills, then the consequence badge in its action's color (none for Pick). Each row has a drag handle, move up/down, hash, message, ref pills, a consequence badge (`↓ fixup into <hash>`, `absorbs <hash>`, `⏸ stops here · reopens staged in Changes`, `dropped · recoverable from the backup`), and an action chip: 24 px tall, rounded, with the mockup's glyph and colors (Pick neutral with a border, Reword blue, Reopen purple, Squash and Fixup amber, Drop red). The chip shows the current action; clicking opens a menu of all six actions with a plain hint and key. **Start rebase** is the filled primary button with its `Ctrl+Enter` hint; **Cancel** shows `Esc`. Keys on the selected row: **P** pick, **R** reword, **E** reopen, **S** squash, **F** fixup, **D** drop.
 - **Squash and Fixup** combine into the nearest kept commit **below** (older). Squash combines both messages; Fixup keeps only the older message. They are disabled with a reason when no kept commit lies below.
 - **Right, the selected commit:** hash, action, author, date, files, and diff in the shared reader. Reword edits the message here, showing the original. Drop dims the diff. **Open in Review** (`Enter`) opens the normal review; `Esc` returns to the plan unchanged.
 - **Footer:** stash working changes first, which refs stay on the original commits, and the private-backup notice.
@@ -79,7 +78,7 @@ Merge commits remain unsupported and are named as the reason.
 Both stops use the operation area under the toolbar. Its first line names the stop and holds **Continue** (`Ctrl+Enter`), **Skip commit**, and **Abort and restore**; the second line carries the explanation and the step chips (done ✓, current, next). The branch button and window identity show the rebase step.
 
 - **Reopened commit (E):** Local Changes opens with the commit's changes staged and its message in the commit box. Unstaging files or lines and committing splits the commit; each part is listed under **Commits made at this stop**. Continue is highlighted once nothing remains.
-- **Conflict:** the conflicted files list and a three-column block per conflict: **Base**, **Ours · rewritten branch**, **Theirs · replayed commit**. Choices per block: Ours, Theirs, Ours + theirs, Theirs + ours (keys 1–4). The result preview shows unresolved markers. **Stage resolution** is enabled when every block in the file has a choice. Continue stays disabled with a reason until every file is staged.
+- **Conflict:** the conflicted files list and a three-column block per conflict: **Base**, **Ours (onto <base>)**, **Theirs (<short id> <subject>)** (long names shortened, full name on hover). Choices per block: Ours, Theirs, Ours + theirs, Theirs + ours (keys 1–4). The result preview shows unresolved markers. **Stage resolution** is enabled when every block in the file has a choice. Continue stays disabled with a reason until every file is staged.
 
 ## Preferences
 

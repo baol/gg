@@ -73,6 +73,33 @@ fn lines(count: usize) -> String {
     }
 }
 
+/// `1 change block (2 lines)`: what a picked-lines discard reverts.
+fn blocks_counted(blocks: &[crate::diff_view::ChangeBlock]) -> String {
+    let changed = blocks
+        .iter()
+        .map(crate::diff_view::ChangeBlock::lines)
+        .sum();
+    format!(
+        "{} change block{} ({})",
+        blocks.len(),
+        if blocks.len() == 1 { "" } else { "s" },
+        lines(changed)
+    )
+}
+
+/// `1 change block (2 lines) at line 12`, naming at most five places.
+fn blocks_named(blocks: &[crate::diff_view::ChangeBlock]) -> String {
+    let mut places = blocks
+        .iter()
+        .take(5)
+        .map(crate::diff_view::ChangeBlock::range)
+        .collect::<Vec<_>>();
+    if blocks.len() > 5 {
+        places.push("…".into());
+    }
+    format!("{} at {}", blocks_counted(blocks), places.join(", "))
+}
+
 /// The subject length against the guide from Preferences › Commit, painted
 /// in the message field's lower-right corner so nothing moves; past the
 /// guide it turns to the warning color.
@@ -168,6 +195,21 @@ impl List {
     }
 }
 
+/// The one next step a clean worktree offers, as in the empty-states
+/// proposal: Pull when behind, Push when ahead.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CleanAction {
+    Pull,
+    Push,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct CleanContext {
+    pub head: Option<(String, String)>,
+    pub ahead: u64,
+    pub behind: u64,
+}
+
 pub struct StatusView {
     path: PathBuf,
     identity: Option<gg_engine::status::StatusIdentity>,
@@ -176,8 +218,19 @@ pub struct StatusView {
     /// A discard waiting for confirmation: one file or hunk edit, or the
     /// picked lines across hunks.
     drop_confirm: Option<Vec<crate::diff_view::StageEdit>>,
+    /// The change blocks a picked-lines discard reverts, named in its
+    /// confirmation.
+    drop_blocks: Vec<crate::diff_view::ChangeBlock>,
     /// Commits made at a stopped rebase's reopened commit: ID and subject.
     stop_commits: Vec<(String, String)>,
+    /// What the clean view shows: HEAD's ID and subject, and the current
+    /// branch's ahead/behind counts.
+    clean_context: CleanContext,
+    /// Local Changes is showing a reopened rebase step (stop mockup labels).
+    reopened: bool,
+    /// The rewrite's backup ref, named in the footer during a stop.
+    stop_backup: Option<String>,
+    clean_request: Option<CleanAction>,
     /// A group header asked to stage everything (`Some(true)`) or unstage
     /// everything (`Some(false)`); the window runs it like the menu item.
     group_request: Option<bool>,
@@ -229,8 +282,13 @@ impl StatusView {
             stage: crate::stage_view::StageActions::default(),
             reader: crate::diff_view::DiffView::default(),
             drop_confirm: None,
+            drop_blocks: Vec::new(),
             group_request: None,
             stop_commits: Vec::new(),
+            clean_context: CleanContext::default(),
+            reopened: false,
+            stop_backup: None,
+            clean_request: None,
             commit: None,
             commit_done: None,
             last_commit: None,
@@ -753,6 +811,88 @@ impl StatusView {
     /// Disable incompatible mutations while another view owns an operation.
     pub fn set_external_busy(&mut self, reason: Option<String>) {
         self.external_busy = reason;
+    }
+
+    /// Whether a reopened rebase step is open, and the rewrite's backup ref.
+    pub fn set_reopened(&mut self, reopened: bool, backup: Option<String>) {
+        self.reopened = reopened;
+        self.stop_backup = backup.filter(|_| reopened);
+    }
+
+    /// HEAD and tracking for the clean view.
+    pub fn set_clean_context(&mut self, context: CleanContext) {
+        self.clean_context = context;
+    }
+
+    /// Pull or Push chosen in the clean view.
+    pub fn take_clean_request(&mut self) -> Option<CleanAction> {
+        self.clean_request.take()
+    }
+
+    /// A finished, empty scan with nothing else to show: the lists, reader,
+    /// and commit form give way to one "Working tree clean" message.
+    fn clean(&self) -> bool {
+        self.complete
+            && self.total == 0
+            && !self.amend
+            && !self.replacing
+            && self.error.is_none()
+            && self.external_busy.is_none()
+            && self.stop_commits.is_empty()
+            && self.commit.is_none()
+    }
+
+    /// The clean view: returns whether Open History was chosen.
+    fn draw_clean(&mut self, ui: &mut egui::Ui) -> bool {
+        let mut back = false;
+        ui.vertical_centered(|ui| {
+            ui.add_space((ui.available_height() * 0.3).max(24.0));
+            ui.label(egui::RichText::new("Working tree clean").size(18.0));
+            ui.add_space(6.0);
+            if let Some((id, subject)) = &self.clean_context.head {
+                ui.weak(format!(
+                    "Last commit {} · {subject}",
+                    &id[..id.len().min(8)]
+                ));
+            }
+            if let Some(result) = self.commit_result() {
+                ui.weak(result);
+            }
+            ui.add_space(12.0);
+            let primary = |text: String| {
+                egui::Button::new(egui::RichText::new(text).color(egui::Color32::WHITE))
+                    .fill(egui::Color32::from_rgb(11, 85, 119))
+            };
+            ui.horizontal(|ui| {
+                let (behind, ahead) = (self.clean_context.behind, self.clean_context.ahead);
+                let step = if behind > 0 {
+                    Some((CleanAction::Pull, format!("Pull {behind}")))
+                } else if ahead > 0 {
+                    Some((CleanAction::Push, format!("Push {ahead}")))
+                } else {
+                    None
+                };
+                // Centre the one or two buttons.
+                let width = if step.is_some() { 230.0 } else { 120.0 };
+                ui.add_space(((ui.available_width() - width) / 2.0).max(0.0));
+                if let Some((action, label)) = step {
+                    if ui.add(primary(label)).clicked() {
+                        self.clean_request = Some(action);
+                    }
+                    back |= ui
+                        .button(("Open History", egui::RichText::new("Ctrl+2").small().weak()))
+                        .clicked();
+                } else {
+                    back |= ui
+                        .add(primary("Open History".into()))
+                        .on_hover_text("Ctrl+2")
+                        .clicked();
+                }
+            });
+            ui.add_space(8.0);
+            ui.weak("Changed files appear here as soon as they are saved.");
+        });
+        back
     }
 
     /// The commits made at the current rebase stop, shown under the lists.
@@ -1308,11 +1448,17 @@ impl StatusView {
                         + self.stop_commits.len().min(4) as f32 * crate::density::row()
                         + 4.0
                 });
+                // Stacked, as in the Changes mockup: UNSTAGED takes the rows
+                // it has (at most 60%), STAGED follows right below it.
                 let lists = height - made.unwrap_or(0.0);
-                let each = ((lists - 6.0) / 2.0 - GROUP_HEADER - 2.0).max(40.0);
-                let (first_click, first_toggle) = self.draw_group(ui, 0, each, false);
+                let row = crate::density::row();
+                let body = (lists - 6.0 - 2.0 * GROUP_HEADER - 4.0).max(80.0);
+                let wanted = (self.lists[0].count.max(1) as f32) * row + 4.0;
+                let first = wanted.clamp(row + 4.0, (body * 0.6).max(row + 4.0));
+                let second = (body - first).max(40.0);
+                let (first_click, first_toggle) = self.draw_group(ui, 0, first, false);
                 ui.add_space(2.0);
-                let (second_click, second_toggle) = self.draw_group(ui, 1, each, false);
+                let (second_click, second_toggle) = self.draw_group(ui, 1, second, false);
                 if made.is_some() {
                     ui.add_space(4.0);
                     ui.label(
@@ -1431,9 +1577,14 @@ impl StatusView {
         let mut confirmed = false;
         if let Some(edit) = confirm.as_ref().and_then(|edits| edits.first()) {
             let scope = match edit.scope {
-                crate::diff_view::StageScope::Selected => "the selected lines' change blocks",
-                crate::diff_view::StageScope::Hunk => "this hunk",
-                crate::diff_view::StageScope::File => "all working changes",
+                crate::diff_view::StageScope::Selected if !self.drop_blocks.is_empty() => {
+                    blocks_named(&self.drop_blocks)
+                }
+                crate::diff_view::StageScope::Selected => {
+                    "the selected lines' change blocks".into()
+                }
+                crate::diff_view::StageScope::Hunk => "this hunk".into(),
+                crate::diff_view::StageScope::File => "unstaged changes".into(),
             };
             ui.horizontal_wrapped(|ui| {
                 ui.colored_label(
@@ -1552,15 +1703,26 @@ impl StatusView {
                 self.reader.clear_line_selection();
                 self.stage.apply_all(edits, ctx);
             }
+            // A discard reverts whole change blocks, so it names them, not
+            // the picked lines.
+            let blocks = if discard {
+                self.reader.discard_blocks()
+            } else {
+                Vec::new()
+            };
             if discard
                 && ui
-                    .add_enabled(!blocked, egui::Button::new(format!("Discard {count}")))
+                    .add_enabled(
+                        !blocked,
+                        egui::Button::new(format!("Discard {}", blocks_counted(&blocks))),
+                    )
                     .on_hover_text(
-                        "Discard the change blocks of the picked lines from the working file",
+                        "Discard every change block that holds a picked line from the working file",
                     )
                     .clicked()
             {
                 self.drop_confirm = Some(self.reader.selection_edits(true));
+                self.drop_blocks = blocks;
             }
             if ui
                 .button("Clear")
@@ -1621,7 +1783,13 @@ impl StatusView {
         let message_height = if self.message_expanded { 118.0 } else { 54.0 };
         let mut commit_now = false;
         ui.horizontal(|ui| {
-            let button_width = if self.amend { 112.0 } else { 88.0 };
+            let button_width = if self.reopened && !self.amend {
+                170.0
+            } else if self.amend {
+                112.0
+            } else {
+                88.0
+            };
             let width = (ui.available_width() - button_width - 150.0).max(160.0);
             let field = ui.add_sized(
                 [width, message_height],
@@ -1683,17 +1851,27 @@ impl StatusView {
                         self.message_expanded = !self.message_expanded;
                     }
                 });
+                // At a reopened step the button says what it makes, as in
+                // the stop mockup.
+                let partial = self.lists[0].count > 0;
                 let label = if self.commit.is_some() {
                     "Committing…"
                 } else if self.amend {
                     "Amend HEAD"
+                } else if self.reopened && partial {
+                    "Commit staged part"
+                } else if self.reopened && !self.stop_commits.is_empty() {
+                    "Commit last part"
+                } else if self.reopened {
+                    "Amend reopened commit"
                 } else {
                     "Commit"
                 };
-                let response = ui.add_enabled(
-                    can_commit,
-                    egui::Button::new(label).min_size(egui::vec2(button_width, 26.0)),
-                );
+                let mut button = egui::Button::new(label).min_size(egui::vec2(button_width, 26.0));
+                if can_commit {
+                    button = button.fill(egui::Color32::from_rgb(11, 85, 119));
+                }
+                let response = ui.add_enabled(can_commit, button);
                 let response = if let Some(reason) = reason {
                     response.on_hover_text(reason)
                 } else if self.amend {
@@ -1703,6 +1881,10 @@ impl StatusView {
                 };
                 ui.weak(reason.unwrap_or(if self.amend {
                     "Ready to amend"
+                } else if self.reopened && partial {
+                    "Unstaged files stay for the next commit."
+                } else if self.reopened {
+                    "Commits everything staged."
                 } else {
                     "Ready to commit the index"
                 }));
@@ -1719,10 +1901,16 @@ impl StatusView {
     fn draw_right(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, height: f32) {
         let form = self.commit_form_height();
         let reader_height = (height - form - 8.0).max(80.0);
+        // The reader keeps its full height even when empty, so the commit
+        // form always sits at the bottom, as in the mockup.
+        let width = ui.available_width();
         ui.allocate_ui_with_layout(
-            egui::vec2(ui.available_width(), reader_height),
+            egui::vec2(width, reader_height),
             egui::Layout::top_down(egui::Align::Min),
-            |ui| self.draw_reader(ui, ctx),
+            |ui| {
+                ui.set_min_size(egui::vec2(width, reader_height));
+                self.draw_reader(ui, ctx);
+            },
         );
         if self.amend {
             self.draw_amend_banner(ui);
@@ -1936,6 +2124,9 @@ impl StatusView {
                         |ui| {
                             // The summary, then the mockup's key hints.
                             let mut text = self.status_text();
+                            if let Some(backup) = &self.stop_backup {
+                                text.push_str(&format!("   ·   Backup: {backup}"));
+                            }
                             if self.error.is_none() && self.external_busy.is_none() {
                                 text.push_str(
                                     "   ·   S / U: stage / unstage · [ ]: hunks · Ctrl+Enter: commit",
@@ -1961,12 +2152,17 @@ impl StatusView {
                 });
             });
         let wide = ui.available_width() >= WIDE_LAYOUT;
-        if !wide {
+        let clean = self.clean();
+        if !wide && !clean {
             egui::Panel::bottom("working-commit")
                 .exact_size(self.commit_form_height() + 8.0)
                 .show(ui, |ui| self.draw_commit_panel(ui, ctx));
         }
         egui::CentralPanel::default().show(ui, |ui| {
+            if clean {
+                back |= self.draw_clean(ui);
+                return;
+            }
             let height = ui.available_height();
             if wide {
                 ui.horizontal_top(|ui| {
@@ -2074,8 +2270,13 @@ mod tests {
             stage: crate::stage_view::StageActions::default(),
             reader: crate::diff_view::DiffView::default(),
             drop_confirm: None,
+            drop_blocks: Vec::new(),
             group_request: None,
             stop_commits: Vec::new(),
+            clean_context: CleanContext::default(),
+            reopened: false,
+            stop_backup: None,
+            clean_request: None,
             commit: None,
             commit_done: None,
             last_commit: None,
@@ -3308,7 +3509,7 @@ mod tests {
         assert!(text.contains(&"Copy path"));
         assert!(text.contains(&"Open in editor"));
         assert!(!text.contains(&"Stage file"));
-        assert!(!text.contains(&"Discard file…"));
+        assert!(!text.contains(&"Discard unstaged changes…"));
         assert!(!view.busy(), "selection and navigation stay available");
         assert!(view.mutations_blocked());
         Ok(())
@@ -3971,6 +4172,27 @@ mod tests {
     }
 
     #[test]
+    fn line_discards_name_their_blocks_and_line_ranges() {
+        use crate::diff_view::ChangeBlock;
+        let replacement = ChangeBlock {
+            deleted: vec![3],
+            added: vec![3, 4],
+        };
+        let removal = ChangeBlock {
+            deleted: vec![9, 10],
+            added: vec![],
+        };
+        assert_eq!(
+            blocks_counted(std::slice::from_ref(&replacement)),
+            "1 change block (3 lines)"
+        );
+        assert_eq!(
+            blocks_named(&[replacement, removal]),
+            "2 change blocks (5 lines) at lines 3–4, deleted lines 9–10"
+        );
+    }
+
+    #[test]
     fn selected_line_drop_reverts_the_whole_change_block() -> Result<(), Box<dyn std::error::Error>>
     {
         let dir = tempfile::tempdir()?;
@@ -3991,9 +4213,19 @@ mod tests {
         let line = text_pos(&output, "TWELVE").ok_or("missing selected line")?;
         click(&ctx, &mut view, 1120.0, line + egui::vec2(5.0, 0.0));
         let output = run(&ctx, &mut view, 1120.0, vec![]);
-        let drop = text_pos(&output, "Discard 1 line").ok_or("missing selected drop")?;
+        // One picked line, but the discard names the whole replacement.
+        let drop =
+            text_pos(&output, "Discard 1 change block (2 lines)").ok_or("missing selected drop")?;
         click(&ctx, &mut view, 1120.0, drop + egui::vec2(5.0, 0.0));
         let output = run(&ctx, &mut view, 1120.0, vec![]);
+        assert!(
+            texts(&output).contains(
+                &"Discard 1 change block (2 lines) at line 12 from a? The index is unchanged."
+                    .to_string()
+            ),
+            "{:?}",
+            texts(&output)
+        );
         let discard = text_pos(&output, "Discard").ok_or("missing discard")?;
         click(&ctx, &mut view, 1120.0, discard + egui::vec2(5.0, 0.0));
         pump(&ctx, &mut view, 1120.0, |view| {
@@ -4052,6 +4284,12 @@ mod tests {
             let output = run(&ctx, &mut view, width, vec![]);
             let drop = text_pos(&output, "Discard hunk").ok_or("missing drop hunk")?;
             click(&ctx, &mut view, width, drop + egui::vec2(5.0, 0.0));
+            wait_text(
+                &ctx,
+                &mut view,
+                width,
+                "Discard this hunk from a? The index is unchanged.",
+            )?;
             let discard = wait_text(&ctx, &mut view, width, "Discard")?;
             click(&ctx, &mut view, width, discard + egui::vec2(5.0, 0.0));
             pump(&ctx, &mut view, width, |view| {
@@ -4068,7 +4306,14 @@ mod tests {
             );
             assert_eq!(std::fs::read(dir.path().join(".git/index"))?, index);
 
-            click_file_action(&ctx, &mut view, width, "Discard file…")?;
+            // The whole-file action names its scope: unstaged changes only.
+            click_file_action(&ctx, &mut view, width, "Discard unstaged changes…")?;
+            wait_text(
+                &ctx,
+                &mut view,
+                width,
+                "Discard unstaged changes from a? The index is unchanged.",
+            )?;
             let discard = wait_text(&ctx, &mut view, width, "Discard")?;
             click(&ctx, &mut view, width, discard + egui::vec2(5.0, 0.0));
             pump(&ctx, &mut view, width, |view| {
@@ -4296,7 +4541,10 @@ mod tests {
             let output = run(&ctx, &mut view, width, vec![]);
             let text = texts(&output);
             assert!(text.contains(&"Stage 1 line".to_string()), "{text:?}");
-            assert!(text.contains(&"Discard 1 line".to_string()));
+            assert!(
+                text.contains(&"Discard 1 change block (2 lines)".to_string()),
+                "a discard names the whole block of the picked line"
+            );
             assert!(
                 text.contains(&"Stage hunk".to_string()),
                 "hunk buttons keep acting on the whole hunk"
@@ -4401,7 +4649,7 @@ mod tests {
     }
 
     #[test]
-    fn empty_groups_say_so_after_the_scan_and_keep_their_slot() {
+    fn empty_groups_say_so_after_the_scan_and_stack() {
         for width in [720.0, 1120.0] {
             let ctx = egui::Context::default();
             let mut busy = fixture(3, 1);
@@ -4413,24 +4661,38 @@ mod tests {
             let output = run(&ctx, &mut view, width, vec![]);
             let text = texts(&output);
             assert!(
-                !text
-                    .iter()
-                    .any(|text| text.starts_with("No ") || text == "Nothing to show."),
+                !text.iter().any(|text| text.starts_with("No ")
+                    || text == "Nothing to show."
+                    || text == "Working tree clean"),
                 "an unfinished scan leaves empty groups blank: {text:?}"
             );
             view.complete = true;
             let output = run(&ctx, &mut view, width, vec![]);
             let text = texts(&output);
             assert!(
+                text.contains(&"Working tree clean".to_string()),
+                "a finished empty scan shows the clean view: {text:?}"
+            );
+            assert!(!text.iter().any(|text| text.starts_with("STAGED ")));
+
+            let mut one = fixture(0, 1);
+            let output = run(&ctx, &mut one, width, vec![]);
+            let text = texts(&output);
+            assert!(
                 text.contains(&"No unstaged changes.".to_string()),
                 "{text:?}"
             );
-            assert!(text.contains(&"No staged changes.".to_string()));
-            assert_eq!(
-                header_y(&output, "STAGED "),
-                staged_header,
-                "the Staged group stays put when Unstaged empties"
-            );
+            // Wide layouts stack the lists; narrow ones keep collapsible
+            // groups of their own.
+            let staged = header_y(&output, "STAGED ");
+            if width >= 1120.0 {
+                assert!(
+                    staged < staged_header,
+                    "stacked: the Staged group follows the shorter Unstaged list"
+                );
+            } else {
+                assert_eq!(staged, staged_header);
+            }
         }
     }
 

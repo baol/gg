@@ -1,5 +1,6 @@
 //! Read unmerged stages, preview a resolution, and publish it explicitly.
-use gg_engine::conflict::{Content, Resolution, Segment, Side, Snapshot};
+use gg_engine::conflict::{Content, Resolution, Segment, Side, SideNames, Snapshot};
+use gg_engine::mutation::Operation;
 use std::{
     io::{Read, Write},
     path::{Component, Path, PathBuf},
@@ -83,6 +84,16 @@ pub fn use_side(path: &Path, file: &str, side: Side) -> Result<(), String> {
             return Err("Base content cannot be selected as the resolution side.".into());
         }
     };
+    let (_, ours, theirs) = stages(path, file)?;
+    let absent = match side {
+        Side::Ours => ours.is_none() && theirs.is_some(),
+        _ => theirs.is_none() && ours.is_some(),
+    };
+    if absent {
+        return Err(format!(
+            "That side deleted {file}. Use --use deletion to stage the removal."
+        ));
+    }
     let output = run(
         path,
         &[
@@ -96,6 +107,184 @@ pub fn use_side(path: &Path, file: &str, side: Side) -> Result<(), String> {
         return Err(failure("Select conflict side", &output));
     }
     stage(path, file)
+}
+
+/// Keep the deletion of a delete/modify conflict: remove the path from the
+/// index and the working tree (`git rm` for that path).
+pub fn keep_deletion(path: &Path, file: &str) -> Result<(), String> {
+    validate(file)?;
+    let (_, ours, theirs) = stages(path, file)?;
+    remove(path, file, ours.is_some(), theirs.is_some())
+}
+
+fn remove(path: &Path, file: &str, ours: bool, theirs: bool) -> Result<(), String> {
+    if ours == theirs {
+        return Err(format!(
+            "Keep deletion applies only when one side deleted {file}."
+        ));
+    }
+    let output = run(
+        path,
+        &[
+            "rm".into(),
+            "-q".into(),
+            "--cached".into(),
+            "--".into(),
+            file.to_string(),
+        ],
+    )?;
+    if !output.status.success() {
+        return Err(failure("Stage the deletion", &output));
+    }
+    let target = worktree_path(path, file)?;
+    match std::fs::symlink_metadata(&target) {
+        Ok(metadata) if metadata.is_file() || metadata.file_type().is_symlink() => {
+            std::fs::remove_file(&target).map_err(|error| {
+                format!(
+                    "The deletion was staged but the working file could not be removed: {error}"
+                )
+            })
+        }
+        Ok(_) => Err(
+            "The deletion was staged but the working path is not a file; remove it externally."
+                .into(),
+        ),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!(
+            "The deletion was staged but the working file could not be read: {error}"
+        )),
+    }
+}
+
+/// Who Ours and Theirs are for the operation in progress: the current
+/// branch and the merged branch for a merge; the base rebased onto and the
+/// replayed commit for a rebase; HEAD's branch and the picked or reverted
+/// commit for a cherry-pick or revert.
+pub fn side_names(path: &Path) -> Result<Option<SideNames>, String> {
+    let Some(state) = crate::mutation::state(path)? else {
+        return Ok(None);
+    };
+    let commit = state.commit.as_deref().unwrap_or_default();
+    Ok(Some(match state.operation {
+        Operation::Merge => SideNames {
+            ours: current(path)?,
+            theirs: ref_name(path, commit)?.map_or_else(|| commit_name(path, commit), Ok)?,
+        },
+        Operation::Rebase => SideNames {
+            ours: match onto(path)? {
+                Some(onto) => format!(
+                    "onto {}",
+                    ref_name(path, &onto)?.unwrap_or_else(|| short_id(&onto))
+                ),
+                None => String::new(),
+            },
+            theirs: commit_name(path, commit)?,
+        },
+        Operation::CherryPick | Operation::Revert => SideNames {
+            ours: current(path)?,
+            theirs: commit_name(path, commit)?,
+        },
+    }))
+}
+
+fn short_id(oid: &str) -> String {
+    oid.chars().take(8).collect()
+}
+
+fn text(output: &Output) -> String {
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
+/// The current branch, or `HEAD <id>` when HEAD is detached.
+fn current(path: &Path) -> Result<String, String> {
+    let output = run(
+        path,
+        &[
+            "symbolic-ref".into(),
+            "--short".into(),
+            "-q".into(),
+            "HEAD".into(),
+        ],
+    )?;
+    if output.status.success() {
+        return Ok(text(&output));
+    }
+    let output = run(path, &["rev-parse".into(), "HEAD".into()])?;
+    Ok(if output.status.success() {
+        format!("HEAD {}", short_id(&text(&output)))
+    } else {
+        String::new()
+    })
+}
+
+/// A branch, remote branch, or tag pointing at `oid`, branches first.
+fn ref_name(path: &Path, oid: &str) -> Result<Option<String>, String> {
+    if oid.is_empty() {
+        return Ok(None);
+    }
+    let output = run(
+        path,
+        &[
+            "for-each-ref".into(),
+            format!("--points-at={oid}"),
+            "--format=%(refname:short)".into(),
+            "refs/heads".into(),
+            "refs/remotes".into(),
+            "refs/tags".into(),
+        ],
+    )?;
+    Ok(output
+        .status
+        .success()
+        .then(|| text(&output))
+        .and_then(|names| names.lines().next().map(str::to_string)))
+}
+
+/// `<8-char id> <subject>` for one commit.
+fn commit_name(path: &Path, oid: &str) -> Result<String, String> {
+    if oid.is_empty() {
+        return Ok(String::new());
+    }
+    let output = run(
+        path,
+        &[
+            "log".into(),
+            "-1".into(),
+            "--format=%s".into(),
+            oid.to_string(),
+            "--".into(),
+        ],
+    )?;
+    let subject = if output.status.success() {
+        text(&output)
+    } else {
+        String::new()
+    };
+    Ok(format!("{} {subject}", short_id(oid))
+        .trim_end()
+        .to_string())
+}
+
+/// The commit a rebase in progress replays onto.
+fn onto(path: &Path) -> Result<Option<String>, String> {
+    for name in ["rebase-merge/onto", "rebase-apply/onto"] {
+        let output = run(
+            path,
+            &[
+                "rev-parse".into(),
+                "--path-format=absolute".into(),
+                "--git-path".into(),
+                name.into(),
+            ],
+        )?;
+        if output.status.success()
+            && let Ok(onto) = std::fs::read_to_string(text(&output))
+            && !onto.trim().is_empty()
+        {
+            return Ok(Some(onto.trim().to_string()));
+        }
+    }
+    Ok(None)
 }
 
 pub fn stage(path: &Path, file: &str) -> Result<(), String> {
@@ -152,12 +341,15 @@ pub fn publish(
         }
         return stage(path, file);
     }
+    if resolution == Resolution::Deletion {
+        return remove(path, file, ours.is_some(), theirs.is_some());
+    }
     let (bytes, mode) = {
         let entry = match resolution {
             Resolution::Base => base,
             Resolution::Ours => ours,
             Resolution::Theirs => theirs,
-            Resolution::Working => unreachable!(),
+            Resolution::Working | Resolution::Deletion => unreachable!(),
         }
         .ok_or_else(|| format!("The selected side is absent for {file}."))?;
         if !matches!(entry.mode.as_str(), "100644" | "100755") {
@@ -196,7 +388,7 @@ pub fn blocks(path: &Path, file: &str) -> Result<Vec<Segment>, String> {
     validate(file)?;
     let (base, ours, theirs) = stages(path, file)?;
     let (Some(ours), Some(theirs)) = (ours, theirs) else {
-        return Err("One side deleted this file. Choose a whole side instead.".into());
+        return Err("One side deleted this file. Choose Keep deletion or a whole side.".into());
     };
     for entry in [&ours, &theirs].into_iter().chain(base.as_ref()) {
         if !matches!(entry.mode.as_str(), "100644" | "100755") {

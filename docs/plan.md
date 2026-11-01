@@ -118,7 +118,7 @@ Design not yet implemented:
 
 Layout moves with content:
 
-7. **Operation area · fixed.** Always present at two lines; idle it summarizes the branch, tracking, changes, and stashes; a rebase stop fits its note and step chips on the second line.
+7. **Operation area.** Shown at two lines only while a merge, rebase, cherry-pick, revert, or rewrite is in progress (no idle row; the branch and its tracking appear only on the branch button); a rebase stop fits its note and step chips on the second line.
 8. **Conflict workspace · fixed.** Fixed path-list width and fixed heights for blocks, result, and side panes; errors and the empty state share one reserved line.
 9. **Interactive rebase dialog · fixed.** The changing result count comes last in the header; the message or reword field has one fixed slot.
 10. **Review header · fixed.** The parent selector, file count, Retry, History, and Prev/Next file keep reserved slots and are hidden, not removed.

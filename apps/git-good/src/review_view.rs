@@ -507,10 +507,7 @@ impl Review {
         self.draw_list_header(ui);
         self.rect = ui.available_rect_before_wrap();
         if self.count == 0 {
-            // An empty list stays empty until the first files arrive.
-            if self.complete {
-                ui.weak("This comparison has no changed files.");
-            }
+            // An empty list stays empty; the reader says why (proposal).
             return;
         }
         let mut scroll = egui::ScrollArea::vertical().id_salt("review-files");
@@ -655,6 +652,35 @@ impl Review {
         }
         if let Some(message) = message {
             bounded_text::field(ui, message, egui::FontId::proportional(12.0), 22.0);
+            return;
+        }
+        // A finished comparison with no files: say why, and offer the other
+        // parent of a merge (empty-states proposal).
+        if self.count == 0 && self.complete && self.history.is_none() {
+            let parents = self.known_parents.len();
+            let parent = self.request.parent.unwrap_or(1);
+            let mut other = None;
+            ui.vertical_centered(|ui| {
+                ui.add_space((ui.available_height() * 0.3).max(24.0));
+                if self.request.against.is_some() {
+                    ui.label(egui::RichText::new("No differences from HEAD").size(16.0));
+                } else if parents > 1 {
+                    ui.label(
+                        egui::RichText::new(format!("No changes against parent {parent}"))
+                            .size(16.0),
+                    );
+                    let next = if parent == 1 { 2 } else { 1 };
+                    ui.add_space(8.0);
+                    if ui.button(format!("Compare with parent {next}")).clicked() {
+                        other = Some(next);
+                    }
+                } else {
+                    ui.label(egui::RichText::new("This commit changes no files").size(16.0));
+                }
+            });
+            if let Some(next) = other {
+                self.switch_parent(next, ctx);
+            }
             return;
         }
         // History sits on the reader's mode row (mockup), not in the header.

@@ -38,6 +38,8 @@ git good tag --delete TAG [--repo PATH]
 git good reset --soft|--mixed|--hard COMMIT [--repo PATH]
 ```
 
+`git good reset --hard` refuses, exiting nonzero with nothing changed, when it would overwrite untracked or ignored files whose paths are tracked in COMMIT; the error lists those paths, one per line, after `Move or delete them, then retry:`.
+
 ## Sync and stash
 
 ```sh
@@ -66,8 +68,10 @@ git good cherry-pick COMMIT [--repo PATH]
 git good revert COMMIT [--repo PATH]
 git good cherry-pick|revert --continue|--skip|--abort [--repo PATH]
 git good conflicts [--repo PATH]
-git good conflict --file PATH [--use ours|theirs|--stage] [--repo PATH]
+git good conflict --file PATH [--use ours|theirs|deletion|--stage] [--repo PATH]
 ```
+
+`--use deletion` resolves a delete/modify conflict by keeping the deletion: it removes the path from the index and the working tree (`git rm` for that path) and fails when neither side deleted the file. `--use ours|theirs` naming the side that deleted the file fails and points to `--use deletion`.
 
 ## Worktrees, submodules, and LFS
 

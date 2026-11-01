@@ -1,6 +1,8 @@
 //! Serialized network operations with bounded progress and cooperative cancellation.
 use eframe::egui;
-use gg_engine::sync::{CloneReceipt, FetchReceipt, Operation, Progress, PushReceipt};
+use gg_engine::sync::{
+    CloneReceipt, FetchReceipt, Operation, Progress, PushReceipt, UpstreamRelation,
+};
 use std::{
     path::PathBuf,
     sync::{
@@ -13,8 +15,15 @@ use std::{
 #[derive(Debug)]
 pub enum Outcome {
     Fetch(FetchReceipt),
+    /// The fetch half of Pull, with how the branch then stands against its upstream.
+    Pull {
+        fetch: FetchReceipt,
+        relation: Option<UpstreamRelation>,
+    },
     Push(PushReceipt),
     Clone(CloneReceipt),
+    /// A remote branch was deleted; the message names it.
+    DeleteRemote(String),
 }
 
 pub enum Message {
@@ -43,6 +52,22 @@ impl Worker {
         })
     }
 
+    /// Fetch `remote`, then read how `branch` (a full ref name) stands against
+    /// its upstream, so Pull integrates only when there is something to take.
+    pub fn pull(
+        ctx: &egui::Context,
+        path: PathBuf,
+        remote: String,
+        branch: String,
+        prune: bool,
+    ) -> Result<Self, String> {
+        start(ctx, Operation::Fetch, move |cancel, progress| {
+            let fetch = gg_git::sync::fetch(&path, Some(&remote), prune, false, &cancel, progress)?;
+            let relation = gg_git::sync::upstream_relation(&path, Some(&branch))?;
+            Ok(Outcome::Pull { fetch, relation })
+        })
+    }
+
     pub fn push(
         ctx: &egui::Context,
         path: PathBuf,
@@ -65,6 +90,21 @@ impl Worker {
                 progress,
             )
             .map(Outcome::Push)
+        })
+    }
+
+    pub fn delete_remote(
+        ctx: &egui::Context,
+        path: PathBuf,
+        remote: String,
+        branch: String,
+        expected: String,
+    ) -> Result<Self, String> {
+        start(ctx, Operation::Push, move |cancel, progress| {
+            gg_git::sync::delete_remote_branch(
+                &path, &remote, &branch, &expected, false, &cancel, progress,
+            )
+            .map(Outcome::DeleteRemote)
         })
     }
 

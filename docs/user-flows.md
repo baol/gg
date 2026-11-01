@@ -101,7 +101,7 @@ flowchart TD
 
 **Amend entry:** Local Changes → Amend. Switch to the separate amend draft or HEAD message and display the affected hash/subject. Staged becomes **HEAD parent → index**, showing the amended commit's actual contents. Stage adds working changes; Unstage removes content from the amended commit while preserving working files. Allow message-only amend. Save a private backup before rewriting, preserve the author, run hooks including post-rewrite, then refresh. Backup failure aborts before publication. Turning Amend off restores the normal draft. Hook failure retains the amend draft.
 
-**Discard entry:** Unstaged → Discard file/hunk/selected. Show the exact path and scope; explain that tracked working content is restored from the index, untracked files are removed, and the index is unchanged. Cancel preserves everything and returns focus to the invoking action. Confirm refreshes both lists and the active comparison in place. Refuse stale/unsupported/conflicted scopes with a reason; never broaden the requested scope. **Completion:** only the confirmed content changes. **Mockup:** Stage → Discard → Stage; amend is specified here rather than simulated.
+**Discard entry:** Unstaged → Discard unstaged changes…/hunk/selected lines. Show the exact path and scope; explain that tracked working content is restored from the index, untracked files are removed, and the index is unchanged. Cancel preserves everything and returns focus to the invoking action. Confirm refreshes both lists and the active comparison in place. Refuse stale/unsupported/conflicted scopes with a reason; never broaden the requested scope. **Completion:** only the confirmed content changes. **Mockup:** Stage → Discard → Stage; amend is specified here rather than simulated.
 
 ### F05 · Switch, create, track, and delete references
 
@@ -120,7 +120,7 @@ flowchart TD
 
 **Fetch:** select the explicit configured remote (or documented sole/default choice), optionally prune, then start. Fetch updates remote-tracking refs; it does not merge or change working files. Success refreshes history/refs while retaining selection. Cancel/failure preserves the previous display and offers Retry fetch.
 
-**Push:** show local branch, destination remote/branch, and upstream decision when missing. Start a non-force push; report progress and allow cancellation. A rejected push offers Details and Retry push; guide the user to fetch and inspect before integration, without automatic fetch, merge, or rebase. Record upstream only after successful push. Credentials use Git configuration/helpers/SSH; output excludes secrets.
+**Push:** show local branch, destination remote/branch, and upstream decision when missing. Start a non-force push; report progress and allow cancellation. A rejected push offers Details and Fetch, guiding the user to fetch and inspect before integration, without automatic fetch, merge, or rebase; Retry push follows only network, credential, and timeout failures. Record upstream only after successful push. Credentials use Git configuration/helpers/SSH; output excludes secrets.
 
 **Force push with lease:** a separate explicit Repository action, enabled only with an upstream remote-tracking ref. The confirmation names the local branch, destination, and lease commit and warns that the remote branch must still match that lease. A missing/stale lease fails without changing the remote and does not offer a retry that falls back to non-force. Bare force is never offered.
 
@@ -156,8 +156,8 @@ flowchart TD
 **Entry:** operation area → Resolve conflicts. **Precondition:** actual unmerged paths, or an externally detected operation on launch.
 
 1. Name operation, unresolved count, and operation commit. Select an unresolved path; load Base/Ours/Theirs on workers.
-2. Explain side identities for that operation. For rebase, Ours is the rebased destination/current replay state and Theirs the commit being replayed; never equate Ours with 'my branch' universally.
-3. For a text file, choose per conflict block: Ours, Theirs, Ours + theirs, or Theirs + ours (keys 1–4). The Result preview keeps markers for open blocks; Stage resolution is enabled once every block has a choice. Otherwise, or in Whole file mode, choose Base, Ours, Theirs, or the working file to change only the Result preview. Edit externally and use Refresh external edits to preview it. **Stage resolution** is the single publication step; it validates the original stages and working bytes and stages the previewed result. State those consequences next to the controls. Select the next unresolved path after success.
+2. Explain side identities for that operation. For rebase, Ours is the rebased destination/current replay state and Theirs the commit being replayed; never equate Ours with 'my branch' universally. Name each side wherever it appears: `Ours (main)` / `Theirs (feature/login)` for a merge, `Ours (onto <base>)` / `Theirs (<short id> <subject>)` for a rebase, HEAD and the picked or reverted commit for cherry-pick and revert; shorten long names and show the full name on hover.
+3. For a text file, choose per conflict block: Ours, Theirs, Ours + theirs, or Theirs + ours (keys 1–4). The Result preview keeps markers for open blocks; Stage resolution is enabled once every block has a choice. When the working file was edited outside the blocks, say so and offer **Use working file** (stage it as is) or **Replace with blocks…**, which confirms before overwriting the edits. Otherwise, or in Whole file mode, choose Base, Ours, Theirs, or the working file to change only the Result preview. A delete/modify conflict also offers **Keep deletion**, whose preview states that the file will be deleted and the other side's changes discarded; staging it removes the path. Edit externally and use Refresh external edits to preview it. **Stage resolution** is the single publication step; it validates the original stages and working bytes and stages the previewed result. State those consequences next to the controls. Select the next unresolved path after success.
 4. Keep Continue disabled until unresolved paths reach zero; then run it on the operation worker. A later conflict returns to this flow.
 5. Abort requests Git's recovery and refreshes; report any failure rather than promise removal of all user edits. Skip exists only for supporting operations (rebase/cherry-pick/revert), never merge. Narrow layouts show side tabs with bounded content.
 
@@ -165,14 +165,14 @@ flowchart TD
 
 ### F10 · Rewrite and recover a previous tip
 
-**Entry:** selected history commit → Interactive rebase from here (`R`), or the toolbar's Interactive rebase of this branch.
+**Entry:** selected history commit → Interactive rebase from here (`R`), or **Branch › Interactive rebase of current branch…**.
 
 1. Resolve the inclusive linear range; reject merge ranges. Show every commit exactly once, newest first, with move controls, drag, and an action chip: Pick, Reword, Reopen, Squash, Fixup, Drop. Squash and Fixup combine into the nearest kept commit below; consequence badges say where.
 2. Inspect the selected commit's files and diff beside the plan, or Open in Review and come back to the same plan. Reword edits the message in place.
 3. Review the result count, clean-worktree/autostash choice, the refs that stay on the original commits, and the private-backup notice; Start rebase.
 4. Close the plan on submission. The operation area shows Rewriting commits, then Refreshing history until the replacement history is accepted; browsing stays available and the old history remains labeled. Conflicts use F09.
 5. From Repository → Recovery choose Backups or Reflog, then inspect the source, kind, subject, and commit time. **Open commit** verifies content in the ordinary reader; Back returns to that source, the Reflog reference filter, and the selected entry.
-6. **Create branch here…** opens the shared branch form with **Switch after creation** off. Reset branch here offers Soft (move tip), Mixed (also reset index), or Hard (also discard staged/working changes), with exact-target confirmation and Hard warning. Copy hash/ref is read-only. Keep backups after recovery.
+6. **Create branch here…** opens the shared branch form with **Switch after creation** off. Reset branch here offers Soft (move tip), Mixed (also reset index), or Hard (also discard staged/working changes), with exact-target confirmation and Hard warning. Hard always confirms, lists the untracked files it would overwrite, and refuses while there are any. Copy hash/ref is read-only. Keep backups after recovery.
 
 **Completion:** rewritten history or a recovered tip is reachable and selection restores. **Mockup:** Rewrite → Recovery; primary Create branch here demonstrates the nondestructive route.
 
