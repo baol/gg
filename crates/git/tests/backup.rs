@@ -27,6 +27,9 @@ fn repo() -> Result<tempfile::TempDir> {
     git(dir.path(), &["init", "-b", "main"])?;
     git(dir.path(), &["config", "user.name", "Test"])?;
     git(dir.path(), &["config", "user.email", "test@example.org"])?;
+    // The library's own Git calls read the system config, where Git for
+    // Windows turns on autocrlf; keep checkouts byte for byte.
+    git(dir.path(), &["config", "core.autocrlf", "false"])?;
     std::fs::write(dir.path().join("a"), b"base\n")?;
     git(dir.path(), &["add", "a"])?;
     git(dir.path(), &["commit", "-qm", "base"])?;
