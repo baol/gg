@@ -500,6 +500,13 @@ Layer: interaction
 - Then History rows remain clickable and Up/Down still move selection beside them
 Covered by (Not automated)
 
+### FRM-76 Full-text windows are titled by their field
+Fixture: `fx-linear` (Given: a commit whose subject is 212 characters)
+Layer: interaction
+- When the user clicks the "…" button at the end of the truncated subject in the commit inspector (a real button named *Show full commit subject*), then presses `Ctrl+C`, then `Esc`
+- Then a non-modal window titled **Commit subject** shows the exact text, selectable, then `212 characters · text is selectable`, **Close** `Esc` and the primary **Copy** `Ctrl+C`; `Ctrl+C` copies the text and `Esc` closes it; a path, the parents, a commit message, File details and an error open the same window titled **Path**, **Parents**, **Commit message**, **File details**, **Error**, with paths and IDs in mono
+Covered by (interaction, partial): `the_full_text_window_is_titled_by_its_field_with_copy_primary`, `overflow_opens_exact_text_without_changing_the_slot` (bounded_text.rs)
+
 ### FRM-66 History keys respect text focus and open menus
 Fixture: `fx-linear`
 Layer: interaction
@@ -822,8 +829,8 @@ Covered by (Not automated)
 Fixture: `fx-branchy`
 Layer: interaction
 - When the user opens **Actions**, right-clicks a row, and presses Alt+A
-- Then each lists the **Commit** menu entries (Review changes `Enter`, Compare with HEAD, Copy ID `Ctrl+C`, Cherry-pick onto HEAD, Revert, Interactive rebase from here… `R`, Reword… `Ctrl+R`, Reopen for editing… `E`, Fixup into… `F`, Drop… `D`, Reset current branch to here…) with the same disabled reasons, then **Copy subject**, **Signature details…**, **Recovery…**
-Covered by (interaction): `scoped_commit_actions_menu_lists_grouped_actions`, `actions_shortcut_opens_the_scoped_menu`, `commit_action_menu_returns_the_clicked_command` (main.rs)
+- Then each lists the **Commit** menu entries as 24 px rows with the empty check column and shortcuts at the right, no group headings or hashes in labels: Review changes `Enter`, Compare with HEAD, Copy ID `Ctrl+C` with **Copy subject** and **Signature details…** under it, Cherry-pick onto HEAD, Revert, Interactive rebase from here… `R`, Reword… `Ctrl+R`, Reopen for editing… `E`, Fixup into… `F`, Drop… `D` (red), **Reset current branch to here ▸** (red; Soft · keep index and files, Mixed · keep files ✓ `default`, Hard · discard changes… in red); no Recovery… (it is in the Repository menu); during a rebase the mutations stay, greyed, under one band reading `Rebase in progress. Continue or abort it to change commits.`
+Covered by (interaction): `scoped_commit_actions_menu_lists_grouped_actions`, `actions_shortcut_opens_the_scoped_menu`, `commit_action_menu_returns_the_clicked_command`, `commit_action_menu_matches_the_inspector_with_one_reason_band` (main.rs)
 
 ### HIS-40 Right-click selects the row first
 Fixture: `fx-linear`
@@ -1249,8 +1256,8 @@ Covered by (interaction): `retry_same_comparison_keeps_selection_anchor_and_diff
 Fixture: `fx-linear`
 Layer: visual
 - Given Review wide
-- Then one reader header row holds the path and exact endpoints (e.g. `main (a1b2c3d)` / parent), then **Diff | Full file**, **Inline | Side by side**, **Blame**, **History**, ‹ ›, ⋯; the path and endpoints are not repeated above the reader; modes, blob IDs, and sizes are in the **File details** disclosure
-Covered by (interaction): `the_reader_header_names_both_exact_endpoints` (diff_view.rs), `header_controls_keep_their_place_across_states` (review_view.rs)
+- Then one reader header row holds the path and exact endpoints (e.g. `main (a1b2c3d)` / parent), then **Diff | Full file**, **Inline | Side by side**, **Blame**, **History**, ‹ ›, ⋯; no Stage button; the path and endpoints are not repeated above the reader; modes, blob IDs, and sizes are in the opt-in **File details** row (⋯ › File details ✓, off by default); ⋯ lists 24 px rows: Open in editor, Reveal in folder, Copy path, Export before…, Export after…, File details, LFS / Submodule details… when they apply, then **Discard file…** last in red (Local Changes, unstaged)
+Covered by (interaction): `the_reader_header_names_both_exact_endpoints` (diff_view.rs), `header_controls_keep_their_place_across_states` (review_view.rs), `file_actions_are_menu_rows_with_discard_last_in_red`, `workspace_uses_one_reader_header_with_on_demand_details` (status_view.rs)
 
 ### REV-24 Byte sizes per side
 Fixture: `fx-linear`
@@ -1366,32 +1373,32 @@ Covered by (interaction): `gitlink_change_exposes_recorded_before_and_after_ids`
 ### REV-41 Image compare metadata and layouts
 Fixture: `fx-file-history` (commit changing `img/logo.png`)
 Layer: visual
-- Then each side names its short blob ID, exact dimensions, encoded bytes; wide layouts offer **Side by side**, **Swipe**, **Onion skin**; a theme-aware checkerboard shows transparency; the starting layout follows Preferences › **Compare images** and then the last choice
-Covered by (interaction): `presentation_controls_metadata_and_swipe_are_rendered` (binary_preview.rs), `the_layout_starts_from_and_remembers_the_last_choice` (binary_preview.rs)
+- Then the reader keeps its one header row with **Side by side | Swipe | Onion skin | Hex** in the layout slot and a **Fit | 1:1** segment; Diff | Full file, Blame and ‹ › are hidden; each side names its short blob ID, exact dimensions, encoded bytes; a theme-aware checkerboard shows transparency; the starting layout follows Preferences › **Compare images** and then the last choice
+Covered by (interaction): `presentation_controls_metadata_and_swipe_are_rendered`, `the_layout_starts_from_and_remembers_the_last_choice` (binary_preview.rs); `image_readers_keep_the_one_row_header_without_text_controls` (diff_view.rs)
 
-### REV-42 Fit and Actual size
+### REV-42 Fit and 1:1
 Fixture: as REV-41
 Layer: visual
-- **Fit** preserves aspect and never upscales a small image; **Actual size** shows 100% with scrolling and a visible zoom label
+- **Fit** preserves aspect and never upscales a small image; **1:1** shows actual size with scrolling
 Covered by (interaction): `fit_preserves_aspect_and_never_upscales` (binary_preview.rs)
 
 ### REV-43 Swipe boundary
 Fixture: as REV-41
 Layer: interaction
-- In **Swipe**, After is clipped at a labeled boundary slider; arrow keys move it when focused; dragging on the canvas moves it; each image aligns by its own dimensions without stretching
+- In **Swipe**, After is clipped at the **Boundary** slider in the strip under the canvas; arrow keys move it when focused; dragging on the canvas moves it; each image aligns by its own dimensions without stretching
 Covered by (interaction): `presentation_controls_metadata_and_swipe_are_rendered` (binary_preview.rs)
 
 ### REV-44 Onion skin requires both images
 Fixture: `fx-file-history` (commit adding `img/logo.png` — Before absent)
 Layer: product
-- In **Onion skin** with both images, After overlays at 50% with a labeled, keyboard-adjustable opacity slider; with Before absent it states both images are required and keeps the per-side absence state
+- In **Onion skin** with both images, After overlays at 50% with the keyboard-adjustable **After opacity** slider in the strip under the canvas; with Before absent Swipe and Onion skin are disabled (*Needs both Before and After images*) and the sides stack with their absence state
 Covered by (interaction): `onion_skin_overlays_after_and_requires_both_images` (binary_preview.rs)
 
 ### REV-45 Narrow image previews stack
 Fixture: as REV-41, narrow
 Layer: interaction
-- Then named Before/After previews are stacked; no Swipe/Onion skin controls
-Covered by (Not automated)
+- Then the layout tabs stay; Side by side stacks named Before/After previews
+Covered by (interaction, partial): `presentation_controls_metadata_and_swipe_are_rendered` (binary_preview.rs) checks the tabs at 720 px
 
 ### REV-46 Corrupt or oversized image falls back to hex
 Fixture: `fx-file-history` (`blob.bin`; Given: a `.png` with corrupt bytes, and a PNG of 5000×100 px)
@@ -1402,16 +1409,16 @@ Covered by (interaction): `png_and_jpeg_decode_with_dimensions_and_hex_fallback_
 ### REV-47 Export a side exactly
 Fixture: `fx-file-history` (commit changing `big.log`)
 Layer: product
-- When the user exports After from **File actions** to a new path
-- Then the written file is byte-identical to the blob (also beyond the diff budget); a symlink exports its target bytes; an absent side is not offered
-Covered by (interaction, end-to-end): `export_is_exact_beyond_diff_budget_and_preserves_existing_destinations` (tests/cli.rs), `export_capabilities_follow_the_displayed_sides` (diff_view.rs)
+- When the user exports After from ⋯ › **Export after…** (dialog titled `Export after version`, File / Version / Save to with **Browse…**, Cancel `Esc`, primary **Export** `Enter`, **Exporting…** while busy) to a new path
+- Then the dialog closes, the footer reads `Exported <n> bytes to <path>`, and the written file is byte-identical to the blob (also beyond the diff budget); a symlink exports its target bytes; an absent side is not offered
+Covered by (interaction, end-to-end): `export_is_exact_beyond_diff_budget_and_preserves_existing_destinations` (tests/cli.rs), `export_capabilities_follow_the_displayed_sides` (diff_view.rs), `a_finished_export_closes_and_reports_in_the_footer`, `the_dialog_names_the_side_version_and_a_suggested_file` (export.rs)
 
 ### REV-48 Export never overwrites
 Fixture: as REV-47
 Layer: product
 - When the chosen destination already exists
-- Then export refuses; the existing file is untouched; no temporary file remains
-Covered by (end-to-end, partial): `export_is_exact_beyond_diff_budget_and_preserves_existing_destinations` (tests/cli.rs); GUI path not automated
+- Then export refuses with the inline error `That file already exists. Choose a new name.` and the dialog stays; the existing file is untouched; no temporary file remains
+Covered by (interaction, end-to-end): `export_is_exact_beyond_diff_budget_and_preserves_existing_destinations` (tests/cli.rs), `a_finished_export_closes_and_reports_in_the_footer` (export.rs)
 
 ### REV-49 Escape cancels export first
 Fixture: as REV-47
@@ -1448,8 +1455,8 @@ Fixture: `fx-file-history`
 Layer: product
 - Given Diff on `src/lib.rs`
 - When the user presses `B` (or **Blame**)
-- Then Full file opens with an author/short-commit column; After uses the selected commit, Before the parent; selecting a line names full author, email, relative time, short commit, subject; `B` again hides it
-Covered by (backend, interaction): `attribution_column_and_selected_line_metadata_render` (diff_view.rs), `attributes_a_bounded_range_and_preserves_origin_lines` (crates/git/src/blame.rs)
+- Then Full file opens with **Blame** pressed and a gutter where each run of lines from one commit shows one label (author, short ID, compact age such as `5d`) and every line an age bar, brighter for newer commits; After uses the selected commit, Before the parent; selecting a line fills the 26 px bar at the reader bottom with `LINE n`, author · short ID · `5 days ago` · subject, **Open commit** and **Line history**; `B` again hides it
+Covered by (backend, interaction): `attribution_column_and_selected_line_metadata_render` (diff_view.rs), `runs_collapse_to_one_label_per_commit`, `newer_commits_draw_brighter_age_bars`, `ages_read_compactly_in_the_gutter_and_fully_in_the_bar`, `the_bar_keeps_its_height_with_and_without_a_line` (blame_view.rs), `attributes_a_bounded_range_and_preserves_origin_lines` (crates/git/src/blame.rs)
 
 ### REV-54 Blame refuses non-text
 Fixture: `fx-file-history`
@@ -1471,8 +1478,8 @@ Fixture: `fx-file-history`
 Layer: interaction
 - Given Review on the newest commit with `src/lib.rs` selected
 - When the user presses `H` (or **History**)
-- Then a version strip appears above the same reader with **Older version**, **Newer version**, a counter, kind, commit, subject, author, date (UTC), and old path; the file list stays; `H` again does not stack another source
-Covered by (interaction): `history_opens_from_the_wide_reader_and_never_stacks` (review_view.rs), `the_rendered_strip_names_the_version_and_old_path` (file_history_view.rs)
+- Then the file-list pane shows the version list: header `FILE HISTORY 12+` with ×, 22 px rows of kind · short ID · subject (a rename adds `← old path`) · date, the selected row being the comparison; **History** stays pressed; scrolling to the end loads the next page with its slot blank (no loading text); `H` again does not stack another source; × or `Esc` closes it
+Covered by (interaction): `history_opens_from_the_wide_reader_and_never_stacks` (review_view.rs), `the_version_list_names_each_version_and_its_old_path` (file_history_view.rs)
 
 ### REV-57 Versions skip unchanged commits
 Fixture: `fx-file-history`
@@ -1490,7 +1497,7 @@ Covered by (backend, partial): `renames_are_followed_and_name_the_old_path` (cra
 ### REV-59 Version boundaries never wrap
 Fixture: `fx-file-history`
 Layer: interaction
-- At the oldest version **Older version** is disabled with `Oldest version`; at newest **Newer version** says `Newest version`; a single-version file says `Only version`; while a page loads `Loading earlier versions…`; budget hit names the limit
+- At the oldest version `Alt+Left` does nothing and the list header's tooltip names `Oldest version`; at newest `Alt+Right` stops (`Newest version`); a single-version file says `Only version`; while a page loads the reason names the pending page; budget hit names the limit
 Covered by (interaction): `boundaries_name_the_reason_and_never_wrap` (file_history_view.rs), `a_loading_predecessor_disables_older_and_names_the_reason` (file_history_view.rs), `rapid_version_steps_stop_at_both_boundaries` (file_history_view.rs)
 
 ### REV-60 Deleted and re-added versions are explicit
@@ -1502,8 +1509,8 @@ Covered by (backend, interaction): `delete_and_readd_produce_an_explicit_absent_
 ### REV-61 Ambiguous predecessor asks
 Fixture: `fx-file-history-merge` (proposed; Given: two branches each independently commit the same content of `x.txt`, then merge)
 Layer: product
-- Then history stops with a chooser listing each candidate's kind, commit, subject, author, date, old path; it never takes the first parent; Full file shows the current content and Diff is disabled until chosen
-Covered by (interaction): `an_ambiguous_predecessor_requires_a_choice` (file_history_view.rs), `an_ambiguous_history_edge_keeps_full_content_and_disables_diff` (review_view.rs)
+- Then history stops and nests the candidates under the merge row (`CHOOSE EARLIER VERSION 2`, then 22 px rows of kind · short ID · subject and `← old path` · author and date); Up/Down and Enter pick one; it never takes the first parent; Full file shows the current content and Diff is disabled until chosen
+Covered by (interaction): `an_ambiguous_predecessor_requires_a_choice`, `the_strip_offers_every_predecessor_choice` (file_history_view.rs), `an_ambiguous_history_edge_keeps_full_content_and_disables_diff` (review_view.rs)
 
 ### REV-62 Closing history restores entry context once
 Fixture: `fx-file-history`
@@ -1532,22 +1539,22 @@ Covered by (Not automated)
 ### REV-65 Narrow history
 Fixture: `fx-file-history`, narrow
 Layer: interaction
-- Then the strip sits above the full-width reader; `Esc` closes history first, then the reader, then Review
+- Then the version list sits in a seven-row pane above the full-width reader; `Esc` closes history first, then the reader, then Review
 Covered by (interaction): `narrow_history_uses_the_reading_layout_and_escape_closes_it_first` (review_view.rs)
 
 ### REV-66 Failed history page keeps loaded versions
 Fixture: `fx-file-history`
 Layer: product
 - Given a failure while paging older versions
-- Then loaded versions stay, the boundary stays pending, and retry resumes
-Covered by (backend, interaction): `a_failed_page_retry_keeps_the_loaded_timeline` (file_history_view.rs), `cancellation_and_a_failed_step_keep_the_loaded_versions` (crates/git/tests/file_history.rs)
+- Then loaded versions stay, the last list row is one red row `History page failed · <error>` with **Retry**, the boundary stays pending, and Retry resumes
+Covered by (backend, interaction): `a_failed_page_retry_keeps_the_loaded_timeline`, `a_failed_page_is_one_red_row_with_retry` (file_history_view.rs), `cancellation_and_a_failed_step_keep_the_loaded_versions` (crates/git/tests/file_history.rs)
 
 ### REV-67 Line-range history
 Fixture: `fx-file-history`
 Layer: product
 - Given Full file with lines 20–30 selected (Shift-click)
 - When the user chooses **Line history** from blame
-- Then the timeline is anchored to the range and lists the 4 versions that changed it; where the range was introduced the boundary reads **Line introduced in this version**; a deleted range reads **Line absent in this version**; ranges are reported whole, never shrunk
+- Then the version list is titled `LINE HISTORY 20–30`, anchored to the range, and lists the 4 versions that changed it; where the range was introduced the boundary reads **Line introduced in this version**; a deleted range reads **Line absent in this version**; ranges are reported whole, never shrunk
 Covered by (backend, interaction): `line_history_names_the_anchor_and_boundary` (file_history_view.rs), `line_mapping_keeps_ranges_whole_and_names_introduced_or_absent_content` (crates/engine/src/file_history.rs)
 
 ### REV-68 Line history from the Before side
@@ -1567,8 +1574,8 @@ Covered by (interaction): `reading_versions_preserves_the_repository` (file_hist
 ### REV-70 Open in editor
 Fixture: `fx-linear`
 Layer: product
-- When the user chooses ⋯ → **Open in editor** for a file deleted in the worktree
-- Then the status line reports the missing file; for a present file the configured editor opens
+- When the user chooses ⋯ → **Open in editor** (or **Reveal in folder**) for a file deleted in the worktree
+- Then the footer reports the missing file; for a present file the configured editor opens (Reveal in folder opens the folder that holds it)
 Covered by (Not automated)
 
 ### REV-71 CLI show streams summaries and validates parent
@@ -1677,12 +1684,12 @@ Layer: interaction
 - Then Unstaged keeps its offset and remembered row; after a refresh both offsets are preserved
 Covered by (interaction): `workspace_preserves_independent_list_selection_and_scroll` (status_view.rs)
 
-### CHG-13 Stage one file (header button, row **+**, double-click, `S`)
+### CHG-13 Stage one file (row **+**, double-click, `S`)
 Fixture: `fx-dirty`
 Layer: product
-- When the user stages `c.txt` with (a) the reader header **Stage** button, (b) the row's **+** button (tooltip *Stage this file*), (c) double-click, or (d) `S` with the Unstaged list focused
+- When the user stages `c.txt` with (a) the row's **+** button (tooltip *Stage this file*), (b) double-click, or (c) `S` with the Unstaged list focused; the reader header has no Stage button
 - Then `c.txt` moves to Staged, the index blob equals `git add c.txt`, the working file is unchanged, and selection advances to the next Unstaged row in display order
-Covered by (backend, interaction): `row_buttons_stage_and_unstage_one_file`, `double_click_stages_and_unstages_with_the_stage_button_and_advances` (status_view.rs); `stage_matches_git_add_and_preserves_working_files` (crates/git/tests/status.rs)
+Covered by (backend, interaction): `row_buttons_stage_and_unstage_one_file`, `double_click_stages_and_unstages_with_the_row_button_and_advances` (status_view.rs); `stage_matches_git_add_and_preserves_working_files` (crates/git/tests/status.rs)
 
 ### CHG-14 Staging the last Unstaged row follows it into Staged
 Fixture: `fx-linear` plus one unstaged edit to `a.txt`
@@ -1691,10 +1698,10 @@ Layer: interaction
 - Then *No unstaged changes.* shows in Unstaged and the selection follows `a.txt` into Staged
 Covered by (interaction): `staging_the_only_file_follows_it_into_staged` (status_view.rs)
 
-### CHG-15 Unstage one file (header button, row **−**, double-click, `U`)
+### CHG-15 Unstage one file (row **−**, double-click, `U`)
 Fixture: `fx-dirty`
 Layer: product
-- When the user unstages `b.txt` by any of the four gestures
+- When the user unstages `b.txt` by any of the three gestures
 - Then `b.txt` returns to Unstaged, the index entry equals HEAD, the working file is unchanged, other index entries are untouched
 Covered by (backend, interaction): `row_buttons_stage_and_unstage_one_file` (status_view.rs); `unstage_matches_head_and_preserves_working_edits_and_other_entries` (crates/git/tests/status.rs)
 
@@ -1850,7 +1857,7 @@ Covered by (backend, interaction): `selected_line_drop_reverts_the_whole_change_
 ### CHG-36 **Discard unstaged changes** for one file keeps the index
 Fixture: `fx-dirty`
 Layer: product
-- When the user chooses **File actions › Discard unstaged changes…** on `c.txt`, `d.txt`, `run.sh`, `new.txt` and partially staged `a.txt`, confirming each (*Discard unstaged changes from <path>? The index is unchanged.*)
+- When the user chooses ⋯ › **Discard file…** (last, in red) on `c.txt`, `d.txt`, `run.sh`, `new.txt` and partially staged `a.txt`, confirming each (*Discard unstaged changes from <path>? The index is unchanged.*)
 - Then `c.txt`/`d.txt`/`run.sh` are restored from the index (mode 644 again), `new.txt` is removed, `a.txt` keeps its staged hunk and loses only the unstaged one; index bytes unchanged; the lists reload in place
 Covered by (backend, interaction, partial): `drop_requires_confirmation_and_leaves_the_index_alone` (apps/git-good/src/status_view.rs); `drop_whole_working_changes_restores_index_and_removes_untracked` (crates/git/tests/status.rs) (the partially staged `a.txt` case not checked)
 

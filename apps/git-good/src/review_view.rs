@@ -639,21 +639,25 @@ impl Review {
             .max(1.0) as usize;
     }
 
-    /// Draw the history strip above whichever reader path is active.
+    /// The version list in the file-list pane while history is open.
+    fn draw_history_list(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        if let Some(history) = &mut self.history {
+            history.draw_list(ui, ctx);
+        }
+    }
+
+    /// Draw whichever reader path is active, fed by history when it is open.
     fn draw_reader(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, reading: bool) {
         let mut message = None;
-        let mut close = false;
-        if let Some(history) = &mut self.history {
-            history.draw_strip(ui, ctx);
-            close = history.take_close();
-            if !close {
-                ui.separator();
-                message = history.prepare(&mut self.diff, ctx);
-            }
-        }
-        if close {
+        if self
+            .history
+            .as_ref()
+            .is_some_and(|history| history.close_requested())
+        {
             self.close_history(ctx);
-            return;
+        }
+        if let Some(history) = &mut self.history {
+            message = history.prepare(&mut self.diff, ctx);
         }
         if let Some(message) = message {
             bounded_text::field_named(ui, message, egui::FontId::proportional(12.0), 22.0, "Error");
@@ -688,17 +692,23 @@ impl Review {
             }
             return;
         }
-        // History sits on the reader's mode row (mockup), not in the header.
+        // History sits on the reader's mode row (mockup), pressed while the
+        // version list is open.
         self.diff.set_history_button(
-            (self.history.is_none() && !self.embedded).then_some(self.selected.is_some()),
+            (!self.embedded).then_some(self.selected.is_some() || self.history.is_some()),
+            self.history.is_some(),
         );
         if reading || self.history.is_some() {
             self.diff.draw_reading(ui);
         } else {
             self.diff.draw(ui);
         }
-        if self.diff.take_history_request() && self.history.is_none() {
-            self.open_history = true;
+        if self.diff.take_history_request() {
+            if self.history.is_some() {
+                self.close_history(ctx);
+            } else {
+                self.open_history = true;
+            }
             ctx.request_repaint();
         }
         if let Some(lines) = self.diff.take_line_history() {
@@ -1165,14 +1175,9 @@ impl Review {
                         .history
                         .as_ref()
                         .map(|history| (history.pending(), history.error().map(str::to_owned)));
-                    let text = if let Some((pending, error)) = &history_state {
-                        if let Some(error) = error {
-                            error.as_str()
-                        } else if *pending {
-                            "Loading earlier versions…"
-                        } else {
-                            crate::navigation::HISTORY_HINT
-                        }
+                    // Paging and failures live in the version list itself.
+                    let text = if history_state.is_some() {
+                        crate::navigation::HISTORY_HINT
                     } else {
                         failure.as_deref().unwrap_or(if self.replacing {
                             &pending
@@ -1188,6 +1193,23 @@ impl Review {
                     };
                     bounded_text::field(ui, text, egui::FontId::proportional(12.0), 18.0);
                 });
+        }
+        if self.history.is_some() && !self.embedded {
+            // The version list takes the file-list pane: at the left when
+            // wide, above the reader when narrow.
+            if narrow {
+                egui::Panel::top("review-history")
+                    .exact_size(crate::density::row() * 7.0)
+                    .show(ui, |ui| self.draw_history_list(ui, ctx));
+            } else {
+                egui::Panel::left("review-files")
+                    .exact_size(FILE_LIST_WIDTH)
+                    .resizable(false)
+                    .show(ui, |ui| self.draw_history_list(ui, ctx));
+            }
+            egui::CentralPanel::default().show(ui, |ui| self.draw_reader(ui, ctx, true));
+            bounded_text::show_disclosure(ctx);
+            return back;
         }
         if self.show_diff {
             egui::CentralPanel::default().show(ui, |ui| self.draw_reader(ui, ctx, true));
@@ -2087,17 +2109,19 @@ mod tests {
         let file_offset = view.offset;
         let (_, text) = frame(&mut view, &ctx, 1120.0, 740.0, vec![]);
         assert!(view.history.is_some());
-        for label in [
-            "File history",
-            "Older version",
-            "Newer version",
-            "Version 1 of 2",
-        ] {
+        // The version list takes the file-list pane; History stays on the
+        // reader row.
+        for label in ["FILE HISTORY 2", "×", "History"] {
             assert!(
-                text.iter().any(|line| line.contains(label)),
+                text.contains(&label.to_string()),
                 "missing {label}: {text:?}"
             );
         }
+        assert!(
+            !text.iter().any(|line| line.starts_with("FILES ")),
+            "the file list is replaced: {text:?}"
+        );
+        assert!(!text.iter().any(|line| line.contains("Older version")));
         let (back, _) = frame(
             &mut view,
             &ctx,
@@ -2212,7 +2236,10 @@ mod tests {
         let saved = install_history(&mut view)?;
         let (_, text) = frame(&mut view, &ctx, 720.0, 480.0, vec![]);
         assert!(view.history.is_some());
-        assert!(text.iter().any(|line| line.contains("Older version")));
+        assert!(
+            text.iter().any(|line| line.starts_with("FILE HISTORY")),
+            "{text:?}"
+        );
         let (back, _) = frame(
             &mut view,
             &ctx,
@@ -2335,8 +2362,8 @@ mod tests {
         assert!(view.history.is_some());
         assert!(
             text.iter()
-                .any(|line| line.contains("Choose the earlier version")),
-            "the chooser stays inside the version strip: {text:?}"
+                .any(|line| line.contains("CHOOSE EARLIER VERSION 1")),
+            "candidates nest under the merge row: {text:?}"
         );
         let capabilities = view.diff.capabilities();
         assert!(!capabilities.diff, "Diff waits for the earlier edge");

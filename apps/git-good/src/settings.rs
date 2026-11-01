@@ -262,16 +262,19 @@ pub enum ImageLayout {
     SideBySide,
     Swipe,
     Onion,
+    /// Hexadecimal rows of both sides.
+    Hex,
 }
 
 impl ImageLayout {
-    pub const ALL: [Self; 3] = [Self::SideBySide, Self::Swipe, Self::Onion];
+    pub const ALL: [Self; 4] = [Self::SideBySide, Self::Swipe, Self::Onion, Self::Hex];
 
     pub fn label(self) -> &'static str {
         match self {
             Self::SideBySide => "Side by side",
             Self::Swipe => "Swipe",
             Self::Onion => "Onion skin",
+            Self::Hex => "Hex",
         }
     }
 }

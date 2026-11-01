@@ -274,6 +274,8 @@ enum Layout {
     SideBySide,
     Swipe,
     Onion,
+    /// Hexadecimal rows of both sides: the fourth layout.
+    Hex,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -282,9 +284,12 @@ enum Size {
     Actual,
 }
 
+/// The image reader: its layout and size controls sit on the reader's one
+/// header row ([`View::header`]); the canvas, with a checkerboard behind
+/// transparency and a slider strip under it, fills the rest
+/// ([`View::draw`]).
 pub struct View {
     textures: [Option<egui::TextureHandle>; 2],
-    hex: bool,
     layout: Layout,
     /// Whether `layout` was taken from the remembered choice yet.
     seeded: bool,
@@ -294,11 +299,19 @@ pub struct View {
 }
 
 impl Layout {
+    const ALL: [(Self, &'static str); 4] = [
+        (Self::SideBySide, "Side by side"),
+        (Self::Swipe, "Swipe"),
+        (Self::Onion, "Onion skin"),
+        (Self::Hex, "Hex"),
+    ];
+
     fn from_setting(layout: crate::settings::ImageLayout) -> Self {
         match layout {
             crate::settings::ImageLayout::SideBySide => Self::SideBySide,
             crate::settings::ImageLayout::Swipe => Self::Swipe,
             crate::settings::ImageLayout::Onion => Self::Onion,
+            crate::settings::ImageLayout::Hex => Self::Hex,
         }
     }
 
@@ -307,6 +320,7 @@ impl Layout {
             Self::SideBySide => crate::settings::ImageLayout::SideBySide,
             Self::Swipe => crate::settings::ImageLayout::Swipe,
             Self::Onion => crate::settings::ImageLayout::Onion,
+            Self::Hex => crate::settings::ImageLayout::Hex,
         }
     }
 }
@@ -315,7 +329,6 @@ impl Default for View {
     fn default() -> Self {
         Self {
             textures: [None, None],
-            hex: false,
             layout: Layout::SideBySide,
             seeded: false,
             size: Size::Fit,
@@ -326,12 +339,70 @@ impl Default for View {
 }
 
 impl View {
-    pub fn draw(&mut self, ui: &mut egui::Ui, pair: &Pair, keyboard: bool) {
+    fn seed(&mut self, ctx: &egui::Context) {
         if !self.seeded {
             self.seeded = true;
-            self.layout = Layout::from_setting(crate::settings::image_layout(ui.ctx()));
+            self.layout = Layout::from_setting(crate::settings::image_layout(ctx));
         }
-        let before_layout = self.layout;
+    }
+
+    /// The layout actually drawn: Hex when neither side decoded as an image.
+    fn shown(&self, pair: &Pair) -> Layout {
+        if pair.before.image.is_none() && pair.after.image.is_none() {
+            Layout::Hex
+        } else {
+            self.layout
+        }
+    }
+
+    /// The reader-header controls: Side by side | Swipe | Onion skin | Hex
+    /// in the layout slot, then the Fit | 1:1 segment.
+    pub fn header(&mut self, ui: &mut egui::Ui, pair: &Pair) {
+        self.seed(ui.ctx());
+        let images = pair.before.image.is_some() || pair.after.image.is_some();
+        let both = pair.before.image.is_some() && pair.after.image.is_some();
+        let shown = self.shown(pair);
+        for (layout, label) in Layout::ALL {
+            let available = match layout {
+                Layout::Hex => true,
+                Layout::SideBySide => images,
+                Layout::Swipe | Layout::Onion => both,
+            };
+            let response = ui
+                .add_enabled(
+                    available,
+                    egui::Button::new(label).selected(shown == layout),
+                )
+                .on_disabled_hover_text(if images {
+                    "Needs both Before and After images"
+                } else {
+                    "Neither side is a PNG or JPEG image"
+                });
+            if response.clicked() && self.layout != layout {
+                self.layout = layout;
+                // Remember the choice for the next comparison.
+                crate::settings::set_image_layout(ui.ctx(), layout.setting());
+            }
+        }
+        ui.separator();
+        let scaled = shown != Layout::Hex;
+        for (size, label, hint) in [
+            (Size::Fit, "Fit", "Fit the image to the reader"),
+            (Size::Actual, "1:1", "Actual size"),
+        ] {
+            if ui
+                .add_enabled(scaled, egui::Button::new(label).selected(self.size == size))
+                .on_hover_text(hint)
+                .on_disabled_hover_text("Hex rows have no zoom")
+                .clicked()
+            {
+                self.size = size;
+            }
+        }
+    }
+
+    pub fn draw(&mut self, ui: &mut egui::Ui, pair: &Pair, keyboard: bool) {
+        self.seed(ui.ctx());
         let previews = [&pair.before, &pair.after];
         for (i, p) in previews.iter().enumerate() {
             if self.textures[i].is_none()
@@ -344,108 +415,59 @@ impl View {
                 ));
             }
         }
+        let layout = self.shown(pair);
+        let both_images = pair.before.image.is_some() && pair.after.image.is_some();
         let narrow = ui.available_width() < NARROW;
-        ui.horizontal_wrapped(|ui| {
-            if narrow {
-                ui.weak("Stacked before/after");
-            } else {
-                if ui
-                    .selectable_label(self.layout == Layout::SideBySide, "Side by side")
-                    .clicked()
-                {
-                    self.layout = Layout::SideBySide;
-                }
-                if ui
-                    .selectable_label(self.layout == Layout::Swipe, "Swipe")
-                    .clicked()
-                {
-                    self.layout = Layout::Swipe;
-                }
-                if ui
-                    .selectable_label(self.layout == Layout::Onion, "Onion skin")
-                    .clicked()
-                {
-                    self.layout = Layout::Onion;
-                }
-                if self.layout != before_layout {
-                    // Remember the choice for the next comparison.
-                    crate::settings::set_image_layout(ui.ctx(), self.layout.setting());
-                }
-                if self.layout == Layout::Swipe {
-                    ui.separator();
-                    ui.add(
-                        egui::Slider::new(&mut self.split, 0.0..=1.0)
-                            .show_value(false)
-                            .text("Boundary"),
-                    );
-                    ui.weak(format!("{:.0}%", self.split * 100.0));
-                } else if self.layout == Layout::Onion {
-                    ui.separator();
-                    ui.add(
-                        egui::Slider::new(&mut self.opacity, 0.0..=1.0)
-                            .show_value(false)
-                            .text("Opacity"),
-                    )
-                    .on_hover_text(
-                        "Focus the slider and use Left/Right to adjust the After opacity",
-                    );
-                    ui.weak(format!("{:.0}%", self.opacity * 100.0));
-                }
-            }
-            ui.separator();
-            if ui.selectable_label(self.size == Size::Fit, "Fit").clicked() {
-                self.size = Size::Fit;
-            }
-            if ui
-                .selectable_label(self.size == Size::Actual, "Actual size")
-                .clicked()
-            {
-                self.size = Size::Actual;
-            }
-            ui.weak(match self.size {
-                Size::Fit => "Zoom: fit",
-                Size::Actual => "Zoom: 100%",
-            });
-            if previews.iter().any(|p| p.image.is_some()) {
-                ui.checkbox(&mut self.hex, "Hexadecimal");
-            }
-        });
+        // Sliders sit in a strip under the canvas, so the header stays one row.
+        let strip = matches!(layout, Layout::Swipe | Layout::Onion) && both_images;
         let page_height = ui.available_height();
-        egui::ScrollArea::both()
-            .id_salt("binary-preview")
-            .show(ui, |ui| {
-                if keyboard {
-                    crate::navigation::scroll(ui, page_height);
-                }
-                let both_images = pair.before.image.is_some() && pair.after.image.is_some();
-                let onion = !narrow && self.layout == Layout::Onion && !self.hex && both_images;
-                let swipe = !narrow && self.layout == Layout::Swipe && !self.hex && both_images;
-                if !narrow && self.layout == Layout::Onion && !self.hex && !both_images {
-                    ui.weak("Onion skin needs both Before and After images.");
-                }
-                if onion {
-                    self.onion(ui, pair);
-                } else if swipe {
-                    self.swipe(ui, pair);
-                } else if ui.available_width() >= NARROW
-                    && !self.hex
-                    && previews
-                        .iter()
-                        .all(|p| p.image.is_some() || p.hex.is_empty())
-                {
-                    ui.columns(2, |cols| {
-                        self.side(&mut cols[0], pair, 0);
-                        self.side(&mut cols[1], pair, 1);
-                    });
+        let canvas = egui::vec2(
+            ui.available_width(),
+            (ui.available_height() - if strip { 30.0 } else { 0.0 }).max(0.0),
+        );
+        ui.allocate_ui_with_layout(canvas, egui::Layout::top_down(egui::Align::Min), |ui| {
+            egui::ScrollArea::both()
+                .id_salt("binary-preview")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    if keyboard {
+                        crate::navigation::scroll(ui, page_height);
+                    }
+                    match layout {
+                        Layout::Onion if both_images => self.onion(ui, pair),
+                        Layout::Swipe if both_images => self.swipe(ui, pair),
+                        Layout::SideBySide if !narrow => {
+                            ui.columns(2, |cols| {
+                                self.side(&mut cols[0], pair, 0, layout);
+                                self.side(&mut cols[1], pair, 1, layout);
+                            });
+                        }
+                        _ => {
+                            // Narrow Side by side and Hex stack Before over After.
+                            self.side(ui, pair, 0, layout);
+                            ui.separator();
+                            self.side(ui, pair, 1, layout);
+                        }
+                    }
+                });
+        });
+        if strip {
+            ui.horizontal(|ui| {
+                ui.set_min_height(28.0);
+                let (value, label) = if layout == Layout::Swipe {
+                    (&mut self.split, "Boundary")
                 } else {
-                    self.side(ui, pair, 0);
-                    ui.separator();
-                    self.side(ui, pair, 1);
-                }
+                    (&mut self.opacity, "After opacity")
+                };
+                ui.weak(label);
+                ui.add(egui::Slider::new(value, 0.0..=1.0).show_value(false))
+                    .on_hover_text("Drag, or focus the slider and use Left/Right");
+                ui.weak(format!("{:.0}%", *value * 100.0));
             });
+        }
     }
 
-    fn side(&mut self, ui: &mut egui::Ui, pair: &Pair, index: usize) {
+    fn side(&mut self, ui: &mut egui::Ui, pair: &Pair, index: usize, layout: Layout) {
         let preview = if index == 0 {
             &pair.before
         } else {
@@ -459,7 +481,7 @@ impl View {
             response.on_hover_text(id);
         }
         crate::bounded_text::field(ui, &preview.note, egui::FontId::proportional(12.0), 22.0);
-        if !self.hex
+        if layout != Layout::Hex
             && let Some(texture) = &self.textures[index]
         {
             let natural = texture.size_vec2();
@@ -633,6 +655,12 @@ impl View {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The header row, then the canvas, as the reader draws them.
+    fn both(view: &mut View, ui: &mut egui::Ui, pair: &Pair) {
+        ui.horizontal(|ui| view.header(ui, pair));
+        view.draw(ui, pair, false);
+    }
     #[test]
     fn hexadecimal_rows_keep_fixed_columns_in_narrow_views() {
         let bytes: Vec<_> = (0..256).map(|n| n as u8).collect();
@@ -708,15 +736,20 @@ mod tests {
     fn the_layout_starts_from_and_remembers_the_last_choice() {
         let ctx = egui::Context::default();
         crate::settings::set_image_layout(&ctx, crate::settings::ImageLayout::Swipe);
+        let image = || {
+            let mut preview = Preview::note("image");
+            preview.image = Some(egui::ColorImage::filled([2, 2], egui::Color32::RED));
+            preview
+        };
         let pair = Pair {
-            before: Preview::note("before"),
-            after: Preview::note("after"),
+            before: image(),
+            after: image(),
         };
         let mut view = View::default();
         let output = crate::tests::run_ui(
             &ctx,
             crate::tests::frame_input(1120.0, 740.0, vec![]),
-            |ui| view.draw(ui, &pair, false),
+            |ui| both(&mut view, ui, &pair),
         );
         assert!(
             view.layout == Layout::Swipe,
@@ -749,7 +782,7 @@ mod tests {
         let _ = crate::tests::run_ui(
             &ctx,
             crate::tests::frame_input(1120.0, 740.0, click),
-            |ui| view.draw(ui, &pair, false),
+            |ui| both(&mut view, ui, &pair),
         );
         assert_eq!(
             crate::settings::image_layout(&ctx),
@@ -760,7 +793,7 @@ mod tests {
         let _ = crate::tests::run_ui(
             &ctx,
             crate::tests::frame_input(1120.0, 740.0, vec![]),
-            |ui| next.draw(ui, &pair, false),
+            |ui| both(&mut next, ui, &pair),
         );
         assert!(next.layout == Layout::Onion);
     }
@@ -831,8 +864,25 @@ mod tests {
             &ctx,
             crate::tests::frame_input(1120.0, 740.0, vec![]),
             |ctx| {
-                egui::CentralPanel::default().show(ctx, |ui| view.draw(ui, &pair, false));
+                egui::CentralPanel::default().show(ctx, |ui| both(&mut view, ui, &pair));
             },
+        );
+        // The slider strip sits under the canvas, not in the header.
+        let y = |needle: &str| {
+            output.shapes.iter().find_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) if text.galley.job.text == needle => {
+                    Some(text.pos.y)
+                }
+                _ => None,
+            })
+        };
+        assert!(
+            y("After opacity") > y("Hex"),
+            "the slider is below the header row"
+        );
+        assert!(
+            y("After opacity").is_some_and(|y| y > 740.0 - 60.0),
+            "the strip is at the bottom"
         );
         let text = output
             .shapes
@@ -842,7 +892,13 @@ mod tests {
                 _ => None,
             })
             .collect::<Vec<_>>();
-        for expected in ["Onion skin", "Opacity", "25%", "Before", "After · 25%"] {
+        for expected in [
+            "Onion skin",
+            "After opacity",
+            "25%",
+            "Before",
+            "After · 25%",
+        ] {
             assert!(
                 text.iter().any(|line| line.contains(expected)),
                 "missing {expected}: {text:?}"
@@ -879,9 +935,9 @@ mod tests {
                 _ => None,
             })
             .collect::<Vec<_>>();
+        // One image cannot overlay: the sides stack and the strip goes.
         assert!(
-            text.iter()
-                .any(|line| line.contains("Onion skin needs both Before and After images")),
+            !text.iter().any(|line| line.contains("After opacity")),
             "{text:?}"
         );
         assert!(
@@ -934,14 +990,14 @@ mod tests {
             before: decoded,
             after,
         };
-        for (width, expected) in [(1120.0, "Side by side"), (720.0, "Stacked before/after")] {
+        for width in [1120.0, 720.0] {
             let ctx = egui::Context::default();
             let mut view = View::default();
             let output = crate::tests::run_ui(
                 &ctx,
                 crate::tests::frame_input(width, 740.0, vec![]),
                 |ctx| {
-                    egui::CentralPanel::default().show(ctx, |ui| view.draw(ui, &pair, false));
+                    egui::CentralPanel::default().show(ctx, |ui| both(&mut view, ui, &pair));
                 },
             );
             let text = output
@@ -952,17 +1008,17 @@ mod tests {
                     _ => None,
                 })
                 .collect::<Vec<_>>();
-            assert!(text.iter().any(|line| line.contains(expected)), "{text:?}");
+            // Every width keeps the four layouts and the Fit | 1:1 segment.
+            for label in ["Side by side", "Swipe", "Onion skin", "Hex", "Fit", "1:1"] {
+                assert!(
+                    text.contains(&label),
+                    "missing {label} at {width}: {text:?}"
+                );
+            }
             assert!(text.iter().any(|line| line.contains("12 × 8")), "{text:?}");
-            assert!(text.iter().any(|line| line.contains("Fit")), "{text:?}");
             assert!(
-                text.iter().any(|line| line.contains("Actual size")),
-                "{text:?}"
-            );
-            assert_eq!(
-                text.iter().any(|line| line.contains("Onion skin")),
-                width > 720.0,
-                "onion skin is a wide-only presentation: {text:?}"
+                !text.iter().any(|line| line.contains("Hexadecimal")),
+                "no checkbox"
             );
         }
         let ctx = egui::Context::default();
@@ -975,8 +1031,21 @@ mod tests {
             &ctx,
             crate::tests::frame_input(1120.0, 740.0, vec![]),
             |ctx| {
-                egui::CentralPanel::default().show(ctx, |ui| view.draw(ui, &pair, false));
+                egui::CentralPanel::default().show(ctx, |ui| both(&mut view, ui, &pair));
             },
+        );
+        // The slider strip sits under the canvas, not in the header.
+        let y = |needle: &str| {
+            output.shapes.iter().find_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) if text.galley.job.text == needle => {
+                    Some(text.pos.y)
+                }
+                _ => None,
+            })
+        };
+        assert!(
+            y("Boundary") > y("Hex"),
+            "the slider is below the header row"
         );
         let text = output
             .shapes
