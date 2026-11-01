@@ -68,11 +68,10 @@ pub fn read(
         .filter(|value| !value.is_empty());
     let dirty = initialized
         .then(|| {
-            run(
-                &nested,
-                &["--no-optional-locks", "status", "--porcelain", "-z"],
-            )
-            .ok()
+            // This status refreshes the submodule's index on purpose, so a
+            // following update does not mistake stale stat data (Windows)
+            // for local changes.
+            run(&nested, &["status", "--porcelain", "-z"]).ok()
         })
         .flatten()
         .and_then(|output| output.status.success().then_some(!output.stdout.is_empty()));
