@@ -414,32 +414,46 @@ Layer: interaction
 - Then at 1440 px the footer reads `j k: select · Enter: review · Alt+A: actions · R: rebase from here · Ctrl+K: search · Ctrl/Cmd+F: filter · Ctrl/Cmd+C: copy ID`; below 1040 px `j/k: select · Enter: review · Space: details · Esc: history · Ctrl/Cmd+F: filter` (no `copy ID`)
 Covered by (interaction): `status_hints_shorten_at_narrow_widths` (apps/git-good/src/main.rs)
 
-### FRM-56 Plain success fades after 8 seconds
+### FRM-56 Receipts fade after 8 seconds
 Fixture: `fx-remote-even`
 Layer: interaction
-- When Fetch completes with no details and no action
-- Then the footer states it in plain words (no `Network ·` prefix) and it disappears after 8 s
-Covered by (interaction): `a_plain_success_fades_after_eight_seconds` (apps/git-good/src/main.rs)
+- When Fetch completes, or a rewrite leaves `Rewrote 4 commits · backup <ref>` with **Recovery…** and **Details…**
+- Then the footer shows a check and the receipt in plain words (no `Network ·` or `History ·` prefix, the part after the first ` · ` in grey) with ×, and fades back to the key hints after 8 s; a failure stays
+Covered by (interaction): `receipts_fade_after_eight_seconds`, `receipts_and_failures_read_without_prefixes` (apps/git-good/src/main.rs); `receipts_split_into_text_and_tail` (apps/git-good/src/footer.rs)
 
-### FRM-57 Errors persist with Details… and one recovery action
+### FRM-57 Failures stay red with one recovery action, Details… and ×
 Fixture: `fx-remote-auth`
 Layer: product
 - When Push runs and fails authentication
-- Then the footer shows an error that stays until dismissed or replaced, with **Details…** (selectable, copyable full text in a non-modal window) and one recovery action, **Retry push** (authentication is retryable; a non-fast-forward rejection offers **Fetch** instead, NET-20)
-Covered by (interaction): `operation_outcome_shows_details_and_recovery`, `operation_details_window_lists_full_text` (apps/git-good/src/main.rs)
+- Then the footer is tinted red with the failure, one recovery action, **Details…** (selectable, copyable full text in a non-modal window), and ×; it outranks a running job and stays until dismissed or the next job starts; authentication offers **Retry push**, a non-fast-forward rejection offers **Fetch** (NET-20)
+Covered by (interaction): `operation_outcome_shows_details_and_recovery`, `operation_details_window_lists_full_text`, `receipts_and_failures_read_without_prefixes` (apps/git-good/src/main.rs)
 
 ### FRM-58 Network progress offers Cancel without clipping
 Fixture: `fx-remote`
 Layer: interaction
 - When Fetch is running at 1440 px and 720 px
-- Then progress and **Cancel** are visible and unclipped; Cancel stops the job and reports it (NET-32); the status line height does not change
-Covered by (interaction): `network_cancel_button_stays_inside_the_operation_area` (apps/git-good/src/main.rs)
+- Then the footer reads `Fetching origin · Receiving objects 42% · 812/1930` with a thin progress bar and **Cancel**, visible and unclipped (`Starting fetch…` until Git reports); Cancel turns the message into `Cancelling fetch…` with `waits for Git to stop` at the right (NET-32); the footer height does not change
+Covered by (interaction): `the_footer_shows_network_progress_then_cancelling`, `network_cancel_button_stays_inside_the_operation_area` (apps/git-good/src/main.rs)
 
-### FRM-59 Status line yields to the operation area
-Fixture: `fx-rebase-conflict`
+### FRM-59 The footer leaves operation controls to the band
+Fixture: `fx-rebase-conflict`; `fx-rebase` (a running rewrite)
 Layer: visual
-- Then progress and **Resolve conflicts…/Continue/Skip/Abort** appear only in the two-line operation area under the toolbar; the footer does not duplicate them; panes below do not move as the stop changes
-Covered by (interaction): `panes_hold_still_while_a_rebase_stop_changes`, `rewrite_progress_lives_once_in_the_operation_area` (apps/git-good/src/main.rs)
+- Then **Resolve conflicts**, **Continue**, **Skip commit** and **Abort and restore** appear only in the two-line operation band under the toolbar; a running Continue is named in the band, not the footer; during a rewrite the footer reads `Backup: refs/gg/backup/…`; panes below do not move as the stop changes
+Covered by (interaction): `panes_hold_still_while_a_rebase_stop_changes`, `rewrite_progress_lives_once_in_the_operation_area`, `footer_labels_name_the_job_and_its_target` (apps/git-good/src/main.rs)
+
+### FRM-74 Footer job labels name the target
+Fixture: `fx-branchy`
+Layer: interaction
+- When a switch, a create, a stash-and-switch, a remote-branch checkout, a merge, or a rebase onto runs
+- Then the footer reads, with a spinner, `Switching to feature/login…`, `Creating feature/x…`, `Stashing 3 files and switching to feature/login…`, `Creating other from origin/other…`, `Merging origin/main into main…`, `Rebasing main onto origin/main…`; a merge or rebase that never stops shows no band and finishes with a receipt (`Merged origin/main into main · 3 commits`, `Rebased main onto origin/main`)
+Covered by (interaction): `footer_labels_name_the_job_and_its_target`, `the_switcher_runs_the_row_under_the_keyboard_cursor`, `rebase_worker_keeps_frames_rendering_while_a_hook_waits` (apps/git-good/src/main.rs)
+
+### FRM-75 A blocked switch is amber with Stash and switch
+Fixture: `fx-dirty`
+Layer: interaction
+- When a switch to `feature/rebase-ui` is blocked by 3 changed files
+- Then the footer is tinted amber: `Can’t switch to feature/rebase-ui: 3 changed files would be overwritten` with the primary **Stash and switch** (**Retry switch** when stashing is not the fix) and ×, which clears the retained intent
+Covered by (interaction): `a_blocked_switch_offers_stash_and_switch_in_amber`, `created_branch_is_reported_when_the_switch_is_blocked` (apps/git-good/src/main.rs)
 
 ### Automatic refresh
 
@@ -2310,14 +2324,14 @@ Covered by (backend, partial): `redacts_passwords_but_keeps_url_identity` (crate
 Fixture: proposed `fx-remote-slow`
 Layer: visual
 - When **Fetch** (or Clone/Push) runs
-- Then the status line shows the operation, the Git phase and a percentage (`· <phase> <n>%`) with **Cancel**, at a fixed height; long phase text is truncated with `…`
-Covered by (backend, interaction): `parses_bounded_progress_phases_and_percentages` (crates/git/src/sync.rs); `network_cancel_button_stays_inside_the_operation_area` (src/main.rs)
+- Then the footer names the job and target (`Fetching origin`, `Pushing <branch> to origin`, `Cloning <name>`), the Git phase, percentage and counts (`· Receiving objects 42% · 812/1930`) with a progress bar and **Cancel**, at a fixed height; long text is truncated with `…`
+Covered by (backend, interaction): `parses_bounded_progress_phases_and_percentages` (crates/git/src/sync.rs); `network_progress_reads_phase_percent_and_counts` (apps/git-good/src/footer.rs); `the_footer_shows_network_progress_then_cancelling` (apps/git-good/src/main.rs)
 
 ### NET-32 Cancel reports what happened and re-reads the repository
 Fixture: `fx-remote-slow`
 Layer: product
 - When **Cancel** is clicked (a) while the Fetch is queued, before Git starts; (b) during transfer; (c) after Git has updated refs, as the job finishes
-- Then the label changes to `Cancelling…` and the Git child is killed and reaped; in every case (gg does not tell them apart) gg re-reads refs, history and status (refs that moved are shown as moved; no rollback is attempted or implied) and the footer reads `Fetch from origin cancelled. gg re-read the repository; check what changed before retrying.`; **Retry fetch** is offered once the re-read finishes
+- Then the label changes to `Cancelling fetch…` and the Git child is killed and reaped; in every case (gg does not tell them apart) gg re-reads refs, history and status (refs that moved are shown as moved; no rollback is attempted or implied) and the footer reads `Fetch from origin cancelled. gg re-read the repository; check what changed before retrying.`; **Retry fetch** is offered once the re-read finishes
 Covered by (backend, interaction, partial): `cancelled_fetch_rereads_the_repository_before_offering_retry` (apps/git-good/src/main.rs); `cancellation_reports_cancel_without_a_receipt` (crates/git/tests/sync.rs) (the three cancel timings are not driven)
 
 ### NET-33 Network operations are serialized
@@ -2478,7 +2492,7 @@ Covered by (interaction): `stash_picker_keys_select_ask_to_drop_and_apply` (src/
 Fixture: `fx-stash-dirty` with the unstaged `a.txt` edit committed first (so Git applies and conflicts rather than refusing)
 Layer: product
 - When **Apply** runs on `stash@{0}`
-- Then `a.txt` contains conflict markers and is listed as conflicted, the footer reads `Restored stash@{0} · 1 conflict(s)` with **Resolve conflicts…**, the entry is kept, and no operation area with Continue/Skip/Abort appears
+- Then `a.txt` contains conflict markers and is listed as conflicted, the footer reads `Restored stash@{0} · 1 conflict` with **Stashes…**, the entry is kept, and no operation band with Continue/Skip/Abort appears
 Covered by (backend, partial): `apply_conflicts_keep_the_stash_and_report_paths` (crates/git/tests/stash.rs); GUI path not automated
 
 ### STA-18 Conflicting pop does not drop the entry
@@ -2577,27 +2591,28 @@ Layer: product
 - Then the remote-tracking merge works; the invalid references fail before Git runs with nonzero status
 Covered by (backend, partial): `rejects_option_shaped_and_missing_references` (crates/git/tests/merge.rs); GUI path not automated
 
-### INT-06 Merge conflict shows the operation area
+### INT-06 Merge conflict shows the operation band
 Fixture: `fx-merge-conflict`
 Layer: product
 - When gg opens the repository
-- Then a fixed two-line operation area under the toolbar reads `merge in progress · <commit> · 3 conflicts` with **Resolve conflicts…**, **Continue** (disabled, `Resolve every unmerged path first.`), and **Abort**; there is no **Skip**; the status line does not repeat these controls
-Covered by (interaction): `merge_operation_area_has_no_skip_at_either_width` (src/main.rs); `conflict_window_leaves_continuation_to_the_operation_area` (src/main.rs)
+- Then a fixed two-line amber band under the toolbar reads `Merge conflict · merging <ref> <8-char id> into main` with the status `3 conflicts left in 3 files` right after the title, then **Resolve conflicts** (filled primary), **Continue** (`Ctrl+Enter`, disabled, tooltip `Resolve and stage every conflicted file first`), and red **Abort and restore** (`Abort the merge and restore main to its previous tip`); there is no **Skip commit**; line 2 reads `Ours is main, Theirs is <ref>. Resolve and stage each file, then continue.`; the footer does not repeat these controls
+Covered by (interaction): `conflict_bands_name_the_operation_and_what_is_left`, `continue_is_the_primary_only_once_nothing_is_conflicted` (apps/git-good/src/operation_band.rs); `merge_operation_area_has_no_skip_at_either_width`, `conflict_window_leaves_continuation_to_the_operation_area` (apps/git-good/src/main.rs)
 
 ### INT-07 Merge abort restores the pre-merge state
 Fixture: `fx-merge-conflict`
 Layer: product
 - When **Abort** is clicked
-- Then HEAD, index and worktree match `main` before the merge, the operation area disappears, and the footer reads `Aborted merge`
+- Then HEAD, index and worktree match `main` before the merge, the band disappears, and the footer reads `Aborted merge`
 Covered by (backend, end-to-end, partial): `conflict_can_abort_and_continue` (crates/git/tests/merge.rs); `merge_cli_fast_forwards_conflicts_and_recovers` (tests/cli.rs)
 
 ### INT-08 Merge continue after all paths are resolved
 Fixture: `fx-merge-conflict`
 Layer: product
 - Given all three paths are resolved and staged
-- When **Continue** is clicked
-- Then a merge commit is created, the operation area disappears, history/refs/status refresh once, and the footer reads `Continued merge`
-Covered by (backend, partial): `conflict_can_abort_and_continue` (crates/git/tests/merge.rs); GUI path not automated
+- Then the band is purple: `Merge ready · merging <ref> <id> into main`, `All files staged`, `Continue writes the merge commit of <ref> into main.`, **Continue** the filled primary with `Ctrl+Enter`
+- When **Continue** (or `Ctrl+Enter`) is pressed
+- Then a merge commit is created, the band disappears, history/refs/status refresh once, and the footer reads `Continued merge`
+Covered by (backend, interaction, partial): `conflict_can_abort_and_continue` (crates/git/tests/merge.rs); `continue_is_the_primary_only_once_nothing_is_conflicted` (apps/git-good/src/operation_band.rs); GUI continue not driven
 
 ### INT-09 Cherry-pick onto HEAD applies the selected commit
 Fixture: `fx-branchy`
@@ -2613,11 +2628,11 @@ Layer: product
 - Then it is refused with `Use the Merge action for merge operations.`; nothing changes
 Covered by (Not automated)
 
-### INT-11 Cherry-pick conflict: operation area, Skip, Abort, Continue
+### INT-11 Cherry-pick conflict: band, Skip commit, Abort, Continue
 Fixture: `fx-cherry-pick-conflict`
 Layer: product
-- Then the operation area reads `cherry-pick in progress · … · 1 conflict` with **Resolve conflicts…**, **Continue** (disabled), **Skip** and **Abort**; **Abort** restores `main`; after resolving, **Continue** creates the commit; **Skip** drops it and ends the operation
-Covered by (backend, end-to-end, partial): `cherry_pick_conflict_can_abort_and_continue` (crates/git/tests/mutation.rs); `cherry_pick_cli_applies_conflicts_and_recovers` (tests/cli.rs)
+- Then the amber band reads `Cherry-pick conflict · applying <8-char id> onto main` · `1 conflict left in 1 file` with **Resolve conflicts**, **Continue** (disabled), **Skip commit** and **Abort and restore**, and line 2 `Theirs is the picked commit. Skip commit leaves it out and ends the cherry-pick.`; **Abort and restore** restores `main`; after resolving, **Continue** creates the commit; **Skip commit** drops it and ends the operation
+Covered by (backend, end-to-end, interaction, partial): `cherry_pick_conflict_can_abort_and_continue` (crates/git/tests/mutation.rs); `cherry_pick_cli_applies_conflicts_and_recovers` (tests/cli.rs); `mutation_banner_renders_at_supported_widths` (apps/git-good/src/main.rs)
 
 ### INT-12 Revert creates the inverse commit
 Fixture: `fx-linear`
@@ -2629,8 +2644,8 @@ Covered by (backend, end-to-end, partial): `revert_inverts_a_commit_and_can_skip
 ### INT-13 Revert conflict recovery
 Fixture: `fx-revert-conflict`
 Layer: product
-- Then the operation area reads `revert in progress …` with **Skip**; **Skip** ends with no new commit; **Abort** restores HEAD; side labels follow INT-19
-Covered by (backend, partial): `revert_inverts_a_commit_and_can_skip_a_conflict` (crates/git/tests/mutation.rs); GUI path not automated
+- Then the amber band reads `Revert conflict · reverting <8-char id> on main` with **Skip commit**; once nothing is conflicted it reads `Revert ready · …` with `Continue commits “Revert …” with Git’s message.`; **Skip commit** ends with no new commit; **Abort and restore** restores HEAD; side labels follow INT-19
+Covered by (backend, interaction, partial): `revert_inverts_a_commit_and_can_skip_a_conflict` (crates/git/tests/mutation.rs); `conflict_bands_name_the_operation_and_what_is_left` (apps/git-good/src/operation_band.rs); GUI path not driven
 
 ### INT-14 Cherry-pick/revert need a selected commit and a clean worktree
 Fixture: `fx-dirty`
@@ -2643,15 +2658,17 @@ Covered by (Not automated)
 Fixture: `fx-cherry-pick-conflict` (state created by command-line Git)
 Layer: interaction
 - When gg opens it
-- Then the operation area is present immediately; after `git cherry-pick --abort` in a terminal it disappears within ~300 ms without user action
+- Then the same operation band is present immediately; after `git cherry-pick --abort` in a terminal it disappears within ~300 ms without user action
 Covered by (Not automated)
 
-### INT-16 Resolve conflicts… opens the workspace in place and Esc returns
+### INT-16 The conflict workspace is the Changes view; Esc returns to the plain list
 Fixture: `fx-merge-conflict`, Local Changes open
 Layer: interaction
-- When **Resolve conflicts…** (operation area or **Changes → Resolve conflicts…**) is clicked
-- Then the conflict workspace replaces Local Changes under the operation area, the refs sidebar hides (its toggle still works), and **Close** or Esc returns to Local Changes; sizes do not change when switching files
-Covered by (interaction): `conflicts_open_in_the_main_workspace_and_hold_still` (src/main.rs); `conflict_view_renders_at_supported_widths` (src/main.rs)
+- When the band's **Resolve conflicts** (or **Changes → Resolve conflicts…**, or the Changes tab while conflicts exist) is clicked
+- Then the conflict workspace replaces Local Changes under the band with the Changes tab selected, the band hides **Resolve conflicts**, there is no Close and no heading, and the refs sidebar hides (its toggle still works)
+- When Esc is pressed
+- Then the plain changes list shows; the band's **Resolve conflicts** brings the workspace back; sizes do not change when switching files
+Covered by (interaction): `conflicts_open_in_the_main_workspace_and_hold_still`, `conflict_window_leaves_continuation_to_the_operation_area`, `conflict_view_renders_at_supported_widths` (apps/git-good/src/main.rs); `resolve_conflicts_hides_while_the_workspace_is_open` (apps/git-good/src/operation_band.rs)
 
 ### INT-17 Resolve conflicts… is disabled without conflicts
 Fixture: `fx-linear`
@@ -2659,24 +2676,26 @@ Layer: interaction
 - Then **Changes → Resolve conflicts…** is disabled with `No conflicts to resolve`
 Covered by (Not automated)
 
-### INT-18 Files panel lists CONFLICTED and RESOLVED, STAGED groups
+### INT-18 Files panel lists CONFLICTED, RESOLVED, STAGED and ALSO CHANGED
 Fixture: `fx-merge-conflict`
 Layer: interaction
-- Then the 300 px file list shows `CONFLICTED 3` with `!` rows (`src/app.rs`, `docs.md`, `logo.png`; the selected one shows `<n> left`), then `RESOLVED, STAGED 0`; after staging one path it moves under `RESOLVED, STAGED 1` marked ✓ and the next unresolved path is selected
-Covered by (interaction): `conflict_selection_prefers_the_next_path` (src/main.rs)
+- Then the 300 px file list shows 22 px rows: `CONFLICTED` with its count at the right and `!` rows in amber (`src/app.rs`, `docs.md`, `logo.png`), each with what is left (`2 left`, `ready`); `RESOLVED, STAGED 0`; `ALSO CHANGED BY THIS MERGE` with `~` rows for staged paths that are not conflicted; at the bottom the legend `In a merge, Ours is main, the branch you are on, and Theirs is <ref>, the branch coming in.`
+- And after staging one path it moves under `RESOLVED, STAGED 1` marked ✓ with **−**, and the next unresolved path is selected; with none left the list reads `All conflicts resolved. Continue with Ctrl+Enter.`
+Covered by (interaction): `conflict_selection_prefers_the_next_path`, `hand_edits_in_the_result_are_what_stage_resolution_stages_and_minus_reopens` (apps/git-good/src/main.rs); `markers_and_legend_name_the_sides` (apps/git-good/src/conflict_workspace.rs); `a_staged_resolution_reopens_as_a_conflict` (crates/git/tests/conflict.rs)
 
 ### INT-19 Ours and Theirs labels name their source (merge, cherry-pick, revert)
 Fixture: `fx-merge-conflict`; `fx-cherry-pick-conflict`; `fx-revert-conflict`
 Layer: product
-- Then block columns, the Whole file sources, side panes and narrow tabs name each side: merge `Ours (main)` / `Theirs (feature/login)` (the ref at `MERGE_HEAD`, else its short ID and subject); cherry-pick `Ours (main)` / `Theirs (<8-char id> <subject>)` of the picked commit; revert `Ours (main)` / `Theirs (<8-char id> <subject>)` of the reverted commit, with the hint `Ours is the current branch. Theirs is the reverted change.`; a detached HEAD reads `Ours (HEAD <8-char id>)`
-- And a name longer than 24 characters is shortened with `…` (`Theirs (1a2b3c4d Add the login…)`), the full label on hover; the block choice buttons keep their short labels and name both sides only in their tooltips (`Theirs (feature/login), then Ours (main)`); Ours is blue and Theirs amber, but the text alone identifies each side
-Covered by (backend, interaction, partial): `conflict_labels_name_both_sides_for_each_operation`, `conflict_workspace_shows_side_names` (apps/git-good/src/main.rs), `choice_tooltips_name_both_sides` (apps/git-good/src/conflict_blocks.rs); `side_names_follow_the_operation` (crates/git/tests/conflict.rs) (merge, rebase and cherry-pick names; revert and the detached case not checked)
+- Then block columns and the Whole file columns name each side: merge `Ours · main (current branch)` / `Theirs · origin/main (being merged)` (the ref at `MERGE_HEAD`, else its short ID); cherry-pick `Theirs · <8-char id> (picked commit)`; revert `Theirs · undo of <8-char id>`; a detached HEAD reads `Ours · HEAD <8-char id> (current branch)`
+- And the stage number and full identity are in the label's tooltip (`Stage 3 · 9a4f9a95 Add login`), not the text; the block choice tooltips name both sides (`Theirs · origin/main (being merged), then Ours · main (current branch)`); Ours is blue and Theirs amber, but the text alone identifies each side
+Covered by (backend, interaction, partial): `side_labels_name_the_real_refs_with_the_stage_in_the_tooltip` (apps/git-good/src/conflict_workspace.rs), `conflict_workspace_shows_side_names` (apps/git-good/src/main.rs), `choice_tooltips_name_both_sides` (apps/git-good/src/conflict_blocks.rs); `side_names_follow_the_operation` (crates/git/tests/conflict.rs)
 
 ### INT-20 Text file opens Block by block with Base/Ours/Theirs per block
 Fixture: `fx-merge-conflict`, `src/app.rs` selected
 Layer: visual
-- Then **Block by block** is selected, each block shows Base, Ours and Theirs side by side (stacked when narrow, indentation kept), its header names `line 10` in our version and `Conflict 1 of 1`, and lists **1 Ours**, **2 Theirs**, **3 Ours + theirs**, **4 Theirs + ours** at the right
-Covered by (backend, interaction): `blocks_know_their_start_lines_and_how_many_are_left` (src/conflict_blocks.rs); `blocks_split_the_conflict_and_compose_a_staged_resolution` (crates/git/tests/conflict.rs)
+- Then the file header reads the path, `1 conflict left`, **Block by block** (selected) | **Whole file**, **Open in editor**, **Refresh external edits**; each block is a bordered frame (amber until chosen, green after) whose header reads `Conflict 1/1` and `line 10` with **Ours**, **Theirs**, **Ours + theirs**, **Theirs + ours** at the right, then Base, Ours and Theirs in three equal columns
+- And a long line (`eframe = { version = "0.37", default-features = false, features = [...] }`) wraps inside its own column at 1120 and 720 px; no column paints over its neighbour
+Covered by (backend, interaction): `blocks_know_their_start_lines_and_how_many_are_left`, `long_lines_wrap_inside_their_column` (apps/git-good/src/conflict_blocks.rs); `blocks_split_the_conflict_and_compose_a_staged_resolution` (crates/git/tests/conflict.rs)
 
 ### INT-21 Keys 1–4 choose for the current block and advance
 Fixture: proposed `fx-merge-conflict-multi` (one file, three blocks)
@@ -2692,20 +2711,20 @@ Layer: interaction
 - Then current wraps to the first, then to the last, and the clicked block becomes current
 Covered by (interaction): `brackets_move_between_blocks_and_wrap` (src/conflict_blocks.rs)
 
-### INT-23 Result preview keeps markers for open blocks
+### INT-23 Result keeps named markers for open blocks
 Fixture: proposed `fx-merge-conflict-multi`
 Layer: product
 - Given only block 1 has a choice
-- Then the numbered **Result** preview shows block 1 resolved and blocks 2–3 with `<<<<<<< ours` / `||||||| base` / `=======` / `>>>>>>> theirs`; **Stage resolution** is disabled
-Covered by (backend, partial): `composes_choices_and_keeps_markers_for_open_blocks` (crates/engine/src/conflict.rs); GUI path not automated
+- Then the line-numbered **Result** shows block 1 resolved and blocks 2–3 with `<<<<<<< main` / `=======` / `>>>>>>> origin/main` in the warning tint with orange markers; **Stage resolution** is disabled
+Covered by (backend, interaction): `unresolved_blocks_carry_named_markers` (apps/git-good/src/conflict_result.rs); `markers_of_unresolved_blocks_take_the_warning_color` (apps/git-good/src/conflict_workspace.rs)
 
-### INT-24 Stage resolution publishes the composed text and stages the path
+### INT-24 Stage resolution publishes the Result and stages the path
 Fixture: `fx-merge-conflict`, `src/app.rs`
 Layer: product
-- Given every block has a choice
-- When **Stage resolution** (`Ctrl+S`) is pressed
-- Then the working file equals the Result preview (no markers), the path is staged (not unmerged), the footer reads `Resolved src/app.rs`, and the next unresolved path is selected
-Covered by (backend, interaction): `blocks_split_the_conflict_and_compose_a_staged_resolution` (crates/git/tests/conflict.rs); `conflict_staging_uses_the_operation_worker` (src/main.rs)
+- Given the Result has no markers left
+- When **Stage resolution** (`Ctrl+S`, also while typing in the Result) is pressed
+- Then the working file equals the Result, hand edits included, the path is staged (not unmerged), the footer reads `Resolved src/app.rs`, and the next unresolved path is selected
+Covered by (backend, interaction): `blocks_split_the_conflict_and_compose_a_staged_resolution` (crates/git/tests/conflict.rs); `hand_edits_in_the_result_are_what_stage_resolution_stages_and_minus_reopens`, `conflict_staging_uses_the_operation_worker` (apps/git-good/src/main.rs)
 
 ### INT-25 Blocks come from the index stages; a hand-edited working file is detected
 Fixture: `fx-merge-conflict` with `git config merge.conflictStyle zdiff3`; variant: working `src/app.rs` also edited by hand outside the conflict markers
@@ -2718,16 +2737,16 @@ Covered by (backend, interaction): `an_edited_working_file_offers_use_working_fi
 ### INT-26 Whole file sources only change the preview
 Fixture: `fx-merge-conflict`, `src/app.rs`
 Layer: product
-- When **Whole file** is chosen and Base, Ours, Theirs, Working are picked in turn
-- Then only **Result** changes (Working is the default), the note reads `Choosing a source only changes this preview. Stage resolution publishes it once.`, and the working file and index are unchanged until **Stage resolution**
-Covered by (backend, interaction): `conflict_preview_is_read_only_until_stage_resolution` (src/main.rs); `previewed_sides_publish_only_after_validation` (crates/git/tests/conflict.rs)
+- When **Whole file** is chosen and **Take ours**, **Take theirs**, **Keep working file** are picked in turn
+- Then only the read-only **Result** changes (Keep working file is the default; each column shows the side's size, `12 lines · text`), and the working file and index are unchanged until **Stage resolution**
+Covered by (backend, interaction): `conflict_preview_is_read_only_until_stage_resolution` (apps/git-good/src/main.rs); `previewed_sides_publish_only_after_validation` (crates/git/tests/conflict.rs)
 
 ### INT-27 External edit makes the preview stale
 Fixture: `fx-merge-conflict`, `src/app.rs` previewed in Whole file
 Layer: product
 - Given the file is changed on disk after the preview was read
 - When **Stage resolution** is pressed
-- Then nothing is written; the workspace and status line show `The conflict changed. Refresh external edits and retry.`; after **Refresh external edits** the new bytes preview and staging succeeds
+- Then nothing is written; the workspace and footer show `The conflict changed. Refresh external edits and retry.`; after **Refresh external edits** the new bytes preview and staging succeeds
 Covered by (backend, partial): `publish_rejects_changed_stages_or_working_bytes` (crates/git/tests/conflict.rs); `composed_resolution_refuses_a_changed_working_file` (crates/git/tests/conflict.rs)
 
 ### INT-28 Binary conflict has no blocks; whole-file sides apply
@@ -2771,19 +2790,19 @@ Layer: product
 - Then the stub receives `--line 1 <abs path>/src/app.rs`; with `myedit` (no `{file}`) the path is appended; an empty command uses `xdg-open`/`open`/`start`; gg does not wait, and the saved file is picked up by the watcher
 Covered by (interaction, partial): `the_file_goes_where_the_command_says_or_at_the_end` (src/editor.rs)
 
-### INT-34 All resolved: empty state and Continue enabled
+### INT-34 All resolved: the band turns purple and Continue is primary
 Fixture: `fx-merge-conflict`
 Layer: product
 - Given all three paths are staged in the workspace
-- Then the workspace's reserved line reads `All conflicts resolved.`, the operation area shows 0 conflicts and **Continue** is enabled
-Covered by (Not automated)
+- Then the file list reads `All conflicts resolved. Continue with Ctrl+Enter.`, the band is purple with `Merge ready · …` and `All files staged`, and **Continue** is the filled primary with `Ctrl+Enter`
+Covered by (interaction, partial): `continue_is_the_primary_only_once_nothing_is_conflicted` (apps/git-good/src/operation_band.rs); the workspace state not driven
 
-### INT-35 Duplicate and incompatible actions disabled while the worker runs
+### INT-35 A running Continue keeps the band in place
 Fixture: `fx-merge-conflict`
 Layer: interaction
 - When **Continue** is clicked
-- Then while it runs the area names it (`Continuing merge…`-style pending label) and Continue/Abort/Merge/Pull/Stash are disabled; a failure clears the pending label and keeps Git's state with **Details…**
-Covered by (Not automated)
+- Then while it runs the band keeps its layout: the icon becomes a spinner, the title reads `Continuing merge · merging …` (`Skipping cherry-pick`, `Aborting revert`), line 2 reads `Writing the merge commit…`, and every button stays in place disabled; Merge/Pull/Stash are disabled; a failure stays in the footer with **Details…** and keeps Git's state
+Covered by (interaction): `a_running_job_keeps_the_buttons_and_names_itself`, `the_busy_band_keeps_every_button_in_place` (apps/git-good/src/operation_band.rs)
 
 ### INT-36 Stage a conflicted path from Local Changes is refused
 Fixture: `fx-merge-conflict`
@@ -2797,9 +2816,36 @@ Covered by (interaction): `conflicts_and_staged_discards_are_refused_before_spaw
 ### INT-38 Rebase conflict labels name the base and the replayed commit
 Fixture: `fx-rebase-conflict` (step 4 of 6, replaying `<id> <subject>` onto `origin/main`)
 Layer: product
-- When **Resolve conflicts…** opens the conflicted file
-- Then block columns, Whole file sources and side panes read `Ours (onto origin/main)` and `Theirs (<8-char id> <subject>)`, shortened to 24 characters with `…` (full label on hover); the hint reads `Ours is the branch being rebased onto, with the commits replayed so far. Theirs is the commit being replayed.`; keys `1`/`2` choose the sides as labeled
-Covered by (backend, interaction, partial): `conflict_labels_name_both_sides_for_each_operation` (apps/git-good/src/main.rs); `side_names_follow_the_operation` (crates/git/tests/conflict.rs) (labels only; the rebase workspace and keys not driven)
+- When **Resolve conflicts** opens the conflicted file
+- Then block columns read `Ours · rewritten branch (onto origin/main)` and `Theirs · <8-char id> (replayed commit)` (the subject in the tooltip), the legend reads `In a rebase, Ours is the rewritten branch so far and Theirs is the commit being replayed.`, the footer's right reads `Abort restores <backup ref>`; keys `1`/`2` choose the sides as labeled
+Covered by (backend, interaction, partial): `side_labels_name_the_real_refs_with_the_stage_in_the_tooltip`, `markers_and_legend_name_the_sides` (apps/git-good/src/conflict_workspace.rs); `side_names_follow_the_operation` (crates/git/tests/conflict.rs) (the rebase workspace and keys not driven)
+
+### INT-39 The Result is editable and keeps hand edits
+Fixture: `fx-merge-conflict`, `src/app.rs`
+Layer: interaction
+- When the user types in the Result, then chooses an option for another block
+- Then only that block's region is rewritten and the typed text stays; choosing an option for a block already edited by hand asks first (`Replace edited block`, **Cancel** `Esc`, danger **Replace block**); `Ctrl+Z` undoes typing and choices together, `Ctrl+Y` redoes
+Covered by (interaction): `typing_in_the_result_edits_it_and_ctrl_z_undoes` (apps/git-good/src/main.rs); `an_option_replaces_only_its_block`, `undo_restores_text_and_origins_and_typing_coalesces`, `an_emptied_block_comes_back_in_place` (apps/git-good/src/conflict_result.rs); `a_hand_edited_block_asks_before_an_option_replaces_it` (apps/git-good/src/conflict_blocks.rs)
+
+### INT-40 Result lines are tinted by origin
+Fixture: `fx-merge-conflict`, `src/app.rs`
+Layer: visual
+- Given block 1 is **Ours + theirs** and block 2 is open
+- Then block 1's Ours lines carry the Ours tint (blue), its Theirs lines the Theirs tint (amber), block 2 the warning tint with orange markers, common lines none; a typed line turns neutral and the others keep their tint while typing
+Covered by (interaction): `origins_tint_each_line_and_stay_while_typing` (apps/git-good/src/conflict_result.rs); `markers_of_unresolved_blocks_take_the_warning_color` (apps/git-good/src/conflict_workspace.rs)
+
+### INT-41 − unstages a resolution back to conflicted
+Fixture: `fx-merge-conflict`, `src/app.rs` resolved and staged
+Layer: product
+- When **−** is clicked on its `RESOLVED, STAGED` row (tooltip `Unstage resolution · back to conflicted`)
+- Then Git recreates the conflict (markers back in the working file) and the path returns under `CONFLICTED`; a path with nothing to recreate is unstaged to a plain change
+Covered by (backend, interaction): `a_staged_resolution_reopens_as_a_conflict` (crates/git/tests/conflict.rs); `hand_edits_in_the_result_are_what_stage_resolution_stages_and_minus_reopens` (apps/git-good/src/main.rs)
+
+### INT-42 Workspace layout matches Final · Rebase conflict
+Fixture: `fx-merge-conflict` at 1440×900 and 1120×740
+Layer: visual
+- Then the left pane is 300 px with 22 px rows, the file header 28 px, the blocks take up to 60% of the height and scroll, and the Result fills the rest; the footer reads `1 / 2 / 3 / 4: ours · theirs · ours+theirs · theirs+ours`, `[ ]: previous / next conflict`, `Ctrl+S: stage file`, `Esc: changes list`, and at the right `Abort restores main to its tip before the merge`
+Covered by (Not automated; native screenshots against the mockup)
 
 ## Rewrite and recovery
 
@@ -3043,18 +3089,18 @@ Layer: product
 - Then the dialog closes, no rewrite job starts, no backup ref is created, HEAD is unchanged
 Covered by (interaction): `rebase_dialog_keys_choose_actions_and_start_only_when_valid` (apps/git-good/src/main.rs)
 
-### RWR-40 Start rebase runs in the background with one operation area
+### RWR-40 Start rebase runs in the background with one operation band
 Fixture: `fx-rebase`, a reorder plan
 Layer: interaction
 - When the user presses `Ctrl+Enter`
-- Then the dialog closes at once; the operation area alone reads **Rewriting commits…** (with `Browsing stays available`), then **Refreshing history…**; History stays browsable; duplicate rewrites are disabled; the area clears when the new history is adopted without the viewport jumping
-Covered by (interaction): `rewrite_progress_lives_once_in_the_operation_area`, `rewrite_refresh_clears_the_operation_area` (apps/git-good/src/main.rs)
+- Then the dialog closes at once; the purple band alone reads `Rewriting <branch> · step <n> of <m> · picking <8-char id>` with a spinner, `Browsing stays available; the old history is labelled until the new one is accepted.`, the step strip, and no buttons; the footer reads `Backup: refs/gg/backup/…`; then the band reads `Refreshing history…` (every step ✓) and the footer `Rewrote <n> commits · backup <ref>`; History stays browsable; duplicate rewrites are disabled; the band clears when the new history is adopted without the viewport jumping
+Covered by (interaction): `rewrite_progress_lives_once_in_the_operation_area`, `rewrite_refresh_clears_the_operation_area` (apps/git-good/src/main.rs); `the_rewrite_band_names_the_step_git_is_applying` (apps/git-good/src/operation_band.rs); `rewrite_reorders_commits_and_records_the_previous_tip` (crates/git/tests/rewrite.rs)
 
 ### RWR-41 A rewrite creates a private backup before Git runs
 Fixture: `fx-rebase`
 Layer: product
 - When a rewrite completes
-- Then `refs/gg/backup/rewrite/<unix-nanos>` points at the old HEAD; it is not shown in the sidebar or graph; the outcome lists `Backup: refs/gg/backup/rewrite/…`
+- Then `refs/gg/backup/rewrite/<unix-nanos>` points at the old HEAD before Git rewrites anything (the footer names it while Git runs); it is not shown in the sidebar or graph; the receipt reads `Rewrote <n> commits · backup refs/gg/backup/rewrite/…`
 Covered by (backend, partial): `rewrite_reorders_commits_and_records_the_previous_tip` (crates/git/tests/rewrite.rs); `backup_refs_point_at_the_previous_tip_and_stay_out_of_refs` (crates/git/tests/backup.rs)
 
 ### RWR-42 The post-rewrite follow-up matches the upstream relationship
@@ -3065,7 +3111,7 @@ Layer: product
 - When a pushed commit is reworded in `fx-remote-even` with **Offer force-with-lease after a rewrite** on
 - Then the follow-up is **Push with force-with-lease…**, opening the confirmation naming the lease commit (NET-22); with the preference off it is **Recovery…**
 - When a rewrite succeeds in `fx-rebase-local`, or leaves the branch even with its upstream
-- Then the follow-up is **Recovery…**, opening the Backups source; a rewrite that stops on conflicts offers **Resolve conflicts…** instead. gg reads the relation from local refs only (no fetch)
+- Then the follow-up is **Recovery…**, opening the Backups source; a rewrite that stops on conflicts shows the band, whose **Resolve conflicts** takes over. gg reads the relation from local refs only (no fetch)
 Covered by (backend, interaction, partial): `rewrite_follow_up_offers_the_push_the_result_needs`, `outcome_recovery_button_opens_backups` (apps/git-good/src/main.rs); `upstream_relation_reads_local_refs_only` (crates/git/tests/sync.rs), `upstream_relation_follows_ahead_and_behind_counts` (crates/engine/src/sync.rs) (the choice of follow-up; the lease confirmation it opens not driven)
 
 ### RWR-43 Rewrite failure keeps recovery reachable
@@ -3078,8 +3124,9 @@ Covered by (interaction): `rewrite_failure_keeps_backup_recovery_reachable`, `re
 ### RWR-44 Reopen stop band
 Fixture: `fx-rewrite-reopened` (stopped by gg's reopen at step 3 of 6)
 Layer: visual
-- Then the operation band is purple with a pause glyph; line 1 reads `Rebase stopped · step 3 of 6 · reopened <8-char id>` with **Continue** (`Ctrl+Enter`), **Skip commit**, **Abort and restore** (red); line 2 reads `Its changes are staged. Edit, unstage parts to split, then continue.`; line 3 shows step chips (`✓ <id> pick` for done, the current filled chip reading `reopen`, then next steps; subject on hover)
-Covered by (interaction): `reopened_commit_opens_local_changes_with_its_message_and_waits_to_continue` (apps/git-good/src/main.rs); `titles_name_the_stop` (apps/git-good/src/rebase_stop.rs)
+- Then the operation band is purple with a pause glyph; line 1 reads `Rebase stopped · step 3 of 6 · reopened <8-char id>` with **Continue** (`Ctrl+Enter`), **Skip commit**, **Abort and restore** (red); line 2 reads `Its changes are staged. Edit, unstage parts to split, then continue.` followed by the step chips (`✓ <id> pick` for done, the current filled chip reading `reopen`, then next steps; subject on hover)
+- And with a 12-step plan at 1120 and 720 px the strip shows `✓ n done`, the current chip, the next chips that fit, and `+N next` (the plan on hover), with no scroll area, never overlapping the explanation or leaving the band
+Covered by (interaction): `reopened_commit_opens_local_changes_with_its_message_and_waits_to_continue` (apps/git-good/src/main.rs); `titles_name_the_stop` (apps/git-good/src/rebase_stop.rs); `the_band_holds_its_lines_chips_and_status_without_clipping`, `the_strip_keeps_the_current_step_and_collapses_the_rest` (apps/git-good/src/operation_band.rs)
 
 ### RWR-45 Reopened commit opens Local Changes with its message
 Fixture: `fx-rewrite-reopened`
@@ -3094,13 +3141,13 @@ Covered by (interaction): `reopened_commit_opens_local_changes_with_its_message_
 Fixture: `fx-rewrite-reopened`
 Layer: product
 - When the user commits in two parts
-- Then the band lists `Commits made at this stop: <id> <subject>, …` and Local Changes shows `COMMITS MADE AT THIS STOP` under STAGED (wide) with 8-char IDs; once no tracked changes remain, **Continue** is enabled and highlighted blue
+- Then the band lists `Commits made at this stop: <id> <subject>, …` and Local Changes shows `COMMITS MADE AT THIS STOP` under STAGED (wide) with 8-char IDs; once no tracked changes remain, **Continue** is enabled as the filled blue primary
 Covered by (interaction): `commits_made_at_a_stop_are_listed_and_continue_is_ready` (apps/git-good/src/main.rs); `commits_made_at_a_rebase_stop_sit_under_the_lists` (apps/git-good/src/status_view.rs)
 
 ### RWR-48 Continue waits while tracked changes remain at a reopened stop
 Fixture: `fx-rewrite-reopened`
 Layer: product
-- Then **Continue** is disabled with `Commit or stash the 2 remaining changed files first.` beside it; `Ctrl+Enter` with no text field focused does nothing
+- Then **Continue** is disabled and the band's status reads `Commit or stash the 2 remaining changed files first.` at normal size; `Ctrl+Enter` with no text field focused does nothing
 Covered by (interaction): `continue_waits_for_conflicts_and_remaining_changes` (apps/git-good/src/rebase_stop.rs)
 
 ### RWR-49 Reopening a root commit stays at HEAD in amend mode
@@ -3113,8 +3160,8 @@ Covered by (backend, partial): `rewrite_reopen_of_a_root_commit_stays_at_head` (
 ### RWR-50 Conflict stop band
 Fixture: `fx-rebase-conflict`
 Layer: visual
-- Then the band is amber with a warning glyph; line 1 reads `Conflict · step 4 of 6 · applying <8-char id> <subject>` with **Resolve conflicts…**, **Continue** (disabled, `Resolve and stage 1 conflicted file first.`), **Skip commit**, **Abort and restore**; line 2 `Resolve each conflicted file and stage the result, then continue.`; **Recovery…** is not among the continuation buttons
-Covered by (interaction): `continue_waits_for_conflicts_and_remaining_changes`, `titles_name_the_stop` (apps/git-good/src/rebase_stop.rs); `rebase_operation_area_keeps_recovery_out_of_continuation` (apps/git-good/src/main.rs)
+- Then the band is amber with a warning glyph; line 1 reads `Conflict · step 4 of 6 · applying <8-char id> <subject>`, then the status `Resolve and stage 1 conflicted file first.` at normal size (the title truncates first; at 1120 px the status reads in full), then **Resolve conflicts** (filled primary, hidden while the workspace is open), **Continue** (disabled), **Skip commit**, **Abort and restore**; line 2 `Resolve each conflicted file and stage the result, then continue.` and the step chips, unclipped inside the band; **Recovery…** is not among the continuation buttons
+Covered by (interaction): `continue_waits_for_conflicts_and_remaining_changes`, `titles_name_the_stop`, `a_conflict_stop_offers_resolve_conflicts_until_the_workspace_opens` (apps/git-good/src/rebase_stop.rs); `the_band_holds_its_lines_chips_and_status_without_clipping` (apps/git-good/src/operation_band.rs); `rebase_operation_area_keeps_recovery_out_of_continuation` (apps/git-good/src/main.rs)
 
 ### RWR-51 Window title and branch button during a stop
 Fixture: `fx-rebase-edit`, then `fx-rebase-conflict`
@@ -4180,7 +4227,7 @@ Covered by (Not automated)
 Fixture: `fx-merge-conflict`, `src/app.rs` resolved and staged, block choices made but not staged in `docs.md`
 Layer: product
 - When gg is quit and reopened
-- Then the operation area reads `merge in progress · <commit> · 2 conflicts`; `src/app.rs` is under `RESOLVED, STAGED`; the unstaged choices were never written, so the working files of the open paths still hold their markers; **Continue** stays disabled; **Abort** restores the pre-merge state
+- Then the amber band reads `Merge conflict · merging <ref> <id> into main` · `2 conflicts left in 2 files`; `src/app.rs` is listed under `ALSO CHANGED BY THIS MERGE` (the session's RESOLVED, STAGED list starts empty); the unstaged choices were never written, so the working files of the open paths still hold their markers; **Continue** stays disabled; **Abort** restores the pre-merge state
 Covered by (Not automated)
 
 ### XCT-04 Kill gg during autostash restoration
@@ -4351,7 +4398,7 @@ Covered by (Not automated)
 Fixture: `fx-branchy`, a conflicting `feature/login` commit
 Layer: product
 - When **Cherry-pick onto HEAD** stops on a conflict, the path is resolved and staged in the GUI, and `git good cherry-pick --continue` runs in a terminal
-- Then the CLI receipt reports `applied: true`, `in_progress: false`, and gg's operation area clears without user action
+- Then the CLI receipt reports `applied: true`, `in_progress: false`, and gg's operation band clears without user action
 Covered by (Not automated)
 
 ### XCT-27 Reopened stop: CLI and GUI agree on Continue

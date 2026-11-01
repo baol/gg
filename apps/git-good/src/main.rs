@@ -12,6 +12,8 @@ mod commit_cli;
 mod commit_stats;
 mod conflict_blocks;
 mod conflict_cli;
+mod conflict_result;
+mod conflict_workspace;
 mod consequence;
 mod density;
 mod details_view;
@@ -23,6 +25,7 @@ mod file_history_view;
 mod file_history_worker;
 mod folder_picker;
 mod folders;
+mod footer;
 mod graph;
 mod history_view;
 mod init_cli;
@@ -37,6 +40,7 @@ mod mutation_cli;
 mod navigation;
 mod network;
 mod new_repository;
+mod operation_band;
 mod phosphor;
 mod reader;
 mod rebase_cli;
@@ -817,11 +821,8 @@ const SEARCH_FILE_LIMIT: usize = 50_000;
 /// Fixed height of the search results popup.
 const SEARCH_RESULTS_HEIGHT: f32 = 360.0;
 
-/// Width of the conflicted-paths list in the conflict workspace.
-const CONFLICT_PATHS_WIDTH: f32 = 300.0;
-
 /// Fixed height of the operation area: two lines.
-const OPERATION_AREA_HEIGHT: f32 = 44.0;
+const OPERATION_AREA_HEIGHT: f32 = operation_band::HEIGHT;
 
 /// Height of the menu bar row (final design: 26 px).
 const MENU_BAR_HEIGHT: f32 = 26.0;
@@ -934,17 +935,6 @@ fn is_repository(path: &Path) -> bool {
         .is_ok_and(|status| status.success())
 }
 
-/// Text with right-aligned line numbers, for the conflict Result preview.
-fn numbered(text: &str) -> String {
-    let lines = text.lines().count().max(1);
-    let width = lines.to_string().len();
-    text.lines()
-        .enumerate()
-        .map(|(index, line)| format!("{:>width$}  {line}", index + 1))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 /// `Name <email>` from the repository's Git config, for Preferences ›
 /// Commit; `None` when Git has no identity.
 /// `git version 2.x`, for Copy version info.
@@ -1053,6 +1043,15 @@ struct RewriteJob {
         >,
     >,
     restore_row: Option<usize>,
+    /// What the worker has seen so far: the backup, then Git's steps.
+    live: std::sync::Arc<std::sync::Mutex<RewriteLive>>,
+}
+
+/// A running rewrite as its worker reports it.
+#[derive(Default)]
+struct RewriteLive {
+    backup: Option<String>,
+    progress: Option<gg_engine::mutation::RebaseProgress>,
 }
 
 struct BranchDeleteDialog {
@@ -1096,15 +1095,14 @@ impl CreateBranchDialog {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum ConflictSide {
-    Base,
-    Ours,
-    Theirs,
-}
-
 enum ConflictUpdate {
-    Paths(Vec<String>),
+    /// The unmerged paths, the other staged paths, and the blocks left in
+    /// each unmerged path.
+    Paths {
+        paths: Vec<String>,
+        also: Vec<String>,
+        counts: std::collections::HashMap<String, usize>,
+    },
     Content {
         content: Box<gg_engine::conflict::Content>,
         snapshot: Box<gg_engine::conflict::Snapshot>,
@@ -1113,14 +1111,6 @@ enum ConflictUpdate {
         edited: bool,
         names: Option<gg_engine::conflict::SideNames>,
     },
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum ConflictTab {
-    Base,
-    Ours,
-    Theirs,
-    Result,
 }
 
 struct ConflictView {
@@ -1134,7 +1124,6 @@ struct ConflictView {
     worker: Option<std::sync::mpsc::Receiver<Result<ConflictUpdate, String>>>,
     snapshot: Option<gg_engine::conflict::Snapshot>,
     preview: gg_engine::conflict::Resolution,
-    tab: ConflictTab,
     /// Per-block choices for a text conflict.
     blocks: Option<conflict_blocks::Blocks>,
     /// Why this file has no text blocks.
@@ -1150,10 +1139,43 @@ struct ConflictView {
     confirm_replace: bool,
     /// Who Ours and Theirs are for the operation in progress.
     names: Option<gg_engine::conflict::SideNames>,
+    /// Staged paths that are not conflicted: what the operation changed.
+    also: Vec<String>,
+    /// Conflict blocks left in each unmerged path.
+    counts: std::collections::HashMap<String, usize>,
+    /// An option chosen for a block edited by hand, asking first.
+    confirm_block: Option<(usize, gg_engine::conflict::BlockChoice)>,
+}
+
+impl Default for ConflictView {
+    fn default() -> Self {
+        Self {
+            paths: Vec::new(),
+            selected: 0,
+            previous_selected: 0,
+            keep: None,
+            content: None,
+            error: None,
+            loading: false,
+            worker: None,
+            snapshot: None,
+            preview: gg_engine::conflict::Resolution::Working,
+            blocks: None,
+            blocks_note: None,
+            whole_file: false,
+            resolved: Vec::new(),
+            edited: false,
+            confirm_replace: false,
+            names: None,
+            also: Vec::new(),
+            counts: Default::default(),
+            confirm_block: None,
+        }
+    }
 }
 
 /// What **Stage resolution** publishes.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ConflictStage {
     /// The composed blocks, or the Whole file preview source.
     Preview,
@@ -1165,34 +1187,6 @@ fn next_conflict_selection(paths: &[String], keep: Option<&str>, previous: usize
     keep.and_then(|path| paths.iter().position(|candidate| candidate == path))
         .unwrap_or(previous)
         .min(paths.len().saturating_sub(1))
-}
-
-fn conflict_side_hint(operation: Option<gg_engine::mutation::Operation>) -> &'static str {
-    match operation {
-        Some(gg_engine::mutation::Operation::Merge) => {
-            "Ours is the current branch. Theirs is the branch being merged."
-        }
-        Some(gg_engine::mutation::Operation::Rebase) => {
-            "Ours is the branch being rebased onto, with the commits replayed so far. Theirs is the commit being replayed."
-        }
-        Some(gg_engine::mutation::Operation::CherryPick) => {
-            "Ours is the current branch. Theirs is the cherry-picked commit."
-        }
-        Some(gg_engine::mutation::Operation::Revert) => {
-            "Ours is the current branch. Theirs is the reverted change."
-        }
-        None => "Ours is stage 2. Theirs is stage 3.",
-    }
-}
-
-fn conflict_resolution_label(resolution: gg_engine::conflict::Resolution) -> &'static str {
-    match resolution {
-        gg_engine::conflict::Resolution::Base => "Base",
-        gg_engine::conflict::Resolution::Ours => "Ours",
-        gg_engine::conflict::Resolution::Theirs => "Theirs",
-        gg_engine::conflict::Resolution::Working => "Working file",
-        gg_engine::conflict::Resolution::Deletion => "Keep deletion",
-    }
 }
 
 fn conflict_preview_available(view: &ConflictView) -> bool {
@@ -1262,62 +1256,6 @@ fn conflict_preview_text(
     side.unwrap_or("(absent)").to_string()
 }
 
-/// Longest side identity shown in a label; the full one is on hover.
-const CONFLICT_NAME_CHARS: usize = 24;
-
-/// A side's label: `Ours (main)` or `Theirs (1a2b3c4d Add login…)` when the
-/// operation names it (shortened unless `full`), else what the side means.
-fn conflict_side_label(
-    operation: Option<gg_engine::mutation::Operation>,
-    side: ConflictSide,
-    names: Option<&gg_engine::conflict::SideNames>,
-    full: bool,
-) -> String {
-    let (title, name) = match side {
-        ConflictSide::Base => return "Base".into(),
-        ConflictSide::Ours => ("Ours", names.map(|names| names.ours.as_str())),
-        ConflictSide::Theirs => ("Theirs", names.map(|names| names.theirs.as_str())),
-    };
-    if let Some(name) = name.filter(|name| !name.is_empty()) {
-        let name = if full || name.chars().count() <= CONFLICT_NAME_CHARS {
-            name.to_string()
-        } else {
-            let kept = name
-                .chars()
-                .take(CONFLICT_NAME_CHARS - 1)
-                .collect::<String>();
-            format!("{}…", kept.trim_end())
-        };
-        return format!("{title} ({name})");
-    }
-    match (operation, side) {
-        (Some(gg_engine::mutation::Operation::Rebase), ConflictSide::Ours) => {
-            "Ours · rewritten branch (stage 2)"
-        }
-        (Some(gg_engine::mutation::Operation::Rebase), _) => "Theirs · replayed commit (stage 3)",
-        (Some(gg_engine::mutation::Operation::Merge), ConflictSide::Theirs) => {
-            "Theirs · incoming branch (stage 3)"
-        }
-        (_, ConflictSide::Ours) => "Ours · current branch (stage 2)",
-        (_, _) => "Theirs · incoming change (stage 3)",
-    }
-    .into()
-}
-
-fn conflict_block_labels(
-    operation: Option<gg_engine::mutation::Operation>,
-    names: Option<&gg_engine::conflict::SideNames>,
-) -> conflict_blocks::Labels {
-    let label = |side, full| conflict_side_label(operation, side, names, full);
-    conflict_blocks::Labels {
-        base: label(ConflictSide::Base, false),
-        ours: label(ConflictSide::Ours, false),
-        theirs: label(ConflictSide::Theirs, false),
-        ours_full: label(ConflictSide::Ours, true),
-        theirs_full: label(ConflictSide::Theirs, true),
-    }
-}
-
 #[derive(Clone, Copy)]
 enum MutationAction {
     Continue,
@@ -1325,32 +1263,26 @@ enum MutationAction {
     Abort,
 }
 
+/// What owns the operation band under the toolbar. Short jobs (network,
+/// branch work, a merge that never stops) report in the footer instead.
 enum OperationArea {
     Mutation {
         operation: gg_engine::mutation::Operation,
-        commit: Option<String>,
         conflicts: usize,
+        /// A worker runs; the band's buttons disable in place.
         pending: bool,
     },
     Rewrite {
         refreshing: bool,
     },
-    Worker {
-        label: String,
-    },
-    Network {
-        operation: gg_engine::sync::Operation,
-        progress: Option<gg_engine::sync::Progress>,
-        cancelling: bool,
-    },
-    Branch {
-        label: String,
-    },
 }
 
 enum OperationOutcome {
-    Merge(gg_engine::merge::Receipt),
-    Rebase(gg_engine::rebase::Receipt),
+    /// A merge or fast-forward: the receipt, the branch, and how many
+    /// commits it brought in.
+    Merge(gg_engine::merge::Receipt, String, Option<usize>),
+    /// A rebase of the named branch.
+    Rebase(gg_engine::rebase::Receipt, String),
     Recovery {
         operation: gg_engine::mutation::Operation,
         action: MutationAction,
@@ -1358,6 +1290,12 @@ enum OperationOutcome {
     },
     Conflict {
         file: String,
+    },
+    /// A staged resolution was undone; `conflicted` when Git recreated the
+    /// conflict.
+    Reopened {
+        file: String,
+        conflicted: bool,
     },
 }
 
@@ -1386,7 +1324,7 @@ enum OutcomeSeverity {
     Error,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RecoveryAction {
     Backups,
     ResolveConflicts,
@@ -1424,7 +1362,7 @@ fn recovery_label(action: RecoveryAction) -> &'static str {
         RecoveryAction::RetryPush => "Retry push",
         RecoveryAction::ManageStashes => "Stashes…",
         RecoveryAction::RetrySwitch => "Retry switch",
-        RecoveryAction::StashAndSwitch => "Stash and switch…",
+        RecoveryAction::StashAndSwitch => "Stash and switch",
         RecoveryAction::PullRebase => "Pull",
         RecoveryAction::ForcePush => "Push with force-with-lease…",
         RecoveryAction::Push => "Push",
@@ -1645,6 +1583,8 @@ struct Browser {
     mutation_path: Option<PathBuf>,
     outcome: Option<Outcome>,
     outcome_details_open: bool,
+    /// The receipt a notice field showed and when it appeared, for the fade.
+    notice_seen: Option<(String, std::time::Instant)>,
     #[cfg(debug_assertions)]
     screenshot_requested: bool,
     #[cfg(debug_assertions)]
@@ -1718,6 +1658,12 @@ struct Browser {
     pending: Option<stream::Worker>,
     /// The private backup the last rewrite saved; Abort restores it.
     rewrite_backup: Option<String>,
+    /// The last rewrite's branch and steps, kept for the refresh band.
+    rewrite_steps: (String, Vec<operation_band::Step>),
+    /// The Continue, Skip, or Abort the operation worker is running.
+    mutation_busy: Option<operation_band::Command>,
+    /// Conflict blocks per unmerged path, as the workspace last read them.
+    conflict_counts: std::collections::HashMap<String, usize>,
     /// Watches the open repository; settled changes refresh what they touch.
     watcher: Option<watcher::Watcher>,
     /// When the history last started loading, so a ref change it already
@@ -1808,6 +1754,7 @@ impl Browser {
             track_dialog: None,
             stash_dialog: None,
             stash_notice: None,
+            notice_seen: None,
             mutation: None,
             mutation_notice: None,
             mutation_error: None,
@@ -1892,6 +1839,9 @@ impl Browser {
             watcher: None,
             last_load: None,
             rewrite_backup: None,
+            rewrite_steps: Default::default(),
+            mutation_busy: None,
+            conflict_counts: Default::default(),
             pending_filter_edit: false,
             worker: None,
             staged: None,
@@ -1927,6 +1877,7 @@ impl Browser {
             return;
         };
         let target_name = name.clone();
+        let label_name = name.clone();
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         let repaint = ctx.clone();
         match std::thread::Builder::new()
@@ -1942,11 +1893,12 @@ impl Browser {
             }) {
             Ok(_) => {
                 self.branch = Some(rx);
+                self.clear_failure();
                 self.branch_target = Some((target_name, create));
                 self.branch_label = Some(if create {
-                    "Creating branch…".into()
+                    format!("Creating {label_name}…")
                 } else {
-                    "Switching branch…".into()
+                    format!("Switching to {label_name}…")
                 });
                 self.branch_error = None;
                 self.branch_warning = None;
@@ -1974,6 +1926,7 @@ impl Browser {
             return;
         };
         let target_name = name.clone();
+        let target = name.clone();
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         let repaint = ctx.clone();
         match std::thread::Builder::new()
@@ -1985,8 +1938,15 @@ impl Browser {
             }) {
             Ok(_) => {
                 self.branch = Some(rx);
+                self.clear_failure();
                 self.branch_target = Some((target_name, false));
-                self.branch_label = Some("Stashing changes and switching branch…".into());
+                self.branch_label = Some(match self.changed_files() {
+                    Some(count) => format!(
+                        "Stashing {} and switching to {target}…",
+                        operation_band::plural(count, "file")
+                    ),
+                    None => format!("Stashing changes and switching to {target}…"),
+                });
                 self.branch_error = None;
                 self.branch_warning = None;
             }
@@ -2040,10 +2000,13 @@ impl Browser {
             target.remote.clone(),
             target.branch.clone(),
             self.prefs.fetch_prune,
-        ) {
+        )
+        .map(|worker| worker.labelled(format!("Fetching {}", target.remote)))
+        {
             Ok(worker) => {
                 self.pull_rebase = Some(target);
                 self.network = Some(worker);
+                self.clear_failure();
                 self.network_progress = None;
                 self.network_error = None;
                 self.network_notice = None;
@@ -2065,6 +2028,10 @@ impl Browser {
             self.branch_error = Some("Open a repository before tracking a remote branch".into());
             return;
         };
+        let label = match remote_branch.split_once('/') {
+            Some((_, local)) => format!("Creating {local} from {remote_branch}…"),
+            None => format!("Creating {remote_branch}…"),
+        };
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         let repaint = ctx.clone();
         match std::thread::Builder::new()
@@ -2076,7 +2043,8 @@ impl Browser {
             }) {
             Ok(_) => {
                 self.branch = Some(rx);
-                self.branch_label = Some("Creating tracking branch…".into());
+                self.clear_failure();
+                self.branch_label = Some(label);
                 self.branch_error = None;
                 self.branch_warning = None;
             }
@@ -2100,9 +2068,15 @@ impl Browser {
             self.network_error = Some("Open a repository before fetching".into());
             return;
         };
-        match network::Worker::fetch(ctx, path, remote, prune) {
+        let label = format!(
+            "Fetching {}",
+            remote.clone().unwrap_or_else(|| self.tracking_remote())
+        );
+        match network::Worker::fetch(ctx, path, remote, prune).map(|worker| worker.labelled(label))
+        {
             Ok(worker) => {
                 self.network = Some(worker);
+                self.clear_failure();
                 self.network_progress = None;
                 self.network_error = None;
                 self.network_notice = None;
@@ -2126,9 +2100,17 @@ impl Browser {
             return;
         };
         let set_upstream = self.state.refs.current_tracking().is_none();
-        match network::Worker::push(ctx, path, None, None, set_upstream, None) {
+        let label = format!(
+            "Pushing {} to {}",
+            self.current_branch_name(),
+            self.tracking_remote()
+        );
+        match network::Worker::push(ctx, path, None, None, set_upstream, None)
+            .map(|worker| worker.labelled(label))
+        {
             Ok(worker) => {
                 self.network = Some(worker);
+                self.clear_failure();
                 self.network_progress = None;
                 self.network_error = None;
                 self.network_notice = None;
@@ -2170,6 +2152,7 @@ impl Browser {
             return;
         };
         self.force_push_pending = true;
+        let label = format!("Force-pushing {} to {}", dialog.branch, dialog.remote);
         match network::Worker::push(
             ctx,
             path,
@@ -2177,9 +2160,12 @@ impl Browser {
             Some(dialog.branch),
             false,
             Some(dialog.lease),
-        ) {
+        )
+        .map(|worker| worker.labelled(label))
+        {
             Ok(worker) => {
                 self.network = Some(worker);
+                self.clear_failure();
                 self.network_progress = None;
                 self.network_error = None;
                 self.network_notice = None;
@@ -2234,7 +2220,10 @@ impl Browser {
             });
         if submit && let Some(path) = self.state.history.as_ref().map(|h| h.path.clone()) {
             self.delete_remote = None;
-            match network::Worker::delete_remote(ctx, path, remote, branch, commit) {
+            let label = format!("Deleting {branch} on {remote}");
+            match network::Worker::delete_remote(ctx, path, remote, branch, commit)
+                .map(|worker| worker.labelled(label))
+            {
                 Ok(worker) => {
                     self.network = Some(worker);
                     self.network_progress = None;
@@ -3155,9 +3144,13 @@ impl Browser {
             return;
         }
         self.force_push_pending = false;
-        match network::Worker::clone(ctx, url, destination) {
+        let name = gg_engine::sync::repository_name(&url).unwrap_or_else(|| url.clone());
+        match network::Worker::clone(ctx, url, destination)
+            .map(|worker| worker.labelled(format!("Cloning {name}")))
+        {
             Ok(worker) => {
                 self.network = Some(worker);
+                self.clear_failure();
                 self.network_progress = None;
                 self.network_error = None;
                 self.network_notice = None;
@@ -3385,8 +3378,8 @@ impl Browser {
             format!("Restored {reference}")
         } else {
             format!(
-                "Restored {reference} · {} conflict(s)",
-                receipt.conflicts.len()
+                "Restored {reference} · {}",
+                operation_band::plural(receipt.conflicts.len(), "conflict")
             )
         };
         self.stash_notice = Some(summary.clone());
@@ -5603,6 +5596,7 @@ impl Browser {
         if self.working_mutation_pending() {
             return;
         }
+        self.conflict_view = None;
         if let Some(working) = &mut self.working
             && let Some(id) = working.take_commit()
         {
@@ -5651,6 +5645,7 @@ impl Browser {
         self.stash_notice = None;
         self.branch_warning = None;
         self.operation_worker = None;
+        self.mutation_busy = None;
         self.operation_repo = None;
         self.operation_restore_row = None;
         self.rewrite_job = None;
@@ -6046,22 +6041,14 @@ impl Browser {
         }
     }
 
-    /// The one operation currently owning the strip beneath navigation.
+    /// The operation owning the band beneath the toolbar: one Git holds open,
+    /// or a rewrite while it runs and its history is read.
     fn operation_area(&self) -> Option<OperationArea> {
-        if self.operation_worker.is_some() {
-            return Some(OperationArea::Worker {
-                label: self
-                    .mutation_notice
-                    .clone()
-                    .unwrap_or_else(|| "Working…".into()),
-            });
-        }
         if let Some(state) = &self.mutation {
             return Some(OperationArea::Mutation {
                 operation: state.operation,
-                commit: state.commit.as_deref().map(|id| self.commit_summary(id)),
                 conflicts: state.conflicts.len(),
-                pending: false,
+                pending: self.operation_busy() || self.network.is_some() || self.branch.is_some(),
             });
         }
         if self.rewrite_job.is_some() {
@@ -6070,18 +6057,364 @@ impl Browser {
         if self.rewrite_refresh.is_some() {
             return Some(OperationArea::Rewrite { refreshing: true });
         }
-        if let Some(worker) = &self.network {
-            return Some(OperationArea::Network {
-                operation: worker.operation,
-                progress: self.network_progress.clone(),
-                cancelling: worker.is_cancelled(),
-            });
-        }
-        self.branch_label
+        None
+    }
+
+    /// Changed files in the working tree, when known.
+    fn changed_files(&self) -> Option<usize> {
+        self.local_summary
             .as_ref()
-            .map(|label| OperationArea::Branch {
-                label: label.clone(),
+            .and_then(|summary| summary.changes)
+    }
+
+    /// The current branch's remote, else `origin`.
+    fn tracking_remote(&self) -> String {
+        self.state
+            .refs
+            .current_tracking()
+            .map(|tracking| tracking.remote.clone())
+            .unwrap_or_else(|| "origin".into())
+    }
+
+    /// The current branch's short name, or `HEAD` when detached.
+    fn current_branch_name(&self) -> String {
+        self.state
+            .refs
+            .head
+            .as_ref()
+            .and_then(|head| head.name.as_deref())
+            .map(|name| name.strip_prefix("refs/heads/").unwrap_or(name).to_string())
+            .unwrap_or_else(|| "HEAD".into())
+    }
+
+    /// The ref a commit is known by other than the current branch: a
+    /// branch, then a remote branch, then a tag.
+    fn ref_for_commit(&self, commit: &str) -> Option<String> {
+        let current = self
+            .state
+            .refs
+            .head
+            .as_ref()
+            .and_then(|head| head.name.clone());
+        let candidates = self
+            .state
+            .refs
+            .for_commit(commit)
+            .filter(|item| Some(&item.full_name) != current.as_ref())
+            .collect::<Vec<_>>();
+        [
+            gg_engine::refs::RefKind::Branch,
+            gg_engine::refs::RefKind::Remote,
+            gg_engine::refs::RefKind::Tag,
+        ]
+        .into_iter()
+        .find_map(|kind| candidates.iter().find(|item| item.kind == kind))
+        .map(|item| item.name.clone())
+    }
+
+    /// The band for a merge, cherry-pick, or revert Git holds open.
+    fn mutation_band(&self) -> Option<operation_band::Band> {
+        let state = self.mutation.as_ref()?;
+        let pending = self.operation_busy() || self.network.is_some() || self.branch.is_some();
+        let current = self.current_branch_name();
+        let incoming = (state.operation == gg_engine::mutation::Operation::Merge)
+            .then(|| {
+                state
+                    .commit
+                    .as_deref()
+                    .and_then(|id| self.ref_for_commit(id))
             })
+            .flatten();
+        let blocks = state
+            .conflicts
+            .iter()
+            .map(|path| {
+                self.conflict_view
+                    .as_ref()
+                    .filter(|view| view.paths.get(view.selected) == Some(path))
+                    .and_then(|view| view.blocks.as_ref().map(conflict_blocks::Blocks::left))
+                    .or_else(|| {
+                        self.conflict_view
+                            .as_ref()
+                            .and_then(|view| view.counts.get(path).copied())
+                    })
+                    .or_else(|| self.conflict_counts.get(path).copied())
+                    .unwrap_or(1)
+            })
+            .sum::<usize>();
+        // Every staged file still counts until Git sees it resolved.
+        let files = state.conflicts.len();
+        Some(operation_band::mutation_band(
+            &operation_band::Subject {
+                operation: state.operation,
+                current: &current,
+                incoming: incoming.as_deref(),
+                commit: state.commit.as_deref(),
+            },
+            operation_band::Conflicts {
+                files,
+                blocks: blocks.max(files),
+            },
+            self.conflict_view.is_some(),
+            pending,
+            self.mutation_busy,
+            Vec::new(),
+        ))
+    }
+
+    /// The band while a rewrite runs, then while its history is read.
+    fn rewrite_band(&self, refreshing: bool) -> operation_band::Band {
+        let (branch, planned) = &self.rewrite_steps;
+        let live = self
+            .rewrite_job
+            .as_ref()
+            .and_then(|job| job.live.lock().ok().and_then(|live| live.progress.clone()));
+        let steps = match live {
+            Some(progress) => operation_band::steps_from_progress(&progress),
+            None => planned.clone(),
+        };
+        let branch = if branch.is_empty() {
+            self.current_branch_name()
+        } else {
+            branch.clone()
+        };
+        operation_band::rewrite_band(&branch, steps, refreshing)
+    }
+
+    /// The one message the footer shows: a failure, then something
+    /// blocked, then a running job, then a receipt (for 8 s), then the key
+    /// hints.
+    fn footer_message(&self, narrow: bool) -> footer::Message {
+        use footer::{Act, Message, Tone, button};
+        let rereading = self.pending.is_some();
+        let with_actions = |mut message: Message, outcome: &Outcome| {
+            if let Some(action) = outcome.recovery {
+                let mut recovery = button(
+                    recovery_label(action),
+                    Act::Recovery(action),
+                    outcome.severity != OutcomeSeverity::Info,
+                );
+                // A network retry waits until the repository was re-read.
+                if rereading
+                    && matches!(
+                        action,
+                        RecoveryAction::RetryFetch | RecoveryAction::RetryPush
+                    )
+                {
+                    recovery.enabled = false;
+                    recovery.tip = "Wait for gg to re-read the repository".into();
+                }
+                message.buttons.push(recovery);
+            }
+            if outcome.details.is_some() {
+                message
+                    .buttons
+                    .push(button("Details…", Act::Details, false));
+            }
+            message.dismiss = true;
+            message
+        };
+        let failure = |text: &str| {
+            let mut message = Message::split(Tone::Failed, text);
+            message.dismiss = true;
+            message
+        };
+        // Failures.
+        if let Some(outcome) = self
+            .outcome
+            .as_ref()
+            .filter(|outcome| outcome.severity == OutcomeSeverity::Error)
+        {
+            return with_actions(Message::split(Tone::Failed, &outcome.summary), outcome);
+        }
+        if let Some(error) = &self.network_error {
+            return failure(error);
+        }
+        if let Some(error) = self
+            .state
+            .error
+            .as_ref()
+            .filter(|_| self.state.history.is_some() || self.pending.is_some())
+        {
+            let mut message = failure(error);
+            if self.state.history.is_some() {
+                message.tail = " · showing previous results".into();
+            }
+            message.dismiss = false;
+            return message;
+        }
+        if let Some(error) = self.branch_error.as_ref().or(self.mutation_error.as_ref()) {
+            return failure(error);
+        }
+        // Blocked.
+        if let Some(outcome) = self
+            .outcome
+            .as_ref()
+            .filter(|outcome| outcome.severity == OutcomeSeverity::Warning)
+        {
+            return with_actions(Message::split(Tone::Blocked, &outcome.summary), outcome);
+        }
+        if let Some(warning) = &self.branch_warning {
+            let mut message = Message::split(Tone::Blocked, warning);
+            message.dismiss = true;
+            return message;
+        }
+        // Running jobs. A band names its own Continue, Skip, or Abort.
+        if self.operation_worker.is_some() && self.mutation_busy.is_none() {
+            return Message::new(
+                Tone::Progress,
+                self.mutation_notice
+                    .clone()
+                    .unwrap_or_else(|| "Working…".into()),
+            );
+        }
+        if let Some(worker) = &self.network {
+            if worker.is_cancelled() {
+                let mut message = Message::new(
+                    Tone::Progress,
+                    format!("Cancelling {}…", worker.operation.as_str()),
+                );
+                message.right = "waits for Git to stop".into();
+                return message;
+            }
+            let mut message = match &self.network_progress {
+                Some(progress) => {
+                    let mut message = Message::new(Tone::Progress, worker.label.clone());
+                    (message.tail, message.bar) = footer::progress_tail(progress);
+                    message.bar = message.bar.or(Some(0.0));
+                    message
+                }
+                None => Message::new(
+                    Tone::Progress,
+                    format!("Starting {}…", worker.operation.as_str()),
+                ),
+            };
+            message.buttons.push(button("Cancel", Act::Cancel, false));
+            return message;
+        }
+        if let Some(label) = &self.branch_label {
+            return Message::new(Tone::Progress, label.clone());
+        }
+        if let Some(backup) = self
+            .rewrite_job
+            .as_ref()
+            .and_then(|job| job.live.lock().ok().and_then(|live| live.backup.clone()))
+        {
+            return Message::new(Tone::Idle, format!("Backup: {backup}"));
+        }
+        if self.pending.is_some() {
+            let mut message = Message::new(
+                Tone::Progress,
+                format!(
+                    "Reading {}",
+                    welcome_view::tilde(
+                        self.state
+                            .requested
+                            .as_deref()
+                            .unwrap_or(std::path::Path::new(".")),
+                        std::env::var("HOME").ok().as_deref()
+                    )
+                ),
+            );
+            if self.state.history.is_some() {
+                message.tail = " · showing previous results".into();
+            }
+            return message;
+        }
+        if !self.state.finished && self.worker.is_some() {
+            return Message::new(
+                Tone::Progress,
+                format!(
+                    "{} · {} commits examined",
+                    if self.state.query.is_empty() {
+                        "Counting history"
+                    } else {
+                        "Searching history"
+                    },
+                    self.state.scanned
+                ),
+            );
+        }
+        // Receipts, until they fade.
+        if let Some(outcome) = &self.outcome {
+            return with_actions(Message::split(Tone::Success, &outcome.summary), outcome);
+        }
+        if let Some((notice, _)) = self
+            .notice_seen
+            .as_ref()
+            .filter(|(_, at)| at.elapsed() < SUCCESS_FADE)
+        {
+            let mut message = Message::split(Tone::Success, notice);
+            message.dismiss = true;
+            return message;
+        }
+        let hints = if self.state.history.is_none() && !self.recent.is_empty() && narrow {
+            "Up/Down, Enter: open   ·   Del: remove   ·   Ctrl+O: open"
+        } else if self.state.history.is_none() && !self.recent.is_empty() {
+            "Up/Down: choose   ·   Enter: open   ·   Del: remove from recent   ·   Ctrl+O: open   ·   Ctrl+K: search   ·   ?: shortcuts"
+        } else if self.state.history.is_none() {
+            "Ctrl+O: open   ·   Ctrl+K: search   ·   ?: shortcuts"
+        } else if narrow {
+            "j/k: select · Enter: review · Space: details · Esc: history · Ctrl/Cmd+F: filter"
+        } else {
+            "j k: select   ·   Enter: review   ·   Alt+A: actions   ·   R: rebase from here   ·   Ctrl+K: search   ·   Ctrl/Cmd+F: filter   ·   Ctrl/Cmd+C: copy ID"
+        };
+        let mut message = Message::new(Tone::Idle, hints);
+        message.changes = self.changed_files();
+        message
+    }
+
+    /// The receipt a notice field holds now; a new one restarts the fade.
+    fn track_notice(&mut self) {
+        let current = self
+            .network_notice
+            .clone()
+            .or_else(|| self.stash_notice.clone())
+            .or_else(|| {
+                self.operation_worker
+                    .is_none()
+                    .then(|| self.mutation_notice.clone())
+                    .flatten()
+            });
+        match current {
+            Some(text) if self.notice_seen.as_ref().map(|(seen, _)| seen) != Some(&text) => {
+                self.notice_seen = Some((text, std::time::Instant::now()));
+            }
+            Some(_) => {}
+            None => self.notice_seen = None,
+        }
+    }
+
+    /// A failure stays in the footer until it is dismissed or the next job
+    /// starts.
+    fn clear_failure(&mut self) {
+        if self
+            .outcome
+            .as_ref()
+            .is_some_and(|outcome| outcome.severity == OutcomeSeverity::Error)
+        {
+            self.dismiss_outcome();
+        }
+    }
+
+    /// Dismiss what the footer shows.
+    fn dismiss_footer(&mut self) {
+        if self.outcome.is_some() {
+            self.dismiss_outcome();
+        } else if self.network_error.is_some() {
+            self.network_error = None;
+        } else if self.branch_error.is_some() {
+            self.branch_error = None;
+        } else if self.mutation_error.is_some() {
+            self.mutation_error = None;
+        } else if self.branch_warning.is_some() {
+            self.branch_warning = None;
+        } else {
+            self.network_notice = None;
+            self.stash_notice = None;
+            self.mutation_notice = None;
+            self.notice_seen = None;
+        }
     }
 
     fn dismiss_outcome(&mut self) {
@@ -6296,6 +6629,7 @@ impl Browser {
             })
             .map_err(|error| format!("Start operation: {error}"))?;
         self.operation_worker = Some(rx);
+        self.clear_failure();
         self.operation_repo = self.stash_path();
         self.operation_restore_row = self.state.selected_row;
         self.mutation_error = None;
@@ -6307,72 +6641,43 @@ impl Browser {
         let restore_row = self.operation_restore_row.take();
         self.refresh_local_summary(ctx);
         match outcome {
-            OperationOutcome::Merge(receipt) => {
+            OperationOutcome::Merge(receipt, branch, incoming) => {
+                let commits = incoming
+                    .filter(|count| *count > 0)
+                    .map(|count| format!(" · {}", operation_band::plural(count, "commit")))
+                    .unwrap_or_default();
                 let summary = match receipt.kind {
                     Some(gg_engine::merge::Kind::UpToDate) => {
-                        format!("Merge {} · already up to date", receipt.reference)
+                        format!("{branch} is already up to date with {}", receipt.reference)
                     }
                     Some(gg_engine::merge::Kind::FastForward) => {
-                        format!("Fast-forwarded to {}", receipt.reference)
+                        format!("Fast-forwarded {branch} to {}{commits}", receipt.reference)
                     }
-                    Some(gg_engine::merge::Kind::MergeCommit) => {
-                        format!("Merged {} as a merge commit", receipt.reference)
-                    }
-                    None => format!(
-                        "Merged {}{}",
-                        receipt.reference,
-                        if receipt.conflicts.is_empty() {
-                            String::new()
-                        } else {
-                            format!(" · {} conflict(s)", receipt.conflicts.len())
-                        }
-                    ),
+                    _ => format!("Merged {} into {branch}{commits}", receipt.reference),
                 };
-                self.mutation_notice = Some(summary.clone());
-                let conflicts = !receipt.conflicts.is_empty();
-                self.set_outcome(
-                    if conflicts {
-                        OutcomeSeverity::Warning
-                    } else {
-                        OutcomeSeverity::Info
-                    },
-                    summary,
-                    conflicts.then(|| receipt.conflicts.join("\n")),
-                    conflicts.then_some(RecoveryAction::ResolveConflicts),
-                );
+                // A merge Git stopped is the band's to report.
+                if receipt.conflicts.is_empty() && !receipt.in_progress {
+                    self.mutation_notice = Some(summary.clone());
+                    self.set_outcome(OutcomeSeverity::Info, summary, None, None);
+                } else {
+                    self.mutation_notice = None;
+                }
                 self.conflict_view = None;
                 self.restore_row = restore_row;
                 self.refresh_mutation();
                 self.load(ctx);
                 self.refresh_working(ctx);
             }
-            OperationOutcome::Rebase(receipt) => {
+            OperationOutcome::Rebase(receipt, branch) => {
                 self.rebase_target = None;
-                let summary = if receipt.in_progress {
-                    format!(
-                        "Rebasing onto {}{}",
-                        receipt.reference,
-                        if receipt.conflicts.is_empty() {
-                            String::new()
-                        } else {
-                            format!(" · {} conflict(s)", receipt.conflicts.len())
-                        }
-                    )
+                // A rebase Git stopped is the band's to report.
+                if receipt.in_progress || !receipt.conflicts.is_empty() {
+                    self.mutation_notice = None;
                 } else {
-                    format!("Rebased onto {}", receipt.reference)
-                };
-                self.mutation_notice = Some(summary.clone());
-                let conflicts = !receipt.conflicts.is_empty();
-                self.set_outcome(
-                    if conflicts {
-                        OutcomeSeverity::Warning
-                    } else {
-                        OutcomeSeverity::Info
-                    },
-                    summary,
-                    conflicts.then(|| receipt.conflicts.join("\n")),
-                    conflicts.then_some(RecoveryAction::ResolveConflicts),
-                );
+                    let summary = format!("Rebased {branch} onto {}", receipt.reference);
+                    self.mutation_notice = Some(summary.clone());
+                    self.set_outcome(OutcomeSeverity::Info, summary, None, None);
+                }
                 self.conflict_view = None;
                 self.restore_row = restore_row;
                 self.refresh_mutation();
@@ -6395,36 +6700,38 @@ impl Browser {
                 self.load(ctx);
                 self.refresh_working(ctx);
             }
+            OperationOutcome::Reopened { file, conflicted } => {
+                let summary = if conflicted {
+                    format!("Reopened the conflict in {file}")
+                } else {
+                    format!("Unstaged {file}")
+                };
+                self.set_outcome(OutcomeSeverity::Info, summary, None, None);
+                self.refresh_mutation();
+                if let Some(view) = &mut self.conflict_view {
+                    view.resolved.retain(|path| path != &file);
+                }
+                self.refresh_conflict_view(ctx, conflicted.then_some(file.as_str()));
+                self.load(ctx);
+                self.refresh_working(ctx);
+            }
             OperationOutcome::Recovery {
                 operation,
                 action,
                 receipt,
             } => {
-                let summary = if receipt.conflicts.is_empty() {
-                    match action {
+                // Git stopping again is the band's to report.
+                if receipt.conflicts.is_empty() {
+                    let summary = match action {
                         MutationAction::Continue => format!("Continued {}", operation.as_str()),
                         MutationAction::Skip => format!("Skipped {}", operation.as_str()),
                         MutationAction::Abort => format!("Aborted {}", operation.as_str()),
-                    }
+                    };
+                    self.mutation_notice = Some(summary.clone());
+                    self.set_outcome(OutcomeSeverity::Info, summary, None, None);
                 } else {
-                    format!(
-                        "{} · {} conflict(s)",
-                        operation.as_str(),
-                        receipt.conflicts.len()
-                    )
-                };
-                self.mutation_notice = Some(summary.clone());
-                let conflicts = !receipt.conflicts.is_empty();
-                self.set_outcome(
-                    if conflicts {
-                        OutcomeSeverity::Warning
-                    } else {
-                        OutcomeSeverity::Info
-                    },
-                    summary,
-                    conflicts.then(|| receipt.conflicts.join("\n")),
-                    conflicts.then_some(RecoveryAction::ResolveConflicts),
-                );
+                    self.mutation_notice = None;
+                }
                 self.refresh_mutation();
                 if self.mutation.is_none() {
                     self.conflict_view = None;
@@ -6445,11 +6752,12 @@ impl Browser {
         let path = self
             .stash_path()
             .ok_or("Open a repository before recovering history.")?;
-        let label = match action {
-            MutationAction::Continue => format!("Continuing {}…", operation.as_str()),
-            MutationAction::Skip => format!("Skipping {}…", operation.as_str()),
-            MutationAction::Abort => format!("Aborting {}…", operation.as_str()),
+        let command = match action {
+            MutationAction::Continue => operation_band::Command::Continue,
+            MutationAction::Skip => operation_band::Command::Skip,
+            MutationAction::Abort => operation_band::Command::Abort,
         };
+        let label = format!("{}…", operation_band::busy_label(operation, command));
         self.start_operation(ctx, label, move || {
             let receipt = match action {
                 MutationAction::Continue => gg_git::mutation::continue_operation(&path, operation)?,
@@ -6461,7 +6769,10 @@ impl Browser {
                 action,
                 receipt,
             })
-        })
+        })?;
+        // The band keeps its place and names the job until the result arrives.
+        self.mutation_busy = Some(command);
+        Ok(())
     }
 
     fn start_merge(
@@ -6474,9 +6785,12 @@ impl Browser {
             .stash_path()
             .ok_or("Open a repository before merging.")?;
         let reference = reference.to_string();
-        let label = format!("Merging {reference}…");
+        let branch = self.current_branch_name();
+        let label = format!("Merging {reference} into {branch}…");
         self.start_operation(ctx, label, move || {
-            gg_git::merge::merge(&path, &reference, no_ff).map(OperationOutcome::Merge)
+            let incoming = gg_git::merge::incoming(&path, &reference).ok();
+            gg_git::merge::merge(&path, &reference, no_ff)
+                .map(|receipt| OperationOutcome::Merge(receipt, branch, incoming))
         })
     }
 
@@ -6487,9 +6801,12 @@ impl Browser {
             .stash_path()
             .ok_or("Open a repository before pulling.")?;
         let reference = reference.to_string();
-        let label = format!("Fast-forwarding to {reference}…");
+        let branch = self.current_branch_name();
+        let label = format!("Fast-forwarding {branch} to {reference}…");
         self.start_operation(ctx, label, move || {
-            gg_git::merge::fast_forward(&path, &reference).map(OperationOutcome::Merge)
+            let incoming = gg_git::merge::incoming(&path, &reference).ok();
+            gg_git::merge::fast_forward(&path, &reference)
+                .map(|receipt| OperationOutcome::Merge(receipt, branch, incoming))
         })
     }
 
@@ -6503,10 +6820,12 @@ impl Browser {
             .stash_path()
             .ok_or("Open a repository before rebasing.")?;
         let reference = reference.to_string();
-        let label = format!("Rebasing onto {reference}…");
+        let branch = self.current_branch_name();
+        let label = format!("Rebasing {branch} onto {reference}…");
         self.rebase_target = Some(reference.clone());
         let started = self.start_operation(ctx, label, move || {
-            gg_git::rebase::rebase(&path, &reference, autostash).map(OperationOutcome::Rebase)
+            gg_git::rebase::rebase(&path, &reference, autostash)
+                .map(|receipt| OperationOutcome::Rebase(receipt, branch))
         });
         if started.is_err() {
             self.rebase_target = None;
@@ -6549,18 +6868,77 @@ impl Browser {
             .ok_or("Open a repository before rewriting history.")?;
         let restore_row = self.state.selected_row;
         let operation_path = path.clone();
+        // The band shows the plan until Git reports its own steps.
+        let planned = steps
+            .iter()
+            .filter(|step| step.action != gg_engine::rewrite::Action::Drop)
+            .enumerate()
+            .map(|(index, step)| operation_band::Step {
+                commit: step.commit.clone(),
+                action: step.action.as_str().into(),
+                subject: String::new(),
+                state: if index == 0 {
+                    operation_band::StepState::Current
+                } else {
+                    operation_band::StepState::Next
+                },
+            })
+            .collect();
+        self.rewrite_steps = (self.current_branch_name(), planned);
+        let live = std::sync::Arc::new(std::sync::Mutex::new(RewriteLive::default()));
+        let worker_live = std::sync::Arc::clone(&live);
         let (sender, receiver) = std::sync::mpsc::channel();
         let repaint = ctx.clone();
         std::thread::Builder::new()
             .name("gg-rewrite".into())
             .spawn(move || {
+                // Git's steps, read beside the rewrite while it runs.
+                let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let watcher = {
+                    let (done, live, path, repaint) = (
+                        std::sync::Arc::clone(&done),
+                        std::sync::Arc::clone(&worker_live),
+                        path.clone(),
+                        repaint.clone(),
+                    );
+                    std::thread::Builder::new()
+                        .name("gg-rewrite-steps".into())
+                        .spawn(move || {
+                            while !done.load(std::sync::atomic::Ordering::Relaxed) {
+                                std::thread::sleep(std::time::Duration::from_millis(150));
+                                if let Ok(Some(progress)) = gg_git::mutation::rebase_progress(&path)
+                                    && let Ok(mut live) = live.lock()
+                                    && live.progress.as_ref() != Some(&progress)
+                                {
+                                    live.progress = Some(progress);
+                                    repaint.request_repaint();
+                                }
+                            }
+                        })
+                        .ok()
+                };
                 // The follow-up push depends on how the result stands against
                 // the upstream; read it here, off the UI thread.
-                let result =
-                    gg_git::rewrite::rewrite(&path, &from, &steps, autostash).map(|receipt| {
-                        let relation = gg_git::sync::upstream_relation(&path, None).ok().flatten();
-                        (receipt, relation)
-                    });
+                let result = gg_git::rewrite::rewrite_observed(
+                    &path,
+                    &from,
+                    &steps,
+                    autostash,
+                    &mut |backup| {
+                        if let Ok(mut live) = worker_live.lock() {
+                            live.backup = Some(backup.to_string());
+                        }
+                        repaint.request_repaint();
+                    },
+                )
+                .map(|receipt| {
+                    let relation = gg_git::sync::upstream_relation(&path, None).ok().flatten();
+                    (receipt, relation)
+                });
+                done.store(true, std::sync::atomic::Ordering::Relaxed);
+                if let Some(watcher) = watcher {
+                    let _ = watcher.join();
+                }
                 let _ = sender.send(result);
                 repaint.request_repaint();
             })
@@ -6568,6 +6946,7 @@ impl Browser {
         self.rewrite_job = Some(RewriteJob {
             receiver,
             restore_row,
+            live,
         });
         self.operation_repo = Some(operation_path);
         self.rewrite_dialog = None;
@@ -6584,20 +6963,13 @@ impl Browser {
         self.refresh_local_summary(ctx);
         self.mutation_error = None;
         let conflicts = receipt.in_progress || !receipt.conflicts.is_empty();
-        let summary = if receipt.in_progress {
-            format!(
-                "Rewriting {} commit(s){}",
-                receipt.steps,
-                if receipt.conflicts.is_empty() {
-                    String::new()
-                } else {
-                    format!(" · {} conflict(s)", receipt.conflicts.len())
-                }
-            )
-        } else {
-            format!("Rewrote {} commit(s)", receipt.steps)
+        let rewrote = operation_band::plural(receipt.steps, "commit");
+        let summary = match (&receipt.backup, receipt.in_progress) {
+            (_, true) => format!("Stopped rewriting {rewrote}"),
+            (Some(backup), false) => format!("Rewrote {rewrote} · backup {backup}"),
+            (None, false) => format!("Rewrote {rewrote}"),
         };
-        self.mutation_notice = Some(summary.clone());
+        self.mutation_notice = None;
         let mut details = Vec::new();
         if let Some(backup) = &receipt.backup {
             details.push(format!("Backup: {backup}"));
@@ -6606,20 +6978,19 @@ impl Browser {
         if !receipt.conflicts.is_empty() {
             details.push(format!("Conflicts: {}", receipt.conflicts.join(", ")));
         }
-        self.set_outcome(
-            if conflicts {
-                OutcomeSeverity::Warning
-            } else {
-                OutcomeSeverity::Info
-            },
-            summary,
-            (!details.is_empty()).then(|| details.join("\n")),
-            Some(rewrite_follow_up(
-                conflicts,
-                self.prefs.offer_force_lease,
-                relation,
-            )),
-        );
+        // A rewrite Git stopped is the band's to report.
+        if !conflicts {
+            self.set_outcome(
+                OutcomeSeverity::Info,
+                summary,
+                (!details.is_empty()).then(|| details.join("\n")),
+                Some(rewrite_follow_up(
+                    conflicts,
+                    self.prefs.offer_force_lease,
+                    relation,
+                )),
+            );
+        }
         self.conflict_view = None;
         self.restore_row = restore_row;
         self.refresh_mutation();
@@ -6991,578 +7362,230 @@ impl Browser {
         });
     }
 
-    /// Resolve conflicts in the main workspace, under the operation area.
-    /// The workspace fills the content area at a fixed size; only a window
-    /// resize changes it.
+    /// The conflict workspace in the main area, under the operation band: the
+    /// Changes view while conflicts exist ([`conflict_workspace`]).
     fn draw_conflict_workspace(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         let ctx = &ctx;
-        let conflict_mutation = self.mutation.clone();
+        let operation = self.mutation.as_ref().map(|state| state.operation);
         let conflict_pending =
             self.operation_busy() || self.network.is_some() || self.branch.is_some();
-        let mut conflict_select = None;
-        let mut stage_resolution = false;
-        let mut refresh_content = false;
-        let mut conflict_open = true;
-        let mut stage_working = false;
-        let workdir = self.stash_path();
-        let editor_command = self.prefs.editor.clone();
-        // Ctrl+S stages the resolution when Stage resolution is enabled.
-        let save_key = crate::navigation::available(ctx)
-            && !ctx.text_edit_focused()
-            && ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::S));
+        let free = crate::navigation::available(ctx);
+        // Ctrl+S stages, also while typing in the Result.
+        let save_key =
+            free && ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::S));
+        let typing = ctx.text_edit_focused();
+        let mut confirm = None;
         if let Some(view) = &mut self.conflict_view
             && !view.whole_file
+            && view.confirm_block.is_none()
             && let Some(blocks) = &mut view.blocks
-            && crate::navigation::available(ctx)
-            && !ctx.text_edit_focused()
+            && free
         {
-            blocks.keys(ctx);
+            // Undo and redo restore the Result with its origins.
+            let redo = ctx.input_mut(|i| {
+                i.consume_key(
+                    egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                    egui::Key::Z,
+                ) || i.consume_key(egui::Modifiers::COMMAND, egui::Key::Y)
+            });
+            if redo {
+                blocks.redo();
+            } else if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::Z)) {
+                blocks.undo();
+            }
+            if !typing {
+                confirm = blocks.keys(ctx);
+            }
         }
-        if let Some(view) = &mut self.conflict_view {
-            let operation = conflict_mutation.as_ref().map(|state| state.operation);
-            let unresolved = conflict_mutation
-                .as_ref()
-                .map(|state| state.conflicts.len())
-                .unwrap_or(view.paths.len());
-            // No heading, as in the conflict mockup: the operation band names
-            // the stop. Close (Esc) sits in the file header; the side hint and
-            // any error sit under the file list.
-            let _ = unresolved;
-            let side_hint = conflict_side_hint(operation);
-            let note = match (&view.error, view.paths.is_empty() && !view.loading) {
-                (Some(error), _) => Some((error.clone(), true)),
-                (None, true) => Some(("No unmerged paths.".to_string(), false)),
-                (None, false) => None,
-            };
-            ui.scope(|ui| {
-                    ui.horizontal_top(|ui| {
-                        ui.vertical(|ui| {
-                            ui.set_width(CONFLICT_PATHS_WIDTH);
-                            // Files, as in the conflict mockup: what is left,
-                            // then what was resolved and staged here.
-                            let left = view
-                                .blocks
-                                .as_ref()
-                                .filter(|_| !view.whole_file)
-                                .map(conflict_blocks::Blocks::left);
-                            let height = ui.available_height();
-                            egui::ScrollArea::vertical()
-                                .id_salt("conflict-paths")
-                                .max_height(height)
-                                .min_scrolled_height(height)
-                                .auto_shrink([false, false])
-                                .show(ui, |ui| {
-                                    ui.label(
-                                        egui::RichText::new(format!("CONFLICTED  {}", view.paths.len()))
-                                            .small()
-                                            .weak(),
-                                    );
-                                    for (index, path) in view.paths.iter().enumerate() {
-                                        let mut text = egui::text::LayoutJob::default();
-                                        text.append(
-                                            "!  ",
-                                            0.0,
-                                            egui::TextFormat {
-                                                color: ui.visuals().error_fg_color,
-                                                ..Default::default()
-                                            },
-                                        );
-                                        text.append(path, 0.0, egui::TextFormat::default());
-                                        if index == view.selected
-                                            && let Some(left) = left
-                                        {
-                                            text.append(
-                                                &format!("  {left} left"),
-                                                0.0,
-                                                egui::TextFormat {
-                                                    color: ui.visuals().weak_text_color(),
-                                                    ..Default::default()
-                                                },
-                                            );
-                                        }
-                                        // Full-width 22 px rows, as in the mockup.
-                                        let selected = index == view.selected;
-                                        if ui
-                                            .add(
-                                                egui::Button::new(text)
-                                                    .fill(if selected {
-                                                        colors::selection(ui.visuals())
-                                                    } else {
-                                                        egui::Color32::TRANSPARENT
-                                                    })
-                                                    .frame_when_inactive(selected)
-                                                    .truncate()
-                                                    .min_size(egui::vec2(
-                                                        ui.available_width(),
-                                                        crate::density::row(),
-                                                    )),
-                                            )
-                                            .on_hover_text(path)
-                                            .clicked()
-                                        {
-                                            conflict_select = Some(index);
-                                        }
-                                    }
-                                    if view.paths.is_empty() && !view.loading {
-                                        ui.weak("All conflicts resolved.");
-                                    }
-                                    ui.add_space(6.0);
-                                    ui.label(
-                                        egui::RichText::new(format!(
-                                            "RESOLVED, STAGED  {}",
-                                            view.resolved.len()
-                                        ))
-                                        .small()
-                                        .weak(),
-                                    );
-                                    for path in &view.resolved {
-                                        ui.add(
-                                            egui::Label::new(
-                                                egui::RichText::new(format!("✓  {path}")).weak(),
-                                            )
-                                            .truncate(),
-                                        )
-                                        .on_hover_text(path);
-                                    }
-                                    // The side hint (and an error or empty
-                                    // note) at the bottom of the list.
-                                    ui.with_layout(
-                                        egui::Layout::bottom_up(egui::Align::Min),
-                                        |ui| {
-                                            ui.add(
-                                                egui::Label::new(
-                                                    egui::RichText::new(side_hint).small().weak(),
-                                                )
-                                                .wrap(),
-                                            );
-                                            if let Some((text, error)) = &note {
-                                                ui.add(
-                                                    egui::Label::new(egui::RichText::new(text).color(
-                                                        if *error {
-                                                            ui.visuals().error_fg_color
-                                                        } else {
-                                                            ui.visuals().text_color()
-                                                        },
-                                                    ))
-                                                    .wrap(),
-                                                );
-                                            }
-                                        },
-                                    );
-                                });
-                        });
-                        ui.separator();
-                        ui.vertical(|ui| {
-                            let Some(content) = &view.content else {
-                                if view.loading {
-                                    ui.spinner();
-                                }
-                                return;
-                            };
-                            ui.horizontal(|ui| {
-                                ui.weak("Resolve");
-                                let blocks = view.blocks.is_some();
-                                if ui
-                                    .add_enabled(
-                                        blocks,
-                                        egui::Button::selectable(
-                                            !view.whole_file && blocks,
-                                            "Block by block",
-                                        ),
-                                    )
-                                    .on_disabled_hover_text(
-                                        view.blocks_note.as_deref().unwrap_or("No text blocks."),
-                                    )
-                                    .clicked()
-                                {
-                                    view.whole_file = false;
-                                }
-                                if ui
-                                    .add(egui::Button::selectable(
-                                        view.whole_file || !blocks,
-                                        "Whole file",
-                                    ))
-                                    .clicked()
-                                {
-                                    view.whole_file = true;
-                                }
-                                if let Some(note) = &view.blocks_note {
-                                    ui.weak(note);
-                                }
-                                ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
-                                    |ui| {
-                                        if ui
-                                            .button(("Close", egui::RichText::new("Esc").small().weak()))
-                                            .on_hover_text("Return to the previous view")
-                                            .clicked()
-                                        {
-                                            conflict_open = false;
-                                        }
-                                        let file = workdir.as_ref().zip(view.paths.get(view.selected));
-                                        if ui
-                                            .add_enabled(file.is_some(), egui::Button::new("Open in editor"))
-                                            .on_hover_text(if editor_command.trim().is_empty() {
-                                                "Open the working file with the system's default app (set an editor in Preferences)"
-                                            } else {
-                                                "Open the working file with the editor from Preferences"
-                                            })
-                                            .clicked()
-                                            && let Some((workdir, path)) = file
-                                        {
-                                            view.error = editor::open(&editor_command, &workdir.join(path)).err();
-                                        }
-                                    },
-                                );
-                            });
-                            if !view.whole_file
-                                && let Some(blocks) = &mut view.blocks
-                            {
-                                let labels = conflict_block_labels(operation, view.names.as_ref());
-                                // Blocks come from the stages; a working file
-                                // edited outside them is staged as is, or
-                                // replaced only after confirmation.
-                                if view.edited {
-                                    ui.horizontal(|ui| {
-                                        ui.colored_label(
-                                            ui.visuals().warn_fg_color,
-                                            "This file was edited outside the conflict blocks.",
-                                        );
-                                        if ui
-                                            .add_enabled(
-                                                !conflict_pending,
-                                                egui::Button::new("Use working file"),
-                                            )
-                                            .on_hover_text("Stage the working file as it is")
-                                            .on_disabled_hover_text(
-                                                "Wait for the current operation to finish.",
-                                            )
-                                            .clicked()
-                                        {
-                                            stage_working = true;
-                                        }
-                                    });
-                                }
-                                blocks.show(ui, &labels);
-                                ui.separator();
-                                ui.horizontal(|ui| {
-                                    ui.strong(format!(
-                                        "Result · {}/{} blocks chosen · preview, not staged",
-                                        blocks.chosen(),
-                                        blocks.count()
-                                    ));
-                                    let enabled = !conflict_pending && blocks.complete();
-                                    let label = if view.edited {
-                                        "Replace with blocks…"
-                                    } else {
-                                        "Stage resolution"
-                                    };
-                                    let response = ui.add_enabled(
-                                        enabled,
-                                        egui::Button::new((
-                                            label,
-                                            egui::RichText::new("Ctrl+S").small().weak(),
-                                        )),
-                                    );
-                                    let response = if conflict_pending {
-                                        response.on_disabled_hover_text(
-                                            "Wait for the current operation to finish.",
-                                        )
-                                    } else {
-                                        response.on_disabled_hover_text(
-                                            "Choose a resolution for every block first.",
-                                        )
-                                    };
-                                    if response.clicked() {
-                                        if view.edited {
-                                            view.confirm_replace = true;
-                                        } else {
-                                            stage_resolution = true;
-                                        }
-                                    }
-                                });
-                                let text = blocks.text();
-                                egui::ScrollArea::both()
-                                    .id_salt("conflict-block-result")
-                                    .max_height(150.0)
-                                    .min_scrolled_height(150.0)
-                                    .auto_shrink([false, false])
-                                    .show(ui, |ui| {
-                                        ui.monospace(numbered(&text));
-                                    });
-                                return;
-                            }
-                            let snapshot = view.snapshot.clone();
-                            let preview_text = snapshot
-                                .as_ref()
-                                .map(|snapshot| conflict_preview_text(content, snapshot, view.preview))
-                                .unwrap_or_default();
-                            let names = view.names.as_ref();
-                            let side = |side, full| conflict_side_label(operation, side, names, full);
-                            // A side that deleted the file reads so in its pane.
-                            let deleted = content.deleted_side();
-                            let pane = |text: &Option<String>, side| -> String {
-                                match text {
-                                    Some(text) => text.clone(),
-                                    None if deleted == Some(side) => "(deleted on this side)".into(),
-                                    None => "(absent)".into(),
-                                }
-                            };
-                            let panes = [
-                                (ConflictSide::Base, pane(&content.base, gg_engine::conflict::Side::Base)),
-                                (ConflictSide::Ours, pane(&content.ours, gg_engine::conflict::Side::Ours)),
-                                (
-                                    ConflictSide::Theirs,
-                                    pane(&content.theirs, gg_engine::conflict::Side::Theirs),
-                                ),
-                            ];
-                            ui.horizontal_wrapped(|ui| {
-                                ui.weak("Preview source");
-                                let mut sources = vec![
-                                    (
-                                        gg_engine::conflict::Resolution::Base,
-                                        side(ConflictSide::Base, false),
-                                        side(ConflictSide::Base, true),
-                                    ),
-                                    (
-                                        gg_engine::conflict::Resolution::Ours,
-                                        side(ConflictSide::Ours, false),
-                                        side(ConflictSide::Ours, true),
-                                    ),
-                                    (
-                                        gg_engine::conflict::Resolution::Theirs,
-                                        side(ConflictSide::Theirs, false),
-                                        side(ConflictSide::Theirs, true),
-                                    ),
-                                    (
-                                        gg_engine::conflict::Resolution::Working,
-                                        "Working file".into(),
-                                        "The working file as it is now".into(),
-                                    ),
-                                ];
-                                // A delete/modify conflict can keep the deletion.
-                                if deleted.is_some() {
-                                    sources.push((
-                                        gg_engine::conflict::Resolution::Deletion,
-                                        "Keep deletion".into(),
-                                        "Delete the file and stage its removal".into(),
-                                    ));
-                                }
-                                for (resolution, label, hover) in sources {
-                                    if ui
-                                        .selectable_label(view.preview == resolution, label)
-                                        .on_hover_text(hover)
-                                        .clicked()
-                                    {
-                                        view.preview = resolution;
-                                        view.tab = ConflictTab::Result;
-                                    }
-                                }
-                                if ui.button("Refresh external edits").clicked() {
-                                    refresh_content = true;
-                                }
-                            });
-                            ui.weak(
-                                "Choosing a source only changes this preview. Stage resolution publishes it once.",
-                            );
-                            if content.binary {
-                                ui.colored_label(ui.visuals().warn_fg_color, "Binary content");
-                            }
-                            if content.truncated {
-                                ui.colored_label(ui.visuals().warn_fg_color, "Content truncated");
-                            }
-                            if ui.available_width() >= 720.0 {
-                                ui.columns(3, |columns| {
-                                    for (column, (which, text)) in columns.iter_mut().zip(&panes) {
-                                        column
-                                            .add(egui::Label::new(side(*which, false)).truncate())
-                                            .on_hover_text(side(*which, true));
-                                        egui::ScrollArea::both()
-                                            .id_salt(("conflict-pane", *which as u8))
-                                            .max_height(240.0)
-                                            .min_scrolled_height(240.0)
-                                            .auto_shrink([false, false])
-                                            .show(column, |ui| {
-                                                ui.monospace(text);
-                                            });
-                                    }
-                                });
-                                ui.separator();
-                                ui.horizontal(|ui| {
-                                    ui.strong(format!(
-                                        "Result · {} · preview, not staged",
-                                        conflict_resolution_label(view.preview)
-                                    ));
-                                    let enabled = !conflict_pending && conflict_preview_available(view);
-                                    let response = ui.add_enabled(
-                                        enabled,
-                                        egui::Button::new((
-                                            "Stage resolution",
-                                            egui::RichText::new("Ctrl+S").small().weak(),
-                                        )),
-                                    );
-                                    let response = if enabled {
-                                        response
-                                    } else {
-                                        response.on_disabled_hover_text(conflict_preview_reason(view))
-                                    };
-                                    if response.clicked() {
-                                        stage_resolution = true;
-                                    }
-                                });
-                                egui::ScrollArea::both()
-                                    .id_salt("conflict-result")
-                                    .max_height(150.0)
-                                    .min_scrolled_height(150.0)
-                                    .auto_shrink([false, false])
-                                    .show(ui, |ui| {
-                                        ui.monospace(&preview_text);
-                                    });
-                            } else {
-                                ui.horizontal(|ui| {
-                                    for (tab, which) in [
-                                        (ConflictTab::Base, ConflictSide::Base),
-                                        (ConflictTab::Ours, ConflictSide::Ours),
-                                        (ConflictTab::Theirs, ConflictSide::Theirs),
-                                    ] {
-                                        ui.selectable_value(&mut view.tab, tab, side(which, false))
-                                            .on_hover_text(side(which, true));
-                                    }
-                                    ui.selectable_value(
-                                        &mut view.tab,
-                                        ConflictTab::Result,
-                                        "Result",
-                                    );
-                                });
-                                let text = match view.tab {
-                                    ConflictTab::Base => &panes[0].1,
-                                    ConflictTab::Ours => &panes[1].1,
-                                    ConflictTab::Theirs => &panes[2].1,
-                                    ConflictTab::Result => &preview_text,
-                                };
-                                egui::ScrollArea::both()
-                                    .id_salt("conflict-side")
-                                    .max_height(280.0)
-                                    .min_scrolled_height(280.0)
-                                    .auto_shrink([false, false])
-                                    .show(ui, |ui| {
-                                        ui.monospace(text);
-                                    });
-                                ui.horizontal(|ui| {
-                                    ui.weak(format!(
-                                        "Result · {} · preview, not staged",
-                                        conflict_resolution_label(view.preview)
-                                    ));
-                                    let enabled = !conflict_pending && conflict_preview_available(view);
-                                    let response = ui.add_enabled(
-                                        enabled,
-                                        egui::Button::new((
-                                            "Stage resolution",
-                                            egui::RichText::new("Ctrl+S").small().weak(),
-                                        )),
-                                    );
-                                    let response = if enabled {
-                                        response
-                                    } else {
-                                        response.on_disabled_hover_text(conflict_preview_reason(view))
-                                    };
-                                    if response.clicked() {
-                                        stage_resolution = true;
-                                    }
-                                });
-                            }
-                        });
-                    });
-                });
+        if let Some(view) = &mut self.conflict_view
+            && confirm.is_some()
+        {
+            view.confirm_block = confirm;
         }
+        let editor_tip = if self.prefs.editor.trim().is_empty() {
+            "Open the working file with the system's default app (set an editor in Preferences)"
+        } else {
+            "Open the working file with the editor from Preferences"
+        };
+        let mut actions = match &mut self.conflict_view {
+            Some(view) => conflict_workspace::show(
+                ui,
+                view,
+                &conflict_workspace::Info {
+                    operation,
+                    pending: conflict_pending,
+                    editor_tip,
+                },
+            ),
+            None => Vec::new(),
+        };
         if save_key
             && !conflict_pending
-            && let Some(view) = &mut self.conflict_view
-            && conflict_preview_available(view)
+            && let Some(view) = &self.conflict_view
         {
-            // Over a working file edited outside the blocks, Ctrl+S asks first.
             let blocks = view.blocks.as_ref().filter(|_| !view.whole_file);
-            if view.edited && blocks.is_some_and(conflict_blocks::Blocks::complete) {
-                view.confirm_replace = true;
-            } else if !view.edited || blocks.is_none() {
-                stage_resolution = true;
+            match blocks {
+                Some(blocks) if blocks.complete() && view.edited => {
+                    actions.push(conflict_workspace::Action::ConfirmReplace);
+                }
+                Some(blocks) if blocks.complete() => {
+                    actions.push(conflict_workspace::Action::Stage(ConflictStage::Preview));
+                }
+                None if conflict_preview_available(view) => {
+                    actions.push(conflict_workspace::Action::Stage(ConflictStage::Preview));
+                }
+                _ => {}
             }
         }
-        // Replace with blocks… confirms before overwriting the edited file.
-        let mut replace = false;
-        if let Some(view) = &mut self.conflict_view
-            && view.confirm_replace
-        {
-            let file = view.paths.get(view.selected).cloned().unwrap_or_default();
-            let mut open = true;
-            let mut cancelled =
-                ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
-            replace = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
-            egui::Window::new("Replace edited file")
-                .id(egui::Id::unique("conflict-replace"))
-                .modal(ctx, egui::Id::unique("conflict-replace"))
-                .open(&mut open)
-                .collapsible(false)
-                .resizable(false)
-                .default_pos(ctx.content_rect().center())
-                .pivot(egui::Align2::CENTER_CENTER)
-                .show(ctx, |ui| {
-                    ui.set_width(420.0);
-                    ui.add(
-                        egui::Label::new(format!(
-                            "Staging the blocks overwrites {file}. The edits made outside the conflict blocks are lost."
-                        ))
-                        .wrap(),
-                    );
-                    ui.horizontal(|ui| {
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui
-                                .add(consequence::danger_button("Replace and stage", true))
-                                .clicked()
-                            {
-                                replace = true;
-                            }
-                            if ui
-                                .button(("Cancel", egui::RichText::new("Esc").small().weak()))
-                                .clicked()
-                            {
-                                cancelled = true;
-                            }
-                        });
-                    });
-                });
-            if replace || cancelled || !open {
-                view.confirm_replace = false;
+        // A question opens in the frame that asked it.
+        if let Some(view) = &mut self.conflict_view {
+            actions.retain(|action| {
+                let ask = *action == conflict_workspace::Action::ConfirmReplace;
+                view.confirm_replace |= ask;
+                !ask
+            });
+        }
+        self.draw_conflict_questions(ctx, conflict_pending, &mut actions);
+        for action in actions {
+            match action {
+                conflict_workspace::Action::Select(index) => {
+                    if let Some(view) = &mut self.conflict_view {
+                        view.selected = index;
+                    }
+                    self.load_conflict_content(ctx);
+                }
+                conflict_workspace::Action::Refresh => self.load_conflict_content(ctx),
+                conflict_workspace::Action::OpenInEditor => {
+                    let file = self
+                        .stash_path()
+                        .zip(
+                            self.conflict_view
+                                .as_ref()
+                                .and_then(|view| view.paths.get(view.selected).cloned()),
+                        )
+                        .map(|(workdir, path)| workdir.join(path));
+                    if let Some(file) = file
+                        && let Some(view) = &mut self.conflict_view
+                    {
+                        view.error = editor::open(&self.prefs.editor, &file).err();
+                    }
+                }
+                conflict_workspace::Action::ConfirmReplace => {}
+                conflict_workspace::Action::Stage(stage) => {
+                    if let Err(error) = self.stage_conflict(ctx, stage)
+                        && let Some(view) = &mut self.conflict_view
+                    {
+                        view.error = Some(error);
+                    }
+                }
+                conflict_workspace::Action::Unstage(file) => {
+                    if let Err(error) = self.reopen_conflict(ctx, file)
+                        && let Some(view) = &mut self.conflict_view
+                    {
+                        view.error = Some(error);
+                    }
+                }
             }
-            replace &= !conflict_pending;
-        }
-        stage_resolution |= replace;
-        if let Some(index) = conflict_select
-            && let Some(view) = &mut self.conflict_view
-        {
-            view.selected = index;
-        }
-        if conflict_select.is_some() || refresh_content {
-            self.load_conflict_content(ctx);
-        }
-        let stage = if stage_working {
-            Some(ConflictStage::WorkingFile)
-        } else {
-            stage_resolution.then_some(ConflictStage::Preview)
-        };
-        if let Some(stage) = stage
-            && let Err(error) = self.stage_conflict(ctx, stage)
-            && let Some(view) = &mut self.conflict_view
-        {
-            view.error = Some(error);
-        }
-        if self.conflict_view.is_some() && !conflict_open {
-            self.conflict_view = None;
         }
     }
 
+    /// The workspace's two questions: **Replace with blocks…** over a file
+    /// edited elsewhere, and an option over a block edited by hand.
+    fn draw_conflict_questions(
+        &mut self,
+        ctx: &egui::Context,
+        pending: bool,
+        actions: &mut Vec<conflict_workspace::Action>,
+    ) {
+        let Some(view) = &mut self.conflict_view else {
+            return;
+        };
+        let file = view.paths.get(view.selected).cloned().unwrap_or_default();
+        let question = if view.confirm_replace {
+            Some((
+                "Replace edited file",
+                format!(
+                    "Staging the blocks overwrites {file}. The edits made outside the conflict blocks are lost."
+                ),
+                "Replace and stage",
+            ))
+        } else {
+            view.confirm_block.map(|(index, choice)| {
+                (
+                    "Replace edited block",
+                    format!(
+                        "Conflict {} was edited by hand in the Result. {} replaces those edits; Ctrl+Z brings them back.",
+                        index + 1,
+                        choice.label()
+                    ),
+                    "Replace block",
+                )
+            })
+        };
+        let Some((title, body, confirm)) = question else {
+            return;
+        };
+        let mut open = true;
+        let mut cancelled =
+            ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+        let mut accepted =
+            ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
+        egui::Window::new(title)
+            .id(egui::Id::unique("conflict-question"))
+            .modal(ctx, egui::Id::unique("conflict-question"))
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .default_pos(ctx.content_rect().center())
+            .pivot(egui::Align2::CENTER_CENTER)
+            .show(ctx, |ui| {
+                ui.set_width(420.0);
+                ui.add(egui::Label::new(body).wrap());
+                ui.horizontal(|ui| {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.add(consequence::danger_button(confirm, true)).clicked() {
+                            accepted = true;
+                        }
+                        if ui
+                            .button(("Cancel", egui::RichText::new("Esc").small().weak()))
+                            .clicked()
+                        {
+                            cancelled = true;
+                        }
+                    });
+                });
+            });
+        if accepted || cancelled || !open {
+            if view.confirm_replace {
+                view.confirm_replace = false;
+                if accepted && !pending {
+                    actions.push(conflict_workspace::Action::Stage(ConflictStage::Preview));
+                }
+            } else if let Some((index, choice)) = view.confirm_block.take()
+                && accepted
+                && let Some(blocks) = &mut view.blocks
+            {
+                blocks.choose(index, choice);
+            }
+        }
+    }
+
+    /// − on a resolved file: Git recreates its conflict (or unstages it).
+    fn reopen_conflict(&mut self, ctx: &egui::Context, file: String) -> Result<(), String> {
+        let path = self
+            .stash_path()
+            .ok_or("Open a repository before resolving conflicts.")?;
+        let label = format!("Unstaging {file}…");
+        self.start_operation(ctx, label, move || {
+            let conflicted = gg_git::conflict::reopen(&path, &file)?;
+            Ok(OperationOutcome::Reopened { file, conflicted })
+        })
+    }
+
+    /// The conflict workspace is the Changes view while conflicts exist.
     fn open_conflict_view(&mut self, ctx: &egui::Context) {
+        self.open_working(ctx);
         self.refresh_conflict_view(ctx, None);
     }
 
@@ -7570,26 +7593,7 @@ impl Browser {
         let Some(path) = self.stash_path() else {
             return;
         };
-        let view = self.conflict_view.get_or_insert_with(|| ConflictView {
-            paths: Vec::new(),
-            selected: 0,
-            previous_selected: 0,
-            keep: None,
-            content: None,
-            error: None,
-            loading: false,
-            worker: None,
-            snapshot: None,
-            preview: gg_engine::conflict::Resolution::Working,
-            tab: ConflictTab::Ours,
-            blocks: None,
-            blocks_note: None,
-            whole_file: false,
-            resolved: Vec::new(),
-            edited: false,
-            confirm_replace: false,
-            names: None,
-        });
+        let view = self.conflict_view.get_or_insert_with(ConflictView::default);
         view.keep = keep.map(str::to_string);
         view.previous_selected = view.selected;
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
@@ -7597,7 +7601,24 @@ impl Browser {
         if std::thread::Builder::new()
             .name("gg-conflicts".into())
             .spawn(move || {
-                let result = gg_git::conflict::unmerged(&path).map(ConflictUpdate::Paths);
+                let result = gg_git::conflict::unmerged(&path).map(|paths| {
+                    // Blocks left per file and what else the operation
+                    // changed, read here, off the UI thread.
+                    let counts = paths
+                        .iter()
+                        .filter_map(|file| {
+                            gg_git::conflict::blocks(&path, file).ok().map(|segments| {
+                                (file.clone(), gg_engine::conflict::block_count(&segments))
+                            })
+                        })
+                        .collect();
+                    let also = gg_git::conflict::also_changed(&path).unwrap_or_default();
+                    ConflictUpdate::Paths {
+                        paths,
+                        also,
+                        counts,
+                    }
+                });
                 let _ = tx.send(result);
                 repaint.request_repaint();
             })
@@ -7626,12 +7647,20 @@ impl Browser {
             }
         };
         let mut load_content = false;
+        let operation = self.mutation.as_ref().map(|state| state.operation);
         if let Some(view) = &mut self.conflict_view {
             view.worker = None;
             view.loading = false;
             match message {
-                Ok(ConflictUpdate::Paths(paths)) => {
+                Ok(ConflictUpdate::Paths {
+                    paths,
+                    also,
+                    counts,
+                }) => {
                     let keep = view.keep.take();
+                    view.also = also;
+                    self.conflict_counts = counts.clone();
+                    view.counts = counts;
                     view.selected =
                         next_conflict_selection(&paths, keep.as_deref(), view.previous_selected);
                     view.paths = paths;
@@ -7658,7 +7687,10 @@ impl Browser {
                     view.names = names;
                     match blocks {
                         Ok(segments) => {
-                            view.blocks = Some(conflict_blocks::Blocks::new(segments));
+                            let markers =
+                                conflict_workspace::markers(operation, view.names.as_ref());
+                            view.blocks =
+                                Some(conflict_blocks::Blocks::with_markers(segments, markers));
                             view.blocks_note = None;
                         }
                         Err(note) => {
@@ -7667,7 +7699,7 @@ impl Browser {
                         }
                     }
                     view.preview = gg_engine::conflict::Resolution::Working;
-                    view.tab = ConflictTab::Result;
+                    view.confirm_block = None;
                     view.error = None;
                 }
                 Err(error) => {
@@ -9306,8 +9338,9 @@ impl Browser {
             && !ctx.text_edit_focused()
             && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
         {
-            // Esc leaves the conflict workspace before any view can take it.
+            // Esc leaves the conflict workspace for the plain changes list.
             self.conflict_view = None;
+            self.open_working(ctx);
         }
         self.ctx_width = ctx.content_rect().width();
         if let Some((changes, first)) = self.watcher.as_mut().and_then(|watcher| watcher.poll()) {
@@ -9429,13 +9462,22 @@ impl Browser {
                     if let Some((name, false)) = target {
                         self.pending_switch = Some(name.clone());
                         let created = self.branch_after_create.take();
+                        let dirty = gg_git::dirty_tree_error(&error);
+                        let reason = match self.changed_files() {
+                            Some(count) if dirty => format!(
+                                "{} would be overwritten",
+                                operation_band::plural(count, "changed file")
+                            ),
+                            _ if dirty => "changed files would be overwritten".into(),
+                            _ => error.lines().next().unwrap_or_default().to_string(),
+                        };
                         let summary = match created {
                             Some(branch) => {
-                                format!("Created {branch} but the switch was blocked: {error}")
+                                format!("Created {branch} but can’t switch to it: {reason}")
                             }
-                            None => format!("Switch to {name} blocked: {error}"),
+                            None => format!("Can’t switch to {name}: {reason}"),
                         };
-                        let recovery = if gg_git::dirty_tree_error(&error) {
+                        let recovery = if dirty {
                             RecoveryAction::StashAndSwitch
                         } else {
                             RecoveryAction::RetrySwitch
@@ -9511,6 +9553,7 @@ impl Browser {
         };
         if let Some(result) = operation_done {
             self.operation_worker = None;
+            self.mutation_busy = None;
             let same_repository = self.operation_repo.as_ref() == self.stash_path().as_ref();
             self.operation_repo = None;
             if !same_repository {
@@ -10142,174 +10185,67 @@ impl Browser {
         }
         let mut mutation_action = None;
         let mut resolve_conflicts = false;
-        let mut cancel_network = false;
         let rebase_progress = self.rebase_progress().cloned();
-        // The operation area appears only while a merge, rebase, cherry-pick,
-        // revert, or rewrite is in progress, as in the stop mockups. Short
-        // jobs (network, branch, workers) report in the footer instead, so
-        // they never move the panes.
-        if let Some(area) = self.operation_area().filter(|area| {
-            matches!(
-                area,
-                OperationArea::Mutation { .. } | OperationArea::Rewrite { .. }
-            )
-        }) {
-            egui::Panel::top("operation-area").exact_size(OPERATION_AREA_HEIGHT).show(ui, |ui| {
-                ui.set_clip_rect(ui.max_rect());
-                if let (
+        // The operation band appears only while Git holds a merge, rebase,
+        // cherry-pick, or revert open, or a rewrite runs. Short jobs
+        // (network, branch work, a merge that never stops) report in the
+        // footer instead, so they never move the panes.
+        if let Some(area) = self.operation_area() {
+            let busy = self.mutation.as_ref().and_then(|state| {
+                self.mutation_busy
+                    .map(|command| operation_band::busy_label(state.operation, command))
+            });
+            let band = match (&area, &rebase_progress) {
+                (
                     OperationArea::Mutation {
                         operation: gg_engine::mutation::Operation::Rebase,
                         conflicts,
                         pending,
-                        ..
                     },
                     Some(progress),
-                ) = (&area, &rebase_progress)
-                {
-                    let keyed = !pending
-                        && rebase_stop::continue_reason(progress, *conflicts).is_none()
-                        && crate::navigation::available(ui.ctx())
-                        && !ui.ctx().text_edit_focused()
-                        && ui.ctx().input_mut(|i| {
-                            i.consume_key(egui::Modifiers::COMMAND, egui::Key::Enter)
-                        });
-                    match rebase_stop::show(
-                        ui,
-                        progress,
-                        *conflicts,
-                        *pending,
-                        self.rewrite_backup.as_deref(),
-                    ) {
-                        Some(rebase_stop::Command::Continue) => {
+                ) => rebase_stop::band(
+                    progress,
+                    *conflicts,
+                    self.conflict_view.is_some(),
+                    *pending,
+                    busy.as_deref(),
+                    self.rewrite_backup.as_deref(),
+                ),
+                (OperationArea::Mutation { .. }, _) => self
+                    .mutation_band()
+                    .unwrap_or_else(|| self.rewrite_band(false)),
+                (OperationArea::Rewrite { refreshing }, _) => self.rewrite_band(*refreshing),
+            };
+            let keyed = band
+                .button(operation_band::Command::Continue)
+                .is_some_and(|button| button.enabled)
+                && crate::navigation::available(ctx)
+                && !ctx.text_edit_focused()
+                && ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::Enter));
+            egui::Panel::top("operation-area")
+                .exact_size(OPERATION_AREA_HEIGHT)
+                .show(ui, |ui| {
+                    ui.set_clip_rect(ui.max_rect().expand2(egui::vec2(8.0, 4.0)));
+                    match operation_band::show(ui, &band).0 {
+                        Some(operation_band::Command::Continue) => {
                             mutation_action = Some(MutationAction::Continue);
                         }
-                        Some(rebase_stop::Command::Skip) => {
+                        Some(operation_band::Command::Skip) => {
                             mutation_action = Some(MutationAction::Skip);
                         }
-                        Some(rebase_stop::Command::Abort) => {
+                        Some(operation_band::Command::Abort) => {
                             mutation_action = Some(MutationAction::Abort);
                         }
-                        Some(rebase_stop::Command::ResolveConflicts) => resolve_conflicts = true,
+                        Some(operation_band::Command::ResolveConflicts) => {
+                            resolve_conflicts = true;
+                        }
                         None if keyed => mutation_action = Some(MutationAction::Continue),
                         None => {}
                     }
-                    return;
-                }
-                ui.horizontal(|ui| {
-                    match &area {
-                        OperationArea::Mutation {
-                            operation,
-                            commit,
-                            conflicts,
-                            pending,
-                        } => {
-                            ui.strong(format!("{} in progress", operation.as_str()));
-                            if let Some(commit) = commit {
-                                ui.add(
-                                    egui::Label::new(egui::RichText::new(format!("· {commit}")).weak())
-                                        .truncate(),
-                                );
-                            }
-                            if *conflicts > 0 {
-                                ui.label(format!(
-                                    "· {conflicts} conflict{}",
-                                    if *conflicts == 1 { "" } else { "s" }
-                                ));
-                                if ui
-                                    .add_enabled(
-                                        !pending,
-                                        egui::Button::new("Resolve conflicts…"),
-                                    )
-                                    .clicked()
-                                {
-                                    resolve_conflicts = true;
-                                }
-                            }
-                            let reason = if *conflicts > 0 {
-                                "Resolve every unmerged path first."
-                            } else {
-                                "Continue the in-progress operation."
-                            };
-                            if ui
-                                .add_enabled(
-                                    !pending && *conflicts == 0,
-                                    egui::Button::new("Continue"),
-                                )
-                                .on_hover_text(reason)
-                                .clicked()
-                            {
-                                mutation_action = Some(MutationAction::Continue);
-                            }
-                            if *operation != gg_engine::mutation::Operation::Merge
-                                && ui
-                                    .add_enabled(!pending, egui::Button::new("Skip"))
-                                    .on_hover_text("Skip the current commit and continue.")
-                                    .clicked()
-                            {
-                                mutation_action = Some(MutationAction::Skip);
-                            }
-                            if ui
-                                .add_enabled(!pending, egui::Button::new("Abort"))
-                                .on_hover_text("Abort the operation and restore the previous tip.")
-                                .clicked()
-                            {
-                                mutation_action = Some(MutationAction::Abort);
-                            }
-                        }
-                        OperationArea::Rewrite { refreshing } => {
-                            ui.spinner();
-                            ui.strong(if *refreshing {
-                                "Refreshing history…"
-                            } else {
-                                "Rewriting commits…"
-                            });
-                            ui.weak(
-                                "Browsing stays available; the old history is labeled until the replacement is accepted.",
-                            );
-                        }
-                        OperationArea::Worker { label } => {
-                            ui.spinner();
-                            ui.strong(label);
-                        }
-                        OperationArea::Network {
-                            operation,
-                            progress,
-                            cancelling,
-                        } => {
-                            ui.spinner();
-                            if let Some(progress) = progress {
-                                ui.strong(progress.operation.as_str());
-                                ui.label(format!(
-                                    "· {} {}{}",
-                                    progress.phase,
-                                    progress
-                                        .percent
-                                        .map(|percent| format!("{percent}% "))
-                                        .unwrap_or_default(),
-                                    progress.message
-                                ));
-                            } else {
-                                ui.strong(format!("Starting {}…", operation.as_str()));
-                            }
-                            if *cancelling {
-                                ui.weak("Cancelling…");
-                            } else if ui.button("Cancel").clicked() {
-                                cancel_network = true;
-                            }
-                        }
-                        OperationArea::Branch { label } => {
-                            ui.spinner();
-                            ui.strong(label);
-                        }
-                    }
                 });
-            });
         }
         if resolve_conflicts {
             self.open_conflict_view(ctx);
-        }
-        if cancel_network && let Some(worker) = &self.network {
-            worker.cancel();
         }
         if let Some(action) = mutation_action
             && let Some(operation) = self.mutation.as_ref().map(|state| state.operation)
@@ -10599,7 +10535,15 @@ impl Browser {
             }
         }
         if go_local {
-            self.open_working(ctx);
+            let conflicted = self
+                .mutation
+                .as_ref()
+                .is_some_and(|state| !state.conflicts.is_empty());
+            if conflicted && self.conflict_view.is_none() {
+                self.open_conflict_view(ctx);
+            } else {
+                self.open_working(ctx);
+            }
         }
         if go_history {
             self.close_to_history(ctx);
@@ -11735,20 +11679,50 @@ impl Browser {
         self.draw_delete_remote(ctx);
         if self.conflict_view.is_some() {
             // The workspace's own footer: its keys, as in the conflict mockup.
+            // The workspace's own footer: its keys and what Abort restores.
+            let abort = match self.mutation.as_ref().map(|state| state.operation) {
+                Some(gg_engine::mutation::Operation::Rebase) => match &self.rewrite_backup {
+                    Some(backup) => format!("Abort restores {backup}"),
+                    None => "Abort restores the branch as it was before the rebase".into(),
+                },
+                Some(operation) => {
+                    operation_band::abort_note(operation, &self.current_branch_name())
+                }
+                None => String::new(),
+            };
             egui::Panel::bottom("conflict-status")
-                .exact_size(25.0)
+                .exact_size(22.0)
                 .show(ui, |ui| {
                     ui.horizontal_centered(|ui| {
-                        ui.label(
-                            egui::RichText::new(
-                                "1 / 2 / 3 / 4: ours · theirs · ours+theirs · theirs+ours   ·   [ ]: next conflict   ·   Esc: close",
-                            )
-                            .size(11.0)
-                            .weak(),
-                        );
+                        ui.spacing_mut().item_spacing.x = 14.0;
+                        let hints = conflict_workspace::FOOTER_HINTS;
+                        let abort_width = ui.fonts_mut(|fonts| {
+                            fonts
+                                .layout_no_wrap(
+                                    abort.clone(),
+                                    egui::FontId::proportional(11.0),
+                                    egui::Color32::WHITE,
+                                )
+                                .size()
+                                .x
+                        });
+                        for hint in hints {
+                            if ui.available_width() < abort_width + 40.0 {
+                                break;
+                            }
+                            ui.label(egui::RichText::new(hint).size(11.0).weak());
+                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.add(
+                                egui::Label::new(egui::RichText::new(&abort).size(11.0).weak())
+                                    .truncate(),
+                            );
+                        });
                     });
                 });
-            egui::CentralPanel::default().show(ui, |ui| self.draw_conflict_workspace(ui));
+            egui::CentralPanel::default()
+                .frame(egui::Frame::new().fill(ui.visuals().panel_fill))
+                .show(ui, |ui| self.draw_conflict_workspace(ui));
             return;
         }
         if self.working.is_some() {
@@ -11912,23 +11886,10 @@ impl Browser {
             return;
         }
 
-        // Only a merge, rebase, or rewrite band takes over reporting; short
-        // jobs report here.
-        let operation_active = self.operation_area().is_some_and(|area| {
-            matches!(
-                area,
-                OperationArea::Mutation { .. } | OperationArea::Rewrite { .. }
-            )
-        });
-        let changes = self
-            .local_summary
-            .as_ref()
-            .and_then(|summary| summary.changes);
-        // A plain success (no details, no recovery) fades after 8 s.
+        // Receipts fade back to the key hints after 8 s.
+        self.track_notice();
         if let Some(outcome) = &self.outcome
             && outcome.severity == OutcomeSeverity::Info
-            && outcome.details.is_none()
-            && outcome.recovery.is_none()
         {
             let elapsed = outcome.at.elapsed();
             if elapsed >= SUCCESS_FADE {
@@ -11937,160 +11898,29 @@ impl Browser {
                 ctx.request_repaint_after(SUCCESS_FADE - elapsed);
             }
         }
-        egui::Panel::bottom("status").exact_size(25.0).show(ui, |ui| {
-            let mut idle = false;
-            let (message, color) = if let Some(error) = &self.network_error {
-                (error.clone(), ui.visuals().error_fg_color)
-            } else if let Some(error) = self.state.error.as_ref().filter(|_| self.state.history.is_some() || self.pending.is_some()) {
-                (format!("{}{}", if self.state.history.is_some() { "Previous results · " } else { "" }, error), ui.visuals().error_fg_color)
-            } else if let Some(error) = &self.branch_error {
-                (error.clone(), ui.visuals().error_fg_color)
-            } else if let Some(error) = &self.mutation_error {
-                (error.clone(), ui.visuals().error_fg_color)
-            } else if !operation_active && let Some(outcome) = &self.outcome {
-                let color = match outcome.severity {
-                    OutcomeSeverity::Info => ui.visuals().text_color(),
-                    OutcomeSeverity::Warning => ui.visuals().warn_fg_color,
-                    OutcomeSeverity::Error => ui.visuals().error_fg_color,
-                };
-                (outcome.summary.clone(), color)
-            } else if self.operation_worker.is_some() {
-                (
-                    self.mutation_notice.clone().unwrap_or_else(|| "Working…".into()),
-                    ui.visuals().text_color(),
-                )
-            } else if !operation_active && let Some(worker) = &self.network {
-                if worker.is_cancelled() {
-                    ("Cancelling network operation…".into(), ui.visuals().text_color())
-                } else if let Some(progress) = &self.network_progress {
-                    (format!(
-                        "{} · {}{} · {}",
-                        progress.operation.as_str(),
-                        progress.phase,
-                        progress.percent.map(|percent| format!(" {percent}%")).unwrap_or_default(),
-                        progress.message
-                    ), ui.visuals().text_color())
-                } else {
-                    (format!("Starting {}…", worker.operation.as_str()), ui.visuals().text_color())
-                }
-            } else if !operation_active && let Some(notice) = &self.network_notice {
-                (notice.clone(), ui.visuals().text_color())
-            } else if !operation_active && let Some(warning) = &self.branch_warning {
-                (warning.clone(), ui.visuals().warn_fg_color)
-            } else if !operation_active && let Some(label) = &self.branch_label {
-                (label.clone(), ui.visuals().text_color())
-            } else if !operation_active && let Some(notice) = &self.stash_notice {
-                (notice.clone(), ui.visuals().text_color())
-            } else if !operation_active && let Some(notice) = &self.mutation_notice {
-                (notice.clone(), ui.visuals().text_color())
-            } else if self.pending.is_some() {
-                (format!("Reading {}{}", welcome_view::tilde(self.state.requested.as_deref().unwrap_or(std::path::Path::new(".")), std::env::var("HOME").ok().as_deref()), if self.state.history.is_some() { " · showing previous results" } else { "" }), ui.visuals().text_color())
-            } else if !self.state.finished && self.worker.is_some() {
-                (format!("{} · {} commits examined", if self.state.query.is_empty() { "Counting history" } else { "Searching history" }, self.state.scanned), ui.visuals().text_color())
-            } else {
-                let hints = if self.state.history.is_none() && !self.recent.is_empty() && narrow {
-                    "Up/Down, Enter: open   ·   Del: remove   ·   Ctrl+O: open"
-                } else if self.state.history.is_none() && !self.recent.is_empty() {
-                    "Up/Down: choose   ·   Enter: open   ·   Del: remove from recent   ·   Ctrl+O: open   ·   Ctrl+K: search   ·   ?: shortcuts"
-                } else if self.state.history.is_none() {
-                    "Ctrl+O: open   ·   Ctrl+K: search   ·   ?: shortcuts"
-                } else if narrow {
-                    "j/k: select · Enter: review · Space: details · Esc: history · Ctrl/Cmd+F: filter"
-                } else {
-                    "j k: select   ·   Enter: review   ·   Alt+A: actions   ·   R: rebase from here   ·   Ctrl+K: search   ·   Ctrl/Cmd+F: filter   ·   Ctrl/Cmd+C: copy ID"
-                };
-                idle = true;
-                (hints.to_string(), ui.visuals().weak_text_color())
-            };
-            let outcome_active = !operation_active
-                && self.network_error.is_none()
-                && self.state.error.is_none()
-                && self.branch_error.is_none()
-                && self.mutation_error.is_none()
-                && self.outcome.is_some();
-            let details = outcome_active
-                .then(|| self.outcome.as_ref().and_then(|outcome| outcome.details.clone()))
-                .flatten();
-            let recovery = outcome_active
-                .then(|| self.outcome.as_ref().and_then(|outcome| outcome.recovery))
-                .flatten();
-            let mut details_clicked = false;
-            let mut recovery_clicked = None;
-            let mut dismiss_clicked = false;
-            let network_running = !operation_active
-                && self.network.as_ref().is_some_and(|worker| !worker.is_cancelled());
-            let rereading = self
-                .pending
-                .is_some()
-                .then_some("Wait for gg to re-read the repository");
-            let mut cancel_clicked = false;
-            ui.horizontal(|ui| {
-                if idle && let Some(count) = changes.filter(|count| *count > 0) {
-                    let green = colors::diff(ui.visuals(), gg_engine::diff::RowKind::Added).1;
-                    let (dot, _) =
-                        ui.allocate_exact_size(egui::vec2(8.0, 18.0), egui::Sense::hover());
-                    ui.painter().circle_filled(dot.center(), 3.5, green);
-                    ui.label(
-                        egui::RichText::new(format!(
-                            "{count} change{}",
-                            if count == 1 { "" } else { "s" }
-                        ))
-                        .size(11.0)
-                        .color(green),
-                    );
-                    ui.add_space(8.0);
-                }
-                let reserved = 70.0
-                    + if recovery.is_some() {
-                        130.0
-                    } else if details.is_some() {
-                        76.0
-                    } else {
-                        0.0
-                    };
-                let width = (ui.available_width() - reserved).max(100.0);
-                let (rect, _) = ui.allocate_exact_size(
-                    egui::vec2(width, 18.0),
-                    egui::Sense::hover(),
-                );
-                bounded_text::paint(ui, rect, &message, egui::FontId::proportional(11.0), color);
-                if details.is_some() && ui.small_button("Details…").clicked() {
-                    details_clicked = true;
-                }
-                // A network retry waits until the repository was re-read.
-                let retry_ready = rereading.is_none()
-                    || !matches!(
-                        recovery,
-                        Some(RecoveryAction::RetryFetch | RecoveryAction::RetryPush)
-                    );
-                if let Some(action) = recovery
-                    && ui
-                        .add_enabled(retry_ready, egui::Button::new(recovery_label(action)).small())
-                        .on_disabled_hover_text(rereading.unwrap_or_default())
-                        .clicked()
-                {
-                    recovery_clicked = Some(action);
-                }
-                if outcome_active && ui.small_button("Dismiss").clicked() {
-                    dismiss_clicked = true;
-                }
-                if network_running && ui.small_button("Cancel").clicked() {
-                    cancel_clicked = true;
-                }
+        if let Some((_, at)) = &self.notice_seen
+            && at.elapsed() < SUCCESS_FADE
+        {
+            ctx.request_repaint_after(SUCCESS_FADE - at.elapsed());
+        }
+        let message = self.footer_message(narrow);
+        let mut act = None;
+        egui::Panel::bottom("status")
+            .exact_size(25.0)
+            .show(ui, |ui| {
+                act = footer::show(ui, &message);
             });
-            if cancel_clicked && let Some(worker) = &self.network {
-                worker.cancel();
+        match act {
+            Some(footer::Act::Cancel) => {
+                if let Some(worker) = &self.network {
+                    worker.cancel();
+                }
             }
-            if details_clicked {
-                self.outcome_details_open = true;
-            }
-            if let Some(action) = recovery_clicked {
-                self.run_recovery_action(ctx, action);
-            }
-            if dismiss_clicked {
-                self.dismiss_outcome();
-            }
-        });
+            Some(footer::Act::Details) => self.outcome_details_open = true,
+            Some(footer::Act::Recovery(action)) => self.run_recovery_action(ctx, action),
+            Some(footer::Act::Dismiss) => self.dismiss_footer(),
+            None => {}
+        }
         if self.outcome_details_open {
             let details = self
                 .outcome
@@ -12918,7 +12748,7 @@ mod tests {
     }
 
     #[test]
-    fn a_plain_success_fades_after_eight_seconds() {
+    fn receipts_fade_after_eight_seconds() {
         let ctx = egui::Context::default();
         let mut app = layout_fixture();
         let old = std::time::Instant::now()
@@ -12940,7 +12770,36 @@ mod tests {
         let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
             app.draw_ui(ctx)
         });
-        assert!(app.outcome.is_some(), "a success with an action stays");
+        assert!(app.outcome.is_none(), "a receipt with Recovery… fades too");
+        // A fresh receipt stays, and so does a failure, however old.
+        app.outcome = Some(Outcome {
+            at: std::time::Instant::now(),
+            ..outcome(None)
+        });
+        let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        assert!(app.outcome.is_some(), "a fresh receipt stays");
+        app.outcome = Some(Outcome {
+            severity: OutcomeSeverity::Error,
+            ..outcome(None)
+        });
+        let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        assert!(app.outcome.is_some(), "a failure stays until dismissed");
+        // A notice receipt fades the same way.
+        app.outcome = None;
+        app.network_notice = Some("Fetched origin".into());
+        app.notice_seen = Some(("Fetched origin".into(), old));
+        assert_eq!(app.footer_message(false).tone, footer::Tone::Idle);
+        app.notice_seen = None;
+        app.track_notice();
+        let message = app.footer_message(false);
+        assert_eq!(
+            (message.tone, message.text.as_str()),
+            (footer::Tone::Success, "Fetched origin")
+        );
     }
 
     #[test]
@@ -13530,7 +13389,6 @@ mod tests {
                     working_note: None,
                 }),
                 preview: gg_engine::conflict::Resolution::Working,
-                tab: ConflictTab::Ours,
                 blocks: None,
                 blocks_note: None,
                 whole_file: false,
@@ -13538,6 +13396,7 @@ mod tests {
                 edited: false,
                 confirm_replace: false,
                 names: None,
+                ..Default::default()
             });
             let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
                 app.draw_ui(ctx)
@@ -13558,8 +13417,7 @@ mod tests {
             assert!(text.iter().any(|line| line.contains("Base")));
             assert!(text.iter().any(|line| line.contains("Ours")));
             assert!(text.iter().any(|line| line.contains("Theirs")));
-            assert!(text.iter().any(|line| line.contains("Preview source")));
-            assert!(text.iter().any(|line| line.contains("Working file")));
+            assert!(text.iter().any(|line| line.contains("Keep working file")));
             assert!(text.iter().any(|line| line.contains("Stage resolution")));
         }
     }
@@ -13614,10 +13472,14 @@ mod tests {
                     _ => None,
                 })
                 .collect::<Vec<_>>();
-            assert!(text.iter().any(|line| line.contains("merge in progress")));
+            assert!(
+                text.iter()
+                    .any(|line| line.starts_with("Merge conflict · merging")),
+                "{text:?}"
+            );
             assert!(text.iter().any(|line| line.contains("Continue")));
-            assert!(text.iter().any(|line| line.contains("Abort")));
-            assert!(!text.iter().any(|line| line == &"Skip"), "{text:?}");
+            assert!(text.iter().any(|line| line.contains("Abort and restore")));
+            assert!(!text.iter().any(|line| line.contains("Skip")), "{text:?}");
         }
     }
 
@@ -13674,10 +13536,13 @@ mod tests {
                     _ => None,
                 })
                 .collect::<Vec<_>>();
-            assert!(text.iter().any(|line| line.contains("rebase in progress")));
+            assert!(
+                text.iter().any(|line| line.starts_with("Rebase conflict")),
+                "{text:?}"
+            );
             assert!(text.iter().any(|line| line.contains("Continue")));
-            assert!(text.iter().any(|line| line.contains("Skip")));
-            assert!(text.iter().any(|line| line.contains("Abort")));
+            assert!(text.iter().any(|line| line.contains("Skip commit")));
+            assert!(text.iter().any(|line| line.contains("Abort and restore")));
         }
     }
 
@@ -14143,10 +14008,28 @@ mod tests {
         let ctx = egui::Context::default();
         let mut app = layout_fixture();
         let (_sender, receiver) = std::sync::mpsc::channel();
+        let live = std::sync::Arc::new(std::sync::Mutex::new(RewriteLive {
+            backup: Some("refs/gg/backup/main/2026-10-30T10-52".into()),
+            progress: None,
+        }));
         app.rewrite_job = Some(RewriteJob {
             receiver,
             restore_row: None,
+            live,
         });
+        let step = |commit: char, state| operation_band::Step {
+            commit: commit.to_string().repeat(40),
+            action: "pick".into(),
+            subject: String::new(),
+            state,
+        };
+        app.rewrite_steps = (
+            "main".into(),
+            vec![
+                step('a', operation_band::StepState::Current),
+                step('b', operation_band::StepState::Next),
+            ],
+        );
         let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
             app.draw_ui(ctx)
         });
@@ -14164,10 +14047,20 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             text.iter()
-                .filter(|line| line.contains("Rewriting commits"))
+                .filter(|line| line.starts_with("Rewriting main · step 1 of 2 · picking aaaaaaaa"))
                 .count(),
             1,
-            "one operation area reports the rewrite: {text:?}"
+            "one operation band reports the rewrite: {text:?}"
+        );
+        assert!(
+            text.contains(&"Backup: refs/gg/backup/main/2026-10-30T10-52"),
+            "the footer names the backup while Git writes: {text:?}"
+        );
+        assert!(
+            !text
+                .iter()
+                .any(|line| line.contains("Abort") || *line == "Cancel"),
+            "no cancel while Git writes: {text:?}"
         );
         assert!(
             text.iter()
@@ -14285,6 +14178,7 @@ mod tests {
         app.rewrite_job = Some(RewriteJob {
             receiver: rx,
             restore_row: None,
+            live: Default::default(),
         });
         let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
             app.draw_ui(ctx)
@@ -14357,16 +14251,19 @@ mod tests {
             app.start_operation(&ctx, "Testing operation…".into(), move || {
                 let _ = started_tx.send(());
                 let _ = gate_rx.recv();
-                Ok(OperationOutcome::Rebase(gg_engine::rebase::Receipt {
-                    reference: "main".into(),
-                    commit: None,
-                    previous: None,
-                    backup: None,
-                    applied: true,
-                    in_progress: false,
-                    conflicts: Vec::new(),
-                    warnings: Vec::new(),
-                }))
+                Ok(OperationOutcome::Rebase(
+                    gg_engine::rebase::Receipt {
+                        reference: "main".into(),
+                        commit: None,
+                        previous: None,
+                        backup: None,
+                        applied: true,
+                        in_progress: false,
+                        conflicts: Vec::new(),
+                        warnings: Vec::new(),
+                    },
+                    "feature".into(),
+                ))
             })
             .is_ok()
         );
@@ -14401,7 +14298,7 @@ mod tests {
         assert!(
             app.mutation_notice
                 .as_deref()
-                .is_some_and(|notice| notice.contains("Rebased onto"))
+                .is_some_and(|notice| notice.starts_with("Rebased ") && notice.contains(" onto "))
         );
     }
 
@@ -14474,7 +14371,8 @@ mod tests {
         assert!(output.shapes.iter().any(|shape| matches!(
             &shape.shape,
             egui::epaint::Shape::Text(text)
-                if text.galley.job.text.contains("Rebasing onto feature")
+                if text.galley.job.text.starts_with("Rebasing ")
+                    && text.galley.job.text.contains("onto feature")
         )));
         std::fs::write(&marker, b"go")?;
         for _ in 0..400 {
@@ -14488,9 +14386,9 @@ mod tests {
         }
         assert!(!app.operation_busy());
         assert!(
-            app.mutation_notice
-                .as_deref()
-                .is_some_and(|notice| notice.contains("Rebased onto feature")),
+            app.mutation_notice.as_deref().is_some_and(
+                |notice| notice.starts_with("Rebased ") && notice.ends_with(" onto feature")
+            ),
             "notice={:?} error={:?}",
             app.mutation_notice,
             app.mutation_error
@@ -14522,7 +14420,6 @@ mod tests {
             worker: Some(rx),
             snapshot: None,
             preview: gg_engine::conflict::Resolution::Working,
-            tab: ConflictTab::Ours,
             blocks: None,
             blocks_note: None,
             whole_file: false,
@@ -14530,6 +14427,7 @@ mod tests {
             edited: false,
             confirm_replace: false,
             names: None,
+            ..Default::default()
         });
         let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
             app.draw_ui(ctx)
@@ -14684,9 +14582,10 @@ mod tests {
         let text = shown_text(&output);
         for expected in [
             "Block by block",
-            "Conflict 1 of 1",
+            "Conflict 1/1",
             "Theirs + ours",
-            "Result · 1/1 blocks chosen · preview, not staged",
+            "working file preview, not staged",
+            "ready to stage",
         ] {
             assert!(
                 text.iter().any(|line| line.contains(expected)),
@@ -14767,7 +14666,7 @@ mod tests {
             names: None,
             snapshot: None,
             preview: gg_engine::conflict::Resolution::Working,
-            tab: ConflictTab::Ours,
+            ..Default::default()
         });
         let result_y = |app: &mut Browser, events: Vec<egui::Event>| {
             let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, events), |ctx| {
@@ -14784,7 +14683,7 @@ mod tests {
                 "the workspace replaces History: {text:?}"
             );
             output.shapes.iter().find_map(|shape| match &shape.shape {
-                egui::epaint::Shape::Text(text) if text.galley.job.text.starts_with("Result ·") => {
+                egui::epaint::Shape::Text(text) if text.galley.job.text == "Result" => {
                     Some(text.pos.y)
                 }
                 _ => None,
@@ -14814,7 +14713,92 @@ mod tests {
             ),
             |ctx| app.draw_ui(ctx),
         );
-        assert!(app.conflict_view.is_none(), "Esc closes the workspace");
+        assert!(app.conflict_view.is_none(), "Esc leaves the workspace");
+        assert!(
+            app.working.is_some(),
+            "Esc returns to the plain changes list"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn typing_in_the_result_edits_it_and_ctrl_z_undoes() -> Result<(), String> {
+        let ctx = egui::Context::default();
+        crate::phosphor::install(&ctx);
+        let mut app = layout_fixture();
+        let block = gg_engine::conflict::Segment::Block {
+            ours: "ours\n".into(),
+            base: "base\n".into(),
+            theirs: "theirs\n".into(),
+        };
+        app.conflict_view = Some(loaded_conflict(
+            Some("ours\n"),
+            Some("theirs\n"),
+            b"<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> x\n",
+            Some(conflict_blocks::Blocks::new(vec![
+                gg_engine::conflict::Segment::Common("top\n".into()),
+                block,
+            ])),
+        ));
+        let mut time = 0.0;
+        let mut frame = |app: &mut Browser, events: Vec<egui::Event>| {
+            time += 0.1;
+            let mut input = frame_input(1120.0, 740.0, events);
+            input.time = Some(time);
+            crate::tests::run_ui(&ctx, input, |ctx| app.draw_ui(ctx))
+        };
+        let _ = frame(&mut app, vec![]);
+        let output = frame(&mut app, vec![]);
+        // The Result's text: click at the end of its first line.
+        let at = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text)
+                    if text.galley.job.text.starts_with("top\n<<<<<<<") =>
+                {
+                    Some(text.pos + egui::vec2(40.0, 8.0))
+                }
+                _ => None,
+            })
+            .ok_or("the Result is painted")?;
+        let press = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let _ = frame(&mut app, vec![egui::Event::PointerMoved(at), press(true)]);
+        let _ = frame(&mut app, vec![press(false)]);
+        let _ = frame(&mut app, vec![egui::Event::Text("X".into())]);
+        let doc = |app: &Browser| {
+            app.conflict_view
+                .as_ref()
+                .and_then(|view| view.blocks.as_ref())
+                .map(|blocks| blocks.doc.text.clone())
+                .unwrap_or_default()
+        };
+        assert!(
+            doc(&app).starts_with("topX\n"),
+            "typed into the Result: {:?}",
+            doc(&app)
+        );
+        assert_eq!(
+            app.conflict_view
+                .as_ref()
+                .and_then(|view| view.blocks.as_ref())
+                .map(|blocks| crate::conflict_result::line_origins(
+                    &blocks.doc.text,
+                    &blocks.doc.spans
+                )[0]),
+            Some(crate::conflict_result::Origin::Edited)
+        );
+        let _ = frame(&mut app, vec![key(egui::Key::Z, egui::Modifiers::COMMAND)]);
+        assert!(
+            doc(&app).starts_with("top\n<<<<<<<"),
+            "Ctrl+Z undoes: {:?}",
+            doc(&app)
+        );
         Ok(())
     }
 
@@ -14854,7 +14838,7 @@ mod tests {
                 working_note: None,
             }),
             preview: gg_engine::conflict::Resolution::Working,
-            tab: ConflictTab::Ours,
+            ..Default::default()
         });
         assert!(app.stage_conflict(&ctx, ConflictStage::Preview).is_ok());
         assert!(app.operation_busy());
@@ -14922,61 +14906,8 @@ mod tests {
                 working_note: None,
             }),
             preview: gg_engine::conflict::Resolution::Working,
-            tab: ConflictTab::Result,
+            ..Default::default()
         }
-    }
-
-    #[test]
-    fn conflict_labels_name_both_sides_for_each_operation() {
-        use gg_engine::{conflict::SideNames, mutation::Operation};
-        let merge = SideNames {
-            ours: "main".into(),
-            theirs: "feature/login".into(),
-        };
-        let label =
-            |operation, side, names, full| conflict_side_label(operation, side, names, full);
-        let merge_op = Some(Operation::Merge);
-        assert_eq!(
-            label(merge_op, ConflictSide::Ours, Some(&merge), false),
-            "Ours (main)"
-        );
-        assert_eq!(
-            label(merge_op, ConflictSide::Theirs, Some(&merge), false),
-            "Theirs (feature/login)"
-        );
-        assert_eq!(
-            label(merge_op, ConflictSide::Base, Some(&merge), false),
-            "Base"
-        );
-        let rebase = SideNames {
-            ours: "onto main".into(),
-            theirs: "1a2b3c4d Add the login form and its validation".into(),
-        };
-        let rebase_op = Some(Operation::Rebase);
-        assert_eq!(
-            label(rebase_op, ConflictSide::Ours, Some(&rebase), false),
-            "Ours (onto main)"
-        );
-        assert_eq!(
-            label(rebase_op, ConflictSide::Theirs, Some(&rebase), false),
-            "Theirs (1a2b3c4d Add the login…)",
-            "long subjects are shortened"
-        );
-        assert_eq!(
-            label(rebase_op, ConflictSide::Theirs, Some(&rebase), true),
-            "Theirs (1a2b3c4d Add the login form and its validation)",
-            "the full name is on hover"
-        );
-        // Without names the label says what the side means.
-        assert_eq!(
-            label(rebase_op, ConflictSide::Ours, None, false),
-            "Ours · rewritten branch (stage 2)"
-        );
-        let labels = conflict_block_labels(merge_op, Some(&merge));
-        assert_eq!(
-            labels.describe(gg_engine::conflict::BlockChoice::TheirsThenOurs),
-            "Theirs (feature/login), then Ours (main)"
-        );
     }
 
     #[test]
@@ -15010,7 +14941,7 @@ mod tests {
                 app.draw_ui(ctx)
             });
             let text = shown_text(&output);
-            for expected in ["Ours (main)", "Theirs (feature/login)"] {
+            for expected in ["Ours · main", "Theirs · feature/login"] {
                 assert!(
                     text.iter().any(|line| line.contains(expected)),
                     "missing {expected:?} (whole file {whole_file}) in {text:?}"
@@ -15147,6 +15078,113 @@ mod tests {
                 .is_some_and(|view| !view.confirm_replace)
         );
         assert!(!app.operation_busy());
+    }
+
+    #[test]
+    fn hand_edits_in_the_result_are_what_stage_resolution_stages_and_minus_reopens()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let run = |path: &std::path::Path, args: &[&str]| -> Result<(), String> {
+            let output = std::process::Command::new("git")
+                .arg("-C")
+                .arg(path)
+                .args(args)
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env(
+                    "GIT_CONFIG_GLOBAL",
+                    if cfg!(windows) { "NUL" } else { "/dev/null" },
+                )
+                .env("GIT_AUTHOR_NAME", "Test")
+                .env("GIT_AUTHOR_EMAIL", "test@example.org")
+                .env("GIT_COMMITTER_NAME", "Test")
+                .env("GIT_COMMITTER_EMAIL", "test@example.org")
+                .output()
+                .map_err(|error| error.to_string())?;
+            if output.status.success() {
+                Ok(())
+            } else {
+                Err(String::from_utf8_lossy(&output.stderr).into_owned())
+            }
+        };
+        let dir = tempfile::tempdir()?;
+        let path = dir.path();
+        run(path, &["init", "-b", "main"])?;
+        run(path, &["config", "core.autocrlf", "false"])?;
+        std::fs::write(path.join("a"), b"[deps]\neframe = \"0.36\"\nend\n")?;
+        run(path, &["add", "a"])?;
+        run(path, &["commit", "-qm", "base"])?;
+        run(path, &["switch", "-qc", "feature"])?;
+        std::fs::write(path.join("a"), b"[deps]\neframe = \"0.38\"\nend\n")?;
+        run(path, &["commit", "-qam", "feature"])?;
+        run(path, &["switch", "-q", "main"])?;
+        std::fs::write(
+            path.join("a"),
+            b"[deps]\neframe = { version = \"0.37\", default-features = false }\nend\n",
+        )?;
+        run(path, &["commit", "-qam", "main"])?;
+        let _ = run(path, &["merge", "-q", "feature"]);
+
+        let ctx = egui::Context::default();
+        let mut app = Browser::new(path.to_path_buf());
+        app.load(&ctx);
+        let settle = |app: &mut Browser, done: &dyn Fn(&Browser) -> bool| {
+            for _ in 0..400 {
+                let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+                    app.draw_ui(ctx)
+                });
+                if done(app) {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+        };
+        settle(&mut app, &|app| {
+            app.state.history.is_some() && app.mutation.is_some()
+        });
+        app.open_conflict_view(&ctx);
+        settle(&mut app, &|app| {
+            app.conflict_view
+                .as_ref()
+                .is_some_and(|view| view.blocks.is_some())
+        });
+        {
+            let view = app.conflict_view.as_mut().ok_or("missing conflict view")?;
+            assert!(!view.edited);
+            let blocks = view.blocks.as_mut().ok_or("missing blocks")?;
+            assert!(
+                blocks.doc.text.contains("<<<<<<< main\n"),
+                "markers name the sides: {}",
+                blocks.doc.text
+            );
+            blocks.choose(0, gg_engine::conflict::BlockChoice::Ours);
+            let edited = blocks.doc.text.replace("end\n", "end by hand\n");
+            blocks.doc.typed(edited, 0.0);
+            assert!(blocks.complete());
+        }
+        app.stage_conflict(&ctx, ConflictStage::Preview)?;
+        settle(&mut app, &|app| !app.operation_busy());
+        assert_eq!(
+            std::fs::read_to_string(path.join("a"))?,
+            "[deps]\neframe = { version = \"0.37\", default-features = false }\nend by hand\n",
+            "the edited Result is what is staged"
+        );
+        assert!(gg_git::conflict::unmerged(path)?.is_empty());
+        settle(&mut app, &|app| {
+            app.conflict_view
+                .as_ref()
+                .is_some_and(|view| !view.loading && view.resolved == ["a"])
+        });
+        // − reopens the file as conflicted.
+        app.reopen_conflict(&ctx, "a".into())?;
+        settle(&mut app, &|app| !app.operation_busy());
+        assert_eq!(gg_git::conflict::unmerged(path)?, vec!["a".to_string()]);
+        settle(&mut app, &|app| {
+            app.conflict_view
+                .as_ref()
+                .is_some_and(|view| !view.loading && view.paths == ["a"])
+        });
+        let view = app.conflict_view.as_ref().ok_or("missing conflict view")?;
+        assert!(view.resolved.is_empty(), "back under CONFLICTED");
+        Ok(())
     }
 
     #[test]
@@ -15531,11 +15569,13 @@ mod tests {
                 .collect::<Vec<_>>();
             assert!(
                 text.iter()
-                    .any(|line| line.contains("cherry-pick in progress"))
+                    .any(|line| line.starts_with("Cherry-pick conflict · applying")),
+                "{text:?}"
             );
+            assert!(text.contains(&"1 conflict left in 1 file"));
             assert!(text.iter().any(|line| line.contains("Continue")));
-            assert!(text.iter().any(|line| line.contains("Skip")));
-            assert!(text.iter().any(|line| line.contains("Abort")));
+            assert!(text.iter().any(|line| line.contains("Skip commit")));
+            assert!(text.iter().any(|line| line.contains("Abort and restore")));
             assert!(
                 !text.iter().any(|line| line.contains("Recovery…")),
                 "recovery destinations stay out of the continuation controls"
@@ -15569,7 +15609,7 @@ mod tests {
                 .collect::<Vec<_>>();
             assert_eq!(
                 text.iter()
-                    .filter(|line| line.contains("merge in progress"))
+                    .filter(|line| line.starts_with("Merge conflict · merging"))
                     .count(),
                 1,
                 "one operation area at {width}: {text:?}"
@@ -15604,7 +15644,6 @@ mod tests {
             worker: None,
             snapshot: None,
             preview: gg_engine::conflict::Resolution::Working,
-            tab: ConflictTab::Base,
             blocks: None,
             blocks_note: None,
             whole_file: false,
@@ -15612,6 +15651,7 @@ mod tests {
             edited: false,
             confirm_replace: false,
             names: None,
+            ..Default::default()
         });
         let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
             app.draw_ui(ctx)
@@ -15627,16 +15667,23 @@ mod tests {
                 _ => None,
             })
             .collect::<Vec<_>>();
-        assert!(text.iter().any(|line| line.contains("Resolve conflicts")));
+        assert!(
+            !text.iter().any(|line| line.contains("Resolve conflicts")),
+            "the band hides Resolve conflicts while the workspace is open: {text:?}"
+        );
+        assert!(
+            !text.contains(&"Close"),
+            "the workspace has no Close: {text:?}"
+        );
         assert_eq!(
             text.iter().filter(|line| line.contains("Continue")).count(),
             1,
             "only the operation area offers Continue: {text:?}"
         );
         assert_eq!(
-            text.iter().filter(|line| line.contains("Skip")).count(),
+            text.iter().filter(|line| **line == "Skip commit").count(),
             1,
-            "only the operation area offers Skip: {text:?}"
+            "only the operation band offers Skip commit: {text:?}"
         );
     }
 
@@ -15663,10 +15710,10 @@ mod tests {
                 _ => None,
             })
             .collect::<Vec<_>>();
-        assert!(text.iter().any(|line| line.contains("rebase in progress")));
+        assert!(text.iter().any(|line| line.starts_with("Rebase conflict")));
         assert!(text.iter().any(|line| line.contains("Continue")));
-        assert!(text.iter().any(|line| line.contains("Skip")));
-        assert!(text.iter().any(|line| line.contains("Abort")));
+        assert!(text.iter().any(|line| line.contains("Skip commit")));
+        assert!(text.iter().any(|line| line.contains("Abort and restore")));
         assert!(!text.iter().any(|line| line.contains("Recovery…")));
     }
 
@@ -15692,6 +15739,150 @@ mod tests {
                 "cancel control missing or clipped at width {width}"
             );
         }
+    }
+
+    #[test]
+    fn the_footer_shows_network_progress_then_cancelling() {
+        let ctx = egui::Context::default();
+        crate::phosphor::install(&ctx);
+        let mut app = layout_fixture();
+        app.network = Some(
+            network::Worker::idle(gg_engine::sync::Operation::Fetch).labelled("Fetching origin"),
+        );
+        let message = app.footer_message(false);
+        assert_eq!(message.text, "Starting fetch…", "until Git reports");
+        app.network_progress = Some(gg_engine::sync::Progress {
+            operation: gg_engine::sync::Operation::Fetch,
+            phase: "Receiving objects".into(),
+            percent: Some(42),
+            message: "812/1930".into(),
+        });
+        let message = app.footer_message(false);
+        assert_eq!(message.tone, footer::Tone::Progress);
+        assert_eq!(
+            message.full_text(),
+            "Fetching origin · Receiving objects 42% · 812/1930"
+        );
+        assert_eq!(message.bar, Some(0.42));
+        assert!(message.button(footer::Act::Cancel).is_some());
+        // Drawn: the message, the bar, and Cancel inside the window.
+        let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        let text = shown_text(&output);
+        assert!(
+            text.iter()
+                .any(|line| line == "Fetching origin · Receiving objects 42% · 812/1930"),
+            "{text:?}"
+        );
+        assert!(!text.iter().any(|line| line.starts_with("Network · ")));
+        if let Some(worker) = &app.network {
+            worker.cancel();
+        }
+        let message = app.footer_message(false);
+        assert_eq!(
+            (message.text.as_str(), message.right.as_str()),
+            ("Cancelling fetch…", "waits for Git to stop")
+        );
+        assert!(message.buttons.is_empty());
+    }
+
+    #[test]
+    fn footer_labels_name_the_job_and_its_target() {
+        let mut app = layout_fixture();
+        app.branch_label = Some("Switching to feature/rebase-ui…".into());
+        assert_eq!(
+            app.footer_message(false).text,
+            "Switching to feature/rebase-ui…"
+        );
+        app.branch_label = None;
+        app.operation_worker = Some(std::sync::mpsc::sync_channel(1).1);
+        app.mutation_notice = Some("Merging origin/main into main…".into());
+        let message = app.footer_message(false);
+        assert_eq!(
+            (message.tone, message.text.as_str()),
+            (footer::Tone::Progress, "Merging origin/main into main…")
+        );
+        // A band names its own Continue; the footer stays quiet about it.
+        app.mutation_busy = Some(operation_band::Command::Continue);
+        assert_ne!(app.footer_message(false).tone, footer::Tone::Progress);
+    }
+
+    #[test]
+    fn receipts_and_failures_read_without_prefixes() {
+        let mut app = layout_fixture();
+        app.set_outcome(
+            OutcomeSeverity::Info,
+            "Rewrote 4 commits · backup refs/gg/backup/main/2026-10-30T10-52".into(),
+            Some("Backup: refs/gg/backup/main/2026-10-30T10-52".into()),
+            Some(RecoveryAction::Backups),
+        );
+        let message = app.footer_message(false);
+        assert_eq!(message.tone, footer::Tone::Success);
+        assert_eq!(message.text, "Rewrote 4 commits");
+        assert_eq!(
+            message.tail,
+            " · backup refs/gg/backup/main/2026-10-30T10-52"
+        );
+        let labels: Vec<_> = message.buttons.iter().map(|b| b.label.as_str()).collect();
+        assert_eq!(labels, ["Recovery…", "Details…"]);
+        assert!(message.dismiss);
+
+        app.set_outcome(
+            OutcomeSeverity::Error,
+            "Push rejected: origin/main has 1 commit you do not have · fetch first".into(),
+            Some("! [rejected] main -> main (fetch first)".into()),
+            Some(RecoveryAction::Fetch),
+        );
+        let message = app.footer_message(false);
+        assert_eq!(message.tone, footer::Tone::Failed);
+        let labels: Vec<_> = message
+            .buttons
+            .iter()
+            .map(|b| (b.label.as_str(), b.primary))
+            .collect();
+        assert_eq!(labels, [("Fetch", true), ("Details…", false)]);
+        assert!(message.dismiss);
+        // A failure outranks a running job and stays until the next one.
+        app.branch_label = Some("Switching to main…".into());
+        assert_eq!(app.footer_message(false).tone, footer::Tone::Failed);
+        app.clear_failure();
+        assert_eq!(app.footer_message(false).tone, footer::Tone::Progress);
+    }
+
+    #[test]
+    fn a_blocked_switch_offers_stash_and_switch_in_amber() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        app.local_summary = Some(LocalSummary {
+            changes: Some(3),
+            ..Default::default()
+        });
+        let (tx, rx) = std::sync::mpsc::channel();
+        let _ = tx.send(Err(
+            "Working tree is not clean (a). Commit, stash, or discard changes before switching or creating a branch.".into(),
+        ));
+        app.branch = Some(rx);
+        app.branch_target = Some(("feature/rebase-ui".into(), false));
+        let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        let message = app.footer_message(false);
+        assert_eq!(message.tone, footer::Tone::Blocked);
+        assert_eq!(
+            message.text,
+            "Can’t switch to feature/rebase-ui: 3 changed files would be overwritten"
+        );
+        let labels: Vec<_> = message
+            .buttons
+            .iter()
+            .map(|b| (b.label.as_str(), b.primary))
+            .collect();
+        assert_eq!(labels, [("Stash and switch", true)]);
+        assert!(message.dismiss);
     }
 
     #[test]
@@ -15783,7 +15974,7 @@ mod tests {
         app.outcome = Some(Outcome {
             at: std::time::Instant::now(),
             severity: OutcomeSeverity::Warning,
-            summary: "Switch to feature blocked".into(),
+            summary: "Can’t switch to feature: 3 changed files would be overwritten".into(),
             details: None,
             recovery: Some(RecoveryAction::RetrySwitch),
         });
@@ -15826,7 +16017,7 @@ mod tests {
         let summary = app.outcome.as_ref().map(|outcome| outcome.summary.as_str());
         assert!(
             summary.is_some_and(
-                |summary| summary.contains("Created feature but the switch was blocked")
+                |summary| summary.starts_with("Created feature but can’t switch to it: ")
             ),
             "{summary:?}"
         );
@@ -16775,17 +16966,6 @@ mod tests {
         let _ = crate::tests::run_ui(&ctx, input, |ctx| app.draw_ui(ctx));
         assert_eq!(app.state.count, 100_000);
         assert!((app.scroll_offset - offset).abs() < 0.1);
-    }
-
-    #[test]
-    fn result_lines_are_numbered_and_aligned() {
-        assert_eq!(numbered("a\nb"), "1  a\n2  b");
-        let ten = (0..10)
-            .map(|n| n.to_string())
-            .collect::<Vec<_>>()
-            .join("\n");
-        assert!(numbered(&ten).starts_with(" 1  0\n"));
-        assert!(numbered(&ten).ends_with("10  9"));
     }
 
     #[test]
@@ -19166,7 +19346,7 @@ mod tests {
         );
         assert_eq!(
             app.branch_label.as_deref(),
-            Some("Creating tracking branch…")
+            Some("Creating other from origin/other…")
         );
     }
 

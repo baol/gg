@@ -5,20 +5,9 @@
 //! step chips (done, current, next). A reopened commit also lists the commits
 //! made at the stop.
 
-use crate::phosphor;
+use crate::operation_band;
 use eframe::egui;
 use gg_engine::mutation::{RebaseProgress, RebaseStop};
-
-/// Chips shown on each side of the current step before collapsing to a count.
-const NEIGHBOURS: usize = 3;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Command {
-    Continue,
-    Skip,
-    Abort,
-    ResolveConflicts,
-}
 
 fn short(id: &str) -> &str {
     &id[..id.len().min(7)]
@@ -42,13 +31,6 @@ pub fn continue_reason(progress: &RebaseProgress, conflicts: usize) -> Option<St
         ));
     }
     None
-}
-
-/// Whether Continue is the obvious next step: a reopened commit is fully
-/// committed again.
-pub fn continue_highlighted(progress: &RebaseProgress) -> bool {
-    matches!(&progress.stop, RebaseStop::Reopened { made, .. } if !made.is_empty())
-        && progress.tracked_changes == 0
 }
 
 /// The stop's title, as in the mockups: what stopped, the step, and the
@@ -99,19 +81,22 @@ pub struct Palette {
     pub band: egui::Color32,
     pub edge: egui::Color32,
     pub ink: egui::Color32,
-    pub note: egui::Color32,
     pub chip: egui::Color32,
     pub chip_edge: egui::Color32,
 }
 
 pub fn palette(progress: &RebaseProgress) -> Palette {
+    tone_palette(progress.stop == RebaseStop::Conflict)
+}
+
+/// The amber conflict palette, or the purple one.
+pub fn tone_palette(conflict: bool) -> Palette {
     use egui::Color32 as C;
-    if progress.stop == RebaseStop::Conflict {
+    if conflict {
         Palette {
             band: C::from_rgb(51, 39, 15),
             edge: C::from_rgb(106, 74, 20),
             ink: C::from_rgb(240, 195, 90),
-            note: C::from_rgb(230, 230, 230),
             chip: C::from_rgb(77, 58, 20),
             chip_edge: C::from_rgb(192, 144, 46),
         }
@@ -120,7 +105,6 @@ pub fn palette(progress: &RebaseProgress) -> Palette {
             band: C::from_rgb(36, 33, 58),
             edge: C::from_rgb(58, 51, 96),
             ink: C::from_rgb(200, 192, 245),
-            note: C::from_rgb(216, 212, 238),
             chip: C::from_rgb(58, 51, 96),
             chip_edge: C::from_rgb(125, 112, 208),
         }
@@ -128,7 +112,7 @@ pub fn palette(progress: &RebaseProgress) -> Palette {
 }
 
 /// One bordered step chip.
-fn chip(
+pub(crate) fn chip(
     ui: &mut egui::Ui,
     colors: Palette,
     text: String,
@@ -161,163 +145,117 @@ fn chip(
         .inner
 }
 
-/// Step chips: done (with a check), the current step, and the next steps,
-/// collapsing far steps into counts.
-fn chips(ui: &mut egui::Ui, progress: &RebaseProgress) {
-    let colors = palette(progress);
-    let current = progress.done.len().saturating_sub(1);
-    let steps = progress.done.iter().chain(progress.todo.iter());
-    let total = progress.done.len() + progress.todo.len();
-    let first = current.saturating_sub(NEIGHBOURS);
-    let last = (current + NEIGHBOURS).min(total.saturating_sub(1));
-    if first > 0 {
-        ui.weak(format!("{} {first} done", phosphor::CHECK));
-    }
-    for (index, step) in steps.enumerate().skip(first).take(last + 1 - first) {
-        // As in the mockup: the step's ID and action; the subject is on hover.
-        // The reopened step reads `reopen`, as in the stop mockup.
-        let action = if index == current && matches!(progress.stop, RebaseStop::Reopened { .. }) {
-            "reopen"
-        } else {
-            step.action.as_str()
-        };
-        let label = format!("{} {action}", &step.commit[..step.commit.len().min(8)]);
-        let text = if index < current {
-            format!("{} {label}", phosphor::CHECK)
-        } else if index == current {
-            format!("{} {label}", phosphor::PAUSE)
-        } else {
-            format!("· {label}")
-        };
-        chip(ui, colors, text, index == current, index < current)
-            .on_hover_text(format!("{} · {}", step.commit, step.subject));
-    }
-    if last + 1 < total {
-        ui.weak(format!("+{} next", total - last - 1));
-    }
-}
-
-/// Draw the stop; returns the command chosen with the pointer.
-pub fn show(
-    ui: &mut egui::Ui,
+/// The stop as an operation band: the title, Continue's reason as the
+/// status, Resolve conflicts while the workspace is closed, Continue, Skip commit, Abort and
+/// restore, the explanation (or the commits made at a reopened commit), and
+/// the step chips.
+pub fn band(
     progress: &RebaseProgress,
     conflicts: usize,
+    workspace_open: bool,
     pending: bool,
+    busy: Option<&str>,
     backup: Option<&str>,
-) -> Option<Command> {
-    let mut command = None;
-    // The purple band from the stop mockups, behind both lines.
-    let colors = palette(progress);
-    let band = ui.max_rect().expand2(egui::vec2(8.0, 4.0));
-    ui.painter().rect_filled(band, 0.0, colors.band);
-    ui.painter().hline(
-        band.x_range(),
-        band.bottom() - 0.5,
-        egui::Stroke::new(1.0, colors.edge),
-    );
-    let glyph = if progress.stop == RebaseStop::Conflict {
-        phosphor::WARNING
-    } else {
-        phosphor::PAUSE
-    };
-    ui.horizontal(|ui| {
-        ui.label(phosphor::icon(glyph).color(colors.ink));
-        ui.add(egui::Label::new(egui::RichText::new(title(progress)).color(colors.ink)).truncate());
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui
-                .add_enabled(
-                    !pending,
-                    egui::Button::new(
-                        egui::RichText::new("Abort and restore")
-                            .color(egui::Color32::from_rgb(245, 160, 160)),
-                    ),
-                )
-                .on_hover_text(match backup {
-                    Some(backup) => format!(
-                        "Stop the rebase and restore the branch as it was.\nBackup: {backup}"
-                    ),
-                    None => "Stop the rebase and restore the branch as it was.".to_string(),
-                })
-                .clicked()
-            {
-                command = Some(Command::Abort);
-            }
-            if ui
-                .add_enabled(!pending, egui::Button::new("Skip commit"))
-                .on_hover_text("Leave this commit out and continue with the next step.")
-                .clicked()
-            {
-                command = Some(Command::Skip);
-            }
-            let reason = continue_reason(progress, conflicts);
-            // Continue is the band's primary action: muted purple until the
-            // stop is done, then the primary blue, with its key.
-            let fill = if continue_highlighted(progress) {
-                egui::Color32::from_rgb(11, 85, 119)
-            } else {
-                egui::Color32::from_rgb(74, 69, 112)
-            };
-            let button = egui::Button::new((
-                egui::RichText::new("Continue").color(egui::Color32::WHITE),
-                egui::RichText::new("Ctrl+Enter").small().color(colors.ink),
-            ))
-            .fill(fill);
-            let response = ui
-                .add_enabled(!pending && reason.is_none(), button)
-                .on_hover_text("Ctrl+Enter");
-            let response = match &reason {
-                Some(reason) => response.on_disabled_hover_text(reason),
-                None => response,
-            };
-            if response.clicked() {
-                command = Some(Command::Continue);
-            }
-            if conflicts > 0
-                && ui
-                    .add_enabled(!pending, egui::Button::new("Resolve conflicts…"))
-                    .clicked()
-            {
-                command = Some(Command::ResolveConflicts);
-            }
-            if let Some(reason) = &reason {
-                ui.add(
-                    egui::Label::new(
-                        egui::RichText::new(reason)
-                            .small()
-                            .color(ui.visuals().warn_fg_color),
-                    )
-                    .truncate(),
-                );
-            }
+) -> operation_band::Band {
+    use operation_band::{Button, Command as C, Icon, Kind, StepState, Tone};
+    let reason = continue_reason(progress, conflicts);
+    let idle = !pending && busy.is_none();
+    let (step, total) = progress.position();
+    let mut buttons = Vec::new();
+    // Resolve conflicts is the primary until the workspace is open.
+    if conflicts > 0 && !workspace_open {
+        buttons.push(Button {
+            command: C::ResolveConflicts,
+            label: "Resolve conflicts",
+            kind: Kind::Primary,
+            key: None,
+            enabled: idle,
+            tip: "Open the conflict workspace in Changes".into(),
         });
+    }
+    buttons.push(Button {
+        command: C::Continue,
+        label: "Continue",
+        kind: if idle && reason.is_none() {
+            Kind::Primary
+        } else {
+            Kind::Secondary
+        },
+        key: Some("Ctrl+Enter"),
+        enabled: idle && reason.is_none(),
+        tip: match &reason {
+            _ if !idle => "Wait for the current operation to finish".into(),
+            Some(reason) => reason.clone(),
+            None => "Ctrl+Enter".into(),
+        },
     });
-    // Second line, fixed: what to do (or the commits made at a reopened
-    // commit) in a fixed-width slot on the left, the step chips on the right.
-    ui.horizontal(|ui| {
-        let note = match &progress.stop {
-            RebaseStop::Reopened { made, .. } if !made.is_empty() => format!(
-                "Commits made at this stop: {}",
-                made.iter()
-                    .map(|step| format!("{} {}", short(&step.commit), step.subject))
-                    .collect::<Vec<_>>()
-                    .join(" · ")
-            ),
-            _ => explanation(progress).to_string(),
-        };
-        let width = (ui.available_width() * 0.5).floor();
-        ui.allocate_ui_with_layout(
-            egui::vec2(width, ui.spacing().interact_size.y),
-            egui::Layout::left_to_right(egui::Align::Center),
-            |ui| {
-                ui.set_min_width(width);
-                ui.add(egui::Label::new(egui::RichText::new(&note).color(colors.note)).truncate())
-                    .on_hover_text(&note);
-            },
-        );
-        ui.spacing_mut().item_spacing.x = 10.0;
-        chips(ui, progress);
+    buttons.push(Button {
+        command: C::Skip,
+        label: "Skip commit",
+        kind: Kind::Secondary,
+        key: None,
+        enabled: idle,
+        tip: "Leave this commit out and continue with the next step.".into(),
     });
-    command
+    buttons.push(Button {
+        command: C::Abort,
+        label: "Abort and restore",
+        kind: Kind::Danger,
+        key: None,
+        enabled: idle,
+        tip: match backup {
+            Some(backup) => {
+                format!("Stop the rebase and restore the branch as it was.\nBackup: {backup}")
+            }
+            None => "Stop the rebase and restore the branch as it was.".to_string(),
+        },
+    });
+    let sub = match &progress.stop {
+        RebaseStop::Reopened { made, .. } if !made.is_empty() => format!(
+            "Commits made at this stop: {}",
+            made.iter()
+                .map(|step| format!("{} {}", short(&step.commit), step.subject))
+                .collect::<Vec<_>>()
+                .join(" · ")
+        ),
+        _ => explanation(progress).to_string(),
+    };
+    let mut steps = operation_band::steps_from_progress(progress);
+    // The reopened step reads `reopen`, as in the stop mockup.
+    if matches!(progress.stop, RebaseStop::Reopened { .. })
+        && let Some(current) = steps
+            .iter_mut()
+            .find(|step| step.state == StepState::Current)
+    {
+        current.action = "reopen".into();
+    }
+    let conflict = progress.stop == RebaseStop::Conflict;
+    operation_band::Band {
+        tone: if conflict && busy.is_none() {
+            Tone::Conflict
+        } else {
+            Tone::Ready
+        },
+        icon: match busy {
+            Some(_) => Icon::Spinner,
+            None if conflict => Icon::Warning,
+            None => Icon::Pause,
+        },
+        title: match busy {
+            Some(label) => format!("{label} · step {step} of {total}"),
+            None => title(progress),
+        },
+        hash: String::new(),
+        post: String::new(),
+        status: if busy.is_some() {
+            String::new()
+        } else {
+            reason.unwrap_or_default()
+        },
+        sub,
+        buttons,
+        steps,
+    }
 }
 
 #[cfg(test)]
@@ -358,10 +296,8 @@ mod tests {
             continue_reason(&progress, 0).as_deref(),
             Some("Commit or stash the 2 remaining changed files first.")
         );
-        assert!(!continue_highlighted(&progress));
         let progress = reopened(2, 0);
         assert_eq!(continue_reason(&progress, 0), None);
-        assert!(continue_highlighted(&progress));
         assert_eq!(
             continue_reason(&progress, 1).as_deref(),
             Some("Resolve and stage 1 conflicted file first.")
@@ -389,5 +325,29 @@ mod tests {
             title(&conflict),
             "Conflict · step 2 of 3 · applying bbbbbbbb two"
         );
+    }
+
+    #[test]
+    fn a_conflict_stop_offers_resolve_conflicts_until_the_workspace_opens() {
+        use operation_band::{Command, Kind};
+        let mut conflict = reopened(0, 0);
+        conflict.stop = RebaseStop::Conflict;
+        let band = band(&conflict, 1, false, false, None, None);
+        assert_eq!(
+            band.button(Command::ResolveConflicts)
+                .map(|button| (button.label, button.kind)),
+            Some(("Resolve conflicts", Kind::Primary))
+        );
+        assert_eq!(band.status, "Resolve and stage 1 conflicted file first.");
+        assert!(
+            band.button(Command::Continue)
+                .is_some_and(|button| !button.enabled)
+        );
+        let open = super::band(&conflict, 1, true, false, None, None);
+        assert!(open.button(Command::ResolveConflicts).is_none());
+        // Busy: the job names itself, the buttons stay and disable.
+        let busy = super::band(&conflict, 0, true, true, Some("Continuing rebase"), None);
+        assert_eq!(busy.title, "Continuing rebase · step 2 of 3");
+        assert!(busy.buttons.iter().all(|button| !button.enabled));
     }
 }
