@@ -15,6 +15,8 @@ pub enum Outcome {
     Fetch(FetchReceipt),
     Push(PushReceipt),
     Clone(CloneReceipt),
+    /// A remote branch was deleted; the message names it.
+    DeleteRemote(String),
 }
 
 pub enum Message {
@@ -65,6 +67,21 @@ impl Worker {
                 progress,
             )
             .map(Outcome::Push)
+        })
+    }
+
+    pub fn delete_remote(
+        ctx: &egui::Context,
+        path: PathBuf,
+        remote: String,
+        branch: String,
+        expected: String,
+    ) -> Result<Self, String> {
+        start(ctx, Operation::Push, move |cancel, progress| {
+            gg_git::sync::delete_remote_branch(
+                &path, &remote, &branch, &expected, false, &cancel, progress,
+            )
+            .map(Outcome::DeleteRemote)
         })
     }
 

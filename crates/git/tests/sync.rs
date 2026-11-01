@@ -354,3 +354,44 @@ fn force_with_lease_requires_a_matching_remote_tracking_ref() -> Result {
     assert_eq!(std::fs::read(local.path().join("b"))?, b"local only\n");
     Ok(())
 }
+
+#[test]
+fn delete_remote_branch_uses_a_lease() -> Result {
+    let local = repo()?;
+    let remote = bare()?;
+    let url = remote.path().to_string_lossy().into_owned();
+    git(local.path(), &["remote", "add", "origin", &url])?;
+    git(
+        local.path(),
+        &["push", "--quiet", "origin", "HEAD:refs/heads/feature"],
+    )?;
+    git(local.path(), &["fetch", "--quiet", "origin"])?;
+    let known = head(local.path(), "refs/remotes/origin/feature")?;
+
+    // A stale lease is refused and leaves the branch.
+    let stale = "0".repeat(40);
+    let refused = gg_git::sync::delete_remote_branch(
+        local.path(),
+        "origin",
+        "feature",
+        &stale,
+        false,
+        &no_cancel(),
+        &mut |_| {},
+    );
+    assert!(refused.is_err(), "a stale lease must be refused");
+    assert_eq!(head(remote.path(), "refs/heads/feature")?, known);
+
+    let done = gg_git::sync::delete_remote_branch(
+        local.path(),
+        "origin",
+        "feature",
+        &known,
+        false,
+        &no_cancel(),
+        &mut |_| {},
+    )?;
+    assert_eq!(done, "Deleted feature on origin");
+    assert!(head(remote.path(), "refs/heads/feature").is_err());
+    Ok(())
+}

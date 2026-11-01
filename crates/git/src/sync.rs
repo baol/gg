@@ -173,6 +173,37 @@ pub fn push(
     })
 }
 
+/// Delete `branch` on `remote` with a lease: Git refuses when the remote
+/// branch no longer points at `expected` (the last fetched commit).
+pub fn delete_remote_branch(
+    path: &Path,
+    remote: &str,
+    branch: &str,
+    expected: &str,
+    interactive: bool,
+    cancel: &AtomicBool,
+    progress: &mut dyn FnMut(Progress),
+) -> Result<String, String> {
+    let (_, root) = open(path)?;
+    gix::ObjectId::from_hex(expected.as_bytes())
+        .map_err(|_| "The remote branch's last known commit is invalid.".to_string())?;
+    if remote.is_empty() || branch.is_empty() || remote.starts_with('-') || branch.starts_with('-')
+    {
+        return Err("Name a remote and a branch to delete.".into());
+    }
+    let args = vec![
+        "push".to_string(),
+        "--progress".to_string(),
+        format!("--force-with-lease=refs/heads/{branch}:{expected}"),
+        remote.to_string(),
+        "--delete".to_string(),
+        format!("refs/heads/{branch}"),
+    ];
+    let output = run_git(&root, &args, Operation::Push, interactive, cancel, progress)?;
+    finish(output, format!("Delete {branch} on {remote}"))?;
+    Ok(format!("Deleted {branch} on {remote}"))
+}
+
 pub fn clone(
     url: &str,
     destination: Option<&Path>,

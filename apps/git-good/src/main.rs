@@ -1564,6 +1564,9 @@ struct Browser {
     commit_stats: Option<(String, commit_stats::Stats)>,
     /// The branch switcher's keyboard cursor.
     branch_cursor: usize,
+    /// Delete on origin, awaiting confirmation: `origin/feature` and its
+    /// last fetched commit.
+    delete_remote: Option<(String, String)>,
     commit_stats_worker: Option<commit_stats::Worker>,
     /// What each open destructive dialog will remove, read in the background.
     consequences: std::collections::BTreeMap<&'static str, consequence::Lines>,
@@ -1732,6 +1735,7 @@ impl Browser {
             refs_visible_elsewhere: false,
             commit_stats: None,
             branch_cursor: 0,
+            delete_remote: None,
             commit_stats_worker: None,
             consequences: std::collections::BTreeMap::new(),
             refs_query: String::new(),
@@ -2024,6 +2028,63 @@ impl Browser {
                 self.force_push_pending = false;
                 self.network_error = Some(error);
             }
+        }
+    }
+
+    /// Delete on origin: one confirmation naming what goes and what stays.
+    fn draw_delete_remote(&mut self, ctx: &egui::Context) {
+        let Some((name, commit)) = self.delete_remote.clone() else {
+            return;
+        };
+        let (remote, branch) = name.split_once('/').unwrap_or(("origin", name.as_str()));
+        let (remote, branch) = (remote.to_string(), branch.to_string());
+        let mut open = true;
+        let mut submit = false;
+        let mut cancel = false;
+        let ready = self.network.is_none() && self.branch.is_none();
+        egui::Window::new("Delete remote branch")
+            .id(egui::Id::unique("delete-remote"))
+            .modal(ctx, egui::Id::unique("delete-remote"))
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .default_width(440.0)
+            .default_pos(ctx.content_rect().center())
+            .pivot(egui::Align2::CENTER_CENTER)
+            .show(ctx, |ui| {
+                ui.label(format!("Delete {branch} on {remote}?"));
+                ui.weak(format!(
+                    "Last fetched at {}. Git refuses if someone pushed to it since. Local branches and other clones keep their copies.",
+                    short_id(&commit)
+                ));
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        submit |= ui
+                            .add_enabled(
+                                ready,
+                                consequence::danger_button(format!("Delete on {remote}"), ready),
+                            )
+                            .clicked();
+                        cancel |= ui
+                            .button(("Cancel", egui::RichText::new("Esc").small().weak()))
+                            .clicked();
+                    });
+                });
+            });
+        if submit && let Some(path) = self.state.history.as_ref().map(|h| h.path.clone()) {
+            self.delete_remote = None;
+            match network::Worker::delete_remote(ctx, path, remote, branch, commit) {
+                Ok(worker) => {
+                    self.network = Some(worker);
+                    self.network_progress = None;
+                    self.network_error = None;
+                    self.network_notice = None;
+                }
+                Err(error) => self.network_error = Some(error),
+            }
+        } else if cancel || !open {
+            self.delete_remote = None;
         }
     }
 
@@ -3014,6 +3075,11 @@ impl Browser {
                         None => format!("Pushed {} to {}", receipt.branch, receipt.remote),
                     }
                 });
+                self.load(ctx);
+            }
+            Ok(network::Outcome::DeleteRemote(message)) => {
+                self.network_error = None;
+                self.network_notice = Some(message);
                 self.load(ctx);
             }
             Ok(network::Outcome::Clone(receipt)) => {
@@ -7407,7 +7473,6 @@ impl Browser {
             return;
         };
         let mut open = true;
-        let mut refresh = false;
         let mut create_open = false;
         let mut open_path = None;
         let mut remove_open = None;
@@ -7435,12 +7500,6 @@ impl Browser {
             .pivot(egui::Align2::CENTER_CENTER)
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    if ui
-                        .add_enabled(window.busy.is_none(), egui::Button::new("Refresh"))
-                        .clicked()
-                    {
-                        refresh = true;
-                    }
                     if ui
                         .add_enabled(window.busy.is_none(), egui::Button::new("Create worktree…"))
                         .clicked()
@@ -7747,9 +7806,6 @@ impl Browser {
         }
         if open_path.is_some() {
             self.worktree_window = None;
-        }
-        if refresh {
-            self.request_worktrees(ctx, worktree_worker::Action::List);
         }
         if create_open && let Some(window) = &mut self.worktree_window {
             window.create = Some(CreateWorktreeDialog {
@@ -8624,6 +8680,15 @@ impl Browser {
         let focused = ctx.input(|i| i.focused);
         if focused && !self.window_focused {
             self.refresh_local_summary(ctx);
+            // The Worktrees window has no Refresh button: it re-reads when
+            // gg gets focus back (accepted proposal).
+            if self
+                .worktree_window
+                .as_ref()
+                .is_some_and(|window| window.busy.is_none())
+            {
+                self.request_worktrees(ctx, worktree_worker::Action::List);
+            }
         }
         self.window_focused = focused;
         colors::apply(ctx);
@@ -9309,7 +9374,9 @@ impl Browser {
         }
         match branch_pick {
             Some(BranchPick::Switch(name)) => self.start_branch(ctx, name, false),
-            Some(BranchPick::Track(name)) => self.track_dialog = Some(name),
+            // Track and switch in one step (accepted proposal); the worktree
+            // check and errors work as for any switch.
+            Some(BranchPick::Track(name)) => self.start_track(ctx, name),
             Some(BranchPick::New) => self.open_new_branch(),
             None => {}
         }
@@ -9844,6 +9911,9 @@ impl Browser {
                     self.open_compare(ctx, commit, location);
                 }
                 Some(refs_view::Action::Push) => self.start_push(ctx),
+                Some(refs_view::Action::DeleteRemote(name, commit)) => {
+                    self.delete_remote = Some((name, commit));
+                }
                 None => {}
             }
         }
@@ -10878,6 +10948,7 @@ impl Browser {
         self.draw_signature(ctx);
         self.draw_tag_create(ctx);
         self.draw_force_push(ctx);
+        self.draw_delete_remote(ctx);
         if self.conflict_view.is_some() {
             // The workspace's own footer: its keys, as in the conflict mockup.
             egui::Panel::bottom("conflict-status")
@@ -12077,6 +12148,34 @@ mod tests {
                 .iter()
                 .any(|line| line.starts_with("No commits yet on")),
             "{unborn:?}"
+        );
+    }
+
+    #[test]
+    fn the_worktrees_window_rereads_when_gg_regains_focus() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        app.worktree_window = Some(WorktreeWindow {
+            open_created: None,
+            snapshot: None,
+            selected: None,
+            error: None,
+            notice: None,
+            create: None,
+            confirm_remove: None,
+            busy: None,
+            pending: None,
+        });
+        let input = |focused| egui::RawInput {
+            focused,
+            ..frame_input(1120.0, 740.0, vec![])
+        };
+        let _ = crate::tests::run_ui(&ctx, input(false), |ctx| app.draw_ui(ctx));
+        let before = app.worktree_generation;
+        let _ = crate::tests::run_ui(&ctx, input(true), |ctx| app.draw_ui(ctx));
+        assert!(
+            app.worktree_generation > before,
+            "regaining focus requests a fresh worktree list"
         );
     }
 
@@ -16994,7 +17093,14 @@ mod tests {
         );
         assert_eq!(app.branch_cursor, 1);
         let _ = frame(&mut app, vec![key(egui::Key::Enter, egui::Modifiers::NONE)]);
-        assert_eq!(app.track_dialog.as_deref(), Some("origin/other"));
+        assert!(
+            app.track_dialog.is_none(),
+            "no dialog: it tracks and switches"
+        );
+        assert_eq!(
+            app.branch_label.as_deref(),
+            Some("Creating tracking branch…")
+        );
     }
 
     #[test]

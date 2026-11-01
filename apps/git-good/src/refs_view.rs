@@ -29,6 +29,9 @@ pub enum Action {
     Compare(String),
     /// Push the current branch.
     Push,
+    /// Delete a remote branch on its remote (confirmed): its short name
+    /// (`origin/feature`) and last fetched commit.
+    DeleteRemote(String, String),
 }
 
 #[derive(Default)]
@@ -723,7 +726,22 @@ fn render_leaf(
                     Action::DeleteTag(item.name.clone()),
                 );
             }
-            RefKind::Remote => {}
+            RefKind::Remote => {
+                ui.separator();
+                let remote = item
+                    .name
+                    .split_once('/')
+                    .map_or("the remote", |(remote, _)| remote);
+                entry(
+                    ui,
+                    format!("Delete on {remote}…"),
+                    "",
+                    idle,
+                    wait,
+                    true,
+                    Action::DeleteRemote(item.name.clone(), item.commit.clone()),
+                );
+            }
         }
     });
 }
