@@ -175,11 +175,13 @@ fn chips(ui: &mut egui::Ui, progress: &RebaseProgress) {
     }
     for (index, step) in steps.enumerate().skip(first).take(last + 1 - first) {
         // As in the mockup: the step's ID and action; the subject is on hover.
-        let label = format!(
-            "{} {}",
-            &step.commit[..step.commit.len().min(8)],
-            step.action
-        );
+        // The reopened step reads `reopen`, as in the stop mockup.
+        let action = if index == current && matches!(progress.stop, RebaseStop::Reopened { .. }) {
+            "reopen"
+        } else {
+            step.action.as_str()
+        };
+        let label = format!("{} {action}", &step.commit[..step.commit.len().min(8)]);
         let text = if index < current {
             format!("{} {label}", phosphor::CHECK)
         } else if index == current {

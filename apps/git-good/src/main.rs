@@ -10998,9 +10998,15 @@ impl Browser {
                 ahead: tracking.and_then(|t| t.ahead).unwrap_or(0),
                 behind: tracking.and_then(|t| t.behind).unwrap_or(0),
             };
+            let reopened = matches!(
+                self.rebase_progress().map(|progress| &progress.stop),
+                Some(gg_engine::mutation::RebaseStop::Reopened { .. })
+            );
+            let backup = self.rewrite_backup.clone();
             if let Some(working) = &mut self.working {
                 working.set_stop_commits(made);
                 working.set_clean_context(clean);
+                working.set_reopened(reopened, backup);
             }
             let close = self.working.as_mut().is_some_and(|working| {
                 working.set_external_busy(external);

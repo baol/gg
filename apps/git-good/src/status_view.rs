@@ -196,6 +196,10 @@ pub struct StatusView {
     /// What the clean view shows: HEAD's ID and subject, and the current
     /// branch's ahead/behind counts.
     clean_context: CleanContext,
+    /// Local Changes is showing a reopened rebase step (stop mockup labels).
+    reopened: bool,
+    /// The rewrite's backup ref, named in the footer during a stop.
+    stop_backup: Option<String>,
     clean_request: Option<CleanAction>,
     /// A group header asked to stage everything (`Some(true)`) or unstage
     /// everything (`Some(false)`); the window runs it like the menu item.
@@ -251,6 +255,8 @@ impl StatusView {
             group_request: None,
             stop_commits: Vec::new(),
             clean_context: CleanContext::default(),
+            reopened: false,
+            stop_backup: None,
             clean_request: None,
             commit: None,
             commit_done: None,
@@ -774,6 +780,12 @@ impl StatusView {
     /// Disable incompatible mutations while another view owns an operation.
     pub fn set_external_busy(&mut self, reason: Option<String>) {
         self.external_busy = reason;
+    }
+
+    /// Whether a reopened rebase step is open, and the rewrite's backup ref.
+    pub fn set_reopened(&mut self, reopened: bool, backup: Option<String>) {
+        self.reopened = reopened;
+        self.stop_backup = backup.filter(|_| reopened);
     }
 
     /// HEAD and tracking for the clean view.
@@ -1718,7 +1730,13 @@ impl StatusView {
         let message_height = if self.message_expanded { 118.0 } else { 54.0 };
         let mut commit_now = false;
         ui.horizontal(|ui| {
-            let button_width = if self.amend { 112.0 } else { 88.0 };
+            let button_width = if self.reopened && !self.amend {
+                170.0
+            } else if self.amend {
+                112.0
+            } else {
+                88.0
+            };
             let width = (ui.available_width() - button_width - 150.0).max(160.0);
             let field = ui.add_sized(
                 [width, message_height],
@@ -1780,17 +1798,27 @@ impl StatusView {
                         self.message_expanded = !self.message_expanded;
                     }
                 });
+                // At a reopened step the button says what it makes, as in
+                // the stop mockup.
+                let partial = self.lists[0].count > 0;
                 let label = if self.commit.is_some() {
                     "Committing…"
                 } else if self.amend {
                     "Amend HEAD"
+                } else if self.reopened && partial {
+                    "Commit staged part"
+                } else if self.reopened && !self.stop_commits.is_empty() {
+                    "Commit last part"
+                } else if self.reopened {
+                    "Amend reopened commit"
                 } else {
                     "Commit"
                 };
-                let response = ui.add_enabled(
-                    can_commit,
-                    egui::Button::new(label).min_size(egui::vec2(button_width, 26.0)),
-                );
+                let mut button = egui::Button::new(label).min_size(egui::vec2(button_width, 26.0));
+                if can_commit {
+                    button = button.fill(egui::Color32::from_rgb(11, 85, 119));
+                }
+                let response = ui.add_enabled(can_commit, button);
                 let response = if let Some(reason) = reason {
                     response.on_hover_text(reason)
                 } else if self.amend {
@@ -1800,6 +1828,10 @@ impl StatusView {
                 };
                 ui.weak(reason.unwrap_or(if self.amend {
                     "Ready to amend"
+                } else if self.reopened && partial {
+                    "Unstaged files stay for the next commit."
+                } else if self.reopened {
+                    "Commits everything staged."
                 } else {
                     "Ready to commit the index"
                 }));
@@ -2039,6 +2071,9 @@ impl StatusView {
                         |ui| {
                             // The summary, then the mockup's key hints.
                             let mut text = self.status_text();
+                            if let Some(backup) = &self.stop_backup {
+                                text.push_str(&format!("   ·   Backup: {backup}"));
+                            }
                             if self.error.is_none() && self.external_busy.is_none() {
                                 text.push_str(
                                     "   ·   S / U: stage / unstage · [ ]: hunks · Ctrl+Enter: commit",
@@ -2185,6 +2220,8 @@ mod tests {
             group_request: None,
             stop_commits: Vec::new(),
             clean_context: CleanContext::default(),
+            reopened: false,
+            stop_backup: None,
             clean_request: None,
             commit: None,
             commit_done: None,
