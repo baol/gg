@@ -25,6 +25,7 @@ mod folder_picker;
 mod folders;
 mod graph;
 mod history_view;
+mod init_cli;
 #[cfg(test)]
 mod interaction_tests;
 mod lfs_cli;
@@ -35,6 +36,7 @@ mod merge_cli;
 mod mutation_cli;
 mod navigation;
 mod network;
+mod new_repository;
 mod phosphor;
 mod reader;
 mod rebase_cli;
@@ -70,6 +72,7 @@ mod sync_cli;
 mod tag_cli;
 mod thumbnails;
 mod watcher;
+mod welcome_view;
 mod worktree_cli;
 mod worktree_worker;
 mod wrap_rows;
@@ -92,7 +95,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("--help")) {
         println!(
-            "gg · good git\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good refs [PATH]      Print branches, remotes, tags, and HEAD as JSON\ngit-good status [PATH] [--file PATH --area AREA]   Print working status or diff as JSON\ngit-good stage --file PATH [--hunk HEADER]... [--repo PATH]   Stage one file or selected hunks\ngit-good unstage --file PATH [--repo PATH]   Unstage one file\ngit-good commit [--amend] [--sign|--no-sign] -m MESSAGE [--repo PATH]   Commit the index or amend HEAD after Git hooks\ngit-good reflog [REF] [--repo PATH]   Print reflog entries as JSON\ngit-good blame PATH [--revision REF] [--lines START,END] [--repo PATH]   Print line attribution as JSON\ngit-good worktree <list|add|remove> [OPTIONS] [--repo PATH]   List, add, or remove worktrees\ngit-good submodule <status|update> PATH [OPTIONS] [--repo PATH]   Inspect or update a gitlink submodule\ngit-good lfs <status|fetch> PATH [--area staged|unstaged|untracked|conflict] [--revision REF] [--before REF] [--repo PATH]   Inspect or fetch an LFS pointer\ngit-good signature <config|verify> [REF] [--repo PATH]   Read signing config or verify a commit/tag\ngit-good switch [--create] [--stash [--include-untracked]] BRANCH [--repo PATH]   Switch to or create a local branch, optionally stashing changes first\ngit-good fetch [REMOTE] [--prune] [--repo PATH]   Fetch and update remote-tracking refs\ngit-good push [REMOTE] [BRANCH] [--set-upstream] [--force-with-lease] [--repo PATH]   Push a local branch, with an explicit lease when rewriting\ngit-good clone URL [PATH]   Clone a repository and open it\ngit-good stash <list|push|apply|pop|drop> [OPTIONS] [--repo PATH]   List or mutate stashes\ngit-good cherry-pick COMMIT [--repo PATH]   Apply a commit\ngit-good revert COMMIT [--repo PATH]   Invert a commit\ngit-good merge REF [--no-ff] [--repo PATH]   Merge a branch, remote, or tag\ngit-good rebase REF [--autostash] [--repo PATH]   Rebase the current branch onto a branch, remote, or tag\ngit-good rebase --continue|--skip|--abort [--repo PATH]   Recover an in-progress rebase\ngit-good rewrite --from COMMIT STEP... [--autostash] [--repo PATH]   Pick, reword, edit, squash, fixup, drop, or reorder a linear range (STEP: --pick|--edit|--squash|--fixup|--drop COMMIT, --reword COMMIT MESSAGE)\ngit-good rewrite --continue|--skip|--abort [--repo PATH]   Recover an in-progress rewrite\ngit-good conflicts [--repo PATH]   List unmerged paths\ngit-good conflict --file PATH [--use ours|theirs|deletion|--stage] [--repo PATH]   Read or resolve a conflict\ngit-good reset --soft|--mixed|--hard COMMIT [--repo PATH]   Reset the current branch\ngit-good branch --delete BRANCH [--force] [--repo PATH]   Delete a local branch\ngit-good branch --create NAME [--at REF] [--repo PATH]   Create a local branch without switching\ngit-good tag --delete TAG [--repo PATH]   Delete a local tag
+            "gg · good git\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good refs [PATH]      Print branches, remotes, tags, and HEAD as JSON\ngit-good status [PATH] [--file PATH --area AREA]   Print working status or diff as JSON\ngit-good stage --file PATH [--hunk HEADER]... [--repo PATH]   Stage one file or selected hunks\ngit-good unstage --file PATH [--repo PATH]   Unstage one file\ngit-good commit [--amend] [--sign|--no-sign] -m MESSAGE [--repo PATH]   Commit the index or amend HEAD after Git hooks\ngit-good reflog [REF] [--repo PATH]   Print reflog entries as JSON\ngit-good blame PATH [--revision REF] [--lines START,END] [--repo PATH]   Print line attribution as JSON\ngit-good worktree <list|add|remove> [OPTIONS] [--repo PATH]   List, add, or remove worktrees\ngit-good submodule <status|update> PATH [OPTIONS] [--repo PATH]   Inspect or update a gitlink submodule\ngit-good lfs <status|fetch> PATH [--area staged|unstaged|untracked|conflict] [--revision REF] [--before REF] [--repo PATH]   Inspect or fetch an LFS pointer\ngit-good signature <config|verify> [REF] [--repo PATH]   Read signing config or verify a commit/tag\ngit-good switch [--create] [--stash [--include-untracked]] BRANCH [--repo PATH]   Switch to or create a local branch, optionally stashing changes first\ngit-good fetch [REMOTE] [--prune] [--repo PATH]   Fetch and update remote-tracking refs\ngit-good push [REMOTE] [BRANCH] [--set-upstream] [--force-with-lease] [--repo PATH]   Push a local branch, with an explicit lease when rewriting\ngit-good clone URL [PATH]   Clone a repository and open it\ngit-good init [--branch NAME] [--commit] [PATH]   Create a repository, optionally committing the files already there\ngit-good stash <list|push|apply|pop|drop> [OPTIONS] [--repo PATH]   List or mutate stashes\ngit-good cherry-pick COMMIT [--repo PATH]   Apply a commit\ngit-good revert COMMIT [--repo PATH]   Invert a commit\ngit-good merge REF [--no-ff] [--repo PATH]   Merge a branch, remote, or tag\ngit-good rebase REF [--autostash] [--repo PATH]   Rebase the current branch onto a branch, remote, or tag\ngit-good rebase --continue|--skip|--abort [--repo PATH]   Recover an in-progress rebase\ngit-good rewrite --from COMMIT STEP... [--autostash] [--repo PATH]   Pick, reword, edit, squash, fixup, drop, or reorder a linear range (STEP: --pick|--edit|--squash|--fixup|--drop COMMIT, --reword COMMIT MESSAGE)\ngit-good rewrite --continue|--skip|--abort [--repo PATH]   Recover an in-progress rewrite\ngit-good conflicts [--repo PATH]   List unmerged paths\ngit-good conflict --file PATH [--use ours|theirs|deletion|--stage] [--repo PATH]   Read or resolve a conflict\ngit-good reset --soft|--mixed|--hard COMMIT [--repo PATH]   Reset the current branch\ngit-good branch --delete BRANCH [--force] [--repo PATH]   Delete a local branch\ngit-good branch --create NAME [--at REF] [--repo PATH]   Create a local branch without switching\ngit-good tag --delete TAG [--repo PATH]   Delete a local tag
 git-good tag --create TAG --at REF -m MESSAGE [--sign] [--repo PATH]   Create an annotated or signed tag\ngit-good show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]   Review or export\n\nBrowse commits reachable from HEAD and all local, remote, and tag refs."
         );
         return Ok(());
@@ -207,6 +210,9 @@ git-good tag --create TAG --at REF -m MESSAGE [--sign] [--repo PATH]   Create an
     if first.as_deref() == Some(std::ffi::OsStr::new("clone")) {
         return sync_cli::clone(args);
     }
+    if first.as_deref() == Some(std::ffi::OsStr::new("init")) {
+        return init_cli::run(args);
+    }
     let headless = first.as_deref() == Some(std::ffi::OsStr::new("history"));
     let given = if headless { args.next() } else { first }.map(PathBuf::from);
     let path = match given {
@@ -215,7 +221,10 @@ git-good tag --create TAG --at REF -m MESSAGE [--sign] [--repo PATH]   Create an
         None => launch_folder(
             std::env::current_dir()?,
             settings::Prefs::load().reopen_last,
-            &settings::recent(),
+            &settings::recent()
+                .into_iter()
+                .map(|entry| entry.path)
+                .collect::<Vec<_>>(),
             is_repository,
         ),
     };
@@ -706,6 +715,8 @@ enum FrameCommand {
     Worktrees,
     Open,
     Clone,
+    /// New repository…, on this folder when given.
+    NewRepository(Option<PathBuf>),
     Preferences,
     Shortcuts,
     LocalChanges,
@@ -1579,6 +1590,8 @@ struct SignatureWindow {
 
 struct Browser {
     logo: Option<egui::TextureHandle>,
+    /// The 36 px logo on the welcome view.
+    welcome_logo: Option<egui::TextureHandle>,
     path: String,
     review: Option<review_view::Review>,
     working: Option<status_view::StatusView>,
@@ -1608,7 +1621,12 @@ struct Browser {
     /// Content width of the last frame, for menu readiness.
     ctx_width: f32,
     /// Repositories opened before, newest first.
-    recent: Vec<PathBuf>,
+    recent: Vec<settings::Recent>,
+    /// The welcome view's selection, filter, and background reads.
+    welcome: welcome_view::Welcome,
+    new_repository: Option<new_repository::Dialog>,
+    /// Open Local Changes once the requested repository has loaded.
+    open_changes_after_load: bool,
     about_open: bool,
     /// The larger logo drawn in About gg.
     about_logo: Option<egui::TextureHandle>,
@@ -1728,6 +1746,7 @@ impl Browser {
     fn new(path: PathBuf) -> Self {
         Self {
             logo: None,
+            welcome_logo: None,
             path: path.to_string_lossy().into_owned(),
             review: None,
             working: None,
@@ -1757,6 +1776,9 @@ impl Browser {
             } else {
                 settings::recent()
             },
+            welcome: welcome_view::Welcome::default(),
+            new_repository: None,
+            open_changes_after_load: false,
             // Debug builds open About gg with `GG_ABOUT=1` for native review.
             about_open: cfg!(debug_assertions) && std::env::var_os("GG_ABOUT").is_some(),
             about_logo: None,
@@ -3492,6 +3514,9 @@ impl Browser {
             }
             FrameCommand::Worktrees => self.open_worktrees(ctx),
             FrameCommand::Open => self.edit_path = true,
+            FrameCommand::NewRepository(folder) => {
+                self.new_repository = Some(new_repository::Dialog::new(folder));
+            }
             FrameCommand::Clone => {
                 let mut dialog =
                     CloneDialog::from_url(clipboard::repository_url(), self.clone_start_folder());
@@ -4266,8 +4291,10 @@ impl Browser {
                 Some(no_repo)
             }
         };
-        let selected = if self.state.selected.is_some() {
-            idle(ready.has_repo)
+        let selected = if !ready.has_repo {
+            Some(no_repo)
+        } else if self.state.selected.is_some() {
+            None
         } else {
             Some("Select a commit in History first")
         };
@@ -4285,12 +4312,16 @@ impl Browser {
         let other_branches = self.state.refs.items.iter().any(|item| {
             item.kind == gg_engine::refs::RefKind::Branch && Some(&item.name) != current.as_ref()
         });
-        let delete = if other_branches {
+        let delete = if !ready.has_repo {
+            Some(no_repo)
+        } else if other_branches {
             idle(ready.branch_idle)
         } else {
             Some("No other local branch to delete")
         };
-        let force = if self.force_push_target().is_some() {
+        let force = if !ready.has_repo {
+            Some(no_repo)
+        } else if self.force_push_target().is_some() {
             idle(ready.network_idle)
         } else {
             Some("Force with lease requires an upstream remote-tracking ref; track and fetch first")
@@ -4334,7 +4365,9 @@ impl Browser {
             let mut entries = self
                 .recent
                 .iter()
+                .map(|entry| &entry.path)
                 .filter(|path| path.is_absolute())
+                .take(settings::RECENT_LIMIT)
                 .map(|path| {
                     let name = path
                         .file_name()
@@ -4378,6 +4411,10 @@ impl Browser {
                         .then_some(busy),
                 )
                 .hint("Clone a repository and open it; a URL on the clipboard pre-fills the form")
+                .entry(),
+            item("New repository…", "", FrameCommand::NewRepository(None))
+                .unless(self.repository_switch_pending().then_some(busy))
+                .hint("git init in a folder, optionally committing the files already there")
                 .entry(),
             Entry::Submenu("Open recent".into(), recent),
             Entry::Separator,
@@ -4589,7 +4626,11 @@ impl Browser {
                     .entry(),
                 Entry::Separator,
                 item("Resolve conflicts…", "", FrameCommand::ResolveConflicts)
-                    .unless((!conflicts).then_some("No conflicts to resolve"))
+                    .unless(if ready.has_repo {
+                        (!conflicts).then_some("No conflicts to resolve")
+                    } else {
+                        Some(no_repo)
+                    })
                     .entry(),
             ],
         });
@@ -4607,17 +4648,21 @@ impl Browser {
                     .checked(self.working.is_some())
                     .entry(),
                 item("History", "Ctrl+2", FrameCommand::History)
+                    .unless(idle(ready.has_repo))
                     .checked(self.working.is_none() && self.review.is_none())
                     .entry(),
                 Entry::Separator,
                 item("Refs sidebar", "Ctrl+\\", FrameCommand::ToggleRefs)
-                    .unless(
+                    .unless(if !ready.has_repo {
+                        Some(no_repo)
+                    } else {
                         (!sidebar)
-                            .then_some("Resize the window to at least 1120 px to show the sidebar"),
-                    )
+                            .then_some("Resize the window to at least 1120 px to show the sidebar")
+                    })
                     .checked(self.refs_shown() && sidebar)
                     .entry(),
                 item("Commit inspector", "Space", FrameCommand::ToggleDetails)
+                    .unless(idle(ready.has_repo))
                     .checked(details)
                     .entry(),
                 Entry::Separator,
@@ -4674,17 +4719,31 @@ impl Browser {
 
     fn search_items(&self, ready: &FrameReadiness) -> Vec<search::Item<FrameCommand>> {
         use search::Group;
-        // Every menu item, named with its menu.
+        // Every menu item, named with its menu; recent repositories form
+        // their own group, named with their folder.
+        let home = std::env::var("HOME").ok();
         let mut items = menus::flatten(&self.menu_table(ready))
             .into_iter()
             .filter(|(_, item)| item.command != FrameCommand::Unavailable)
-            .map(|(path, item)| search::Item {
-                group: Group::Actions,
-                label: item.label,
-                context: format!("{path} menu"),
-                key: item.key,
-                disabled: item.disabled,
-                command: item.command,
+            .map(|(path, item)| match &item.command {
+                FrameCommand::OpenRecent(folder) => search::Item {
+                    group: Group::Repositories,
+                    label: folder
+                        .file_name()
+                        .map_or(item.label, |name| name.to_string_lossy().into_owned()),
+                    context: welcome_view::tilde(folder, home.as_deref()),
+                    key: "",
+                    disabled: item.disabled,
+                    command: item.command,
+                },
+                _ => search::Item {
+                    group: Group::Actions,
+                    label: item.label,
+                    context: format!("{path} menu"),
+                    key: item.key,
+                    disabled: item.disabled,
+                    command: item.command,
+                },
             })
             .collect::<Vec<_>>();
         let head = self
@@ -5604,7 +5663,9 @@ impl Browser {
             self.clear_operation_state();
         }
         if let Some(path) = &path {
-            settings::push_recent(&mut self.recent, path.clone());
+            self.welcome.opening = None;
+            self.welcome.failed = None;
+            settings::push_recent(&mut self.recent, path.clone(), settings::now());
             if let Err(error) = settings::save_recent(&self.recent) {
                 self.mutation_error = Some(error);
             }
@@ -5736,6 +5797,199 @@ impl Browser {
         self.refresh_backups();
         self.refresh_working(ctx);
         Ok(())
+    }
+
+    /// No repository is open (or one is still being read from the welcome
+    /// view), so the welcome view replaces History.
+    fn welcome_shown(&self) -> bool {
+        self.state.history.is_none()
+            && self.working.is_none()
+            && self.review.is_none()
+            && (self.pending.is_none() || self.welcome.opening.is_some())
+    }
+
+    /// Classify a finished read that left no repository open: a recent row
+    /// that failed becomes its amber line; any other folder becomes the
+    /// not-a-repository line.
+    fn settle_welcome(&mut self) {
+        if self.pending.is_some() {
+            return;
+        }
+        let opening = self.welcome.opening.take();
+        let (Some(error), Some(requested)) = (&self.state.error, &self.state.requested) else {
+            return;
+        };
+        if self.welcome.settled.as_ref() == Some(requested) {
+            return;
+        }
+        self.welcome.settled = Some(requested.clone());
+        if opening.as_ref() == Some(requested) {
+            let failure = if requested.is_dir() {
+                welcome_view::Failure::NotRepository
+            } else {
+                welcome_view::Failure::Missing
+            };
+            self.welcome.failed = Some((requested.clone(), failure));
+            self.welcome.reread();
+        } else {
+            self.welcome.launch = Some((requested.clone(), error.clone()));
+        }
+    }
+
+    fn save_recent(&mut self) {
+        if let Err(error) = settings::save_recent(&self.recent) {
+            self.set_outcome(OutcomeSeverity::Warning, error, None, None);
+        }
+    }
+
+    /// Open `path` as the repository, leaving whatever was shown.
+    fn open_repository(&mut self, ctx: &egui::Context, path: PathBuf) {
+        if let Some(working) = &self.working {
+            self.working_drafts
+                .insert(working.repository_key(), working.capture_draft());
+        }
+        self.working = None;
+        self.review = None;
+        self.recovery = None;
+        self.path = path.to_string_lossy().into_owned();
+        self.load(ctx);
+    }
+
+    fn run_welcome_command(&mut self, ctx: &egui::Context, command: welcome_view::Command) {
+        use welcome_view::Command;
+        let frame = match command {
+            Command::Open => FrameCommand::Open,
+            Command::Clone => FrameCommand::Clone,
+            Command::NewRepository(folder) => FrameCommand::NewRepository(folder),
+            Command::Preferences => {
+                self.open_preferences(PrefSection::General);
+                return;
+            }
+            Command::OpenRecent(path) => {
+                if self.repository_switch_pending() {
+                    return;
+                }
+                self.welcome.failed = None;
+                self.welcome.opening = Some(path.clone());
+                self.open_repository(ctx, path);
+                return;
+            }
+            Command::Remove(path) => {
+                self.recent.retain(|entry| entry.path != path);
+                if self
+                    .welcome
+                    .failed
+                    .as_ref()
+                    .is_some_and(|(failed, _)| *failed == path)
+                {
+                    self.welcome.failed = None;
+                }
+                self.save_recent();
+                return;
+            }
+            Command::Locate(path) => {
+                let start = path.ancestors().find(|folder| folder.is_dir());
+                if let Some(found) = folder_picker::pick_folder("Locate repository", start) {
+                    self.relocate_recent(&path, found.clone());
+                    self.run_welcome_command(ctx, Command::OpenRecent(found));
+                }
+                return;
+            }
+        };
+        let (mut local, mut history) = (false, false);
+        self.run_frame_command(ctx, frame, &mut local, &mut history);
+    }
+
+    /// New repository…: on success the repository opens, in History when
+    /// it committed and in Local Changes otherwise.
+    fn draw_new_repository(&mut self, ctx: &egui::Context) {
+        let Some(dialog) = &mut self.new_repository else {
+            return;
+        };
+        let home = std::env::var("HOME").ok();
+        match dialog.show(ctx, home.as_deref()) {
+            Some(new_repository::Action::Created(receipt)) => {
+                self.new_repository = None;
+                self.welcome.launch = None;
+                self.open_changes_after_load = receipt.head.is_none();
+                let shown = welcome_view::tilde(&receipt.path, home.as_deref());
+                self.set_outcome(
+                    OutcomeSeverity::Info,
+                    match receipt.head {
+                        Some(_) => format!(
+                            "Created {shown} on {} with {} files in Initial commit",
+                            receipt.branch, receipt.files
+                        ),
+                        None => format!("Created {shown} on {}", receipt.branch),
+                    },
+                    None,
+                    None,
+                );
+                self.welcome.opening = Some(receipt.path.clone());
+                self.open_repository(ctx, receipt.path);
+            }
+            Some(new_repository::Action::OpenRepository(path)) => {
+                self.new_repository = None;
+                self.welcome.opening = Some(path.clone());
+                self.open_repository(ctx, path);
+            }
+            Some(new_repository::Action::Closed) => self.new_repository = None,
+            None => {}
+        }
+    }
+
+    /// Drag and drop on the welcome view: an overlay names the folder; a
+    /// repository (or a file inside one) opens, any other folder opens New
+    /// repository… on it.
+    fn drop_folders(&mut self, ctx: &egui::Context) {
+        if let Some(rx) = &self.welcome.drop_rx
+            && let Ok((folder, repository)) = rx.try_recv()
+        {
+            self.welcome.drop_rx = None;
+            if repository {
+                self.welcome.opening = Some(folder.clone());
+                self.open_repository(ctx, folder);
+            } else {
+                self.new_repository = Some(new_repository::Dialog::new(Some(folder)));
+            }
+        }
+        if !self.welcome_shown() || self.new_repository.is_some() || self.edit_path {
+            return;
+        }
+        let (hovered, dropped) = ctx.input(|input| {
+            (
+                input.raw.hovered_files.clone(),
+                input.raw.dropped_files.clone(),
+            )
+        });
+        if let Some(file) = hovered.first() {
+            let home = std::env::var("HOME").ok();
+            let folder = file.path.as_deref().map(|path| {
+                welcome_view::tilde(&welcome_view::dropped_folder(path), home.as_deref())
+            });
+            welcome_view::paint_drop_overlay(ctx, folder.as_deref());
+        }
+        if let Some(path) = dropped.first().map(|file| file.path().to_path_buf()) {
+            let folder = welcome_view::dropped_folder(&path);
+            let (tx, rx) = std::sync::mpsc::channel();
+            let repaint = ctx.clone();
+            std::thread::spawn(move || {
+                let repository = is_repository(&folder);
+                let _ = tx.send((folder, repository));
+                repaint.request_repaint();
+            });
+            self.welcome.drop_rx = Some(rx);
+        }
+    }
+
+    /// Replace the recent entry for `old` with `new`, in place.
+    fn relocate_recent(&mut self, old: &Path, new: PathBuf) {
+        self.recent.retain(|entry| entry.path != new);
+        if let Some(entry) = self.recent.iter_mut().find(|entry| entry.path == old) {
+            entry.path = new;
+        }
+        self.welcome.failed = None;
+        self.save_recent();
     }
 
     fn working_mutation_pending(&self) -> bool {
@@ -7507,6 +7761,7 @@ impl Browser {
     }
 
     fn load(&mut self, ctx: &egui::Context) {
+        self.welcome.settled = None;
         self.branch_error = None;
         self.network_error = None;
         let path = PathBuf::from(&self.path);
@@ -9036,6 +9291,16 @@ impl Browser {
         if let Some((changes, first)) = self.watcher.as_mut().and_then(|watcher| watcher.poll()) {
             self.apply_changes(ctx, changes, first);
         }
+        if self.welcome_shown() {
+            self.settle_welcome();
+            let available = crate::navigation::activation_available(ctx)
+                && self.new_repository.is_none()
+                && !self.edit_path
+                && self.search.is_none();
+            if let Some(command) = self.welcome.keys(ctx, &self.recent, available) {
+                self.run_welcome_command(ctx, command);
+            }
+        }
         self.menu_shortcuts(ctx);
         self.poll_local_summary();
         let focused = ctx.input(|i| i.focused);
@@ -9062,6 +9327,16 @@ impl Browser {
             self.open_local = false;
             self.open_working(ctx);
         }
+        // A new repository without a commit opens in Local Changes.
+        if self.open_changes_after_load
+            && self.pending.is_none()
+            && self.working.is_none()
+            && self.state.history.is_some()
+        {
+            self.open_changes_after_load = false;
+            self.open_working(ctx);
+        }
+        self.drop_folders(ctx);
         self.open_reopened_commit(ctx);
         self.remember_layout(ctx);
         #[cfg(debug_assertions)]
@@ -9524,6 +9799,9 @@ impl Browser {
                     let has_repo = self.state.history.is_some();
                     let local_selected = self.working.is_some();
                     let sidebar_available = ctx.content_rect().width() >= 1120.0;
+                    // Without a repository the toolbar holds only search;
+                    // the repository controls appear once one opens.
+                    if has_repo {
                     let sidebar = ui
                         .add_enabled(
                             sidebar_available,
@@ -9615,11 +9893,16 @@ impl Browser {
                     if toolbar_button(ui, icon::ARROW_LINE_UP, None, "Push  Ctrl+Shift+P", idle(ready.network_idle)) {
                         tool = Some(FrameCommand::Push);
                     }
+                    }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let icon = crate::phosphor::icon(crate::phosphor::MAGNIFYING_GLASS);
                         // A search field when there is room; narrow windows keep
                         // an icon that opens the same search with its own field.
-                        let wide = ui.available_width() >= 150.0;
+                        let wide = if has_repo {
+                            ui.available_width() >= 150.0
+                        } else {
+                            ctx.content_rect().width() >= welcome_view::COMPACT_WINDOW
+                        };
                         if wide {
                             let roomy = ui.available_width() >= 560.0;
                             let width = if roomy {
@@ -9629,7 +9912,9 @@ impl Browser {
                             } else {
                                 140.0
                             };
-                            let hint = if roomy {
+                            let hint = if !has_repo {
+                                "Search repositories and actions"
+                            } else if roomy {
                                 "Search commits, branches, files, actions"
                             } else {
                                 "Search"
@@ -9669,7 +9954,9 @@ impl Browser {
                             }
                         }
                         let compact = !wide || ui.available_width() < 230.0;
-                        if let Some(pick) = self.branch_switcher_button(ui, &ready, compact) {
+                        if has_repo
+                            && let Some(pick) = self.branch_switcher_button(ui, &ready, compact)
+                        {
                             branch_pick = Some(pick);
                         }
                     });
@@ -9956,8 +10243,8 @@ impl Browser {
             let recent = self
                 .recent
                 .iter()
+                .map(|entry| entry.path.clone())
                 .filter(|path| path.is_absolute())
-                .cloned()
                 .collect::<Vec<_>>();
             let modal = egui::Modal::new(egui::Id::unique("open-repository"))
                 .backdrop_color(egui::Color32::from_black_alpha(140))
@@ -10004,12 +10291,12 @@ impl Browser {
                             typed.is_empty()
                                 || path.to_string_lossy().to_lowercase().contains(&typed)
                         })
-                        .take(8)
+                        .take(settings::RECENT_LIMIT)
                         .collect::<Vec<_>>();
                     ui.add_space(6.0);
                     ui.label(egui::RichText::new("RECENT").small().weak());
                     // A fixed slot so filtering never resizes the dialog.
-                    let slot = 8.0 * crate::density::row();
+                    let slot = settings::RECENT_LIMIT as f32 * crate::density::row();
                     ui.allocate_ui_with_layout(
                         egui::vec2(500.0, slot),
                         egui::Layout::top_down(egui::Align::Min),
@@ -10234,6 +10521,7 @@ impl Browser {
         }
         self.draw_folders_dialog(ctx);
         self.draw_menu_dialogs(ctx);
+        self.draw_new_repository(ctx);
         self.draw_stash_switch(ctx);
         let mut chosen_clone_folder = None;
         if let Some(dialog) = &mut self.clone_dialog {
@@ -11610,12 +11898,16 @@ impl Browser {
             } else if !operation_active && let Some(notice) = &self.mutation_notice {
                 (notice.clone(), ui.visuals().text_color())
             } else if self.pending.is_some() {
-                (format!("Reading {}{}", self.state.requested.as_deref().unwrap_or(std::path::Path::new(".")).display(), if self.state.history.is_some() { " · showing previous results" } else { "" }), ui.visuals().text_color())
+                (format!("Reading {}{}", welcome_view::tilde(self.state.requested.as_deref().unwrap_or(std::path::Path::new(".")), std::env::var("HOME").ok().as_deref()), if self.state.history.is_some() { " · showing previous results" } else { "" }), ui.visuals().text_color())
             } else if !self.state.finished && self.worker.is_some() {
                 (format!("{} · {} commits examined", if self.state.query.is_empty() { "Counting history" } else { "Searching history" }, self.state.scanned), ui.visuals().text_color())
             } else {
-                let hints = if self.state.history.is_none() {
-                    "Ctrl+O: open   ·   Ctrl+K: search"
+                let hints = if self.state.history.is_none() && !self.recent.is_empty() && narrow {
+                    "Up/Down, Enter: open   ·   Del: remove   ·   Ctrl+O: open"
+                } else if self.state.history.is_none() && !self.recent.is_empty() {
+                    "Up/Down: choose   ·   Enter: open   ·   Del: remove from recent   ·   Ctrl+O: open   ·   Ctrl+K: search   ·   ?: shortcuts"
+                } else if self.state.history.is_none() {
+                    "Ctrl+O: open   ·   Ctrl+K: search   ·   ?: shortcuts"
                 } else if narrow {
                     "j/k: select · Enter: review · Space: details · Esc: history · Ctrl/Cmd+F: filter"
                 } else {
@@ -11802,7 +12094,7 @@ impl Browser {
         }
         let mut pending_commit_command: Option<(String, String, CommitCommand)> = None;
         let mut right_clicked_row: Option<usize> = None;
-        let mut welcome_command: Option<FrameCommand> = None;
+        let mut welcome_command: Option<welcome_view::Command> = None;
         egui::CentralPanel::default().show(ui, |ui| {
             if narrow && self.narrow_details {
                 self.history_rect = egui::Rect::NOTHING;
@@ -12028,119 +12320,28 @@ impl Browser {
                             .max(1.0) as usize;
                         ui.spacing_mut().item_spacing.y = previous_spacing;
                     });
-            } else if self.pending.is_some() {
+            } else if !self.welcome_shown() {
                 // The status line reports the read; the pane stays empty.
             } else {
-                // The welcome view (proposal): Open… first, Clone…, the
-                // recent repositories, and why the launch folder did not open.
-                ui.vertical_centered(|ui| {
-                    ui.add_space((ui.available_height() * 0.18).max(24.0));
-                    ui.label(egui::RichText::new("Open a repository").size(20.0));
-                    ui.add_space(6.0);
-                    if let Some(error) = &self.state.error {
-                        ui.colored_label(
-                            ui.visuals().warn_fg_color,
-                            format!("{} is not a Git repository.", self.path),
-                        )
-                        .on_hover_text(error);
-                    }
-                    ui.add_space(12.0);
-                    ui.horizontal(|ui| {
-                        ui.add_space(((ui.available_width() - 200.0) / 2.0).max(0.0));
-                        if ui
-                            .add(
-                                egui::Button::new((
-                                    egui::RichText::new("Open…").color(egui::Color32::WHITE),
-                                    egui::RichText::new("Ctrl+O")
-                                        .small()
-                                        .color(egui::Color32::from_rgb(184, 212, 230)),
-                                ))
-                                .fill(egui::Color32::from_rgb(11, 85, 119)),
-                            )
-                            .clicked()
-                        {
-                            welcome_command = Some(FrameCommand::Open);
-                        }
-                        if ui.button("Clone…").clicked() {
-                            welcome_command = Some(FrameCommand::Clone);
-                        }
-                    });
-                    if !self.recent.is_empty() {
-                        ui.add_space(18.0);
-                        ui.allocate_ui_with_layout(
-                            egui::vec2(420.0, 0.0),
-                            egui::Layout::top_down(egui::Align::Min),
-                            |ui| {
-                                ui.label(egui::RichText::new("RECENT").small().weak());
-                                let home = std::env::var("HOME").ok();
-                                for path in self
-                                    .recent
-                                    .iter()
-                                    .filter(|path| path.is_absolute())
-                                    .take(10)
-                                {
-                                    let name = path
-                                        .file_name()
-                                        .map(|name| name.to_string_lossy().into_owned())
-                                        .unwrap_or_else(|| path.display().to_string());
-                                    let shown = window_title(
-                                        &path.display().to_string(),
-                                        home.as_deref(),
-                                        None,
-                                    );
-                                    let shown = shown.trim_start_matches("gg — ").to_string();
-                                    // Name first, the folder dimmed after it; the
-                                    // folder is what truncates.
-                                    let (rect, row) = ui.allocate_exact_size(
-                                        egui::vec2(420.0, crate::density::row()),
-                                        egui::Sense::click(),
-                                    );
-                                    if row.hovered() {
-                                        ui.painter().rect_filled(
-                                            rect,
-                                            3.0,
-                                            ui.visuals().widgets.hovered.weak_bg_fill,
-                                        );
-                                    }
-                                    let name_rect = egui::Rect::from_min_size(
-                                        rect.min + egui::vec2(6.0, 0.0),
-                                        egui::vec2(150.0, rect.height()),
-                                    );
-                                    bounded_text::paint(
-                                        ui,
-                                        name_rect,
-                                        &name,
-                                        egui::FontId::proportional(13.0),
-                                        ui.visuals().text_color(),
-                                    );
-                                    let path_rect = egui::Rect::from_min_max(
-                                        egui::pos2(name_rect.right() + 8.0, rect.top()),
-                                        rect.max - egui::vec2(6.0, 0.0),
-                                    );
-                                    bounded_text::paint(
-                                        ui,
-                                        path_rect,
-                                        &shown,
-                                        egui::FontId::monospace(11.0),
-                                        ui.visuals().weak_text_color(),
-                                    );
-                                    let row = row
-                                        .on_hover_text(path.display().to_string())
-                                        .on_hover_cursor(egui::CursorIcon::PointingHand);
-                                    if row.clicked() {
-                                        welcome_command =
-                                            Some(FrameCommand::OpenRecent(path.clone()));
-                                    }
-                                }
-                            },
-                        );
-                    }
-                });
+                // The welcome view (proposal): logo and title, the
+                // not-a-repository line, Open… / Clone… / New repository…
+                // cards, and the recent repositories.
+                self.welcome.read(ctx, &self.recent);
+                let home = std::env::var("HOME").ok();
+                let clone_folder = self.clone_start_folder();
+                let shown = self.recent.len().min(settings::RECENT_LIMIT);
+                let info = welcome_view::Info {
+                    recent: &self.recent[..shown],
+                    clone_folder: &clone_folder,
+                    home: home.as_deref(),
+                    now: settings::now(),
+                    window_width: ctx.content_rect().width(),
+                };
+                welcome_command = self.welcome.show(ui, &info, &mut self.welcome_logo);
             }
         });
         if let Some(command) = welcome_command {
-            let (mut local, mut history) = (false, false);
-            self.run_frame_command(ctx, command, &mut local, &mut history);
+            self.run_welcome_command(ctx, command);
         }
         if let Some(row) = right_clicked_row {
             self.state.select_row(row);
@@ -16839,6 +17040,432 @@ mod tests {
         );
     }
 
+    fn welcome_texts(
+        ctx: &egui::Context,
+        app: &mut Browser,
+        events: Vec<egui::Event>,
+    ) -> Vec<String> {
+        let output = crate::tests::run_ui(ctx, frame_input(1120.0, 740.0, events), |ui| {
+            app.draw_ui(ui)
+        });
+        output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) => Some(text.galley.job.text.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Frames until `done`, for background reads.
+    fn welcome_until(
+        ctx: &egui::Context,
+        app: &mut Browser,
+        done: impl Fn(&Browser, &[String]) -> bool,
+    ) -> Vec<String> {
+        let mut texts = Vec::new();
+        for _ in 0..300 {
+            texts = welcome_texts(ctx, app, vec![]);
+            if done(app, &texts) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        texts
+    }
+
+    fn welcome_key(key: egui::Key) -> egui::Event {
+        egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+
+    fn recent_list(paths: &[PathBuf]) -> Vec<settings::Recent> {
+        paths
+            .iter()
+            .map(|path| settings::Recent {
+                path: path.clone(),
+                opened: Some(settings::now() - 7_200),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_welcome_frame_shows_only_search_and_the_actions() {
+        let ctx = egui::Context::default();
+        let mut app = Browser::new("/nowhere".into());
+        welcome_texts(&ctx, &mut app, vec![]);
+        let texts = welcome_texts(&ctx, &mut app, vec![]);
+        // Changes is only the menu title; the toolbar tab is gone.
+        let count = |label: &str| texts.iter().filter(|text| *text == label).count();
+        assert_eq!(count("Changes"), 1, "{texts:?}");
+        for hidden in ["History", "no branch", "COMMITS"] {
+            assert_eq!(count(hidden), 0, "{hidden} shown: {texts:?}");
+        }
+        assert!(
+            texts
+                .iter()
+                .any(|text| text.ends_with("Search repositories and actions")),
+            "{texts:?}"
+        );
+        for shown in ["Open…", "Clone…", "New repository…", "git init in a folder"] {
+            assert!(
+                texts.iter().any(|text| text == shown),
+                "{shown} missing: {texts:?}"
+            );
+        }
+        assert!(
+            texts
+                .iter()
+                .any(|text| text == "A folder on this computer · Ctrl+O"),
+            "{texts:?}"
+        );
+    }
+
+    #[test]
+    fn the_narrow_welcome_keeps_three_cards_and_drops_logo_version_and_branch() {
+        let ctx = egui::Context::default();
+        let mut app = Browser::new("/nowhere".into());
+        app.recent = recent_list(&[PathBuf::from("/nowhere/narrow")]);
+        let texts = |app: &mut Browser, width: f32| {
+            crate::tests::run_ui(&ctx, frame_input(width, 480.0, vec![]), |ui| {
+                app.draw_ui(ui)
+            })
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) => Some(text.galley.job.text.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+        };
+        let version = format!("gg {}", env!("CARGO_PKG_VERSION"));
+        let wide = texts(&mut app, 1120.0);
+        assert!(
+            wide.iter().any(|text| text.starts_with(&version)),
+            "{wide:?}"
+        );
+        let narrow = texts(&mut app, 720.0);
+        assert!(
+            !narrow.iter().any(|text| text.starts_with(&version)),
+            "{narrow:?}"
+        );
+        assert!(
+            !narrow
+                .iter()
+                .any(|text| text.contains("Search repositories"))
+        );
+        for card in ["Open…", "Clone…", "New repository…", "Ctrl+O", "git init"] {
+            assert!(
+                narrow.iter().any(|text| text == card),
+                "{card} missing: {narrow:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn first_run_explains_where_repositories_will_appear() {
+        let ctx = egui::Context::default();
+        let mut app = Browser::new("/nowhere".into());
+        let texts = welcome_texts(&ctx, &mut app, vec![]);
+        for shown in [
+            "Welcome to gg",
+            "Open a repository to see its history and changes.",
+            "Repositories you open are listed here. Drop a folder on this window to open it.",
+            "Clone folder:",
+            "Change in Preferences…",
+        ] {
+            assert!(
+                texts.iter().any(|text| text == shown),
+                "{shown} missing: {texts:?}"
+            );
+        }
+        assert!(!texts.iter().any(|text| text == "RECENT"));
+        assert!(!texts.iter().any(|text| text == "Open a repository"));
+    }
+
+    #[test]
+    fn recent_rows_take_arrows_enter_and_delete() -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir()?;
+        let paths = ["one", "two", "three"].map(|name| dir.path().join(name));
+        for path in &paths {
+            std::fs::create_dir(path)?;
+        }
+        let mut app = Browser::new("/nowhere".into());
+        app.recent = recent_list(&paths);
+        let texts = welcome_texts(&ctx, &mut app, vec![]);
+        assert!(texts.iter().any(|text| text == "Open a repository"));
+        assert!(texts.iter().any(|text| text == "RECENT"));
+        assert!(texts.iter().any(|text| text == "2 h ago"), "{texts:?}");
+        assert_eq!(app.welcome.selected, 0, "the first row is selected");
+        welcome_texts(&ctx, &mut app, vec![welcome_key(egui::Key::ArrowDown)]);
+        welcome_texts(&ctx, &mut app, vec![welcome_key(egui::Key::ArrowDown)]);
+        welcome_texts(&ctx, &mut app, vec![welcome_key(egui::Key::ArrowDown)]);
+        assert_eq!(app.welcome.selected, 2);
+        welcome_texts(&ctx, &mut app, vec![welcome_key(egui::Key::ArrowUp)]);
+        welcome_texts(&ctx, &mut app, vec![welcome_key(egui::Key::Delete)]);
+        assert_eq!(
+            app.recent
+                .iter()
+                .map(|entry| entry.path.clone())
+                .collect::<Vec<_>>(),
+            [paths[0].clone(), paths[2].clone()]
+        );
+        assert!(paths[1].is_dir(), "removing keeps the folder");
+        welcome_texts(&ctx, &mut app, vec![welcome_key(egui::Key::Enter)]);
+        assert_eq!(app.welcome.opening.as_ref(), Some(&paths[2]));
+        assert_eq!(app.state.requested.as_ref(), Some(&paths[2]));
+        // Opening keeps the row selected and the view in place.
+        let texts = welcome_texts(&ctx, &mut app, vec![]);
+        if app.pending.is_some() {
+            assert!(texts.iter().any(|text| text == "RECENT"));
+            assert!(
+                texts.iter().any(|text| text.starts_with("Reading ")),
+                "{texts:?}"
+            );
+        }
+        let texts = welcome_until(&ctx, &mut app, |app, _| app.welcome.failed.is_some());
+        let shown = format!("{} is no longer a Git repository.", paths[2].display());
+        assert!(texts.contains(&shown), "{texts:?}");
+        assert!(texts.iter().any(|text| text == "Remove from recent"));
+        assert!(!texts.iter().any(|text| text == "Locate…"));
+        assert!(
+            app.welcome.launch.is_none(),
+            "a row failure stays in its row"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_missing_recent_folder_is_marked_and_offers_remove_and_locate()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir()?;
+        let gone = dir.path().join("old-site");
+        let mut app = Browser::new("/nowhere".into());
+        app.recent = recent_list(std::slice::from_ref(&gone));
+        welcome_until(&ctx, &mut app, |_, texts| {
+            texts.iter().any(|text| text == "missing")
+        });
+        app.run_welcome_command(&ctx, welcome_view::Command::OpenRecent(gone.clone()));
+        let texts = welcome_until(&ctx, &mut app, |app, _| app.welcome.failed.is_some());
+        assert_eq!(
+            app.welcome.failed,
+            Some((gone.clone(), welcome_view::Failure::Missing))
+        );
+        let shown = format!("{} no longer exists.", gone.display());
+        assert!(texts.contains(&shown), "{texts:?}");
+        assert!(texts.iter().any(|text| text == "Locate…"));
+        click_welcome(&ctx, &mut app, "Remove from recent")?;
+        assert!(app.recent.is_empty());
+        assert!(app.welcome.failed.is_none());
+        // Locate… replaces the entry in place.
+        let moved = dir.path().join("moved");
+        app.recent = recent_list(&[dir.path().join("a"), gone.clone()]);
+        app.relocate_recent(&gone, moved.clone());
+        assert_eq!(app.recent[1].path, moved);
+        assert_eq!(app.recent.len(), 2);
+        Ok(())
+    }
+
+    fn click_welcome(ctx: &egui::Context, app: &mut Browser, label: &str) -> Result<(), String> {
+        let output = crate::tests::run_ui(ctx, frame_input(1120.0, 740.0, vec![]), |ui| {
+            app.draw_ui(ui)
+        });
+        let pos = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) if text.galley.job.text == label => {
+                    Some(text.visual_bounding_rect().center())
+                }
+                _ => None,
+            })
+            .ok_or(format!("{label} not shown"))?;
+        let _ = crate::tests::run_ui(ctx, frame_input(1120.0, 740.0, click_at(pos)), |ui| {
+            app.draw_ui(ui)
+        });
+        Ok(())
+    }
+
+    #[test]
+    fn typing_filters_many_recent_repositories_and_esc_clears() {
+        let ctx = egui::Context::default();
+        let mut app = Browser::new("/nowhere".into());
+        let paths = (0..12)
+            .map(|index| PathBuf::from(format!("/nowhere/repo-{index}")))
+            .collect::<Vec<_>>();
+        app.recent = recent_list(&paths);
+        let texts = welcome_texts(&ctx, &mut app, vec![]);
+        assert!(texts.iter().any(|text| text == "10"), "{texts:?}");
+        welcome_texts(&ctx, &mut app, vec![egui::Event::Text("repo-1".into())]);
+        assert_eq!(app.welcome.filter, "repo-1");
+        let texts = welcome_texts(&ctx, &mut app, vec![]);
+        // repo-1 only: repo-10 and repo-11 are past the limit of ten.
+        assert!(texts.iter().any(|text| text == "1 of 10"), "{texts:?}");
+        welcome_texts(&ctx, &mut app, vec![welcome_key(egui::Key::Escape)]);
+        assert!(app.welcome.filter.is_empty());
+        // Six or fewer: typing does not filter.
+        app.recent.truncate(6);
+        welcome_texts(&ctx, &mut app, vec![egui::Event::Text("x".into())]);
+        assert!(app.welcome.filter.is_empty());
+    }
+
+    #[test]
+    fn one_recent_limit_for_the_welcome_list_open_recent_and_open() {
+        let ctx = egui::Context::default();
+        let mut app = Browser::new("/nowhere".into());
+        let paths = (0..12)
+            .map(|index| PathBuf::from(format!("/nowhere/limit-{index}")))
+            .collect::<Vec<_>>();
+        app.recent = recent_list(&paths);
+        let rows = |texts: &[String]| {
+            texts
+                .iter()
+                .filter(|text| text.starts_with("limit-"))
+                .count()
+        };
+        assert_eq!(
+            rows(&welcome_texts(&ctx, &mut app, vec![])),
+            settings::RECENT_LIMIT
+        );
+        let ready = app.frame_readiness();
+        let recent = menus::flatten(&app.menu_table(&ready))
+            .into_iter()
+            .filter(|(_, item)| matches!(item.command, FrameCommand::OpenRecent(_)))
+            .count();
+        assert_eq!(recent, settings::RECENT_LIMIT);
+        app.edit_path = true;
+        app.path.clear();
+        welcome_texts(&ctx, &mut app, vec![]);
+        let texts = welcome_texts(&ctx, &mut app, vec![]);
+        let dialog = texts
+            .iter()
+            .filter(|text| text.starts_with("limit-") && !text.contains('/'))
+            .count();
+        assert!(dialog >= settings::RECENT_LIMIT, "{texts:?}");
+    }
+
+    #[test]
+    fn a_launch_folder_that_is_not_a_repository_offers_initialize_here()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir()?;
+        let mut app = Browser::new(dir.path().to_path_buf());
+        app.load(&ctx);
+        let texts = welcome_until(&ctx, &mut app, |app, _| app.welcome.launch.is_some());
+        let shown = format!("{} is not a Git repository.", dir.path().display());
+        assert!(texts.contains(&shown), "{texts:?}");
+        click_welcome(&ctx, &mut app, "Initialize here…")?;
+        assert_eq!(
+            app.new_repository
+                .as_ref()
+                .map(|dialog| PathBuf::from(&dialog.folder)),
+            Some(dir.path().to_path_buf())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn the_new_repository_dialog_creates_and_opens_the_repository()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir()?;
+        let folder = dir.path().join("notes");
+        std::fs::create_dir(&folder)?;
+        std::fs::write(folder.join("a.md"), b"a")?;
+        let mut app = Browser::new("/nowhere".into());
+        app.run_welcome_command(
+            &ctx,
+            welcome_view::Command::NewRepository(Some(folder.clone())),
+        );
+        if let Some(dialog) = &mut app.new_repository {
+            dialog.commit = false;
+        }
+        let texts = welcome_until(&ctx, &mut app, |app, _| {
+            app.new_repository
+                .as_ref()
+                .is_some_and(|dialog| dialog.inspection().is_some())
+        });
+        let line = format!("{} has 1 file.", folder.display());
+        assert!(texts.contains(&line), "{texts:?}");
+        assert!(texts.iter().any(|text| text == "FIRST BRANCH"));
+        click_welcome(&ctx, &mut app, "Create repository")?;
+        welcome_until(&ctx, &mut app, |app, _| app.new_repository.is_none());
+        assert!(folder.join(".git").is_dir());
+        assert_eq!(app.state.requested, Some(std::fs::canonicalize(&folder)?));
+        assert!(
+            app.open_changes_after_load,
+            "no commit: Local Changes opens"
+        );
+        // Inside a repository the dialog refuses and offers to open it.
+        let nested = folder.join("docs");
+        app.new_repository = Some(new_repository::Dialog::new(Some(nested)));
+        let texts = welcome_until(&ctx, &mut app, |app, _| {
+            app.new_repository
+                .as_ref()
+                .is_some_and(|dialog| dialog.inspection().is_some())
+        });
+        let top = std::fs::canonicalize(&folder)?;
+        let open = format!("Open {}", top.display());
+        assert!(texts.contains(&open), "{texts:?}");
+        assert!(
+            texts.iter().any(|text| text.ends_with("Open it instead?")),
+            "{texts:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn without_a_repository_menus_stay_complete_and_repository_commands_say_why() {
+        let app = Browser::new("/nowhere".into());
+        let ready = app.frame_readiness();
+        let open = [
+            FrameCommand::Open,
+            FrameCommand::Clone,
+            FrameCommand::NewRepository(None),
+            FrameCommand::Preferences,
+            FrameCommand::Quit,
+            FrameCommand::Shortcuts,
+            FrameCommand::Documentation,
+            FrameCommand::About,
+        ];
+        let items = menus::flatten(&app.menu_table(&ready));
+        let with_repo =
+            menus::flatten(&layout_fixture().menu_table(&layout_fixture().frame_readiness()));
+        assert_eq!(
+            items.len(),
+            with_repo.len(),
+            "the menus look the same before and after"
+        );
+        for (path, item) in items {
+            if open.contains(&item.command)
+                || matches!(
+                    item.command,
+                    FrameCommand::SetDensity(_)
+                        | FrameCommand::SetDiffLayout(_)
+                        | FrameCommand::SetTheme(_)
+                        | FrameCommand::Unavailable
+                        | FrameCommand::ClearRecent
+                )
+            {
+                continue;
+            }
+            assert_eq!(
+                item.disabled.as_deref(),
+                Some("Open a repository first"),
+                "{path} › {}",
+                item.label
+            );
+        }
+    }
+
     #[test]
     fn menus_follow_the_final_design_mockup() {
         let app = layout_fixture();
@@ -16885,6 +17512,7 @@ mod tests {
                 [
                     "Open…",
                     "Clone…",
+                    "New repository…",
                     "Open recent ▸",
                     "-",
                     "Fetch",
@@ -17955,6 +18583,30 @@ mod tests {
         assert_eq!(results[0].group, search::Group::Filter);
         assert!(results.iter().any(|item| item.group == search::Group::Tags
             && item.command == FrameCommand::Inspect("c".repeat(40))));
+    }
+
+    #[test]
+    fn welcome_search_lists_recent_repositories_and_new_repository() {
+        let mut app = Browser::new("/nowhere".into());
+        app.recent = recent_list(&[PathBuf::from("/nowhere/blog")]);
+        let ready = app.frame_readiness();
+        let items = app.search_items(&ready);
+        let results = search::results("blog", &items, FrameCommand::Filter("blog".into()));
+        assert!(
+            results
+                .iter()
+                .any(|item| item.group == search::Group::Repositories
+                    && item.label == "blog"
+                    && item.command == FrameCommand::OpenRecent("/nowhere/blog".into()))
+        );
+        let results = search::results("new repo", &items, FrameCommand::Filter("x".into()));
+        assert!(
+            results
+                .iter()
+                .any(|item| item.group == search::Group::Actions
+                    && item.command == FrameCommand::NewRepository(None)
+                    && item.disabled.is_none())
+        );
     }
 
     #[test]

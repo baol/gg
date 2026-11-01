@@ -82,20 +82,24 @@ Layer: product
 Covered by (end-to-end, partial): `explicit_path_overrides_cwd_and_failure_uses_stderr` (apps/git-good/tests/cli.rs, CLI); GUI part Not automated
 
 ### FRM-03 Launch in a folder that is not a repository shows the welcome view
-Fixture: `fx-not-repo`, Preference **Reopen the last repository when launched outside one** off
+Fixture: `fx-not-repo`, Preference **Reopen the last repository when launched outside one** off, recent list `[fx-linear, fx-branchy, <missing folder>]`
 Layer: product
 - Given cwd is `fx-not-repo`
 - When `git good` is run
-- Then History is replaced by a centered welcome view: heading **Open a repository**, an amber line `<path> is not a Git repository.` (full error on hover), primary **Open…** (`Ctrl+O`), **Clone…**, and up to ten recent repositories (folder name first, path dimmed)
-- And the refs sidebar and commit inspector are hidden; the footer does not repeat the error and shows `Ctrl+O: open · Ctrl+K: search`
-Covered by (interaction, partial): `renders_empty_error_and_filtered_snapshots` (apps/git-good/src/main.rs); Not automated for the full layout
+- Then History is replaced by a centered 640 px welcome column: the 36 px logo, **Open a repository**, the weak line `gg <version> · Git <version>`, one amber line `<~path> is not a Git repository.` (warning glyph, truncating; full path and Git's message on hover) with **Initialize here…**, three equal cards **Open…** (filled, `A folder on this computer · Ctrl+O`), **Clone…** (`From a URL into <~preferred clone folder>`), **New repository…** (`git init in a folder`), and RECENT with count `3`: rows name / `~` path / branch / opened / ×, the missing folder dimmed with an amber `missing` chip
+- And the toolbar shows only the search field `Search repositories and actions`: no sidebar toggle, Changes/History tabs, Fetch/Pull/Push or branch button; no refs sidebar, History header or inspector; the footer does not repeat the error and lists the welcome keys
+- And every menu stays complete; repository commands are disabled with *Open a repository first*
+- And `Ctrl+K` lists the recent repositories under REPOSITORIES and **New repository…** under ACTIONS
+- When **Initialize here…**
+- Then the New repository dialog opens on `fx-not-repo` (DLG-17)
+Covered by (interaction): `the_welcome_frame_shows_only_search_and_the_actions`, `without_a_repository_menus_stay_complete_and_repository_commands_say_why`, `a_launch_folder_that_is_not_a_repository_offers_initialize_here`, `a_missing_recent_folder_is_marked_and_offers_remove_and_locate`, `welcome_search_lists_recent_repositories_and_new_repository` (apps/git-good/src/main.rs)
 
 ### FRM-04 Welcome view recent list caps at ten
 Fixture: `fx-not-repo` with a settings file listing 12 existing recent repositories
 Layer: interaction
 - When gg launches in `fx-not-repo`
-- Then the welcome view lists exactly ten recent entries, most recent first, no duplicates; clicking one opens it
-Covered by (interaction, partial): `recent_repositories_move_to_the_front_without_duplicates` (apps/git-good/src/settings.rs) — ordering only; cap Not automated
+- Then the welcome view lists exactly ten recent entries, most recent first, no duplicates, and **Repository › Open recent** and the Open… dialog list the same ten (one limit, `RECENT_LIMIT`); clicking one opens it
+Covered by (interaction): `one_recent_limit_for_the_welcome_list_open_recent_and_open` (apps/git-good/src/main.rs), `recent_repositories_move_to_the_front_without_duplicates` (apps/git-good/src/settings.rs)
 
 ### FRM-05 Reopen the last repository when launched outside one
 Fixture: `fx-not-repo`; recent list `[<missing folder>, <fx-linear>]` (most recent first); Preference **Reopen the last repository when launched outside one** on
@@ -3795,10 +3799,10 @@ Covered by (backend, interaction): `signing_readiness_blocks_the_commit_without_
 Fixture: `fx-linear`, recent list of 10
 Layer: interaction
 - When `Ctrl+O`
-- Then a modal shows a folder field with **Browse…**, at most eight recent repositories, **Clone…**, **Cancel** (`Esc`), **Open** (`Enter`)
+- Then a modal shows a folder field with **Browse…**, up to ten recent repositories (the limit shared with the welcome view, FRM-04), **Clone…**, **Cancel** (`Esc`), **Open** (`Enter`)
 - When `bran` is typed
 - Then only `fx-branchy` stays listed (name match first, path dimmed)
-Covered by (Not automated)
+Covered by (interaction, partial): `one_recent_limit_for_the_welcome_list_open_recent_and_open` (apps/git-good/src/main.rs) — the limit; filtering Not automated
 
 ### DLG-03 Open a valid path and invalid path
 Fixture: `fx-linear`; target `fx-branchy` and `fx-not-repo`
@@ -3826,10 +3830,11 @@ Covered by (Not automated)
 ### DLG-06 Open recent menu
 Fixture: `fx-linear` open; recent `[fx-linear, fx-branchy, deleted-repo]`
 Layer: interaction
-- Then **Repository › Open recent** lists folder name then path; `fx-linear` has a checkmark; `deleted-repo` is disabled with *Not found*; the list ends with **Clear recent**
+- Then **Repository › Open recent** lists up to ten entries, folder name then path; `fx-linear` has a checkmark; `deleted-repo` is disabled with *Not found*; the list ends with **Clear recent**
 - When **Clear recent**
 - Then the submenu is empty (except Clear recent) and `recent_repositories` is empty after restart
-Covered by (Not automated)
+- And `recent_repositories` stores `{"path", "opened"}` entries; a settings file with plain path strings from older versions still loads
+Covered by (interaction, partial): `one_recent_limit_for_the_welcome_list_open_recent_and_open` (apps/git-good/src/main.rs), `recent_times_round_trip_and_old_path_lists_still_load` (apps/git-good/src/settings.rs); checkmark and Clear recent Not automated
 
 ### DLG-07 Clone dialog Into folder and target line — see NET-03
 
@@ -3847,6 +3852,63 @@ Layer: visual
 Covered by (interaction, partial): `about_names_the_license_and_the_human_authors` (apps/git-good/src/branding.rs); copy not automated
 
 ### DLG-12 Decision dialogs are modal — see FRM-64
+
+### DLG-13 Welcome recent rows: keys, remove, branch and opened time
+Fixture: `fx-not-repo` (cwd); recent `[fx-linear (opened 2 h ago), fx-branchy (yesterday), fx-dirty (3 days ago)]`
+Layer: interaction
+- Then the first row is selected; rows are 22 px with name 132 px, `~` path (mono, truncating, full path on hover), branch 128 px (`main`, blank until read, nothing shifts when it arrives), opened 76 px (`2 h ago`, `yesterday`, `3 days ago`; older dates as `Oct 12`), × on hover or selection
+- When ↓ ↓ ↑ then `Del`
+- Then `fx-branchy` leaves the list (its folder is untouched) and the count reads `2`
+- When `Enter`
+- Then the selected row stays selected while the footer reads `Reading <~path>`, the pane shows no loading text, and the repository opens
+Covered by (interaction): `recent_rows_take_arrows_enter_and_delete` (apps/git-good/src/main.rs), `opened_times_read_relative_then_as_dates`, `the_branch_is_read_from_head_for_repositories_and_worktrees` (apps/git-good/src/welcome_view.rs)
+
+### DLG-14 A recent row that fails to open shows its fix in place
+Fixture: `fx-not-repo` (cwd); recent `[<moved folder>, <plain folder that was a repository>]`
+Layer: product
+- When the moved folder's row is opened
+- Then the row becomes one amber line in the same 22 px slot: `<~path> no longer exists.` with **Remove from recent** and **Locate…**; **Locate…** picks a folder that replaces the entry and opens it; **Remove from recent** removes the entry
+- When the plain folder's row is opened
+- Then its slot reads `<~path> is no longer a Git repository.` with **Remove from recent**; the launch line is unchanged
+Covered by (interaction): `a_missing_recent_folder_is_marked_and_offers_remove_and_locate`, `recent_rows_take_arrows_enter_and_delete` (apps/git-good/src/main.rs)
+
+### DLG-15 First run and filtering many recent repositories
+Fixture: `fx-not-repo` (cwd), an empty `XDG_CONFIG_HOME`; then a recent list of 12
+Layer: visual
+- Given no recent repositories
+- Then the title reads **Welcome to gg** with *Open a repository to see its history and changes.*; RECENT is absent; the lines *Repositories you open are listed here. Drop a folder on this window to open it.* and `Clone folder: <~folder> · Change in Preferences…` show; the link opens Preferences › General
+- Given 12 recent repositories
+- When `repo-1` is typed while the list has the keyboard
+- Then only matching rows show (every word must match the name or path), the count reads `1 of 10`, and the list keeps its height; `Esc` clears; with six or fewer entries typing does not filter
+Covered by (interaction): `first_run_explains_where_repositories_will_appear`, `typing_filters_many_recent_repositories_and_esc_clears` (apps/git-good/src/main.rs), `every_word_must_match_the_name_or_path_and_the_list_is_capped` (apps/git-good/src/welcome_view.rs)
+
+### DLG-16 Drop a folder on the welcome view
+Fixture: `fx-not-repo` (cwd); `fx-linear`; an empty folder `<plain>`
+Layer: interaction
+- When `fx-linear` is dragged over the window
+- Then an overlay with a dashed `#2f8fc4` border reads `Drop to open <~fx-linear>` (`Drop to open` when the platform gives no path)
+- When it is dropped (or a file inside it)
+- Then `fx-linear` opens
+- When `<plain>` is dropped
+- Then the New repository dialog opens on `<plain>`
+Covered by (interaction, partial): `a_dropped_file_stands_for_its_folder` (apps/git-good/src/welcome_view.rs); overlay and drop Not automated
+
+### DLG-17 New repository dialog
+Fixture: `fx-not-repo` with 14 files, 3 of them ignored by its `.gitignore`; `fx-linear`
+Layer: product
+- When **Repository › New repository…** (or the welcome card, or **Initialize here…**)
+- Then a modal *New repository* shows **Folder** with **Choose…**, **First branch** `main`, checked **Commit the existing files as “Initial commit”**, and the weak line `<~folder> has 14 files (3 ignored by .gitignore).` (read in the background; `will be created.` for a missing folder), **Cancel** (`Esc`) and the filled **Create repository** (`Enter`)
+- When **Create repository**
+- Then the repository is created on `main`, the 11 files are committed as `Initial commit`, and it opens in History and joins the recent list; unchecked, it opens in Local Changes with nothing committed
+- When the folder is `<fx-linear>/docs`
+- Then the line reads `<~fx-linear>/docs is inside the repository <~fx-linear>. Open it instead?` with **Open <~fx-linear>**, and **Create repository** stays disabled
+Covered by (backend, interaction): `init_commits_the_existing_files_except_ignored_ones`, `init_refuses_inside_an_existing_repository`, `init_creates_the_folder_on_the_named_branch_without_committing` (crates/git/tests/init.rs), `the_new_repository_dialog_creates_and_opens_the_repository` (apps/git-good/src/main.rs)
+
+### DLG-18 Narrow welcome view
+Fixture: `fx-not-repo` (cwd), recent list of 6; window 720×480
+Layer: visual
+- Then the column fills the width; the cards stay three across with short subtitles (`Ctrl+O`, `into <~folder>`, `git init`); the branch column drops while the opened time stays; the logo and version line hide below 760 px; search is its icon
+Covered by (interaction): `the_narrow_welcome_keeps_three_cards_and_drops_logo_version_and_branch` (apps/git-good/src/main.rs)
 
 ## CLI
 
@@ -4066,6 +4128,15 @@ Layer: product
 Covered by (Not automated)
 
 ### CLI-27 Launch with PATH opens the GUI on that repository — see FRM-02
+
+### CLI-28 Init creates a repository and refuses inside one
+Fixture: an empty temporary folder with `notes/a.txt`; `fx-linear`
+Layer: product
+- When `git good init --branch trunk --commit notes`
+- Then stdout is one receipt `{"operation":"init","path","branch":"trunk","head","files":1,"complete":true}`, `notes` is a repository on `trunk` whose HEAD is `head` (`Initial commit`)
+- When `git good init` runs in `notes/docs`
+- Then it exits nonzero with `is inside the repository` on stderr, empty stdout, and nothing created
+Covered by (end-to-end): `init_cli_creates_commits_and_refuses_inside_a_repository` (apps/git-good/tests/cli.rs)
 
 Rules every area relies on, cases that span areas, and the CLI contract. Area cases cite a rule when they check one instance of it.
 
@@ -4405,7 +4476,7 @@ Contradictions and gaps found while writing these cases. Each needs a decision; 
 8. **Preferences.** final-design.md calls it a non-blocking window, architecture.md a modal; **Load avatars from the network** is listed under both General and Appearance; theme order differs; the `settings.json` key list misses `zoom`, `code_font`, `editor`, `sign_tags`, `recent_repositories`, `reopen_last`, `backup_days`, `pull_strategy` and more. The Avatars section still reads as Gravatar-on-by-default.
 9. **Worktrees.** One sentence says pruning a missing registration is not offered, the next offers **Prune**; there is **Unlock** but no Lock; the CLI has neither.
 10. **CLI drift.** `tag --sign` versus `--sign|--no-sign`; `switch --stash`, worktree `--branch/--create/--at`, submodule `--recorded/--before` are missing from cli.md; `--help` prints `git-good`; no `-h`; `--help` says `clone` "opens" the clone but the CLI only prints a receipt (CLI-C01).
-11. **Recent repositories and signing defaults.** Open… shows 8, welcome 10; **Sign tags** preference versus `tag.gpgsign`; Sign commits has three modes but the Signing text says it follows `commit.gpgsign`.
+11. **Signing defaults.** **Sign tags** preference versus `tag.gpgsign`; Sign commits has three modes but the Signing text says it follows `commit.gpgsign`.
 12. **Stale user flows.** user-flows F07 still describes a Stashes window and Restore…; line 32 lists old toolbar menus; the toolbar now holds only Fetch, Pull and Push (FRM-23).
 13. **Unspecified states.** Bare repository UI; the missing-parent incomplete comparison label; operation band first line for merge/cherry-pick/revert; pending labels during Continue/Abort; disabled reasons for Fetch, Push, Merge and Recovery; empty refs-sidebar groups while filtering (spec keeps headers, test expects `No matching refs`).
 14. **Recovery window Refresh.** The Backups and Reflog sources each have a **Refresh** button in code, against "There is no Refresh command".
