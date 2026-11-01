@@ -34,10 +34,16 @@ pub fn enclosing_repository(path: &Path) -> Option<PathBuf> {
     if !output.status.success() {
         // A bare repository or a `.git` folder has no top level.
         let inside = git(existing, &[], &["rev-parse", "--git-dir"]).ok()?;
-        return inside.status.success().then(|| existing.to_path_buf());
+        return inside.status.success().then(|| canonical(existing));
     }
     let top = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    (!top.is_empty()).then(|| PathBuf::from(top))
+    (!top.is_empty()).then(|| canonical(Path::new(&top)))
+}
+
+/// The canonical form of `path`, as the app spells repository paths (Git
+/// prints `C:/...` on Windows, where canonical paths are `\\?\C:\...`).
+fn canonical(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 /// Initialize `path` on `branch`, creating the folder when it is missing,
