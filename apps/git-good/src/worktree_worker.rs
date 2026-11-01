@@ -14,6 +14,10 @@ pub enum Action {
     List,
     Add(AddRequest),
     Remove(PathBuf),
+    /// Forget missing worktrees.
+    Prune,
+    /// Unlock a locked worktree.
+    Unlock(PathBuf),
 }
 
 #[derive(Clone)]
@@ -86,6 +90,22 @@ impl Worker {
                             ),
                             Err(error) => (Err(error), None),
                         },
+                        Action::Prune => match gg_git::worktree::prune(&request.repo) {
+                            Ok(()) => (
+                                gg_git::worktree::list(&request.repo),
+                                Some("Pruned missing worktrees; their branches are kept.".into()),
+                            ),
+                            Err(error) => (Err(error), None),
+                        },
+                        Action::Unlock(path) => {
+                            match gg_git::worktree::unlock(&request.repo, path) {
+                                Ok(()) => (
+                                    gg_git::worktree::list(&request.repo),
+                                    Some(format!("Unlocked {}.", path.display())),
+                                ),
+                                Err(error) => (Err(error), None),
+                            }
+                        }
                     };
                     if g.load(Ordering::Relaxed) != current {
                         continue;

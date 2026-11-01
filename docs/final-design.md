@@ -36,7 +36,7 @@ Every command has exactly one menu home. The toolbar, shortcuts, context menus, 
 | Repository | Open… (`Ctrl+O`) · Clone… · Open recent ▸ · Fetch (`Ctrl+Shift+F`) · Pull (rebase) (`Ctrl+Shift+L`) · Push (`Ctrl+Shift+P`) · Push with force-with-lease… · Worktrees… · Submodules… · LFS… · Backups… · Reflog… · Preferences… (`Ctrl+,`) · Quit (`Ctrl+Q`) |
 | Branch | New branch… (`Ctrl+B`) · New tag… · Switch to… (`Ctrl+Shift+B`) · Merge into current… · Rebase current onto… · Set upstream… · Track remote branch… · Rename… (`F2`) · Delete… (`Del`) |
 | Commit | Review changes (`Enter`) · Compare with HEAD · Copy ID (`Ctrl+C`) · Cherry-pick onto HEAD · Revert · Interactive rebase from here… (`R`) · Reword… (`Ctrl+R`) · Reopen for editing… (`E`) · Fixup into… (`F`) · Drop… (`D`) · Reset current branch to here… — acts on the selected commit |
-| Changes | Stage all (`Ctrl+Shift+S`) · Unstage all (`Ctrl+Shift+U`) · Discard all… · Commit (`Ctrl+Enter`) · Amend HEAD (`Ctrl+Shift+Enter`) · Stash changes (`Ctrl+Shift+Z`) · Stashes… · Resolve conflicts… |
+| Changes | Stage all (`Ctrl+Shift+S`) · Unstage all (`Ctrl+Shift+U`) · Discard all… · Commit (`Ctrl+Enter`) · Amend HEAD (`Ctrl+Shift+Enter`) · Stash changes… (`Ctrl+Shift+Z`) · Stashes… · Resolve conflicts… |
 | View | Local Changes (`Ctrl+1`) · History (`Ctrl+2`) · Refs sidebar (`Ctrl+\`) · Commit inspector (`Space`) · Inline diff · Side-by-side diff · Compact density · Theme ▸ |
 | Help | Keyboard shortcuts (`?`) · Documentation · About gg |
 

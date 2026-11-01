@@ -305,3 +305,41 @@ pub fn remove(repo: &Path, destination: &Path) -> Result<Receipt, String> {
     }
     Ok(Receipt::from_worktree(worktree))
 }
+
+/// Run `git worktree <args>` and report Git's message on failure.
+fn run_worktree(repo: &Path, args: &[&std::ffi::OsStr], what: &str) -> Result<(), String> {
+    let result = command(repo)
+        .arg("worktree")
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|error| format!("Could not {what} using Git: {error}"))?;
+    if !result.status.success() {
+        return Err(format!(
+            "{} failed ({}).{}",
+            what[..1].to_uppercase() + &what[1..],
+            result.status,
+            match detail(&result) {
+                detail if detail.is_empty() => String::new(),
+                detail => format!("\n{detail}"),
+            }
+        ));
+    }
+    Ok(())
+}
+
+/// Forget worktrees whose folders are gone (`git worktree prune`); their
+/// branches are kept.
+pub fn prune(repo: &Path) -> Result<(), String> {
+    run_worktree(repo, &["prune".as_ref()], "prune missing worktrees")
+}
+
+/// Unlock one locked worktree (`git worktree unlock`).
+pub fn unlock(repo: &Path, destination: &Path) -> Result<(), String> {
+    run_worktree(
+        repo,
+        &["unlock".as_ref(), "--".as_ref(), destination.as_os_str()],
+        "unlock the worktree",
+    )
+}

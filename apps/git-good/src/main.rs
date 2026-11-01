@@ -454,14 +454,6 @@ struct StashDialog {
     error: Option<String>,
 }
 
-#[derive(Clone)]
-struct RestoreStashDialog {
-    reference: String,
-    restore_index: bool,
-    remove: bool,
-    error: Option<String>,
-}
-
 /// Repository facts the window frame needs without opening Local Changes,
 /// read on a background thread.
 #[derive(Clone, Debug, Default)]
@@ -542,13 +534,9 @@ struct StashPicker {
     selected: usize,
     confirm_drop: bool,
     error: Option<String>,
-}
-
-struct StashWindow {
-    entries: Vec<gg_engine::stash::StashEntry>,
-    error: Option<String>,
-    notice: Option<String>,
-    confirm_drop: Option<String>,
+    /// Apply and Pop also restore what was staged (remembered for the
+    /// session); replaces the old Restore… dialog.
+    restore_index: bool,
 }
 
 struct RecoveryView {
@@ -1207,10 +1195,6 @@ fn conflict_side_label(
     }
 }
 
-enum StashAction {
-    Drop(String),
-}
-
 #[derive(Clone, Copy)]
 enum MutationAction {
     Continue,
@@ -1377,6 +1361,8 @@ struct WorktreeState {
 }
 
 struct WorktreeWindow {
+    /// The folder to open once the pending create succeeds.
+    open_created: Option<PathBuf>,
     snapshot: Option<gg_engine::worktree::Snapshot>,
     selected: Option<usize>,
     error: Option<String>,
@@ -1393,6 +1379,26 @@ struct CreateWorktreeDialog {
     branch: String,
     at: String,
     error: Option<String>,
+    /// The destination follows the branch (`<repo>-<branch>` beside the
+    /// repository) until it is edited.
+    destination_auto: bool,
+    /// Switch to the new worktree once it is created.
+    open_after: bool,
+}
+
+/// The default worktree folder for `branch`: a sibling of the repository
+/// named `<repo>-<branch>`, slashes turned into dashes.
+fn worktree_default_destination(repo: &Path, branch: &str) -> String {
+    let name = repo.file_name().unwrap_or_default().to_string_lossy();
+    let parent = repo.parent().unwrap_or(repo);
+    let branch = branch.trim().replace(['/', '\\'], "-");
+    if branch.is_empty() {
+        return String::new();
+    }
+    parent
+        .join(format!("{name}-{branch}"))
+        .display()
+        .to_string()
 }
 
 struct SubmoduleWindow {
@@ -1469,8 +1475,6 @@ struct Browser {
     force_push_pending: bool,
     track_dialog: Option<String>,
     stash_dialog: Option<StashDialog>,
-    stash_window: Option<StashWindow>,
-    restore_stash: Option<RestoreStashDialog>,
     stash_notice: Option<String>,
     mutation: Option<gg_engine::mutation::OperationState>,
     mutation_notice: Option<String>,
@@ -1628,8 +1632,6 @@ impl Browser {
             force_push_pending: false,
             track_dialog: None,
             stash_dialog: None,
-            stash_window: None,
-            restore_stash: None,
             stash_notice: None,
             mutation: None,
             mutation_notice: None,
@@ -3038,22 +3040,6 @@ impl Browser {
             .map(|history| history.path.clone())
     }
 
-    fn refresh_stashes(&mut self) {
-        let Some(path) = self.stash_path() else {
-            return;
-        };
-        let result = gg_git::stash::list(&path);
-        if let Some(window) = &mut self.stash_window {
-            match result {
-                Ok(list) => {
-                    window.entries = list.entries;
-                    window.error = None;
-                }
-                Err(error) => window.error = Some(error),
-            }
-        }
-    }
-
     fn push_stash(
         &mut self,
         ctx: &egui::Context,
@@ -3074,7 +3060,6 @@ impl Browser {
                 .map(|reference| format!(" {reference}"))
                 .unwrap_or_default()
         ));
-        self.refresh_stashes();
         self.load(ctx);
         self.refresh_working(ctx);
         Ok(())
@@ -3115,7 +3100,6 @@ impl Browser {
             conflicts.then(|| receipt.conflicts.join("\n")),
             conflicts.then_some(RecoveryAction::ManageStashes),
         );
-        self.refresh_stashes();
         self.load(ctx);
         self.refresh_working(ctx);
         Ok(())
@@ -3127,7 +3111,6 @@ impl Browser {
             .ok_or("Open a repository before dropping a stash.")?;
         gg_git::stash::drop(&path, Some(reference))?;
         self.stash_notice = Some(format!("Dropped {reference}"));
-        self.refresh_stashes();
         self.load(ctx);
         self.refresh_working(ctx);
         Ok(())
@@ -3198,7 +3181,8 @@ impl Browser {
                 });
             }
             FrameCommand::Stash => self.open_stash_dialog(),
-            FrameCommand::Stashes => self.open_stash_window(),
+            // The toolbar picker is the one stash surface (proposal).
+            FrameCommand::Stashes => egui::Popup::open_id(ctx, stash_picker_popup_id()),
             FrameCommand::Rewrite => {
                 let start = self
                     .local_summary
@@ -4288,7 +4272,7 @@ impl Browser {
                     .unless(idle(ready.has_repo))
                     .entry(),
                 Entry::Separator,
-                item("Stash changes", "Ctrl+Shift+Z", FrameCommand::Stash)
+                item("Stash changes…", "Ctrl+Shift+Z", FrameCommand::Stash)
                     .unless(ready.stash_reason)
                     .entry(),
                 item("Stashes…", "", FrameCommand::Stashes)
@@ -4914,7 +4898,7 @@ const STASH_PICKER_ROW: f32 = 40.0;
 /// Height of the picker's entry list: six rows.
 const STASH_PICKER_LIST: f32 = 5.0 * STASH_PICKER_ROW;
 /// Height reserved for the picker's actions, its drop confirmation, and an error.
-const STASH_PICKER_ACTIONS: f32 = 64.0;
+const STASH_PICKER_ACTIONS: f32 = 88.0;
 
 /// Display message without the `WIP on <branch>: ` or `On <branch>: ` prefix
 /// that the branch column already shows.
@@ -5034,15 +5018,26 @@ fn stash_picker_actions(
             entry.reference
         ));
         ui.horizontal(|ui| {
-            if ui.button("Drop").clicked() {
+            if ui
+                .add(consequence::danger_button(
+                    format!("Drop {}", entry.reference),
+                    true,
+                ))
+                .clicked()
+            {
                 *pick = Some(StashPick::Drop(entry.reference.clone()));
                 picker.confirm_drop = false;
             }
-            if ui.button("Cancel").clicked() {
+            if ui
+                .button(("Cancel", egui::RichText::new("Esc").small().weak()))
+                .clicked()
+            {
                 picker.confirm_drop = false;
             }
         });
     } else {
+        ui.checkbox(&mut picker.restore_index, "Restore staged state")
+            .on_hover_text("Apply and Pop also restore what was staged when the stash was made");
         ui.horizontal(|ui| {
             if ui
                 .button(format!("Apply {}", entry.reference))
@@ -5082,8 +5077,14 @@ fn stash_picker_actions(
 impl Browser {
     fn apply_stash_pick(&mut self, ctx: &egui::Context, pick: StashPick) {
         let result = match pick {
-            StashPick::Apply(reference) => self.restore_stash_inner(ctx, &reference, false, false),
-            StashPick::Pop(reference) => self.restore_stash_inner(ctx, &reference, true, false),
+            StashPick::Apply(reference) => {
+                let index = self.stash_picker.restore_index;
+                self.restore_stash_inner(ctx, &reference, false, index)
+            }
+            StashPick::Pop(reference) => {
+                let index = self.stash_picker.restore_index;
+                self.restore_stash_inner(ctx, &reference, true, index)
+            }
             StashPick::Drop(reference) => self.drop_stash(ctx, &reference),
             StashPick::Show { commit, message } => {
                 let return_location = self.capture_return_location();
@@ -5487,15 +5488,7 @@ impl Browser {
                     self.start_branch(ctx, target, false);
                 }
             }
-            RecoveryAction::ManageStashes => {
-                self.stash_window = Some(StashWindow {
-                    entries: Vec::new(),
-                    error: None,
-                    notice: None,
-                    confirm_drop: None,
-                });
-                self.refresh_stashes();
-            }
+            RecoveryAction::ManageStashes => egui::Popup::open_id(ctx, stash_picker_popup_id()),
             RecoveryAction::StashAndSwitch => {
                 if let Some(target) = self.pending_switch.clone() {
                     self.stash_switch = Some(StashSwitchDialog {
@@ -5991,16 +5984,6 @@ impl Browser {
             keep_index: self.prefs.stash_keep_index,
             error: None,
         });
-    }
-
-    fn open_stash_window(&mut self) {
-        self.stash_window = Some(StashWindow {
-            entries: Vec::new(),
-            error: None,
-            notice: None,
-            confirm_drop: None,
-        });
-        self.refresh_stashes();
     }
 
     fn open_merge_dialog(&mut self) {
@@ -7155,6 +7138,7 @@ impl Browser {
     fn open_worktrees(&mut self, ctx: &egui::Context) {
         if self.worktree_window.is_none() {
             self.worktree_window = Some(WorktreeWindow {
+                open_created: None,
                 snapshot: None,
                 selected: None,
                 error: None,
@@ -7197,6 +7181,8 @@ impl Browser {
             worktree_worker::Action::List => "",
             worktree_worker::Action::Add(_) => "Adding worktree…",
             worktree_worker::Action::Remove(_) => "Removing worktree…",
+            worktree_worker::Action::Prune => "Pruning missing worktrees…",
+            worktree_worker::Action::Unlock(_) => "Unlocking worktree…",
         };
         if let Some(window) = &mut self.worktree_window {
             window.busy = Some(label.into());
@@ -7209,20 +7195,17 @@ impl Browser {
         }
     }
 
-    fn poll_worktrees(&mut self) {
-        let Some(update) = self
+    /// Apply a worktree update; returns a created worktree to open.
+    fn poll_worktrees(&mut self) -> Option<PathBuf> {
+        let update = self
             .worktree_worker
             .as_ref()
-            .and_then(worktree_worker::Worker::poll)
-        else {
-            return;
-        };
+            .and_then(worktree_worker::Worker::poll)?;
         if update.generation != self.worktree_generation {
-            return;
+            return None;
         }
-        let Some(window) = &mut self.worktree_window else {
-            return;
-        };
+        let window = self.worktree_window.as_mut()?;
+        let mut open_created = None;
         window.busy = None;
         match update.result {
             Ok(snapshot) => {
@@ -7238,6 +7221,7 @@ impl Browser {
                 if let Some(notice) = update.notice {
                     if notice.starts_with("Added") {
                         window.create = None;
+                        open_created = window.open_created.take();
                     } else if notice.starts_with("Removed") {
                         window.confirm_remove = None;
                     }
@@ -7252,6 +7236,7 @@ impl Browser {
                 window.error = Some(error);
             }
         }
+        open_created
     }
 
     fn worktree_key(&self) -> PathBuf {
@@ -7304,7 +7289,6 @@ impl Browser {
         self.review = None;
         self.recovery = None;
         self.conflict_view = None;
-        self.stash_window = None;
         self.worktree_window = None;
         self.edit_path = false;
         self.path = path.to_string_lossy().into_owned();
@@ -7313,7 +7297,11 @@ impl Browser {
     }
 
     fn draw_worktrees(&mut self, ctx: &egui::Context) {
-        self.poll_worktrees();
+        if let Some(path) = self.poll_worktrees() {
+            self.worktree_window = None;
+            self.switch_worktree(ctx, path);
+            return;
+        }
         let branches = self
             .state
             .refs
@@ -7335,6 +7323,13 @@ impl Browser {
         let mut cancel_create = false;
         let mut submit_remove = None;
         let mut cancel_remove = false;
+        let mut prune = false;
+        let mut unlock = None;
+        let repo_path = self
+            .state
+            .history
+            .as_ref()
+            .map(|history| history.path.clone());
         let max_width = (ctx.content_rect().width() - 24.0).max(360.0);
         egui::Window::new("Worktrees")
             .id(egui::Id::unique("worktrees"))
@@ -7379,60 +7374,123 @@ impl Browser {
                     }
                     return;
                 };
-                for (index, worktree) in snapshot.worktrees.iter().enumerate() {
-                    ui.horizontal(|ui| {
-                        let selected = window.selected == Some(index);
-                        if ui
-                            .selectable_label(
-                                selected,
-                                format!("{}  {}", worktree.branch_label(), worktree.path),
-                            )
-                            .clicked()
-                        {
-                            window.selected = Some(index);
+                // An aligned table (proposal): branch, path, status, and the
+                // actions that can run. Enter opens the selected row, Del
+                // removes it.
+                let keys = ui.input(|i| {
+                    (
+                        i.key_pressed(egui::Key::Enter),
+                        i.key_pressed(egui::Key::Delete),
+                    )
+                });
+                egui::Grid::new("worktree-table")
+                    .num_columns(4)
+                    .spacing([16.0, 4.0])
+                    .striped(false)
+                    .show(ui, |ui| {
+                        for title in ["BRANCH", "PATH", "STATUS", ""] {
+                            ui.label(egui::RichText::new(title).small().weak());
                         }
-                        ui.weak(worktree.status_label());
-                        if worktree.main {
-                            ui.weak("main");
-                        }
-                        let path = worktree_path(&worktree.path_bytes);
-                        let can_open = worktree.prunable.is_none() && path.exists();
-                        if ui
-                            .add_enabled(
-                                !worktree.current && can_open && !repository_switch_pending,
-                                egui::Button::new("Open"),
+                        ui.end_row();
+                        for (index, worktree) in snapshot.worktrees.iter().enumerate() {
+                            let selected = window.selected == Some(index);
+                            let branch = ui.add(
+                                egui::Button::new(worktree.branch_label())
+                                    .fill(if selected {
+                                        colors::selection(ui.visuals())
+                                    } else {
+                                        egui::Color32::TRANSPARENT
+                                    })
+                                    .frame_when_inactive(selected)
+                                    .truncate(),
+                            );
+                            if branch.clicked() {
+                                window.selected = Some(index);
+                            }
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(&worktree.path).monospace().size(11.5),
+                                )
+                                .truncate(),
                             )
-                            .on_disabled_hover_text(if worktree.current {
-                                "This is the current worktree"
-                            } else if repository_switch_pending {
-                                "Wait for the current operation to finish"
-                            } else {
-                                "The worktree path is missing"
-                            })
-                            .clicked()
-                        {
-                            open_path = Some(path.clone());
-                        }
-                        let removable = worktree.can_remove();
-                        if ui
-                            .add_enabled(removable.is_ok(), egui::Button::new("Remove…"))
-                            .on_disabled_hover_text(
-                                removable
-                                    .err()
-                                    .unwrap_or_else(|| "Remove this worktree".into()),
-                            )
-                            .clicked()
-                        {
-                            remove_open = Some(index);
+                            .on_hover_text(&worktree.path);
+                            let status = match (&worktree.locked, &worktree.prunable) {
+                                (Some(lock), _) => format!("Locked · {lock}"),
+                                (_, Some(reason)) => format!("Missing · {reason}"),
+                                _ if worktree.main => format!("{} · main", worktree.status_label()),
+                                _ => worktree.status_label().to_string(),
+                            };
+                            ui.add(egui::Label::new(egui::RichText::new(status).weak()).truncate());
+                            ui.horizontal(|ui| {
+                                let path = worktree_path(&worktree.path_bytes);
+                                let can_open = worktree.prunable.is_none() && path.exists();
+                                let open_enabled =
+                                    !worktree.current && can_open && !repository_switch_pending;
+                                if ui
+                                    .add_enabled(open_enabled, egui::Button::new("Open"))
+                                    .on_disabled_hover_text(if worktree.current {
+                                        "This is the current worktree"
+                                    } else if repository_switch_pending {
+                                        "Wait for the current operation to finish"
+                                    } else {
+                                        "The worktree path is missing"
+                                    })
+                                    .clicked()
+                                    || (selected
+                                        && keys.0
+                                        && open_enabled
+                                        && window.create.is_none())
+                                {
+                                    open_path = Some(path.clone());
+                                }
+                                if worktree.prunable.is_some() {
+                                    if ui
+                                        .add_enabled(
+                                            window.busy.is_none(),
+                                            egui::Button::new("Prune"),
+                                        )
+                                        .on_hover_text(
+                                            "Forget missing worktrees; their branches stay",
+                                        )
+                                        .clicked()
+                                    {
+                                        prune = true;
+                                    }
+                                } else if worktree.locked.is_some() {
+                                    if ui
+                                        .add_enabled(
+                                            window.busy.is_none(),
+                                            egui::Button::new("Unlock"),
+                                        )
+                                        .clicked()
+                                    {
+                                        unlock = Some(path.clone());
+                                    }
+                                } else {
+                                    let removable = worktree.can_remove();
+                                    if ui
+                                        .add_enabled(
+                                            removable.is_ok(),
+                                            egui::Button::new("Remove…"),
+                                        )
+                                        .on_disabled_hover_text(
+                                            removable
+                                                .err()
+                                                .unwrap_or_else(|| "Remove this worktree".into()),
+                                        )
+                                        .clicked()
+                                        || (selected
+                                            && keys.1
+                                            && worktree.can_remove().is_ok()
+                                            && window.confirm_remove.is_none())
+                                    {
+                                        remove_open = Some(index);
+                                    }
+                                }
+                            });
+                            ui.end_row();
                         }
                     });
-                    if let Some(lock) = &worktree.locked {
-                        ui.weak(format!("Locked: {lock}"));
-                    }
-                    if let Some(reason) = &worktree.prunable {
-                        ui.weak(format!("Missing: {reason}"));
-                    }
-                }
                 if snapshot.worktrees.is_empty() {
                     ui.weak("No worktrees registered.");
                 }
@@ -7449,34 +7507,22 @@ impl Browser {
                 .default_pos(ctx.content_rect().center())
                 .pivot(egui::Align2::CENTER_CENTER)
                 .show(ctx, |ui| {
-                    ui.label("Destination");
+                    // Branch first, then the folder, which follows the branch
+                    // until edited (proposal).
                     ui.horizontal(|ui| {
-                        ui.add(
-                            egui::TextEdit::singleline(&mut dialog.destination)
-                                .desired_width((ui.available_width() - 84.0).max(160.0)),
-                        );
-                        if ui
-                            .button("Browse…")
-                            .on_hover_text("Choose a folder with the desktop dialog")
-                            .clicked()
-                            && let Some(path) = folder_picker::pick_folder(
-                                "Worktree destination",
-                                Some(Path::new(dialog.destination.trim())),
-                            )
-                        {
-                            dialog.destination = path.to_string_lossy().into_owned();
-                        }
+                        ui.radio_value(&mut dialog.create, true, "New branch");
+                        ui.radio_value(&mut dialog.create, false, "Existing branch");
                     });
-                    ui.radio_value(&mut dialog.create, false, "Existing branch");
-                    ui.radio_value(&mut dialog.create, true, "New branch");
+                    let before = dialog.branch.clone();
                     if dialog.create {
-                        ui.label("New branch");
+                        ui.label(egui::RichText::new("BRANCH").small().weak());
                         ui.add(egui::TextEdit::singleline(&mut dialog.branch).desired_width(260.0));
-                        ui.label("Start at");
+                        ui.label(egui::RichText::new("START AT").small().weak());
                         ui.add(egui::TextEdit::singleline(&mut dialog.at).desired_width(260.0));
                     } else if branches.is_empty() {
                         ui.weak("No local branches are available.");
                     } else {
+                        ui.label(egui::RichText::new("BRANCH").small().weak());
                         egui::ComboBox::from_id_salt("worktree-branch")
                             .selected_text(if dialog.branch.is_empty() {
                                 "Choose a branch"
@@ -7495,24 +7541,65 @@ impl Browser {
                                 }
                             });
                     }
+                    if dialog.destination_auto
+                        && dialog.branch != before
+                        && let Some(repo) = &repo_path
+                    {
+                        dialog.destination = worktree_default_destination(repo, &dialog.branch);
+                    }
+                    ui.label(egui::RichText::new("FOLDER").small().weak());
+                    ui.horizontal(|ui| {
+                        let field = ui.add(
+                            egui::TextEdit::singleline(&mut dialog.destination)
+                                .desired_width((ui.available_width() - 84.0).max(160.0)),
+                        );
+                        if field.changed() {
+                            dialog.destination_auto = false;
+                        }
+                        if ui
+                            .button("Browse…")
+                            .on_hover_text("Choose a folder with the desktop dialog")
+                            .clicked()
+                            && let Some(path) = folder_picker::pick_folder(
+                                "Worktree destination",
+                                Some(Path::new(dialog.destination.trim())),
+                            )
+                        {
+                            dialog.destination = path.to_string_lossy().into_owned();
+                            dialog.destination_auto = false;
+                        }
+                    });
+                    ui.checkbox(&mut dialog.open_after, "Open after create");
                     if let Some(error) = &dialog.error {
                         ui.colored_label(ui.visuals().error_fg_color, error);
                     }
                     ui.horizontal(|ui| {
-                        let ready = !dialog.destination.trim().is_empty()
-                            && !dialog.branch.trim().is_empty()
-                            && window.busy.is_none();
-                        if ui.add_enabled(ready, egui::Button::new("Create")).clicked() {
-                            submit_create = Some((
-                                PathBuf::from(dialog.destination.trim()),
-                                dialog.create,
-                                dialog.branch.trim().to_string(),
-                                dialog.at.trim().to_string(),
-                            ));
-                        }
-                        if ui.button("Cancel").clicked() {
-                            cancel_create = true;
-                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let ready = !dialog.destination.trim().is_empty()
+                                && !dialog.branch.trim().is_empty()
+                                && window.busy.is_none();
+                            let primary = egui::Button::new((
+                                egui::RichText::new("Create worktree").color(egui::Color32::WHITE),
+                                egui::RichText::new("Enter")
+                                    .small()
+                                    .color(egui::Color32::from_rgb(184, 212, 230)),
+                            ))
+                            .fill(egui::Color32::from_rgb(11, 85, 119));
+                            if ui.add_enabled(ready, primary).clicked() {
+                                submit_create = Some((
+                                    PathBuf::from(dialog.destination.trim()),
+                                    dialog.create,
+                                    dialog.branch.trim().to_string(),
+                                    dialog.at.trim().to_string(),
+                                ));
+                            }
+                            if ui
+                                .button(("Cancel", egui::RichText::new("Esc").small().weak()))
+                                .clicked()
+                            {
+                                cancel_create = true;
+                            }
+                        });
                     });
                 });
             if !dialog_open {
@@ -7525,32 +7612,41 @@ impl Browser {
         {
             let mut confirm = true;
             egui::Window::new("Remove worktree")
-                .id(egui::Id::unique("remove-worktree")).modal(ctx, egui::Id::unique("remove-worktree"))
+                .id(egui::Id::unique("remove-worktree"))
+                .modal(ctx, egui::Id::unique("remove-worktree"))
                 .open(&mut confirm)
                 .collapsible(false)
                 .resizable(false)
                 .default_pos(ctx.content_rect().center())
                 .pivot(egui::Align2::CENTER_CENTER)
                 .show(ctx, |ui| {
-                    ui.label(format!(
-                        "Remove {} at {}?",
-                        worktree.branch_label(),
+                    ui.label(format!("Remove worktree {}?", worktree.branch_label()));
+                    ui.weak(format!(
+                        "The folder {} is deleted. The branch stays, with all its commits.",
                         worktree.path
                     ));
-                    ui.weak("Worktree removal is refused for dirty, locked, missing, main, and current worktrees. No force option is offered.");
                     if let Some(error) = &window.error {
                         ui.colored_label(ui.visuals().error_fg_color, error);
                     }
                     ui.horizontal(|ui| {
-                        if ui
-                            .add_enabled(window.busy.is_none(), egui::Button::new("Remove"))
-                            .clicked()
-                        {
-                            submit_remove = Some(worktree_path(&worktree.path_bytes));
-                        }
-                        if ui.button("Cancel").clicked() {
-                            cancel_remove = true;
-                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let ready = window.busy.is_none();
+                            if ui
+                                .add_enabled(
+                                    ready,
+                                    consequence::danger_button("Remove worktree", ready),
+                                )
+                                .clicked()
+                            {
+                                submit_remove = Some(worktree_path(&worktree.path_bytes));
+                            }
+                            if ui
+                                .button(("Cancel", egui::RichText::new("Esc").small().weak()))
+                                .clicked()
+                            {
+                                cancel_remove = true;
+                            }
+                        });
                     });
                 });
             if !confirm {
@@ -7570,6 +7666,8 @@ impl Browser {
                 branch: String::new(),
                 at: "HEAD".into(),
                 error: None,
+                destination_auto: true,
+                open_after: true,
             });
         }
         if let Some(index) = remove_open
@@ -7580,6 +7678,11 @@ impl Browser {
         if let Some((destination, create, branch, at)) = submit_create
             && let Some(window) = &mut self.worktree_window
         {
+            window.open_created = window
+                .create
+                .as_ref()
+                .filter(|dialog| dialog.open_after)
+                .map(|_| destination.clone());
             let request = gg_engine::worktree::AddRequest {
                 destination,
                 branch: (!create).then_some(branch.clone()),
@@ -7593,6 +7696,12 @@ impl Browser {
         }
         if let Some(path) = submit_remove {
             self.request_worktrees(ctx, worktree_worker::Action::Remove(path));
+        }
+        if prune {
+            self.request_worktrees(ctx, worktree_worker::Action::Prune);
+        }
+        if let Some(path) = unlock {
+            self.request_worktrees(ctx, worktree_worker::Action::Unlock(path));
         }
         if cancel_create && let Some(window) = &mut self.worktree_window {
             window.create = None;
@@ -10479,6 +10588,46 @@ impl Browser {
 
         let mut stash_submit = None;
         let mut stash_open = true;
+        // What will be stashed, counted in the background (proposal).
+        let mut stash_files = match self
+            .stash_dialog
+            .as_ref()
+            .map(|dialog| dialog.include_untracked)
+        {
+            Some(untracked) => self.take_consequence(
+                "stash",
+                &[
+                    "status",
+                    "--porcelain=v1",
+                    if untracked { "-unormal" } else { "-uno" },
+                ],
+                ctx,
+            ),
+            None => {
+                self.consequences.remove("stash");
+                None
+            }
+        };
+        let stash_summary = stash_files.as_mut().and_then(|files| match files.get() {
+            Some(Ok(lines)) => {
+                let (mut staged, mut unstaged, mut untracked) = (0, 0, 0);
+                for line in lines {
+                    let mut chars = line.chars();
+                    let (index, tree) = (chars.next().unwrap_or(' '), chars.next().unwrap_or(' '));
+                    if index == '?' {
+                        untracked += 1;
+                    } else {
+                        staged += usize::from(index != ' ');
+                        unstaged += usize::from(tree != ' ');
+                    }
+                }
+                Some((lines.len(), staged, unstaged, untracked))
+            }
+            _ => None,
+        });
+        if let Some(files) = stash_files.take() {
+            self.consequences.insert("stash", files);
+        }
         if let Some(dialog) = &mut self.stash_dialog {
             let mut cancelled = false;
             egui::Window::new("Stash changes")
@@ -10499,20 +10648,78 @@ impl Browser {
                     );
                     ui.checkbox(&mut dialog.include_untracked, "Include untracked files");
                     ui.checkbox(&mut dialog.keep_index, "Keep staged changes in the index");
+                    // One fixed line: what will be stashed.
+                    let summary = match stash_summary {
+                        Some((files, staged, unstaged, untracked)) => {
+                            let mut parts = Vec::new();
+                            if staged > 0 {
+                                parts.push(format!("{staged} staged"));
+                            }
+                            if unstaged > 0 {
+                                parts.push(format!("{unstaged} unstaged"));
+                            }
+                            if untracked > 0 {
+                                parts.push(format!("{untracked} untracked"));
+                            }
+                            format!(
+                                "{}{}",
+                                consequence::counted(files, "file", "files"),
+                                if parts.is_empty() {
+                                    String::new()
+                                } else {
+                                    format!(" · {}", parts.join(", "))
+                                }
+                            )
+                        }
+                        None => String::new(),
+                    };
+                    let (rect, _) = ui.allocate_exact_size(
+                        egui::vec2(ui.available_width(), 18.0),
+                        egui::Sense::hover(),
+                    );
+                    bounded_text::paint(
+                        ui,
+                        rect,
+                        &summary,
+                        egui::FontId::proportional(12.0),
+                        ui.visuals().weak_text_color(),
+                    );
                     if let Some(error) = &dialog.error {
                         ui.colored_label(ui.visuals().error_fg_color, error);
                     }
                     ui.horizontal(|ui| {
-                        if ui.button("Stash").clicked() {
-                            stash_submit = Some((
-                                dialog.message.clone(),
-                                dialog.include_untracked,
-                                dialog.keep_index,
-                            ));
-                        }
-                        if ui.button("Cancel").clicked() {
-                            cancelled = true;
-                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let files = stash_summary.map(|(files, ..)| files);
+                            let ready = files != Some(0);
+                            let label = match files {
+                                Some(files) => format!(
+                                    "Stash {}",
+                                    consequence::counted(files, "file", "files")
+                                ),
+                                None => "Stash".into(),
+                            };
+                            let primary = egui::Button::new((
+                                egui::RichText::new(label).color(egui::Color32::WHITE),
+                                egui::RichText::new("Enter")
+                                    .small()
+                                    .color(egui::Color32::from_rgb(184, 212, 230)),
+                            ))
+                            .fill(egui::Color32::from_rgb(11, 85, 119));
+                            let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+                            if ui.add_enabled(ready, primary).clicked() || (ready && enter) {
+                                stash_submit = Some((
+                                    dialog.message.clone(),
+                                    dialog.include_untracked,
+                                    dialog.keep_index,
+                                ));
+                            }
+                            if ui
+                                .button(("Cancel", egui::RichText::new("Esc").small().weak()))
+                                .clicked()
+                            {
+                                cancelled = true;
+                            }
+                        });
                     });
                 });
             if cancelled {
@@ -10534,156 +10741,6 @@ impl Browser {
             }
         } else if self.stash_dialog.is_some() && !stash_open {
             self.stash_dialog = None;
-        }
-
-        let mut stash_action = None;
-        let mut stash_window_open = true;
-        let mut stash_refresh = false;
-        let mut restore_reference = None;
-        if let Some(window) = &mut self.stash_window {
-            egui::Window::new("Stashes")
-                .id(egui::Id::unique("stashes"))
-                .open(&mut stash_window_open)
-                .collapsible(false)
-                .resizable(true)
-                .default_width(520.0)
-                .default_pos(ctx.content_rect().center())
-                .pivot(egui::Align2::CENTER_CENTER)
-                .show(ctx, |ui| {
-                    if let Some(error) = &window.error {
-                        ui.colored_label(ui.visuals().error_fg_color, error);
-                    }
-                    if let Some(notice) = &window.notice {
-                        ui.label(notice);
-                    }
-                    if ui.button("Refresh").clicked() {
-                        stash_refresh = true;
-                    }
-                    ui.separator();
-                    if window.entries.is_empty() {
-                        ui.label("No stashes.");
-                    }
-                    for entry in &window.entries {
-                        ui.horizontal(|ui| {
-                            ui.label(egui::RichText::new(&entry.reference).strong());
-                            ui.label(egui::RichText::new(&entry.message).size(11.0));
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| {
-                                    if ui.button("Drop").clicked() {
-                                        window.confirm_drop = Some(entry.reference.clone());
-                                    }
-                                    if ui.button("Restore…").clicked() {
-                                        restore_reference = Some(entry.reference.clone());
-                                    }
-                                },
-                            );
-                        });
-                    }
-                });
-            if window.confirm_drop.is_some() {
-                let reference = window.confirm_drop.clone().unwrap_or_default();
-                egui::Window::new("Drop stash")
-                    .id(egui::Id::unique("drop-stash"))
-                    .modal(ctx, egui::Id::unique("drop-stash"))
-                    .collapsible(false)
-                    .resizable(false)
-                    .default_pos(ctx.content_rect().center())
-                    .pivot(egui::Align2::CENTER_CENTER)
-                    .show(ctx, |ui| {
-                        ui.label(format!(
-                            "Drop {reference}? This removes the stash entry, not working files."
-                        ));
-                        ui.horizontal(|ui| {
-                            if ui.button("Drop").clicked() {
-                                stash_action = Some(StashAction::Drop(reference.clone()));
-                                window.confirm_drop = None;
-                            }
-                            if ui.button("Cancel").clicked() {
-                                window.confirm_drop = None;
-                            }
-                        });
-                    });
-            }
-        }
-        if let Some(reference) = restore_reference {
-            self.restore_stash = Some(RestoreStashDialog {
-                reference,
-                restore_index: false,
-                remove: false,
-                error: None,
-            });
-        }
-        let mut restore_submit = false;
-        if let Some(dialog) = &mut self.restore_stash {
-            let mut open = true;
-            let mut cancelled = false;
-            egui::Window::new("Restore stash")
-                .id(egui::Id::unique("restore-stash"))
-                .modal(ctx, egui::Id::unique("restore-stash"))
-                .open(&mut open)
-                .collapsible(false)
-                .resizable(false)
-                .default_width(420.0)
-                .default_pos(ctx.content_rect().center())
-                .pivot(egui::Align2::CENTER_CENTER)
-                .show(ctx, |ui| {
-                    ui.label(format!(
-                        "Restore {} into the working tree.",
-                        dialog.reference
-                    ));
-                    ui.checkbox(&mut dialog.restore_index, "Restore staged state");
-                    ui.checkbox(&mut dialog.remove, "Remove stash after successful restore");
-                    if let Some(error) = &dialog.error {
-                        egui::ScrollArea::vertical()
-                            .id_salt("restore-stash-error")
-                            .max_height(80.0)
-                            .show(ui, |ui| {
-                                ui.colored_label(ui.visuals().error_fg_color, error);
-                            });
-                    }
-                    ui.horizontal(|ui| {
-                        if ui.button("Restore stash").clicked() {
-                            restore_submit = true;
-                        }
-                        if ui.button("Cancel").clicked() {
-                            cancelled = true;
-                        }
-                    });
-                });
-            if cancelled || !open {
-                self.restore_stash = None;
-            }
-        }
-        if restore_submit && let Some(dialog) = self.restore_stash.clone() {
-            match self.restore_stash_inner(
-                ctx,
-                &dialog.reference,
-                dialog.remove,
-                dialog.restore_index,
-            ) {
-                Ok(()) => self.restore_stash = None,
-                Err(error) => {
-                    if let Some(dialog) = &mut self.restore_stash {
-                        dialog.error = Some(error);
-                    }
-                }
-            }
-        }
-        if stash_refresh {
-            self.refresh_stashes();
-        }
-        if let Some(action) = stash_action {
-            let result = match action {
-                StashAction::Drop(reference) => self.drop_stash(ctx, &reference),
-            };
-            if let Err(error) = result
-                && let Some(window) = &mut self.stash_window
-            {
-                window.error = Some(error);
-            }
-        } else if self.stash_window.is_some() && !stash_window_open {
-            self.stash_window = None;
         }
 
         self.draw_submodule(ctx);
@@ -11665,6 +11722,7 @@ mod tests {
         assert!(rendered(&mut app).iter().any(|line| line == "Browse…"));
         app.edit_path = false;
         app.worktree_window = Some(WorktreeWindow {
+            open_created: None,
             snapshot: None,
             selected: None,
             error: None,
@@ -11675,6 +11733,8 @@ mod tests {
                 branch: String::new(),
                 at: String::new(),
                 error: None,
+                destination_auto: false,
+                open_after: true,
             }),
             confirm_remove: None,
             busy: None,
@@ -11888,6 +11948,19 @@ mod tests {
                 .any(|line| line.starts_with("No commits yet on")),
             "{unborn:?}"
         );
+    }
+
+    #[test]
+    fn worktree_folders_default_to_a_sibling_named_after_the_branch() {
+        let repo = Path::new("/home/ada/dev/gg");
+        assert_eq!(
+            worktree_default_destination(repo, "review/pr-42"),
+            Path::new("/home/ada/dev")
+                .join("gg-review-pr-42")
+                .display()
+                .to_string()
+        );
+        assert_eq!(worktree_default_destination(repo, "  "), "");
     }
 
     #[test]
@@ -12304,68 +12377,6 @@ mod tests {
                 text.iter()
                     .any(|line| line.contains("Include untracked files"))
             );
-
-            app.stash_dialog = None;
-            app.stash_window = Some(StashWindow {
-                entries: vec![gg_engine::stash::StashEntry {
-                    index: 0,
-                    reference: "stash@{0}".into(),
-                    commit: "abc123".into(),
-                    message: "On main: work in progress".into(),
-                    ..Default::default()
-                }],
-                error: None,
-                notice: None,
-                confirm_drop: None,
-            });
-            let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
-                app.draw_ui(ctx)
-            });
-            let output = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
-                app.draw_ui(ctx)
-            });
-            let text = output
-                .shapes
-                .iter()
-                .filter_map(|shape| match &shape.shape {
-                    egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
-                    _ => None,
-                })
-                .collect::<Vec<_>>();
-            assert!(text.iter().any(|line| line.contains("Stashes")));
-            assert!(text.iter().any(|line| line.contains("stash@{0}")));
-            assert!(text.iter().any(|line| line.contains("Restore…")));
-            assert!(text.iter().any(|line| line.contains("Drop")));
-
-            app.restore_stash = Some(RestoreStashDialog {
-                reference: "stash@{0}".into(),
-                restore_index: true,
-                remove: true,
-                error: None,
-            });
-            let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
-                app.draw_ui(ctx)
-            });
-            let output = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
-                app.draw_ui(ctx)
-            });
-            let text = output
-                .shapes
-                .iter()
-                .filter_map(|shape| match &shape.shape {
-                    egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
-                    _ => None,
-                })
-                .collect::<Vec<_>>();
-            assert!(text.iter().any(|line| line.contains("Restore stash")));
-            assert!(
-                text.iter()
-                    .any(|line| line.contains("Restore staged state"))
-            );
-            assert!(
-                text.iter()
-                    .any(|line| line.contains("Remove stash after successful restore"))
-            );
         }
     }
 
@@ -12396,59 +12407,6 @@ mod tests {
                     .text
                     .contains("Create the first commit before creating a branch.")
         )));
-    }
-
-    #[test]
-    fn restore_stash_error_region_stays_bounded() {
-        let ctx = egui::Context::default();
-        let mut app = layout_fixture();
-        app.restore_stash = Some(RestoreStashDialog {
-            reference: "stash@{0}".into(),
-            restore_index: false,
-            remove: false,
-            error: Some(
-                (0..40)
-                    .map(|line| format!("restore failure line {line}"))
-                    .collect::<Vec<_>>()
-                    .join("\n"),
-            ),
-        });
-        let _ = crate::tests::run_ui(&ctx, frame_input(720.0, 480.0, vec![]), |ctx| {
-            app.draw_ui(ctx)
-        });
-        let output = crate::tests::run_ui(&ctx, frame_input(720.0, 480.0, vec![]), |ctx| {
-            app.draw_ui(ctx)
-        });
-        let error_clip = output.shapes.iter().find_map(|shape| match &shape.shape {
-            egui::epaint::Shape::Text(text)
-                if text.galley.job.text.contains("restore failure line 0") =>
-            {
-                Some(shape.clip_rect)
-            }
-            _ => None,
-        });
-        assert!(error_clip.is_some(), "the restore error is rendered");
-        if let Some(error_clip) = error_clip {
-            assert!(
-                error_clip.height() <= 80.0,
-                "error region grew to {:?}",
-                error_clip
-            );
-        }
-        for expected in [
-            "Restore stash",
-            "Restore staged state",
-            "Remove stash after successful restore",
-        ] {
-            assert!(
-                output.shapes.iter().any(|shape| matches!(
-                    &shape.shape,
-                    egui::epaint::Shape::Text(text)
-                        if text.galley.job.text.contains(expected)
-                )),
-                "missing {expected} while an error is shown"
-            );
-        }
     }
 
     #[test]
@@ -15106,6 +15064,7 @@ mod tests {
             let ctx = egui::Context::default();
             let mut app = layout_fixture();
             app.worktree_window = Some(WorktreeWindow {
+                open_created: None,
                 snapshot: Some(snapshot.clone()),
                 selected: Some(1),
                 error: None,
@@ -15696,7 +15655,7 @@ mod tests {
                 "Commit",
                 "Amend HEAD",
                 "-",
-                "Stash changes",
+                "Stash changes…",
                 "Stashes…",
                 "-",
                 "Resolve conflicts…"
