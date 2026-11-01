@@ -19,6 +19,16 @@ pub enum Action {
     OpenStash(usize),
     /// Open another worktree of this repository.
     OpenWorktree(String),
+    /// Rename a local branch (dialog).
+    Rename(String),
+    /// Set a local branch's upstream (dialog).
+    SetUpstream(String),
+    /// New branch at a ref's commit (dialog): commit and ref name.
+    NewBranchAt(String, String),
+    /// Compare a ref's commit with HEAD.
+    Compare(String),
+    /// Push the current branch.
+    Push,
 }
 
 #[derive(Default)]
@@ -476,113 +486,244 @@ fn render_leaf(
     } else if response.clicked() {
         *action = Some(Action::Jump(item.commit.clone()));
     }
+    // The ref's menu (branch menus proposal): the shared 24 px menu rows; a
+    // label ends in "…" when it opens a dialog or confirmation.
     response.context_menu(|ui| {
+        ui.set_min_width(230.0);
+        let mut entry = |ui: &mut egui::Ui,
+                         label: String,
+                         key: &'static str,
+                         enabled: bool,
+                         reason: &str,
+                         danger: bool,
+                         chosen: Action| {
+            let text = if danger {
+                egui::RichText::new(label).color(ui.visuals().error_fg_color)
+            } else {
+                egui::RichText::new(label)
+            };
+            let response = ui
+                .add_enabled(enabled, crate::menus::row(false, text).shortcut_text(key))
+                .on_disabled_hover_text(reason);
+            if response.clicked() {
+                *action = Some(chosen);
+                ui.close();
+            }
+        };
+        let wait = "Wait for the current operation to finish.";
+        let here = "Already on this branch";
+        let idle = !busy;
         match item.kind {
             RefKind::Branch => {
-                if ui
-                    .add_enabled(
-                        !current && !busy,
-                        egui::Button::new(format!("Switch to {}", item.name)),
-                    )
-                    .on_hover_text(if current {
-                        "Already on this branch"
-                    } else if busy {
-                        "Wait for the current operation to finish."
+                let reason = if current { here } else { wait };
+                entry(
+                    ui,
+                    format!("Switch to {}", item.name),
+                    "",
+                    !current && idle,
+                    reason,
+                    false,
+                    Action::Switch(item.name.clone()),
+                );
+                entry(
+                    ui,
+                    "Merge into current…".into(),
+                    "",
+                    !current && idle,
+                    reason,
+                    false,
+                    Action::Merge(item.name.clone()),
+                );
+                entry(
+                    ui,
+                    "Rebase current onto this…".into(),
+                    "",
+                    !current && idle,
+                    reason,
+                    false,
+                    Action::Rebase(item.name.clone()),
+                );
+                entry(
+                    ui,
+                    "Compare with HEAD".into(),
+                    "",
+                    !current,
+                    here,
+                    false,
+                    Action::Compare(item.commit.clone()),
+                );
+                ui.separator();
+                entry(
+                    ui,
+                    "New branch here…".into(),
+                    "",
+                    idle,
+                    wait,
+                    false,
+                    Action::NewBranchAt(item.commit.clone(), item.name.clone()),
+                );
+                entry(
+                    ui,
+                    "Push".into(),
+                    "Ctrl+Shift+P",
+                    current && idle,
+                    if current {
+                        wait
                     } else {
-                        "Switch the worktree after a clean-worktree check"
-                    })
-                    .clicked()
-                {
-                    *action = Some(Action::Switch(item.name.clone()));
-                    ui.close();
-                }
-                if ui
-                    .add_enabled(!current && !busy, egui::Button::new("Merge into current"))
-                    .clicked()
-                {
-                    *action = Some(Action::Merge(item.name.clone()));
-                    ui.close();
-                }
-                if ui
-                    .add_enabled(
-                        !current && !busy,
-                        egui::Button::new("Rebase current onto this"),
-                    )
-                    .clicked()
-                {
-                    *action = Some(Action::Rebase(item.name.clone()));
-                    ui.close();
-                }
-                if ui
-                    .add_enabled(!current && !busy, egui::Button::new("Delete branch…"))
-                    .clicked()
-                {
-                    *action = Some(Action::DeleteBranch(item.name.clone()));
-                    ui.close();
-                }
+                        "Switch to the branch to push it"
+                    },
+                    false,
+                    Action::Push,
+                );
+                entry(
+                    ui,
+                    "Set upstream…".into(),
+                    "",
+                    idle,
+                    wait,
+                    false,
+                    Action::SetUpstream(item.name.clone()),
+                );
+                entry(
+                    ui,
+                    "Rename…".into(),
+                    "F2",
+                    idle,
+                    wait,
+                    false,
+                    Action::Rename(item.name.clone()),
+                );
             }
             RefKind::Remote => {
-                if ui
-                    .add_enabled(!busy, egui::Button::new("Create tracking branch…"))
-                    .clicked()
-                {
-                    *action = Some(Action::Track(item.name.clone()));
-                    ui.close();
-                }
-                if ui
-                    .add_enabled(!busy, egui::Button::new("Merge into current"))
-                    .clicked()
-                {
-                    *action = Some(Action::Merge(item.name.clone()));
-                    ui.close();
-                }
-                if ui
-                    .add_enabled(!busy, egui::Button::new("Rebase current onto this"))
-                    .clicked()
-                {
-                    *action = Some(Action::Rebase(item.name.clone()));
-                    ui.close();
-                }
+                entry(
+                    ui,
+                    "Create tracking branch…".into(),
+                    "",
+                    idle,
+                    wait,
+                    false,
+                    Action::Track(item.name.clone()),
+                );
+                entry(
+                    ui,
+                    "Merge into current…".into(),
+                    "",
+                    idle,
+                    wait,
+                    false,
+                    Action::Merge(item.name.clone()),
+                );
+                entry(
+                    ui,
+                    "Rebase current onto this…".into(),
+                    "",
+                    idle,
+                    wait,
+                    false,
+                    Action::Rebase(item.name.clone()),
+                );
+                entry(
+                    ui,
+                    "Compare with HEAD".into(),
+                    "",
+                    true,
+                    "",
+                    false,
+                    Action::Compare(item.commit.clone()),
+                );
+                entry(
+                    ui,
+                    "New branch here…".into(),
+                    "",
+                    idle,
+                    wait,
+                    false,
+                    Action::NewBranchAt(item.commit.clone(), item.name.clone()),
+                );
             }
             RefKind::Tag => {
-                if ui
-                    .add_enabled(!busy, egui::Button::new("Merge into current"))
-                    .clicked()
-                {
-                    *action = Some(Action::Merge(item.name.clone()));
-                    ui.close();
-                }
-                if ui
-                    .add_enabled(!busy, egui::Button::new("Rebase current onto this"))
-                    .clicked()
-                {
-                    *action = Some(Action::Rebase(item.name.clone()));
-                    ui.close();
-                }
-                if ui
-                    .add_enabled(!busy, egui::Button::new("Signature details…"))
-                    .clicked()
-                {
-                    *action = Some(Action::VerifyTag(item.full_name.clone()));
-                    ui.close();
-                }
-                if ui
-                    .add_enabled(!busy, egui::Button::new("Delete tag…"))
-                    .clicked()
-                {
-                    *action = Some(Action::DeleteTag(item.name.clone()));
-                    ui.close();
-                }
+                entry(
+                    ui,
+                    "Merge into current…".into(),
+                    "",
+                    idle,
+                    wait,
+                    false,
+                    Action::Merge(item.name.clone()),
+                );
+                entry(
+                    ui,
+                    "Rebase current onto this…".into(),
+                    "",
+                    idle,
+                    wait,
+                    false,
+                    Action::Rebase(item.name.clone()),
+                );
+                entry(
+                    ui,
+                    "Compare with HEAD".into(),
+                    "",
+                    true,
+                    "",
+                    false,
+                    Action::Compare(item.commit.clone()),
+                );
+                entry(
+                    ui,
+                    "New branch here…".into(),
+                    "",
+                    idle,
+                    wait,
+                    false,
+                    Action::NewBranchAt(item.commit.clone(), item.name.clone()),
+                );
+                entry(
+                    ui,
+                    "Signature details…".into(),
+                    "",
+                    idle,
+                    wait,
+                    false,
+                    Action::VerifyTag(item.full_name.clone()),
+                );
             }
         }
         ui.separator();
-        if ui.button("Copy name").clicked() {
+        if ui.add(crate::menus::row(false, "Copy name")).clicked() {
             ui.ctx().copy_text(item.name.clone());
             ui.close();
         }
-        if ui.button("Copy hash").clicked() {
+        if ui.add(crate::menus::row(false, "Copy ID")).clicked() {
             ui.ctx().copy_text(item.commit.clone());
             ui.close();
+        }
+        match item.kind {
+            RefKind::Branch => {
+                ui.separator();
+                entry(
+                    ui,
+                    "Delete branch…".into(),
+                    "Del",
+                    !current && idle,
+                    if current { here } else { wait },
+                    true,
+                    Action::DeleteBranch(item.name.clone()),
+                );
+            }
+            RefKind::Tag => {
+                ui.separator();
+                entry(
+                    ui,
+                    "Delete tag…".into(),
+                    "",
+                    idle,
+                    wait,
+                    true,
+                    Action::DeleteTag(item.name.clone()),
+                );
+            }
+            RefKind::Remote => {}
         }
     });
 }

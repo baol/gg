@@ -492,7 +492,32 @@ impl LocalSummary {
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum BranchPick {
     Switch(String),
+    /// Track a remote branch that has no local branch yet.
+    Track(String),
     New,
+}
+
+/// Remote branches without a local branch of the same name, for the
+/// switcher's second section.
+fn switcher_remotes(refs: &gg_engine::refs::Snapshot, filter: &str) -> Vec<String> {
+    let locals = refs
+        .items
+        .iter()
+        .filter(|item| item.kind == gg_engine::refs::RefKind::Branch)
+        .map(|item| item.name.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    refs.items
+        .iter()
+        .filter(|item| item.kind == gg_engine::refs::RefKind::Remote)
+        .filter(|item| !item.name.ends_with("/HEAD"))
+        .filter(|item| {
+            item.name
+                .split_once('/')
+                .is_none_or(|(_, short)| !locals.contains(short))
+        })
+        .filter(|item| crate::search::matches(filter, &item.name))
+        .map(|item| item.name.clone())
+        .collect()
 }
 
 fn branch_switcher_popup_id() -> egui::Id {
@@ -1537,6 +1562,8 @@ struct Browser {
     refs_visible_elsewhere: bool,
     /// File and line counts for the inspected commit, and their worker.
     commit_stats: Option<(String, commit_stats::Stats)>,
+    /// The branch switcher's keyboard cursor.
+    branch_cursor: usize,
     commit_stats_worker: Option<commit_stats::Worker>,
     /// What each open destructive dialog will remove, read in the background.
     consequences: std::collections::BTreeMap<&'static str, consequence::Lines>,
@@ -1704,6 +1731,7 @@ impl Browser {
             refs_visible: true,
             refs_visible_elsewhere: false,
             commit_stats: None,
+            branch_cursor: 0,
             commit_stats_worker: None,
             consequences: std::collections::BTreeMap::new(),
             refs_query: String::new(),
@@ -4716,10 +4744,41 @@ impl Browser {
             ));
         if response.clicked() {
             self.branch_filter.clear();
+            self.branch_cursor = 0;
         }
         let branches = switcher_branches(&self.state.refs, &self.branch_filter);
+        let remotes = switcher_remotes(&self.state.refs, &self.branch_filter);
         let filter = &mut self.branch_filter;
         let mut pick = None;
+        // Keyboard: Up/Down move a cursor over the rows that can run, Enter
+        // runs it (branch menus proposal). Rows: local branches, then remotes.
+        let runnable = branches
+            .iter()
+            .filter(|(_, current)| !*current)
+            .map(|(name, _)| BranchPick::Switch(name.clone()))
+            .chain(remotes.iter().map(|name| BranchPick::Track(name.clone())))
+            .collect::<Vec<_>>();
+        let popup_open = egui::Popup::is_id_open(ui.ctx(), branch_switcher_popup_id());
+        if popup_open {
+            let (down, up, enter) = ui.input_mut(|i| {
+                (
+                    i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown),
+                    i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp),
+                    i.key_pressed(egui::Key::Enter),
+                )
+            });
+            if down {
+                self.branch_cursor = (self.branch_cursor + 1).min(runnable.len().saturating_sub(1));
+            }
+            if up {
+                self.branch_cursor = self.branch_cursor.saturating_sub(1);
+            }
+            self.branch_cursor = self.branch_cursor.min(runnable.len().saturating_sub(1));
+            if enter && ready.branch_idle {
+                pick = runnable.get(self.branch_cursor).cloned();
+            }
+        }
+        let cursor = runnable.get(self.branch_cursor).cloned();
         egui::Popup::from_toggle_button_response(&response)
             .id(branch_switcher_popup_id())
             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
@@ -4753,12 +4812,14 @@ impl Browser {
                         } else {
                             branch.clone()
                         };
-                        let response = ui.add_enabled(
-                            reason.is_none(),
-                            menus::row(*current, label)
-                                .truncate()
-                                .min_size(egui::vec2(ui.available_width(), menus::ROW_HEIGHT)),
-                        );
+                        let at_cursor = cursor.as_ref() == Some(&BranchPick::Switch(branch.clone()));
+                        let mut row = menus::row(*current, label)
+                            .truncate()
+                            .min_size(egui::vec2(ui.available_width(), menus::ROW_HEIGHT));
+                        if at_cursor {
+                            row = row.fill(ui.visuals().widgets.hovered.weak_bg_fill);
+                        }
+                        let response = ui.add_enabled(reason.is_none(), row);
                         let response = match reason {
                             Some(reason) => response.on_disabled_hover_text(reason),
                             None => response.on_hover_text(
@@ -4769,7 +4830,38 @@ impl Browser {
                             pick = Some(BranchPick::Switch(branch.clone()));
                         }
                     }
+                    if !remotes.is_empty() {
+                        ui.add_space(4.0);
+                        ui.label(egui::RichText::new("REMOTE BRANCHES").small().weak());
+                    }
+                    for remote in &remotes {
+                        let at_cursor = cursor.as_ref() == Some(&BranchPick::Track(remote.clone()));
+                        let mut row = menus::row(
+                            false,
+                            (
+                                egui::RichText::new(remote),
+                                egui::Atom::grow(),
+                                egui::RichText::new("track and switch").small().weak(),
+                            ),
+                        )
+                        .truncate()
+                        .min_size(egui::vec2(ui.available_width(), menus::ROW_HEIGHT));
+                        if at_cursor {
+                            row = row.fill(ui.visuals().widgets.hovered.weak_bg_fill);
+                        }
+                        let response = ui
+                            .add_enabled(ready.branch_idle, row)
+                            .on_disabled_hover_text("Wait for the current operation to finish");
+                        if response.clicked() {
+                            pick = Some(BranchPick::Track(remote.clone()));
+                        }
+                    }
                 });
+                ui.label(
+                    egui::RichText::new("Up/Down choose · Enter switch · Esc close")
+                        .small()
+                        .weak(),
+                );
                 ui.separator();
                 if ui
                     .add_enabled(
@@ -9217,6 +9309,7 @@ impl Browser {
         }
         match branch_pick {
             Some(BranchPick::Switch(name)) => self.start_branch(ctx, name, false),
+            Some(BranchPick::Track(name)) => self.track_dialog = Some(name),
             Some(BranchPick::New) => self.open_new_branch(),
             None => {}
         }
@@ -9714,6 +9807,43 @@ impl Browser {
                     self.tag_delete = Some(TagDeleteDialog { name, error: None });
                 }
                 Some(refs_view::Action::VerifyTag(name)) => self.open_signature(ctx, name),
+                Some(refs_view::Action::Rename(name)) => {
+                    self.rename_dialog = Some(RenameDialog {
+                        new: name.clone(),
+                        old: name,
+                        error: None,
+                    });
+                }
+                Some(refs_view::Action::SetUpstream(name)) => {
+                    let upstream = self
+                        .state
+                        .refs
+                        .tracking
+                        .iter()
+                        .find(|tracking| tracking.branch == name)
+                        .map(|tracking| tracking.upstream.clone())
+                        .unwrap_or_default();
+                    self.upstream_dialog = Some(UpstreamDialog {
+                        branch: name,
+                        upstream,
+                        error: None,
+                    });
+                }
+                Some(refs_view::Action::NewBranchAt(commit, name)) => {
+                    self.create_branch = Some(CreateBranchDialog {
+                        name: String::new(),
+                        commit,
+                        selector: name,
+                        switch: self.prefs.branch_switch,
+                        recovery_source: None,
+                        error: None,
+                    });
+                }
+                Some(refs_view::Action::Compare(commit)) => {
+                    let location = self.capture_return_location();
+                    self.open_compare(ctx, commit, location);
+                }
+                Some(refs_view::Action::Push) => self.start_push(ctx),
                 None => {}
             }
         }
@@ -16786,6 +16916,85 @@ mod tests {
         assert_eq!(app.state.selected, selected);
         assert_eq!(app.state.query, query);
         assert!((app.scroll_offset - offset).abs() < 1.0);
+    }
+
+    fn switcher_refs() -> gg_engine::refs::Snapshot {
+        let item = |name: &str, full: &str, kind| gg_engine::refs::RefItem {
+            name: name.into(),
+            full_name: full.into(),
+            kind,
+            commit: "a".repeat(40),
+        };
+        gg_engine::refs::Snapshot {
+            head: Some(gg_engine::refs::Head {
+                name: Some("refs/heads/main".into()),
+                detached: false,
+                commit: Some("a".repeat(40)),
+            }),
+            items: vec![
+                item("main", "refs/heads/main", gg_engine::refs::RefKind::Branch),
+                item(
+                    "feature",
+                    "refs/heads/feature",
+                    gg_engine::refs::RefKind::Branch,
+                ),
+                item(
+                    "origin/main",
+                    "refs/remotes/origin/main",
+                    gg_engine::refs::RefKind::Remote,
+                ),
+                item(
+                    "origin/other",
+                    "refs/remotes/origin/other",
+                    gg_engine::refs::RefKind::Remote,
+                ),
+                item(
+                    "origin/HEAD",
+                    "refs/remotes/origin/HEAD",
+                    gg_engine::refs::RefKind::Remote,
+                ),
+            ],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn the_switcher_lists_remote_branches_without_a_local_one() {
+        assert_eq!(
+            switcher_remotes(&switcher_refs(), ""),
+            vec!["origin/other".to_string()]
+        );
+        assert!(switcher_remotes(&switcher_refs(), "zzz").is_empty());
+    }
+
+    #[test]
+    fn the_switcher_runs_the_row_under_the_keyboard_cursor() {
+        let ctx = egui::Context::default();
+        crate::phosphor::install(&ctx);
+        let mut app = layout_fixture();
+        app.state.refs = switcher_refs();
+        let frame = |app: &mut Browser, events| {
+            crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, events), |ctx| {
+                app.draw_ui(ctx)
+            })
+        };
+        let _ = frame(&mut app, vec![]);
+        let _ = frame(
+            &mut app,
+            vec![key(
+                egui::Key::B,
+                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+            )],
+        );
+        assert!(egui::Popup::is_id_open(&ctx, branch_switcher_popup_id()));
+        // Rows that can run: feature, then origin/other.
+        let _ = frame(
+            &mut app,
+            vec![key(egui::Key::ArrowDown, egui::Modifiers::NONE)],
+        );
+        assert_eq!(app.branch_cursor, 1);
+        let _ = frame(&mut app, vec![key(egui::Key::Enter, egui::Modifiers::NONE)]);
+        assert_eq!(app.track_dialog.as_deref(), Some("origin/other"));
     }
 
     #[test]
