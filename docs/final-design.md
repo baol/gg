@@ -78,7 +78,7 @@ Merge commits remain unsupported and are named as the reason.
 Both stops use the operation area under the toolbar. Its first line names the stop and holds **Continue** (`Ctrl+Enter`), **Skip commit**, and **Abort and restore**; the second line carries the explanation and the step chips (done ✓, current, next). The branch button and window identity show the rebase step.
 
 - **Reopened commit (E):** Local Changes opens with the commit's changes staged and its message in the commit box. Unstaging files or lines and committing splits the commit; each part is listed under **Commits made at this stop**. Continue is highlighted once nothing remains.
-- **Conflict:** the conflicted files list and a three-column block per conflict: **Base**, **Ours · rewritten branch**, **Theirs · replayed commit**. Choices per block: Ours, Theirs, Ours + theirs, Theirs + ours (keys 1–4). The result preview shows unresolved markers. **Stage resolution** is enabled when every block in the file has a choice. Continue stays disabled with a reason until every file is staged.
+- **Conflict:** the conflicted files list and a three-column block per conflict: **Base**, **Ours (onto <base>)**, **Theirs (<short id> <subject>)** (long names shortened, full name on hover). Choices per block: Ours, Theirs, Ours + theirs, Theirs + ours (keys 1–4). The result preview shows unresolved markers. **Stage resolution** is enabled when every block in the file has a choice. Continue stays disabled with a reason until every file is staged.
 
 ## Preferences
 

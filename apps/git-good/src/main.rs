@@ -92,7 +92,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("--help")) {
         println!(
-            "gg · good git\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good refs [PATH]      Print branches, remotes, tags, and HEAD as JSON\ngit-good status [PATH] [--file PATH --area AREA]   Print working status or diff as JSON\ngit-good stage --file PATH [--hunk HEADER]... [--repo PATH]   Stage one file or selected hunks\ngit-good unstage --file PATH [--repo PATH]   Unstage one file\ngit-good commit [--amend] [--sign|--no-sign] -m MESSAGE [--repo PATH]   Commit the index or amend HEAD after Git hooks\ngit-good reflog [REF] [--repo PATH]   Print reflog entries as JSON\ngit-good blame PATH [--revision REF] [--lines START,END] [--repo PATH]   Print line attribution as JSON\ngit-good worktree <list|add|remove> [OPTIONS] [--repo PATH]   List, add, or remove worktrees\ngit-good submodule <status|update> PATH [OPTIONS] [--repo PATH]   Inspect or update a gitlink submodule\ngit-good lfs <status|fetch> PATH [--area staged|unstaged|untracked|conflict] [--revision REF] [--before REF] [--repo PATH]   Inspect or fetch an LFS pointer\ngit-good signature <config|verify> [REF] [--repo PATH]   Read signing config or verify a commit/tag\ngit-good switch [--create] [--stash [--include-untracked]] BRANCH [--repo PATH]   Switch to or create a local branch, optionally stashing changes first\ngit-good fetch [REMOTE] [--prune] [--repo PATH]   Fetch and update remote-tracking refs\ngit-good push [REMOTE] [BRANCH] [--set-upstream] [--force-with-lease] [--repo PATH]   Push a local branch, with an explicit lease when rewriting\ngit-good clone URL [PATH]   Clone a repository and open it\ngit-good stash <list|push|apply|pop|drop> [OPTIONS] [--repo PATH]   List or mutate stashes\ngit-good cherry-pick COMMIT [--repo PATH]   Apply a commit\ngit-good revert COMMIT [--repo PATH]   Invert a commit\ngit-good merge REF [--no-ff] [--repo PATH]   Merge a branch, remote, or tag\ngit-good rebase REF [--autostash] [--repo PATH]   Rebase the current branch onto a branch, remote, or tag\ngit-good rebase --continue|--skip|--abort [--repo PATH]   Recover an in-progress rebase\ngit-good rewrite --from COMMIT STEP... [--autostash] [--repo PATH]   Pick, reword, edit, squash, fixup, drop, or reorder a linear range (STEP: --pick|--edit|--squash|--fixup|--drop COMMIT, --reword COMMIT MESSAGE)\ngit-good rewrite --continue|--skip|--abort [--repo PATH]   Recover an in-progress rewrite\ngit-good conflicts [--repo PATH]   List unmerged paths\ngit-good conflict --file PATH [--use ours|theirs|--stage] [--repo PATH]   Read or resolve a conflict\ngit-good reset --soft|--mixed|--hard COMMIT [--repo PATH]   Reset the current branch\ngit-good branch --delete BRANCH [--force] [--repo PATH]   Delete a local branch\ngit-good branch --create NAME [--at REF] [--repo PATH]   Create a local branch without switching\ngit-good tag --delete TAG [--repo PATH]   Delete a local tag
+            "gg · good git\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good refs [PATH]      Print branches, remotes, tags, and HEAD as JSON\ngit-good status [PATH] [--file PATH --area AREA]   Print working status or diff as JSON\ngit-good stage --file PATH [--hunk HEADER]... [--repo PATH]   Stage one file or selected hunks\ngit-good unstage --file PATH [--repo PATH]   Unstage one file\ngit-good commit [--amend] [--sign|--no-sign] -m MESSAGE [--repo PATH]   Commit the index or amend HEAD after Git hooks\ngit-good reflog [REF] [--repo PATH]   Print reflog entries as JSON\ngit-good blame PATH [--revision REF] [--lines START,END] [--repo PATH]   Print line attribution as JSON\ngit-good worktree <list|add|remove> [OPTIONS] [--repo PATH]   List, add, or remove worktrees\ngit-good submodule <status|update> PATH [OPTIONS] [--repo PATH]   Inspect or update a gitlink submodule\ngit-good lfs <status|fetch> PATH [--area staged|unstaged|untracked|conflict] [--revision REF] [--before REF] [--repo PATH]   Inspect or fetch an LFS pointer\ngit-good signature <config|verify> [REF] [--repo PATH]   Read signing config or verify a commit/tag\ngit-good switch [--create] [--stash [--include-untracked]] BRANCH [--repo PATH]   Switch to or create a local branch, optionally stashing changes first\ngit-good fetch [REMOTE] [--prune] [--repo PATH]   Fetch and update remote-tracking refs\ngit-good push [REMOTE] [BRANCH] [--set-upstream] [--force-with-lease] [--repo PATH]   Push a local branch, with an explicit lease when rewriting\ngit-good clone URL [PATH]   Clone a repository and open it\ngit-good stash <list|push|apply|pop|drop> [OPTIONS] [--repo PATH]   List or mutate stashes\ngit-good cherry-pick COMMIT [--repo PATH]   Apply a commit\ngit-good revert COMMIT [--repo PATH]   Invert a commit\ngit-good merge REF [--no-ff] [--repo PATH]   Merge a branch, remote, or tag\ngit-good rebase REF [--autostash] [--repo PATH]   Rebase the current branch onto a branch, remote, or tag\ngit-good rebase --continue|--skip|--abort [--repo PATH]   Recover an in-progress rebase\ngit-good rewrite --from COMMIT STEP... [--autostash] [--repo PATH]   Pick, reword, edit, squash, fixup, drop, or reorder a linear range (STEP: --pick|--edit|--squash|--fixup|--drop COMMIT, --reword COMMIT MESSAGE)\ngit-good rewrite --continue|--skip|--abort [--repo PATH]   Recover an in-progress rewrite\ngit-good conflicts [--repo PATH]   List unmerged paths\ngit-good conflict --file PATH [--use ours|theirs|deletion|--stage] [--repo PATH]   Read or resolve a conflict\ngit-good reset --soft|--mixed|--hard COMMIT [--repo PATH]   Reset the current branch\ngit-good branch --delete BRANCH [--force] [--repo PATH]   Delete a local branch\ngit-good branch --create NAME [--at REF] [--repo PATH]   Create a local branch without switching\ngit-good tag --delete TAG [--repo PATH]   Delete a local tag
 git-good tag --create TAG --at REF -m MESSAGE [--sign] [--repo PATH]   Create an annotated or signed tag\ngit-good show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]   Review or export\n\nBrowse commits reachable from HEAD and all local, remote, and tag refs."
         );
         return Ok(());
@@ -1098,6 +1098,9 @@ enum ConflictUpdate {
         content: Box<gg_engine::conflict::Content>,
         snapshot: Box<gg_engine::conflict::Snapshot>,
         blocks: Result<Vec<gg_engine::conflict::Segment>, String>,
+        /// The working file was edited outside the blocks.
+        edited: bool,
+        names: Option<gg_engine::conflict::SideNames>,
     },
 }
 
@@ -1129,6 +1132,22 @@ struct ConflictView {
     whole_file: bool,
     /// Files resolved and staged while the workspace was open.
     resolved: Vec<String>,
+    /// The working file no longer holds what Git wrote at conflict time, so
+    /// staging the blocks would overwrite edits made outside them.
+    edited: bool,
+    /// **Replace with blocks…** is asking before it overwrites those edits.
+    confirm_replace: bool,
+    /// Who Ours and Theirs are for the operation in progress.
+    names: Option<gg_engine::conflict::SideNames>,
+}
+
+/// What **Stage resolution** publishes.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ConflictStage {
+    /// The composed blocks, or the Whole file preview source.
+    Preview,
+    /// The working file as it is, whatever the blocks say.
+    WorkingFile,
 }
 
 fn next_conflict_selection(paths: &[String], keep: Option<&str>, previous: usize) -> usize {
@@ -1143,7 +1162,7 @@ fn conflict_side_hint(operation: Option<gg_engine::mutation::Operation>) -> &'st
             "Ours is the current branch. Theirs is the branch being merged."
         }
         Some(gg_engine::mutation::Operation::Rebase) => {
-            "Ours is the rewritten branch so far. Theirs is the commit being replayed."
+            "Ours is the branch being rebased onto, with the commits replayed so far. Theirs is the commit being replayed."
         }
         Some(gg_engine::mutation::Operation::CherryPick) => {
             "Ours is the current branch. Theirs is the cherry-picked commit."
@@ -1161,6 +1180,7 @@ fn conflict_resolution_label(resolution: gg_engine::conflict::Resolution) -> &'s
         gg_engine::conflict::Resolution::Ours => "Ours",
         gg_engine::conflict::Resolution::Theirs => "Theirs",
         gg_engine::conflict::Resolution::Working => "Working file",
+        gg_engine::conflict::Resolution::Deletion => "Keep deletion",
     }
 }
 
@@ -1175,12 +1195,24 @@ fn conflict_preview_available(view: &ConflictView) -> bool {
         gg_engine::conflict::Resolution::Working => {
             snapshot.working.is_some() || snapshot.working_hash.is_some()
         }
+        gg_engine::conflict::Resolution::Deletion => content.deleted_side().is_some(),
     }
 }
 
 fn conflict_preview_reason(view: &ConflictView) -> &'static str {
+    let deleted = view
+        .content
+        .as_ref()
+        .and_then(gg_engine::conflict::Content::deleted_side);
+    let chosen = match view.preview {
+        gg_engine::conflict::Resolution::Ours => Some(gg_engine::conflict::Side::Ours),
+        gg_engine::conflict::Resolution::Theirs => Some(gg_engine::conflict::Side::Theirs),
+        _ => None,
+    };
     if view.content.is_none() || view.snapshot.is_none() {
         "Load the conflict before staging a resolution."
+    } else if deleted.is_some() && deleted == chosen {
+        "This side deleted the file. Choose Keep deletion to stage the removal."
     } else if !conflict_preview_available(view) {
         "This preview source has no content. Choose another source or resolve it externally."
     } else {
@@ -1197,6 +1229,12 @@ fn conflict_preview_text(
         gg_engine::conflict::Resolution::Base => content.base.as_deref(),
         gg_engine::conflict::Resolution::Ours => content.ours.as_deref(),
         gg_engine::conflict::Resolution::Theirs => content.theirs.as_deref(),
+        gg_engine::conflict::Resolution::Deletion => {
+            return format!(
+                "{} will be deleted; the other side's changes to it are discarded.",
+                content.path
+            );
+        }
         gg_engine::conflict::Resolution::Working => {
             return match &snapshot.working {
                 Some(bytes) if bytes.contains(&0) => {
@@ -1213,26 +1251,59 @@ fn conflict_preview_text(
     side.unwrap_or("(absent)").to_string()
 }
 
+/// Longest side identity shown in a label; the full one is on hover.
+const CONFLICT_NAME_CHARS: usize = 24;
+
+/// A side's label: `Ours (main)` or `Theirs (1a2b3c4d Add login…)` when the
+/// operation names it (shortened unless `full`), else what the side means.
 fn conflict_side_label(
     operation: Option<gg_engine::mutation::Operation>,
     side: ConflictSide,
-) -> &'static str {
+    names: Option<&gg_engine::conflict::SideNames>,
+    full: bool,
+) -> String {
+    let (title, name) = match side {
+        ConflictSide::Base => return "Base".into(),
+        ConflictSide::Ours => ("Ours", names.map(|names| names.ours.as_str())),
+        ConflictSide::Theirs => ("Theirs", names.map(|names| names.theirs.as_str())),
+    };
+    if let Some(name) = name.filter(|name| !name.is_empty()) {
+        let name = if full || name.chars().count() <= CONFLICT_NAME_CHARS {
+            name.to_string()
+        } else {
+            let kept = name
+                .chars()
+                .take(CONFLICT_NAME_CHARS - 1)
+                .collect::<String>();
+            format!("{}…", kept.trim_end())
+        };
+        return format!("{title} ({name})");
+    }
     match (operation, side) {
-        (_, ConflictSide::Base) => "Base",
         (Some(gg_engine::mutation::Operation::Rebase), ConflictSide::Ours) => {
             "Ours · rewritten branch (stage 2)"
         }
-        (Some(gg_engine::mutation::Operation::Rebase), ConflictSide::Theirs) => {
-            "Theirs · replayed commit (stage 3)"
-        }
-        (Some(gg_engine::mutation::Operation::Merge), ConflictSide::Ours) => {
-            "Ours · current branch (stage 2)"
-        }
+        (Some(gg_engine::mutation::Operation::Rebase), _) => "Theirs · replayed commit (stage 3)",
         (Some(gg_engine::mutation::Operation::Merge), ConflictSide::Theirs) => {
             "Theirs · incoming branch (stage 3)"
         }
         (_, ConflictSide::Ours) => "Ours · current branch (stage 2)",
-        (_, ConflictSide::Theirs) => "Theirs · incoming change (stage 3)",
+        (_, _) => "Theirs · incoming change (stage 3)",
+    }
+    .into()
+}
+
+fn conflict_block_labels(
+    operation: Option<gg_engine::mutation::Operation>,
+    names: Option<&gg_engine::conflict::SideNames>,
+) -> conflict_blocks::Labels {
+    let label = |side, full| conflict_side_label(operation, side, names, full);
+    conflict_blocks::Labels {
+        base: label(ConflictSide::Base, false),
+        ours: label(ConflictSide::Ours, false),
+        theirs: label(ConflictSide::Theirs, false),
+        ours_full: label(ConflictSide::Ours, true),
+        theirs_full: label(ConflictSide::Theirs, true),
     }
 }
 
@@ -6657,6 +6728,7 @@ impl Browser {
         let mut stage_resolution = false;
         let mut refresh_content = false;
         let mut conflict_open = true;
+        let mut stage_working = false;
         let workdir = self.stash_path();
         let editor_command = self.prefs.editor.clone();
         // Ctrl+S stages the resolution when Stage resolution is enabled.
@@ -6871,11 +6943,31 @@ impl Browser {
                             if !view.whole_file
                                 && let Some(blocks) = &mut view.blocks
                             {
-                                let labels = conflict_blocks::Labels {
-                                    base: conflict_side_label(operation, ConflictSide::Base),
-                                    ours: conflict_side_label(operation, ConflictSide::Ours),
-                                    theirs: conflict_side_label(operation, ConflictSide::Theirs),
-                                };
+                                let labels = conflict_block_labels(operation, view.names.as_ref());
+                                // Blocks come from the stages; a working file
+                                // edited outside them is staged as is, or
+                                // replaced only after confirmation.
+                                if view.edited {
+                                    ui.horizontal(|ui| {
+                                        ui.colored_label(
+                                            ui.visuals().warn_fg_color,
+                                            "This file was edited outside the conflict blocks.",
+                                        );
+                                        if ui
+                                            .add_enabled(
+                                                !conflict_pending,
+                                                egui::Button::new("Use working file"),
+                                            )
+                                            .on_hover_text("Stage the working file as it is")
+                                            .on_disabled_hover_text(
+                                                "Wait for the current operation to finish.",
+                                            )
+                                            .clicked()
+                                        {
+                                            stage_working = true;
+                                        }
+                                    });
+                                }
                                 blocks.show(ui, &labels);
                                 ui.separator();
                                 ui.horizontal(|ui| {
@@ -6885,10 +6977,15 @@ impl Browser {
                                         blocks.count()
                                     ));
                                     let enabled = !conflict_pending && blocks.complete();
+                                    let label = if view.edited {
+                                        "Replace with blocks…"
+                                    } else {
+                                        "Stage resolution"
+                                    };
                                     let response = ui.add_enabled(
                                         enabled,
                                         egui::Button::new((
-                                            "Stage resolution",
+                                            label,
                                             egui::RichText::new("Ctrl+S").small().weak(),
                                         )),
                                     );
@@ -6902,7 +6999,11 @@ impl Browser {
                                         )
                                     };
                                     if response.clicked() {
-                                        stage_resolution = true;
+                                        if view.edited {
+                                            view.confirm_replace = true;
+                                        } else {
+                                            stage_resolution = true;
+                                        }
                                     }
                                 });
                                 let text = blocks.text();
@@ -6921,16 +7022,61 @@ impl Browser {
                                 .as_ref()
                                 .map(|snapshot| conflict_preview_text(content, snapshot, view.preview))
                                 .unwrap_or_default();
+                            let names = view.names.as_ref();
+                            let side = |side, full| conflict_side_label(operation, side, names, full);
+                            // A side that deleted the file reads so in its pane.
+                            let deleted = content.deleted_side();
+                            let pane = |text: &Option<String>, side| -> String {
+                                match text {
+                                    Some(text) => text.clone(),
+                                    None if deleted == Some(side) => "(deleted on this side)".into(),
+                                    None => "(absent)".into(),
+                                }
+                            };
+                            let panes = [
+                                (ConflictSide::Base, pane(&content.base, gg_engine::conflict::Side::Base)),
+                                (ConflictSide::Ours, pane(&content.ours, gg_engine::conflict::Side::Ours)),
+                                (
+                                    ConflictSide::Theirs,
+                                    pane(&content.theirs, gg_engine::conflict::Side::Theirs),
+                                ),
+                            ];
                             ui.horizontal_wrapped(|ui| {
                                 ui.weak("Preview source");
-                                for (resolution, label) in [
-                                    (gg_engine::conflict::Resolution::Base, "Base"),
-                                    (gg_engine::conflict::Resolution::Ours, "Ours"),
-                                    (gg_engine::conflict::Resolution::Theirs, "Theirs"),
-                                    (gg_engine::conflict::Resolution::Working, "Working file"),
-                                ] {
+                                let mut sources = vec![
+                                    (
+                                        gg_engine::conflict::Resolution::Base,
+                                        side(ConflictSide::Base, false),
+                                        side(ConflictSide::Base, true),
+                                    ),
+                                    (
+                                        gg_engine::conflict::Resolution::Ours,
+                                        side(ConflictSide::Ours, false),
+                                        side(ConflictSide::Ours, true),
+                                    ),
+                                    (
+                                        gg_engine::conflict::Resolution::Theirs,
+                                        side(ConflictSide::Theirs, false),
+                                        side(ConflictSide::Theirs, true),
+                                    ),
+                                    (
+                                        gg_engine::conflict::Resolution::Working,
+                                        "Working file".into(),
+                                        "The working file as it is now".into(),
+                                    ),
+                                ];
+                                // A delete/modify conflict can keep the deletion.
+                                if deleted.is_some() {
+                                    sources.push((
+                                        gg_engine::conflict::Resolution::Deletion,
+                                        "Keep deletion".into(),
+                                        "Delete the file and stage its removal".into(),
+                                    ));
+                                }
+                                for (resolution, label, hover) in sources {
                                     if ui
                                         .selectable_label(view.preview == resolution, label)
+                                        .on_hover_text(hover)
                                         .clicked()
                                     {
                                         view.preview = resolution;
@@ -6952,21 +7098,17 @@ impl Browser {
                             }
                             if ui.available_width() >= 720.0 {
                                 ui.columns(3, |columns| {
-                                    for (column, (title, text)) in columns.iter_mut().zip([
-                                        (conflict_side_label(operation, ConflictSide::Base), &content.base),
-                                        (conflict_side_label(operation, ConflictSide::Ours), &content.ours),
-                                        (conflict_side_label(operation, ConflictSide::Theirs), &content.theirs),
-                                    ]) {
-                                        column.label(title);
+                                    for (column, (which, text)) in columns.iter_mut().zip(&panes) {
+                                        column
+                                            .add(egui::Label::new(side(*which, false)).truncate())
+                                            .on_hover_text(side(*which, true));
                                         egui::ScrollArea::both()
-                                            .id_salt(title)
+                                            .id_salt(("conflict-pane", *which as u8))
                                             .max_height(240.0)
                                             .min_scrolled_height(240.0)
                                             .auto_shrink([false, false])
-                                    .min_scrolled_height(240.0)
-                                    .auto_shrink([false, false])
                                             .show(column, |ui| {
-                                                ui.monospace(text.as_deref().unwrap_or("(absent)"));
+                                                ui.monospace(text);
                                             });
                                     }
                                 });
@@ -7003,13 +7145,14 @@ impl Browser {
                                     });
                             } else {
                                 ui.horizontal(|ui| {
-                                    ui.selectable_value(&mut view.tab, ConflictTab::Base, "Base");
-                                    ui.selectable_value(&mut view.tab, ConflictTab::Ours, "Ours");
-                                    ui.selectable_value(
-                                        &mut view.tab,
-                                        ConflictTab::Theirs,
-                                        "Theirs",
-                                    );
+                                    for (tab, which) in [
+                                        (ConflictTab::Base, ConflictSide::Base),
+                                        (ConflictTab::Ours, ConflictSide::Ours),
+                                        (ConflictTab::Theirs, ConflictSide::Theirs),
+                                    ] {
+                                        ui.selectable_value(&mut view.tab, tab, side(which, false))
+                                            .on_hover_text(side(which, true));
+                                    }
                                     ui.selectable_value(
                                         &mut view.tab,
                                         ConflictTab::Result,
@@ -7017,11 +7160,9 @@ impl Browser {
                                     );
                                 });
                                 let text = match view.tab {
-                                    ConflictTab::Base => content.base.as_deref().unwrap_or("(absent)"),
-                                    ConflictTab::Ours => content.ours.as_deref().unwrap_or("(absent)"),
-                                    ConflictTab::Theirs => {
-                                        content.theirs.as_deref().unwrap_or("(absent)")
-                                    }
+                                    ConflictTab::Base => &panes[0].1,
+                                    ConflictTab::Ours => &panes[1].1,
+                                    ConflictTab::Theirs => &panes[2].1,
                                     ConflictTab::Result => &preview_text,
                                 };
                                 egui::ScrollArea::both()
@@ -7061,13 +7202,66 @@ impl Browser {
         }
         if save_key
             && !conflict_pending
-            && self
-                .conflict_view
-                .as_ref()
-                .is_some_and(conflict_preview_available)
+            && let Some(view) = &mut self.conflict_view
+            && conflict_preview_available(view)
         {
-            stage_resolution = true;
+            // Over a working file edited outside the blocks, Ctrl+S asks first.
+            let blocks = view.blocks.as_ref().filter(|_| !view.whole_file);
+            if view.edited && blocks.is_some_and(conflict_blocks::Blocks::complete) {
+                view.confirm_replace = true;
+            } else if !view.edited || blocks.is_none() {
+                stage_resolution = true;
+            }
         }
+        // Replace with blocks… confirms before overwriting the edited file.
+        let mut replace = false;
+        if let Some(view) = &mut self.conflict_view
+            && view.confirm_replace
+        {
+            let file = view.paths.get(view.selected).cloned().unwrap_or_default();
+            let mut open = true;
+            let mut cancelled =
+                ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+            replace = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
+            egui::Window::new("Replace edited file")
+                .id(egui::Id::unique("conflict-replace"))
+                .modal(ctx, egui::Id::unique("conflict-replace"))
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(false)
+                .default_pos(ctx.content_rect().center())
+                .pivot(egui::Align2::CENTER_CENTER)
+                .show(ctx, |ui| {
+                    ui.set_width(420.0);
+                    ui.add(
+                        egui::Label::new(format!(
+                            "Staging the blocks overwrites {file}. The edits made outside the conflict blocks are lost."
+                        ))
+                        .wrap(),
+                    );
+                    ui.horizontal(|ui| {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui
+                                .add(consequence::danger_button("Replace and stage", true))
+                                .clicked()
+                            {
+                                replace = true;
+                            }
+                            if ui
+                                .button(("Cancel", egui::RichText::new("Esc").small().weak()))
+                                .clicked()
+                            {
+                                cancelled = true;
+                            }
+                        });
+                    });
+                });
+            if replace || cancelled || !open {
+                view.confirm_replace = false;
+            }
+            replace &= !conflict_pending;
+        }
+        stage_resolution |= replace;
         if let Some(index) = conflict_select
             && let Some(view) = &mut self.conflict_view
         {
@@ -7076,8 +7270,13 @@ impl Browser {
         if conflict_select.is_some() || refresh_content {
             self.load_conflict_content(ctx);
         }
-        if stage_resolution
-            && let Err(error) = self.stage_conflict_resolution(ctx)
+        let stage = if stage_working {
+            Some(ConflictStage::WorkingFile)
+        } else {
+            stage_resolution.then_some(ConflictStage::Preview)
+        };
+        if let Some(stage) = stage
+            && let Err(error) = self.stage_conflict(ctx, stage)
             && let Some(view) = &mut self.conflict_view
         {
             view.error = Some(error);
@@ -7111,6 +7310,9 @@ impl Browser {
             blocks_note: None,
             whole_file: false,
             resolved: Vec::new(),
+            edited: false,
+            confirm_replace: false,
+            names: None,
         });
         view.keep = keep.map(str::to_string);
         view.previous_selected = view.selected;
@@ -7161,6 +7363,8 @@ impl Browser {
                     view.snapshot = None;
                     view.blocks = None;
                     view.blocks_note = None;
+                    view.edited = false;
+                    view.confirm_replace = false;
                     view.error = None;
                     load_content = !view.paths.is_empty();
                 }
@@ -7168,9 +7372,14 @@ impl Browser {
                     content,
                     snapshot,
                     blocks,
+                    edited,
+                    names,
                 }) => {
                     view.content = Some(*content);
                     view.snapshot = Some(*snapshot);
+                    view.edited = edited;
+                    view.confirm_replace = false;
+                    view.names = names;
                     match blocks {
                         Ok(segments) => {
                             view.blocks = Some(conflict_blocks::Blocks::new(segments));
@@ -7213,6 +7422,8 @@ impl Browser {
         view.snapshot = None;
         view.blocks = None;
         view.blocks_note = None;
+        view.edited = false;
+        view.confirm_replace = false;
         view.preview = gg_engine::conflict::Resolution::Working;
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         let repaint = ctx.clone();
@@ -7227,10 +7438,19 @@ impl Browser {
                     } else {
                         gg_git::conflict::blocks(&path, &file)
                     };
+                    let edited = match (&blocks, &snapshot.working) {
+                        (Ok(segments), Some(working)) => {
+                            gg_engine::conflict::edited_outside(segments, working)
+                        }
+                        _ => false,
+                    };
+                    let names = gg_git::conflict::side_names(&path).ok().flatten();
                     Ok(ConflictUpdate::Content {
                         content: Box::new(content),
                         snapshot: Box::new(snapshot),
                         blocks,
+                        edited,
+                        names,
                     })
                 })();
                 let _ = tx.send(result);
@@ -7247,7 +7467,7 @@ impl Browser {
         view.worker = Some(rx);
     }
 
-    fn stage_conflict_resolution(&mut self, ctx: &egui::Context) -> Result<(), String> {
+    fn stage_conflict(&mut self, ctx: &egui::Context, stage: ConflictStage) -> Result<(), String> {
         let path = self
             .stash_path()
             .ok_or("Open a repository before resolving conflicts.")?;
@@ -7262,12 +7482,13 @@ impl Browser {
             .as_ref()
             .and_then(|view| view.snapshot.clone())
             .ok_or("Load the conflict before staging its resolution.")?;
-        let resolution = self
-            .conflict_view
-            .as_ref()
-            .map(|view| view.preview)
-            .unwrap_or(gg_engine::conflict::Resolution::Working);
+        let resolution = match stage {
+            ConflictStage::WorkingFile => None,
+            ConflictStage::Preview => self.conflict_view.as_ref().map(|view| view.preview),
+        }
+        .unwrap_or(gg_engine::conflict::Resolution::Working);
         let composed = match self.conflict_view.as_ref() {
+            _ if stage == ConflictStage::WorkingFile => None,
             Some(view) if !view.whole_file => match &view.blocks {
                 Some(blocks) if blocks.complete() => Some(blocks.text()),
                 Some(_) => return Err("Choose a resolution for every block first.".into()),
@@ -13018,6 +13239,9 @@ mod tests {
                 blocks_note: None,
                 whole_file: false,
                 resolved: Vec::new(),
+                edited: false,
+                confirm_replace: false,
+                names: None,
             });
             let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
                 app.draw_ui(ctx)
@@ -14007,6 +14231,9 @@ mod tests {
             blocks_note: None,
             whole_file: false,
             resolved: Vec::new(),
+            edited: false,
+            confirm_replace: false,
+            names: None,
         });
         let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
             app.draw_ui(ctx)
@@ -14031,6 +14258,8 @@ mod tests {
                     working_note: None,
                 }),
                 blocks: Err("whole file only".into()),
+                edited: false,
+                names: None,
             }))
             .is_ok()
         );
@@ -14191,7 +14420,7 @@ mod tests {
             "choosing a preview source is read-only"
         );
 
-        app.stage_conflict_resolution(&ctx)?;
+        app.stage_conflict(&ctx, ConflictStage::Preview)?;
         for _ in 0..400 {
             let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
                 app.draw_ui(ctx)
@@ -14237,6 +14466,9 @@ mod tests {
             blocks_note: None,
             whole_file: false,
             resolved: Vec::new(),
+            edited: false,
+            confirm_replace: false,
+            names: None,
             snapshot: None,
             preview: gg_engine::conflict::Resolution::Working,
             tab: ConflictTab::Ours,
@@ -14314,6 +14546,9 @@ mod tests {
             blocks_note: None,
             whole_file: false,
             resolved: Vec::new(),
+            edited: false,
+            confirm_replace: false,
+            names: None,
             snapshot: Some(gg_engine::conflict::Snapshot {
                 base: Some("1".repeat(40)),
                 ours: Some("2".repeat(40)),
@@ -14325,7 +14560,7 @@ mod tests {
             preview: gg_engine::conflict::Resolution::Working,
             tab: ConflictTab::Ours,
         });
-        assert!(app.stage_conflict_resolution(&ctx).is_ok());
+        assert!(app.stage_conflict(&ctx, ConflictStage::Preview).is_ok());
         assert!(app.operation_busy());
         for _ in 0..200 {
             let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
@@ -14350,6 +14585,365 @@ mod tests {
                 .is_some(),
             "the conflict workspace shows the publication error"
         );
+    }
+
+    /// A loaded conflict view for `a` with the given sides and working bytes.
+    fn loaded_conflict(
+        ours: Option<&str>,
+        theirs: Option<&str>,
+        working: &[u8],
+        blocks: Option<conflict_blocks::Blocks>,
+    ) -> ConflictView {
+        ConflictView {
+            paths: vec!["a".into()],
+            selected: 0,
+            previous_selected: 0,
+            keep: None,
+            content: Some(gg_engine::conflict::Content {
+                path: "a".into(),
+                base: Some("base\n".into()),
+                ours: ours.map(str::to_string),
+                theirs: theirs.map(str::to_string),
+                binary: false,
+                truncated: false,
+            }),
+            error: None,
+            loading: false,
+            worker: None,
+            whole_file: blocks.is_none(),
+            blocks_note: blocks.is_none().then(|| "No text blocks.".to_string()),
+            blocks,
+            resolved: Vec::new(),
+            edited: false,
+            confirm_replace: false,
+            names: None,
+            snapshot: Some(gg_engine::conflict::Snapshot {
+                base: Some("1".repeat(40)),
+                ours: ours.map(|_| "2".repeat(40)),
+                theirs: theirs.map(|_| "3".repeat(40)),
+                working: Some(working.to_vec()),
+                working_hash: None,
+                working_note: None,
+            }),
+            preview: gg_engine::conflict::Resolution::Working,
+            tab: ConflictTab::Result,
+        }
+    }
+
+    #[test]
+    fn conflict_labels_name_both_sides_for_each_operation() {
+        use gg_engine::{conflict::SideNames, mutation::Operation};
+        let merge = SideNames {
+            ours: "main".into(),
+            theirs: "feature/login".into(),
+        };
+        let label =
+            |operation, side, names, full| conflict_side_label(operation, side, names, full);
+        let merge_op = Some(Operation::Merge);
+        assert_eq!(
+            label(merge_op, ConflictSide::Ours, Some(&merge), false),
+            "Ours (main)"
+        );
+        assert_eq!(
+            label(merge_op, ConflictSide::Theirs, Some(&merge), false),
+            "Theirs (feature/login)"
+        );
+        assert_eq!(
+            label(merge_op, ConflictSide::Base, Some(&merge), false),
+            "Base"
+        );
+        let rebase = SideNames {
+            ours: "onto main".into(),
+            theirs: "1a2b3c4d Add the login form and its validation".into(),
+        };
+        let rebase_op = Some(Operation::Rebase);
+        assert_eq!(
+            label(rebase_op, ConflictSide::Ours, Some(&rebase), false),
+            "Ours (onto main)"
+        );
+        assert_eq!(
+            label(rebase_op, ConflictSide::Theirs, Some(&rebase), false),
+            "Theirs (1a2b3c4d Add the login…)",
+            "long subjects are shortened"
+        );
+        assert_eq!(
+            label(rebase_op, ConflictSide::Theirs, Some(&rebase), true),
+            "Theirs (1a2b3c4d Add the login form and its validation)",
+            "the full name is on hover"
+        );
+        // Without names the label says what the side means.
+        assert_eq!(
+            label(rebase_op, ConflictSide::Ours, None, false),
+            "Ours · rewritten branch (stage 2)"
+        );
+        let labels = conflict_block_labels(merge_op, Some(&merge));
+        assert_eq!(
+            labels.describe(gg_engine::conflict::BlockChoice::TheirsThenOurs),
+            "Theirs (feature/login), then Ours (main)"
+        );
+    }
+
+    #[test]
+    fn conflict_workspace_shows_side_names() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        let block = gg_engine::conflict::Segment::Block {
+            ours: "ours\n".into(),
+            base: "base\n".into(),
+            theirs: "theirs\n".into(),
+        };
+        let mut view = loaded_conflict(
+            Some("ours\n"),
+            Some("theirs\n"),
+            b"<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> x\n",
+            Some(conflict_blocks::Blocks::new(vec![block])),
+        );
+        view.names = Some(gg_engine::conflict::SideNames {
+            ours: "main".into(),
+            theirs: "feature/login".into(),
+        });
+        app.conflict_view = Some(view);
+        for whole_file in [false, true] {
+            if let Some(view) = &mut app.conflict_view {
+                view.whole_file = whole_file;
+            }
+            let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let text = shown_text(&output);
+            for expected in ["Ours (main)", "Theirs (feature/login)"] {
+                assert!(
+                    text.iter().any(|line| line.contains(expected)),
+                    "missing {expected:?} (whole file {whole_file}) in {text:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn delete_modify_conflict_offers_keep_deletion() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        app.conflict_view = Some(loaded_conflict(Some("main\n"), None, b"main\n", None));
+        let shown = |app: &mut Browser| {
+            let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            shown_text(&crate::tests::run_ui(
+                &ctx,
+                frame_input(1120.0, 740.0, vec![]),
+                |ctx| app.draw_ui(ctx),
+            ))
+        };
+        let text = shown(&mut app);
+        assert!(text.iter().any(|line| line == "Keep deletion"), "{text:?}");
+        assert!(
+            text.iter()
+                .any(|line| line.contains("(deleted on this side)")),
+            "{text:?}"
+        );
+        // The deleted side points to Keep deletion.
+        if let Some(view) = &mut app.conflict_view {
+            view.preview = gg_engine::conflict::Resolution::Theirs;
+        }
+        let view = app.conflict_view.as_ref().map(|view| {
+            (
+                conflict_preview_available(view),
+                conflict_preview_reason(view),
+            )
+        });
+        assert_eq!(
+            view,
+            Some((
+                false,
+                "This side deleted the file. Choose Keep deletion to stage the removal."
+            ))
+        );
+        // Keep deletion states the consequence and can be staged.
+        if let Some(view) = &mut app.conflict_view {
+            view.preview = gg_engine::conflict::Resolution::Deletion;
+        }
+        let text = shown(&mut app);
+        assert!(
+            text.iter().any(|line| line
+                .contains("a will be deleted; the other side's changes to it are discarded.")),
+            "{text:?}"
+        );
+        assert!(
+            app.conflict_view
+                .as_ref()
+                .is_some_and(conflict_preview_available)
+        );
+        // A modify/modify conflict has no Keep deletion.
+        app.conflict_view = Some(loaded_conflict(Some("o\n"), Some("t\n"), b"o\n", None));
+        let text = shown(&mut app);
+        assert!(!text.iter().any(|line| line == "Keep deletion"), "{text:?}");
+    }
+
+    #[test]
+    fn an_edited_working_file_offers_use_working_file_and_confirms_replace() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        let mut blocks = conflict_blocks::Blocks::new(vec![gg_engine::conflict::Segment::Block {
+            ours: "ours\n".into(),
+            base: "base\n".into(),
+            theirs: "theirs\n".into(),
+        }]);
+        blocks.choose(0, gg_engine::conflict::BlockChoice::Ours);
+        let mut view = loaded_conflict(
+            Some("ours\n"),
+            Some("theirs\n"),
+            b"hand edit\n",
+            Some(blocks),
+        );
+        view.edited = true;
+        app.conflict_view = Some(view);
+        let frame = |app: &mut Browser, events| {
+            let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, events), |ctx| {
+                app.draw_ui(ctx)
+            });
+            shown_text(&crate::tests::run_ui(
+                &ctx,
+                frame_input(1120.0, 740.0, vec![]),
+                |ctx| app.draw_ui(ctx),
+            ))
+        };
+        let text = frame(&mut app, vec![]);
+        for expected in [
+            "This file was edited outside the conflict blocks.",
+            "Use working file",
+            "Replace with blocks…",
+        ] {
+            assert!(
+                text.iter().any(|line| line.contains(expected)),
+                "missing {expected:?} in {text:?}"
+            );
+        }
+        assert!(!text.iter().any(|line| line == "Stage resolution"));
+        // Ctrl+S asks before overwriting the edits; nothing is staged yet.
+        let text = frame(&mut app, vec![key(egui::Key::S, egui::Modifiers::COMMAND)]);
+        assert!(!app.operation_busy());
+        assert!(
+            app.conflict_view
+                .as_ref()
+                .is_some_and(|view| view.confirm_replace)
+        );
+        assert!(
+            text.iter()
+                .any(|line| line.contains("The edits made outside the conflict blocks are lost.")),
+            "{text:?}"
+        );
+        assert!(
+            text.iter().any(|line| line == "Replace and stage"),
+            "{text:?}"
+        );
+        // Esc cancels the question, not the workspace.
+        let _ = frame(
+            &mut app,
+            vec![key(egui::Key::Escape, egui::Modifiers::NONE)],
+        );
+        assert!(
+            app.conflict_view
+                .as_ref()
+                .is_some_and(|view| !view.confirm_replace)
+        );
+        assert!(!app.operation_busy());
+    }
+
+    #[test]
+    fn use_working_file_stages_a_hand_edited_file_as_is() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let run = |path: &std::path::Path, args: &[&str]| -> Result<(), String> {
+            let output = std::process::Command::new("git")
+                .arg("-C")
+                .arg(path)
+                .args(args)
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env(
+                    "GIT_CONFIG_GLOBAL",
+                    if cfg!(windows) { "NUL" } else { "/dev/null" },
+                )
+                .env("GIT_AUTHOR_NAME", "Test")
+                .env("GIT_AUTHOR_EMAIL", "test@example.org")
+                .env("GIT_COMMITTER_NAME", "Test")
+                .env("GIT_COMMITTER_EMAIL", "test@example.org")
+                .output()
+                .map_err(|error| error.to_string())?;
+            if output.status.success() {
+                Ok(())
+            } else {
+                Err(String::from_utf8_lossy(&output.stderr).into_owned())
+            }
+        };
+        let dir = tempfile::tempdir()?;
+        let path = dir.path();
+        run(path, &["init", "-b", "main"])?;
+        run(path, &["config", "core.autocrlf", "false"])?;
+        std::fs::write(path.join("a"), b"base\n")?;
+        run(path, &["add", "a"])?;
+        run(path, &["commit", "-qm", "base"])?;
+        run(path, &["switch", "-qc", "feature"])?;
+        std::fs::write(path.join("a"), b"feature\n")?;
+        run(path, &["commit", "-qam", "feature"])?;
+        run(path, &["switch", "-q", "main"])?;
+        std::fs::write(path.join("a"), b"main\n")?;
+        run(path, &["commit", "-qam", "main"])?;
+        // Merge with the test identity; it stops on the conflict.
+        let _ = run(path, &["merge", "-q", "feature"]);
+        std::fs::write(path.join("a"), b"resolved by hand\n")?;
+
+        let ctx = egui::Context::default();
+        let mut app = Browser::new(path.to_path_buf());
+        app.load(&ctx);
+        for _ in 0..400 {
+            let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            if app.state.history.is_some() && app.mutation.is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        app.open_conflict_view(&ctx);
+        for _ in 0..400 {
+            let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            if app
+                .conflict_view
+                .as_ref()
+                .is_some_and(|view| view.content.is_some())
+            {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        {
+            let view = app.conflict_view.as_ref().ok_or("missing conflict view")?;
+            assert!(view.edited, "the hand edit is detected");
+            assert!(view.blocks.is_some(), "blocks still come from the stages");
+            let names = view.names.as_ref().ok_or("missing side names")?;
+            assert_eq!(
+                (names.ours.as_str(), names.theirs.as_str()),
+                ("main", "feature")
+            );
+        }
+        app.stage_conflict(&ctx, ConflictStage::WorkingFile)?;
+        for _ in 0..400 {
+            let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            if !app.operation_busy() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert_eq!(std::fs::read(path.join("a"))?, b"resolved by hand\n");
+        assert!(gg_git::conflict::unmerged(path)?.is_empty());
+        Ok(())
     }
 
     #[test]
@@ -14719,6 +15313,9 @@ mod tests {
             blocks_note: None,
             whole_file: false,
             resolved: Vec::new(),
+            edited: false,
+            confirm_replace: false,
+            names: None,
         });
         let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
             app.draw_ui(ctx)

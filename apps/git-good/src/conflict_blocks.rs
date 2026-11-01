@@ -13,11 +13,28 @@ pub struct Blocks {
     pub current: usize,
 }
 
-/// Column titles for one block: base, ours, theirs.
+/// Column titles for one block, such as `Base`, `Ours (main)` and
+/// `Theirs (feature/login)`, shortened to keep the layout; the `_full`
+/// forms are shown on hover and name the sides in the choice tooltips.
 pub struct Labels {
-    pub base: &'static str,
-    pub ours: &'static str,
-    pub theirs: &'static str,
+    pub base: String,
+    pub ours: String,
+    pub theirs: String,
+    pub ours_full: String,
+    pub theirs_full: String,
+}
+
+impl Labels {
+    /// What a block choice takes, naming both sides.
+    pub fn describe(&self, choice: BlockChoice) -> String {
+        let (ours, theirs) = (&self.ours_full, &self.theirs_full);
+        match choice {
+            BlockChoice::Ours => ours.clone(),
+            BlockChoice::Theirs => theirs.clone(),
+            BlockChoice::OursThenTheirs => format!("{ours}, then {theirs}"),
+            BlockChoice::TheirsThenOurs => format!("{theirs}, then {ours}"),
+        }
+    }
 }
 
 impl Blocks {
@@ -162,7 +179,8 @@ impl Blocks {
                                                     .fill(egui::Color32::from_rgb(11, 85, 119));
                                             }
                                             let response = ui.add(button).on_hover_text(format!(
-                                                "Key {} on the current block",
+                                                "{} · key {} on the current block",
+                                                labels.describe(choice),
                                                 key + 1
                                             ));
                                             if response.clicked() {
@@ -173,28 +191,38 @@ impl Blocks {
                                 );
                             });
                             let columns = [
-                                (labels.base, base),
-                                (labels.ours, ours),
-                                (labels.theirs, theirs),
+                                ((labels.base.as_str(), labels.base.as_str()), base),
+                                ((labels.ours.as_str(), labels.ours_full.as_str()), ours),
+                                (
+                                    (labels.theirs.as_str(), labels.theirs_full.as_str()),
+                                    theirs,
+                                ),
                             ];
                             // Ours in blue and Theirs in amber, as in the mockup.
-                            let side = |ui: &mut egui::Ui, title: &str, text: &str| {
-                                let color = if title.starts_with("Ours") {
-                                    egui::Color32::from_rgb(156, 202, 245)
-                                } else if title.starts_with("Theirs") {
-                                    egui::Color32::from_rgb(240, 166, 78)
-                                } else {
-                                    ui.visuals().weak_text_color()
-                                };
-                                ui.label(egui::RichText::new(title).small().color(color));
-                                let text = if text.is_empty() { "(no lines)" } else { text };
-                                ui.add(
-                                    egui::Label::new(
-                                        egui::RichText::new(text.trim_end()).monospace(),
+                            let side =
+                                |ui: &mut egui::Ui, (title, full): (&str, &str), text: &str| {
+                                    let color = if title.starts_with("Ours") {
+                                        egui::Color32::from_rgb(156, 202, 245)
+                                    } else if title.starts_with("Theirs") {
+                                        egui::Color32::from_rgb(240, 166, 78)
+                                    } else {
+                                        ui.visuals().weak_text_color()
+                                    };
+                                    ui.add(
+                                        egui::Label::new(
+                                            egui::RichText::new(title).small().color(color),
+                                        )
+                                        .truncate(),
                                     )
-                                    .extend(),
-                                );
-                            };
+                                    .on_hover_text(full);
+                                    let text = if text.is_empty() { "(no lines)" } else { text };
+                                    ui.add(
+                                        egui::Label::new(
+                                            egui::RichText::new(text.trim_end()).monospace(),
+                                        )
+                                        .extend(),
+                                    );
+                                };
                             if wide {
                                 ui.columns(3, |cols| {
                                     for (col, (title, text)) in cols.iter_mut().zip(columns) {
@@ -263,6 +291,22 @@ mod tests {
         assert_eq!(blocks.left(), 3);
         blocks.choose(0, BlockChoice::Ours);
         assert_eq!(blocks.left(), 2);
+    }
+
+    #[test]
+    fn choice_tooltips_name_both_sides() {
+        let labels = Labels {
+            base: "Base".into(),
+            ours: "Ours (main)".into(),
+            theirs: "Theirs (feature/login)".into(),
+            ours_full: "Ours (main)".into(),
+            theirs_full: "Theirs (feature/login)".into(),
+        };
+        assert_eq!(labels.describe(BlockChoice::Ours), "Ours (main)");
+        assert_eq!(
+            labels.describe(BlockChoice::TheirsThenOurs),
+            "Theirs (feature/login), then Ours (main)"
+        );
     }
 
     #[test]
