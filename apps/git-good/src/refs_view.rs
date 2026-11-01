@@ -132,11 +132,19 @@ pub fn show(
                     ui.weak(format!("Detached at {commit}"));
                 }
                 if branches.is_empty() {
-                    ui.weak(if query.is_empty() {
-                        "No local branches"
-                    } else {
-                        "No matching branches"
-                    });
+                    // No filler lines (proposal): an unborn branch is listed
+                    // as having no commits, so it agrees with the branch
+                    // button; a filter says it matched nothing.
+                    if !query.is_empty() {
+                        ui.weak("No matching branches");
+                    } else if let Some(name) = head_name
+                        && refs.head.as_ref().is_some_and(|head| head.commit.is_none())
+                    {
+                        ui.weak(format!(
+                            "{}  · no commits",
+                            name.strip_prefix("refs/heads/").unwrap_or(name)
+                        ));
+                    }
                 } else if query.is_empty() {
                     let mut tree = Tree::default();
                     for item in branches {
@@ -170,11 +178,9 @@ pub fn show(
 
             section(ui, "Remotes", remotes.len(), !query.is_empty(), |ui| {
                 if remotes.is_empty() {
-                    ui.weak(if query.is_empty() {
-                        "No remotes"
-                    } else {
-                        "No matching remotes"
-                    });
+                    if !query.is_empty() {
+                        ui.weak("No matching remotes");
+                    }
                 } else if query.is_empty() {
                     let mut tree = Tree::default();
                     for item in remotes {
@@ -208,11 +214,9 @@ pub fn show(
 
             section(ui, "Tags", tags.len(), !query.is_empty(), |ui| {
                 if tags.is_empty() {
-                    ui.weak(if query.is_empty() {
-                        "No tags"
-                    } else {
-                        "No matching tags"
-                    });
+                    if !query.is_empty() {
+                        ui.weak("No matching tags");
+                    }
                 } else if query.is_empty() {
                     let mut tree = Tree::default();
                     for item in tags {
@@ -245,12 +249,8 @@ pub fn show(
             });
 
             section(ui, "Stashes", stash_rows.len(), !query.is_empty(), |ui| {
-                if stash_rows.is_empty() {
-                    ui.weak(if query.is_empty() {
-                        "No stashes"
-                    } else {
-                        "No matching stashes"
-                    });
+                if stash_rows.is_empty() && !query.is_empty() {
+                    ui.weak("No matching stashes");
                 }
                 for (index, entry) in stash_rows {
                     let short = entry

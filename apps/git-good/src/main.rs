@@ -1284,7 +1284,12 @@ struct Outcome {
     summary: String,
     details: Option<String>,
     recovery: Option<RecoveryAction>,
+    /// When it was reported; a plain success fades after [`SUCCESS_FADE`].
+    at: std::time::Instant,
 }
+
+/// How long a success with nothing to act on stays in the footer.
+const SUCCESS_FADE: std::time::Duration = std::time::Duration::from_secs(8);
 
 fn recovery_label(action: RecoveryAction) -> &'static str {
     match action {
@@ -5287,6 +5292,7 @@ impl Browser {
             summary,
             details,
             recovery,
+            at: std::time::Instant::now(),
         });
     }
 
@@ -6196,6 +6202,10 @@ impl Browser {
         let mut conflict_open = true;
         let workdir = self.stash_path();
         let editor_command = self.prefs.editor.clone();
+        // Ctrl+S stages the resolution when Stage resolution is enabled.
+        let save_key = crate::navigation::available(ctx)
+            && !ctx.text_edit_focused()
+            && ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::S));
         if let Some(view) = &mut self.conflict_view
             && !view.whole_file
             && let Some(blocks) = &mut view.blocks
@@ -6420,7 +6430,10 @@ impl Browser {
                                     let enabled = !conflict_pending && blocks.complete();
                                     let response = ui.add_enabled(
                                         enabled,
-                                        egui::Button::new("Stage resolution"),
+                                        egui::Button::new((
+                                            "Stage resolution",
+                                            egui::RichText::new("Ctrl+S").small().weak(),
+                                        )),
                                     );
                                     let response = if conflict_pending {
                                         response.on_disabled_hover_text(
@@ -6509,7 +6522,10 @@ impl Browser {
                                     let enabled = !conflict_pending && conflict_preview_available(view);
                                     let response = ui.add_enabled(
                                         enabled,
-                                        egui::Button::new("Stage resolution"),
+                                        egui::Button::new((
+                                            "Stage resolution",
+                                            egui::RichText::new("Ctrl+S").small().weak(),
+                                        )),
                                     );
                                     let response = if enabled {
                                         response
@@ -6567,7 +6583,10 @@ impl Browser {
                                     let enabled = !conflict_pending && conflict_preview_available(view);
                                     let response = ui.add_enabled(
                                         enabled,
-                                        egui::Button::new("Stage resolution"),
+                                        egui::Button::new((
+                                            "Stage resolution",
+                                            egui::RichText::new("Ctrl+S").small().weak(),
+                                        )),
                                     );
                                     let response = if enabled {
                                         response
@@ -6582,6 +6601,15 @@ impl Browser {
                         });
                     });
                 });
+        }
+        if save_key
+            && !conflict_pending
+            && self
+                .conflict_view
+                .as_ref()
+                .is_some_and(conflict_preview_available)
+        {
+            stage_resolution = true;
         }
         if let Some(index) = conflict_select
             && let Some(view) = &mut self.conflict_view
@@ -8418,7 +8446,10 @@ impl Browser {
         }
         self.poll_conflict_view(ctx);
         let narrow = ctx.content_rect().width() < 1040.0;
-        let wide_refs = !narrow && self.refs_shown() && ctx.content_rect().width() >= 1120.0;
+        let wide_refs = !narrow
+            && self.refs_shown()
+            && self.state.history.is_some()
+            && ctx.content_rect().width() >= 1120.0;
         history_view::set_graph_width(graph::column_width(self.state.graph_lanes));
         if self.working.is_none() && self.review.is_none() {
             self.state.viewport = self.viewport.clone();
@@ -10307,13 +10338,51 @@ impl Browser {
                     .collect(),
                 _ => Vec::new(),
             };
+            let head = self
+                .state
+                .refs
+                .head
+                .as_ref()
+                .and_then(|head| head.commit.clone())
+                .map(|id| {
+                    let subject = self
+                        .state
+                        .rows
+                        .values()
+                        .find(|commit| commit.id == id)
+                        .map(|commit| commit.subject().to_owned())
+                        .unwrap_or_default();
+                    (id, subject)
+                });
+            let tracking = self.state.refs.current_tracking();
+            let clean = status_view::CleanContext {
+                head,
+                ahead: tracking.and_then(|t| t.ahead).unwrap_or(0),
+                behind: tracking.and_then(|t| t.behind).unwrap_or(0),
+            };
             if let Some(working) = &mut self.working {
                 working.set_stop_commits(made);
+                working.set_clean_context(clean);
             }
             let close = self.working.as_mut().is_some_and(|working| {
                 working.set_external_busy(external);
                 working.draw_ui(ui)
             });
+            match self
+                .working
+                .as_mut()
+                .and_then(|working| working.take_clean_request())
+            {
+                Some(status_view::CleanAction::Pull) => {
+                    let (mut local, mut history) = (false, false);
+                    self.run_frame_command(ctx, FrameCommand::Pull, &mut local, &mut history);
+                }
+                Some(status_view::CleanAction::Push) => {
+                    let (mut local, mut history) = (false, false);
+                    self.run_frame_command(ctx, FrameCommand::Push, &mut local, &mut history);
+                }
+                None => {}
+            }
             if let Some(request) = self
                 .working
                 .as_mut()
@@ -10427,37 +10496,36 @@ impl Browser {
             .local_summary
             .as_ref()
             .and_then(|summary| summary.changes);
+        // A plain success (no details, no recovery) fades after 8 s.
+        if let Some(outcome) = &self.outcome
+            && outcome.severity == OutcomeSeverity::Info
+            && outcome.details.is_none()
+            && outcome.recovery.is_none()
+        {
+            let elapsed = outcome.at.elapsed();
+            if elapsed >= SUCCESS_FADE {
+                self.outcome = None;
+            } else {
+                ctx.request_repaint_after(SUCCESS_FADE - elapsed);
+            }
+        }
         egui::Panel::bottom("status").exact_size(25.0).show(ui, |ui| {
             let mut idle = false;
             let (message, color) = if let Some(error) = &self.network_error {
-                (format!("Network · {error}"), ui.visuals().error_fg_color)
-            } else if let Some(error) = &self.state.error {
+                (error.clone(), ui.visuals().error_fg_color)
+            } else if let Some(error) = self.state.error.as_ref().filter(|_| self.state.history.is_some() || self.pending.is_some()) {
                 (format!("{}{}", if self.state.history.is_some() { "Previous results · " } else { "" }, error), ui.visuals().error_fg_color)
             } else if let Some(error) = &self.branch_error {
-                (format!("Branch · {error}"), ui.visuals().error_fg_color)
+                (error.clone(), ui.visuals().error_fg_color)
             } else if let Some(error) = &self.mutation_error {
-                (format!("History · {error}"), ui.visuals().error_fg_color)
+                (error.clone(), ui.visuals().error_fg_color)
             } else if !operation_active && let Some(outcome) = &self.outcome {
                 let color = match outcome.severity {
                     OutcomeSeverity::Info => ui.visuals().text_color(),
                     OutcomeSeverity::Warning => ui.visuals().warn_fg_color,
                     OutcomeSeverity::Error => ui.visuals().error_fg_color,
                 };
-                (
-                    format!(
-                        "{} · {}",
-                        if matches!(
-                            outcome.recovery,
-                            Some(RecoveryAction::RetrySwitch | RecoveryAction::StashAndSwitch)
-                        ) {
-                            "Branch"
-                        } else {
-                            "History"
-                        },
-                        outcome.summary
-                    ),
-                    color,
-                )
+                (outcome.summary.clone(), color)
             } else if self.operation_worker.is_some() {
                 (
                     self.mutation_notice.clone().unwrap_or_else(|| "Working…".into()),
@@ -10478,21 +10546,23 @@ impl Browser {
                     (format!("Starting {}…", worker.operation.as_str()), ui.visuals().text_color())
                 }
             } else if !operation_active && let Some(notice) = &self.network_notice {
-                (format!("Network · {notice}"), ui.visuals().text_color())
+                (notice.clone(), ui.visuals().text_color())
             } else if !operation_active && let Some(warning) = &self.branch_warning {
-                (format!("Branch · {warning}"), ui.visuals().text_color())
+                (warning.clone(), ui.visuals().warn_fg_color)
             } else if !operation_active && let Some(label) = &self.branch_label {
                 (label.clone(), ui.visuals().text_color())
             } else if !operation_active && let Some(notice) = &self.stash_notice {
-                (format!("Stash · {notice}"), ui.visuals().text_color())
+                (notice.clone(), ui.visuals().text_color())
             } else if !operation_active && let Some(notice) = &self.mutation_notice {
-                (format!("History · {notice}"), ui.visuals().text_color())
+                (notice.clone(), ui.visuals().text_color())
             } else if self.pending.is_some() {
                 (format!("Reading {}{}", self.state.requested.as_deref().unwrap_or(std::path::Path::new(".")).display(), if self.state.history.is_some() { " · showing previous results" } else { "" }), ui.visuals().text_color())
             } else if !self.state.finished && self.worker.is_some() {
                 (format!("{} · {} commits examined", if self.state.query.is_empty() { "Counting history" } else { "Searching history" }, self.state.scanned), ui.visuals().text_color())
             } else {
-                let hints = if narrow {
+                let hints = if self.state.history.is_none() {
+                    "Ctrl+O: open   ·   Ctrl+K: search"
+                } else if narrow {
                     "j/k: select · Enter: review · Space: details · Esc: history · Ctrl/Cmd+F: filter"
                 } else {
                     "j k: select   ·   Enter: review   ·   Alt+A: actions   ·   R: rebase from here   ·   Ctrl+K: search   ·   Ctrl/Cmd+F: filter   ·   Ctrl/Cmd+C: copy ID"
@@ -10608,7 +10678,7 @@ impl Browser {
             }
         }
         self.details_rect = egui::Rect::NOTHING;
-        if !narrow && self.details_visible {
+        if !narrow && self.details_visible && self.state.history.is_some() {
             // The commit inspector sits under the history list, as in the
             // History mockup; the refs sidebar keeps the full height.
             let details = egui::Panel::bottom("details")
@@ -10665,6 +10735,7 @@ impl Browser {
         }
         let mut pending_commit_command: Option<(String, String, CommitCommand)> = None;
         let mut right_clicked_row: Option<usize> = None;
+        let mut welcome_command: Option<FrameCommand> = None;
         egui::CentralPanel::default().show(ui, |ui| {
             if narrow && self.narrow_details {
                 self.history_rect = egui::Rect::NOTHING;
@@ -10689,15 +10760,10 @@ impl Browser {
                 return;
             }
             if self.state.history.is_some() {
-                if self.state.count == 0 {
-                    ui.label(if !self.state.finished {
-                        "Searching history..."
-                    } else if self.state.query.is_empty() {
-                        "Ready for the first commit"
-                    } else {
-                        "No commits match this filter."
-                    });
-                }
+                // Empty states (proposal): blank while scanning; once the scan
+                // finishes, either no commits yet or no filter matches.
+                let empty = (self.state.count == 0 && self.state.finished)
+                    .then_some(self.state.query.is_empty());
                 self.history_rect = ui.available_rect_before_wrap();
                 let row_menu = self.commit_menu_entries();
                 egui::ScrollArea::horizontal()
@@ -10717,6 +10783,63 @@ impl Browser {
                         if history_view::header(ui, &count, &self.state.query) {
                             self.state.query.clear();
                             self.filter_changed();
+                        }
+                        if let Some(unborn) = empty {
+                            let changes = self
+                                .local_summary
+                                .as_ref()
+                                .and_then(|summary| summary.changes)
+                                .unwrap_or(0);
+                            let branch = self.current_branch().unwrap_or_else(|| "HEAD".into());
+                            let mut clear = false;
+                            let mut go_changes = false;
+                            ui.vertical_centered(|ui| {
+                                ui.add_space((ui.available_height() * 0.3).max(24.0));
+                                if unborn {
+                                    ui.label(
+                                        egui::RichText::new(format!("No commits yet on {branch}"))
+                                            .size(18.0),
+                                    );
+                                    ui.add_space(8.0);
+                                    if changes > 0 {
+                                        go_changes = ui
+                                            .button((
+                                                "Go to Changes",
+                                                egui::RichText::new("Ctrl+1").small().weak(),
+                                            ))
+                                            .clicked();
+                                    } else {
+                                        ui.weak(format!(
+                                            "Create or copy files into {}, then commit them.",
+                                            self.window_title.trim_start_matches("gg — ")
+                                        ));
+                                    }
+                                } else {
+                                    ui.label(
+                                        egui::RichText::new(format!(
+                                            "No commits match “{}”",
+                                            self.state.query
+                                        ))
+                                        .size(18.0),
+                                    );
+                                    ui.weak("Searched messages, authors, and IDs.");
+                                    ui.add_space(8.0);
+                                    clear = ui
+                                        .button((
+                                            "Clear filter",
+                                            egui::RichText::new("Esc").small().weak(),
+                                        ))
+                                        .clicked();
+                                }
+                            });
+                            if clear {
+                                self.state.query.clear();
+                                self.filter_changed();
+                            }
+                            if go_changes {
+                                self.open_working(ctx);
+                            }
+                            return;
                         }
                         let mut scroll = egui::ScrollArea::vertical().id_salt("history-rows");
                         if self.scroll_to_selection
@@ -10841,9 +10964,117 @@ impl Browser {
             } else if self.pending.is_some() {
                 // The status line reports the read; the pane stays empty.
             } else {
-                ui.label("Choose Open… to enter a repository path.");
+                // The welcome view (proposal): Open… first, Clone…, the
+                // recent repositories, and why the launch folder did not open.
+                ui.vertical_centered(|ui| {
+                    ui.add_space((ui.available_height() * 0.18).max(24.0));
+                    ui.label(egui::RichText::new("Open a repository").size(20.0));
+                    ui.add_space(6.0);
+                    if let Some(error) = &self.state.error {
+                        ui.colored_label(
+                            ui.visuals().warn_fg_color,
+                            format!("{} is not a Git repository.", self.path),
+                        )
+                        .on_hover_text(error);
+                    }
+                    ui.add_space(12.0);
+                    ui.horizontal(|ui| {
+                        ui.add_space(((ui.available_width() - 200.0) / 2.0).max(0.0));
+                        if ui
+                            .add(
+                                egui::Button::new((
+                                    egui::RichText::new("Open…").color(egui::Color32::WHITE),
+                                    egui::RichText::new("Ctrl+O")
+                                        .small()
+                                        .color(egui::Color32::from_rgb(184, 212, 230)),
+                                ))
+                                .fill(egui::Color32::from_rgb(11, 85, 119)),
+                            )
+                            .clicked()
+                        {
+                            welcome_command = Some(FrameCommand::Open);
+                        }
+                        if ui.button("Clone…").clicked() {
+                            welcome_command = Some(FrameCommand::Clone);
+                        }
+                    });
+                    if !self.recent.is_empty() {
+                        ui.add_space(18.0);
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(420.0, 0.0),
+                            egui::Layout::top_down(egui::Align::Min),
+                            |ui| {
+                                ui.label(egui::RichText::new("RECENT").small().weak());
+                                let home = std::env::var("HOME").ok();
+                                for path in self
+                                    .recent
+                                    .iter()
+                                    .filter(|path| path.is_absolute())
+                                    .take(10)
+                                {
+                                    let name = path
+                                        .file_name()
+                                        .map(|name| name.to_string_lossy().into_owned())
+                                        .unwrap_or_else(|| path.display().to_string());
+                                    let shown = window_title(
+                                        &path.display().to_string(),
+                                        home.as_deref(),
+                                        None,
+                                    );
+                                    let shown = shown.trim_start_matches("gg — ").to_string();
+                                    // Name first, the folder dimmed after it; the
+                                    // folder is what truncates.
+                                    let (rect, row) = ui.allocate_exact_size(
+                                        egui::vec2(420.0, crate::density::row()),
+                                        egui::Sense::click(),
+                                    );
+                                    if row.hovered() {
+                                        ui.painter().rect_filled(
+                                            rect,
+                                            3.0,
+                                            ui.visuals().widgets.hovered.weak_bg_fill,
+                                        );
+                                    }
+                                    let name_rect = egui::Rect::from_min_size(
+                                        rect.min + egui::vec2(6.0, 0.0),
+                                        egui::vec2(150.0, rect.height()),
+                                    );
+                                    bounded_text::paint(
+                                        ui,
+                                        name_rect,
+                                        &name,
+                                        egui::FontId::proportional(13.0),
+                                        ui.visuals().text_color(),
+                                    );
+                                    let path_rect = egui::Rect::from_min_max(
+                                        egui::pos2(name_rect.right() + 8.0, rect.top()),
+                                        rect.max - egui::vec2(6.0, 0.0),
+                                    );
+                                    bounded_text::paint(
+                                        ui,
+                                        path_rect,
+                                        &shown,
+                                        egui::FontId::monospace(11.0),
+                                        ui.visuals().weak_text_color(),
+                                    );
+                                    let row = row
+                                        .on_hover_text(path.display().to_string())
+                                        .on_hover_cursor(egui::CursorIcon::PointingHand);
+                                    if row.clicked() {
+                                        welcome_command =
+                                            Some(FrameCommand::OpenRecent(path.clone()));
+                                    }
+                                }
+                            },
+                        );
+                    }
+                });
             }
         });
+        if let Some(command) = welcome_command {
+            let (mut local, mut history) = (false, false);
+            self.run_frame_command(ctx, command, &mut local, &mut history);
+        }
         if let Some(row) = right_clicked_row {
             self.state.select_row(row);
             if self.worker.is_none() {
@@ -11236,6 +11467,71 @@ mod tests {
             );
             assert!(app.history_rect.width() >= history_view::MIN_WIDTH);
         }
+    }
+
+    #[test]
+    fn empty_history_explains_itself_only_after_the_scan() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        app.state.rows.clear();
+        app.state.count = 0;
+        app.state.finished = false;
+        app.state.query = "zzz".into();
+        let text = |app: &mut Browser| {
+            let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            shown_text(&output)
+        };
+        let scanning = text(&mut app);
+        assert!(
+            !scanning
+                .iter()
+                .any(|line| line.contains("Searching") || line.contains("No commits")),
+            "nothing while the scan runs: {scanning:?}"
+        );
+        app.state.finished = true;
+        let filtered = text(&mut app);
+        assert!(
+            filtered
+                .iter()
+                .any(|line| line.contains("No commits match “zzz”"))
+        );
+        assert!(filtered.iter().any(|line| line == "Clear filter"));
+        app.state.query.clear();
+        let unborn = text(&mut app);
+        assert!(
+            unborn
+                .iter()
+                .any(|line| line.starts_with("No commits yet on")),
+            "{unborn:?}"
+        );
+    }
+
+    #[test]
+    fn a_plain_success_fades_after_eight_seconds() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        let old = std::time::Instant::now()
+            .checked_sub(std::time::Duration::from_secs(9))
+            .unwrap_or_else(std::time::Instant::now);
+        let outcome = |recovery| Outcome {
+            severity: OutcomeSeverity::Info,
+            summary: "Pushed".into(),
+            details: None,
+            recovery,
+            at: old,
+        };
+        app.outcome = Some(outcome(None));
+        let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        assert!(app.outcome.is_none(), "a plain success fades");
+        app.outcome = Some(outcome(Some(RecoveryAction::Backups)));
+        let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        assert!(app.outcome.is_some(), "a success with an action stays");
     }
 
     #[test]
@@ -12724,6 +13020,7 @@ mod tests {
         app.operation_repo = Some("/old".into());
         app.mutation_notice = Some("Merging old repository…".into());
         app.outcome = Some(Outcome {
+            at: std::time::Instant::now(),
             severity: OutcomeSeverity::Info,
             summary: "Merged old repository".into(),
             details: None,
@@ -13420,6 +13717,7 @@ mod tests {
             let ctx = egui::Context::default();
             let mut app = layout_fixture();
             app.outcome = Some(Outcome {
+                at: std::time::Instant::now(),
                 severity: OutcomeSeverity::Warning,
                 summary: "Rebased onto feature · 1 conflict(s)".into(),
                 details: Some("Conflicts: a.txt".into()),
@@ -13457,6 +13755,7 @@ mod tests {
         let ctx = egui::Context::default();
         let mut app = layout_fixture();
         app.outcome = Some(Outcome {
+            at: std::time::Instant::now(),
             severity: OutcomeSeverity::Warning,
             summary: "Rewrote 2 commit(s)".into(),
             details: Some("Backup: refs/gg/backup/rewrite/1".into()),
@@ -13487,6 +13786,7 @@ mod tests {
         let ctx = egui::Context::default();
         let mut app = layout_fixture();
         app.outcome = Some(Outcome {
+            at: std::time::Instant::now(),
             severity: OutcomeSeverity::Info,
             summary: "Rewrote 1 commit(s)".into(),
             details: None,
@@ -13724,6 +14024,7 @@ mod tests {
         let ctx = egui::Context::default();
         let mut app = Browser::new(".".into());
         app.outcome = Some(Outcome {
+            at: std::time::Instant::now(),
             severity: OutcomeSeverity::Info,
             summary: "Old repository result".into(),
             details: None,
@@ -13781,6 +14082,7 @@ mod tests {
         assert!(app.pending_switch.is_none());
         assert!(app.outcome.is_none());
         app.outcome = Some(Outcome {
+            at: std::time::Instant::now(),
             severity: OutcomeSeverity::Warning,
             summary: "Switch to feature blocked".into(),
             details: None,

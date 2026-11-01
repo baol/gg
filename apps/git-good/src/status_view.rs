@@ -168,6 +168,21 @@ impl List {
     }
 }
 
+/// The one next step a clean worktree offers, as in the empty-states
+/// proposal: Pull when behind, Push when ahead.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CleanAction {
+    Pull,
+    Push,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct CleanContext {
+    pub head: Option<(String, String)>,
+    pub ahead: u64,
+    pub behind: u64,
+}
+
 pub struct StatusView {
     path: PathBuf,
     identity: Option<gg_engine::status::StatusIdentity>,
@@ -178,6 +193,10 @@ pub struct StatusView {
     drop_confirm: Option<Vec<crate::diff_view::StageEdit>>,
     /// Commits made at a stopped rebase's reopened commit: ID and subject.
     stop_commits: Vec<(String, String)>,
+    /// What the clean view shows: HEAD's ID and subject, and the current
+    /// branch's ahead/behind counts.
+    clean_context: CleanContext,
+    clean_request: Option<CleanAction>,
     /// A group header asked to stage everything (`Some(true)`) or unstage
     /// everything (`Some(false)`); the window runs it like the menu item.
     group_request: Option<bool>,
@@ -231,6 +250,8 @@ impl StatusView {
             drop_confirm: None,
             group_request: None,
             stop_commits: Vec::new(),
+            clean_context: CleanContext::default(),
+            clean_request: None,
             commit: None,
             commit_done: None,
             last_commit: None,
@@ -753,6 +774,82 @@ impl StatusView {
     /// Disable incompatible mutations while another view owns an operation.
     pub fn set_external_busy(&mut self, reason: Option<String>) {
         self.external_busy = reason;
+    }
+
+    /// HEAD and tracking for the clean view.
+    pub fn set_clean_context(&mut self, context: CleanContext) {
+        self.clean_context = context;
+    }
+
+    /// Pull or Push chosen in the clean view.
+    pub fn take_clean_request(&mut self) -> Option<CleanAction> {
+        self.clean_request.take()
+    }
+
+    /// A finished, empty scan with nothing else to show: the lists, reader,
+    /// and commit form give way to one "Working tree clean" message.
+    fn clean(&self) -> bool {
+        self.complete
+            && self.total == 0
+            && !self.amend
+            && !self.replacing
+            && self.error.is_none()
+            && self.external_busy.is_none()
+            && self.stop_commits.is_empty()
+            && self.commit.is_none()
+    }
+
+    /// The clean view: returns whether Open History was chosen.
+    fn draw_clean(&mut self, ui: &mut egui::Ui) -> bool {
+        let mut back = false;
+        ui.vertical_centered(|ui| {
+            ui.add_space((ui.available_height() * 0.3).max(24.0));
+            ui.label(egui::RichText::new("Working tree clean").size(18.0));
+            ui.add_space(6.0);
+            if let Some((id, subject)) = &self.clean_context.head {
+                ui.weak(format!(
+                    "Last commit {} · {subject}",
+                    &id[..id.len().min(8)]
+                ));
+            }
+            if let Some(result) = self.commit_result() {
+                ui.weak(result);
+            }
+            ui.add_space(12.0);
+            let primary = |text: String| {
+                egui::Button::new(egui::RichText::new(text).color(egui::Color32::WHITE))
+                    .fill(egui::Color32::from_rgb(11, 85, 119))
+            };
+            ui.horizontal(|ui| {
+                let (behind, ahead) = (self.clean_context.behind, self.clean_context.ahead);
+                let step = if behind > 0 {
+                    Some((CleanAction::Pull, format!("Pull {behind}")))
+                } else if ahead > 0 {
+                    Some((CleanAction::Push, format!("Push {ahead}")))
+                } else {
+                    None
+                };
+                // Centre the one or two buttons.
+                let width = if step.is_some() { 230.0 } else { 120.0 };
+                ui.add_space(((ui.available_width() - width) / 2.0).max(0.0));
+                if let Some((action, label)) = step {
+                    if ui.add(primary(label)).clicked() {
+                        self.clean_request = Some(action);
+                    }
+                    back |= ui
+                        .button(("Open History", egui::RichText::new("Ctrl+2").small().weak()))
+                        .clicked();
+                } else {
+                    back |= ui
+                        .add(primary("Open History".into()))
+                        .on_hover_text("Ctrl+2")
+                        .clicked();
+                }
+            });
+            ui.add_space(8.0);
+            ui.weak("Changed files appear here as soon as they are saved.");
+        });
+        back
     }
 
     /// The commits made at the current rebase stop, shown under the lists.
@@ -1967,12 +2064,17 @@ impl StatusView {
                 });
             });
         let wide = ui.available_width() >= WIDE_LAYOUT;
-        if !wide {
+        let clean = self.clean();
+        if !wide && !clean {
             egui::Panel::bottom("working-commit")
                 .exact_size(self.commit_form_height() + 8.0)
                 .show(ui, |ui| self.draw_commit_panel(ui, ctx));
         }
         egui::CentralPanel::default().show(ui, |ui| {
+            if clean {
+                back |= self.draw_clean(ui);
+                return;
+            }
             let height = ui.available_height();
             if wide {
                 ui.horizontal_top(|ui| {
@@ -2082,6 +2184,8 @@ mod tests {
             drop_confirm: None,
             group_request: None,
             stop_commits: Vec::new(),
+            clean_context: CleanContext::default(),
+            clean_request: None,
             commit: None,
             commit_done: None,
             last_commit: None,
@@ -4419,19 +4523,27 @@ mod tests {
             let output = run(&ctx, &mut view, width, vec![]);
             let text = texts(&output);
             assert!(
-                !text
-                    .iter()
-                    .any(|text| text.starts_with("No ") || text == "Nothing to show."),
+                !text.iter().any(|text| text.starts_with("No ")
+                    || text == "Nothing to show."
+                    || text == "Working tree clean"),
                 "an unfinished scan leaves empty groups blank: {text:?}"
             );
             view.complete = true;
             let output = run(&ctx, &mut view, width, vec![]);
             let text = texts(&output);
             assert!(
+                text.contains(&"Working tree clean".to_string()),
+                "a finished empty scan shows the clean view: {text:?}"
+            );
+            assert!(!text.iter().any(|text| text.starts_with("STAGED ")));
+
+            let mut one = fixture(0, 1);
+            let output = run(&ctx, &mut one, width, vec![]);
+            let text = texts(&output);
+            assert!(
                 text.contains(&"No unstaged changes.".to_string()),
                 "{text:?}"
             );
-            assert!(text.contains(&"No staged changes.".to_string()));
             assert_eq!(
                 header_y(&output, "STAGED "),
                 staged_header,
