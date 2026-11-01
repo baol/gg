@@ -107,6 +107,9 @@ struct StageConfig {
     pending: bool,
 }
 
+/// Readers narrower than this fold Blame and File history into the ⋯ menu.
+const FOLD_TOOLS_BELOW: f32 = 760.0;
+
 pub struct DiffView {
     worker: Option<Worker>,
     export: crate::export::Export,
@@ -186,6 +189,10 @@ pub struct DiffView {
     details_open: bool,
     /// Width the header's mode controls took on the last single-line frame.
     header_controls: f32,
+    /// A narrow reader folds Blame and File history into ⋯.
+    fold_tools: bool,
+    /// Blame chosen from the ⋯ menu.
+    blame_request: bool,
     /// Context and whitespace of the requested comparison.
     options: gg_engine::diff::Options,
     /// Displayed characters of every diff row, for wrapping unloaded rows.
@@ -268,6 +275,8 @@ impl Default for DiffView {
             side_request: None,
             details_open: false,
             header_controls: 560.0,
+            fold_tools: false,
+            blame_request: false,
             options: gg_engine::diff::Options::default(),
             widths: Arc::default(),
             wrap: None,
@@ -1936,6 +1945,25 @@ impl DiffView {
     fn file_actions_menu(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, change: &FileChange) {
         ui.menu_button(crate::phosphor::icon(crate::phosphor::DOTS_THREE), |ui| {
             let capabilities = self.capabilities();
+            if self.fold_tools {
+                let blame = self.attribution_available();
+                if ui
+                    .add_enabled(blame, crate::menus::row(self.attribution, "Blame").shortcut_text("B"))
+                    .clicked()
+                {
+                    self.blame_request = true;
+                    ui.close();
+                }
+                if let Some(available) = self.history_button
+                    && ui
+                        .add_enabled(available, crate::menus::row(false, "File history").shortcut_text("H"))
+                        .clicked()
+                {
+                    self.history_request = true;
+                    ui.close();
+                }
+                ui.separator();
+            }
             for (label, side, enabled) in [
                 (
                     "Export before…",
@@ -2167,6 +2195,7 @@ impl DiffView {
         let capabilities = self.capabilities();
         // One header row, as in the mockups: path and endpoints, then the
         // mode controls; narrow readers wrap the controls to a second line.
+        self.fold_tools = ui.available_width() < FOLD_TOOLS_BELOW;
         // When the controls leave the path less than 220 px, the path takes
         // the first line and the controls wrap below it.
         let spare = ui.available_width() - self.header_controls - 8.0;
@@ -2197,25 +2226,45 @@ impl DiffView {
             {
                 actions.push(Action::Mode(Mode::Full));
             }
-            // Inline | Side by side keeps its slot in both presentations.
+            // One slot: Inline | Side by side in Diff, Before | After in Full
+            // file (accepted reader proposal).
             ui.separator();
-            for (layout, label) in [
-                (DiffLayout::Inline, "Inline"),
-                (DiffLayout::SideBySide, "Side by side"),
-            ] {
-                let response = ui
-                    .add_enabled(
-                        self.mode == Mode::Diff,
-                        egui::Button::new(label).selected(self.layout == layout),
-                    )
-                    .on_disabled_hover_text("Full file shows one side; choose Diff to compare");
-                if response.clicked() {
-                    actions.push(Action::Layout(layout));
+            if self.mode == Mode::Full {
+                for side in [ReadingSide::Before, ReadingSide::After] {
+                    let available = self.edge_known
+                        && match side {
+                            ReadingSide::Before => capabilities.full_before,
+                            ReadingSide::After => capabilities.full_after,
+                        };
+                    let response = ui
+                        .add_enabled(
+                            available,
+                            egui::Button::new(self.side_label(side)).selected(side == self.side),
+                        )
+                        .on_disabled_hover_text(if self.edge_known {
+                            "This side does not exist in this comparison"
+                        } else {
+                            "Earlier version not loaded"
+                        });
+                    if response.clicked() && side != self.side {
+                        actions.push(Action::Side(side));
+                    }
+                }
+            } else {
+                for (layout, label) in [
+                    (DiffLayout::Inline, "Inline"),
+                    (DiffLayout::SideBySide, "Side by side"),
+                ] {
+                    let response = ui.add(egui::Button::new(label).selected(self.layout == layout));
+                    if response.clicked() {
+                        actions.push(Action::Layout(layout));
+                    }
                 }
             }
             // Blame and History sit on this row in both presentations, as in
-            // the mockup; Blame from Diff opens Full file with blame on.
-            {
+            // the mockup; Blame from Diff opens Full file with blame on. A
+            // narrow reader folds them into ⋯ (accepted proposal).
+            if !self.fold_tools {
                 let available = self.attribution_available();
                 let label = if self.attribution && self.mode == Mode::Full {
                     "Hide blame"
@@ -2241,29 +2290,13 @@ impl DiffView {
                     }
                 }
             }
-            if let Some(available) = self.history_button {
+            if let Some(available) = self.history_button.filter(|_| !self.fold_tools) {
                 let response = ui
                     .add_enabled(available, egui::Button::new("History"))
                     .on_hover_text("File history · H")
                     .on_disabled_hover_text("Select a file to follow its history");
                 if response.clicked() {
                     self.history_request = true;
-                }
-            }
-            if self.mode == Mode::Full && self.edge_known {
-                ui.separator();
-                for side in [ReadingSide::Before, ReadingSide::After] {
-                    let available = match side {
-                        ReadingSide::Before => capabilities.full_before,
-                        ReadingSide::After => capabilities.full_after,
-                    };
-                    let response = ui.add_enabled(
-                        side != self.side && available,
-                        egui::Button::new(self.side_label(side)),
-                    );
-                    if response.clicked() {
-                        actions.push(Action::Side(side));
-                    }
                 }
             }
             ui.separator();
@@ -2332,6 +2365,16 @@ impl DiffView {
             self.header_controls = (row.width() - path_width).max(self.header_controls.min(200.0));
         }
         self.draw_header_details(ui, &change);
+        if std::mem::take(&mut self.blame_request) {
+            if self.mode != Mode::Full {
+                actions.push(Action::Mode(Mode::Full));
+                if !self.attribution {
+                    actions.push(Action::Attribution);
+                }
+            } else {
+                actions.push(Action::Attribution);
+            }
+        }
         for action in actions {
             match action {
                 Action::Mode(mode) => self.set_mode(mode, &ctx),
@@ -4875,6 +4918,38 @@ mod tests {
         draw(&mut view);
         assert!(view.wrap.is_none());
         assert_eq!(top(&view), 41, "unwrapping keeps the top row");
+    }
+
+    #[test]
+    fn a_narrow_reader_folds_blame_into_the_file_actions_menu()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for (width, shown) in [(720.0, false), (1120.0, true)] {
+            let ctx = egui::Context::default();
+            let mut view = DiffView {
+                change: Some(file("a", true, true)),
+                generation: 1,
+                ..Default::default()
+            };
+            view.accept(diff_update(1, split_fixture()), None);
+            view.change = None;
+            let mut output = None;
+            for _ in 0..3 {
+                output = Some(crate::tests::run_ui(
+                    &ctx,
+                    crate::tests::frame_input(width, 480.0, vec![]),
+                    |ctx| {
+                        egui::CentralPanel::default().show(ctx, |ui| view.draw_reading(ui));
+                    },
+                ));
+            }
+            let output = output.ok_or("no frame")?;
+            let blame = output.shapes.iter().any(|shape| {
+                matches!(&shape.shape, egui::epaint::Shape::Text(text) if text.galley.job.text == "Blame")
+            });
+            assert_eq!(blame, shown, "Blame on the header row at {width}");
+            assert_eq!(view.fold_tools, !shown);
+        }
+        Ok(())
     }
 
     #[test]
