@@ -6,7 +6,14 @@ use gg_engine::Commit;
 /// Compact row height; runtime code uses `crate::density::row()`.
 #[cfg(test)]
 pub const ROW_HEIGHT: f32 = crate::density::COMPACT_ROW;
-pub const MIN_WIDTH: f32 = 610.0;
+/// Narrowest list before the columns scroll sideways; Author and Date have
+/// dropped by then, so the subject keeps at least 200 px.
+pub const MIN_WIDTH: f32 = 360.0;
+/// The Author column shows from this list width; narrower lists drop it
+/// first, so subjects never truncate before it (narrow proposal).
+pub const AUTHOR_FROM: f32 = 760.0;
+/// The Date column shows from this list width; narrower lists drop it next.
+pub const DATE_FROM: f32 = 600.0;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RefAction {
@@ -22,14 +29,22 @@ pub fn set_graph_width(width: f32) {
     GRAPH_WIDTH.with(|cell| cell.set(width));
 }
 
+/// Graph, subject, author, hash, and date cells; a dropped column is an
+/// empty cell.
 pub fn columns(rect: egui::Rect) -> [egui::Rect; 5] {
     let graph = GRAPH_WIDTH.with(std::cell::Cell::get);
+    let author = if rect.width() >= AUTHOR_FROM {
+        150.0
+    } else {
+        0.0
+    };
+    let date = if rect.width() >= DATE_FROM { 92.0 } else { 0.0 };
     let widths = [
         graph,
-        (rect.width() - graph - 150.0 - 66.0 - 92.0).max(0.0),
-        150.0,
+        (rect.width() - graph - author - 66.0 - date).max(0.0),
+        author,
         66.0,
-        92.0,
+        date,
     ];
     let mut x = rect.left();
     widths.map(|width| {
@@ -72,6 +87,43 @@ pub fn sort_labels(refs: &mut [gg_engine::refs::RefItem], head_name: Option<&str
             item.name.clone(),
         )
     });
+}
+
+/// One pill for a branch in sync with its upstream (narrow proposal):
+/// `main ⇄ origin` replaces the `main` and `origin/main` pills when both
+/// point at the row's commit.
+pub fn merge_in_sync(
+    refs: Vec<gg_engine::refs::RefItem>,
+    tracking: &[gg_engine::refs::Tracking],
+) -> Vec<gg_engine::refs::RefItem> {
+    let mut merged = Vec::new();
+    for item in &refs {
+        if item.kind == gg_engine::refs::RefKind::Branch
+            && let Some(track) = tracking.iter().find(|t| t.full_name == item.full_name)
+            && refs
+                .iter()
+                .any(|other| other.full_name == track.upstream_full_name)
+        {
+            merged.push((
+                track.upstream_full_name.clone(),
+                format!("{} ⇄ {}", item.name, track.remote),
+            ));
+        }
+    }
+    refs.into_iter()
+        .filter(|item| !merged.iter().any(|(remote, _)| *remote == item.full_name))
+        .map(|mut item| {
+            if item.kind == gg_engine::refs::RefKind::Branch
+                && let Some(track) = tracking.iter().find(|t| t.full_name == item.full_name)
+                && let Some((_, label)) = merged
+                    .iter()
+                    .find(|(remote, _)| *remote == track.upstream_full_name)
+            {
+                item.name = label.clone();
+            }
+            item
+        })
+        .collect()
 }
 
 /// Column titles, as in the History mockup: `Commit · 164`, and the active
@@ -160,7 +212,23 @@ fn paint_refs_and_subject(
     let mut shown = 0;
     for item in refs.iter().take(max_labels) {
         let (background, foreground) = ref_label_colors(ui.visuals(), item.kind, selected);
-        let galley = painter.layout_no_wrap(item.name.clone(), font.clone(), foreground);
+        // The in-sync arrow `⇄` comes from the monospace font, which has it.
+        let mut job = egui::text::LayoutJob::default();
+        for (index, part) in item.name.split('⇄').enumerate() {
+            if index > 0 {
+                job.append(
+                    "⇄",
+                    0.0,
+                    egui::TextFormat::simple(egui::FontId::monospace(10.5), foreground),
+                );
+            }
+            job.append(
+                part,
+                0.0,
+                egui::TextFormat::simple(font.clone(), foreground),
+            );
+        }
+        let galley = painter.layout_job(job);
         // Plain text pills, as in the History mockup: kind by color only.
         let width = galley.size().x + 8.0;
         if x + width > inner.right() - 24.0 {
@@ -354,7 +422,9 @@ pub fn row(
         &shown_refs
     };
     let action = paint_refs_and_subject(ui, subject, refs, head_name, commit, selected);
-    let name_left = if crate::density::show_avatars() {
+    let name_left = if author.width() <= 0.0 {
+        author.left()
+    } else if crate::density::show_avatars() {
         let avatar = egui::Rect::from_center_size(
             egui::pos2(author.left() + 14.0, author.center().y),
             egui::vec2(18.0, 18.0),
@@ -524,6 +594,65 @@ mod tests {
             }
             assert!(cells[1].width() >= 200.0);
         }
+    }
+
+    #[test]
+    fn author_drops_first_then_date_below_600() {
+        let cells = |width: f32| {
+            columns(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(width, ROW_HEIGHT),
+            ))
+        };
+        let wide = cells(1040.0);
+        assert!(wide[2].width() > 0.0 && wide[4].width() > 0.0);
+        let narrow = cells(720.0);
+        assert_eq!(narrow[2].width(), 0.0, "Author drops at 720");
+        assert!(narrow[4].width() > 0.0, "Date stays at 720");
+        let narrower = cells(580.0);
+        assert_eq!(narrower[2].width(), 0.0);
+        assert_eq!(narrower[4].width(), 0.0, "Date drops below 600");
+        assert!(narrower[3].width() > 0.0, "Hash stays");
+        assert!(narrower[1].width() >= 400.0, "the subject gains the room");
+    }
+
+    #[test]
+    fn a_branch_in_sync_with_its_upstream_shows_one_pill() {
+        use gg_engine::refs::{RefItem, RefKind, Tracking};
+        let item = |name: &str, full: &str, kind| RefItem {
+            name: name.into(),
+            full_name: full.into(),
+            kind,
+            commit: "c".into(),
+        };
+        let tracking = vec![Tracking {
+            branch: "main".into(),
+            full_name: "refs/heads/main".into(),
+            upstream: "origin/main".into(),
+            upstream_full_name: "refs/remotes/origin/main".into(),
+            remote: "origin".into(),
+            remote_branch: "main".into(),
+            ahead: Some(0),
+            behind: Some(0),
+        }];
+        let refs = vec![
+            item("v1", "refs/tags/v1", RefKind::Tag),
+            item("main", "refs/heads/main", RefKind::Branch),
+            item("origin/main", "refs/remotes/origin/main", RefKind::Remote),
+            item(
+                "upstream/main",
+                "refs/remotes/upstream/main",
+                RefKind::Remote,
+            ),
+        ];
+        let names = merge_in_sync(refs.clone(), &tracking)
+            .into_iter()
+            .map(|item| item.name)
+            .collect::<Vec<_>>();
+        assert_eq!(names, ["v1", "main ⇄ origin", "upstream/main"]);
+        // Out of sync: the upstream is on another row, both pills stay apart.
+        let apart = merge_in_sync(refs[..2].to_vec(), &tracking);
+        assert_eq!(apart[1].name, "main");
     }
     #[test]
     fn ref_labels_prefix_the_subject() {
@@ -804,7 +933,7 @@ mod tests {
                     count += 1;
                 }
             }
-            assert!(count >= 5); // Fields, avatar fallback, and overflow controls.
+            assert!(count >= 4); // Subject, hash, date, and overflow (Author drops at 720).
         }
     }
 }

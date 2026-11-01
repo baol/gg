@@ -381,6 +381,41 @@ fn diff_layout_id() -> eframe::egui::Id {
     eframe::egui::Id::unique("gg-diff-layout")
 }
 
+/// Windows narrower than this use the narrow layouts (narrow proposal).
+pub const NARROW_WINDOW: f32 = 1040.0;
+
+/// The layout readers show: the preference in wide windows; below
+/// [`NARROW_WINDOW`] Inline unless Side by side was chosen there this
+/// session (narrow proposal).
+pub fn reader_layout(ctx: &eframe::egui::Context) -> DiffLayout {
+    if ctx.content_rect().width() < NARROW_WINDOW {
+        ctx.data(|data| data.get_temp(narrow_layout_id()))
+            .unwrap_or(DiffLayout::Inline)
+    } else {
+        diff_layout(ctx)
+    }
+}
+
+/// A layout chosen in a reader: the preference in wide windows, the
+/// session's narrow layout below [`NARROW_WINDOW`].
+pub fn choose_reader_layout(ctx: &eframe::egui::Context, layout: DiffLayout) {
+    if ctx.content_rect().width() < NARROW_WINDOW {
+        ctx.data_mut(|data| data.insert_temp(narrow_layout_id(), layout));
+    } else {
+        set_diff_layout(ctx, layout);
+    }
+}
+
+/// The session's narrow layout, as if chosen in a narrow reader.
+#[cfg(test)]
+pub fn set_narrow_layout(ctx: &eframe::egui::Context, layout: DiffLayout) {
+    ctx.data_mut(|data| data.insert_temp(narrow_layout_id(), layout));
+}
+
+fn narrow_layout_id() -> eframe::egui::Id {
+    eframe::egui::Id::unique("gg-narrow-diff-layout")
+}
+
 /// Context lines and whitespace handling every Diff in the window uses.
 pub fn diff_options(ctx: &eframe::egui::Context) -> gg_engine::diff::Options {
     ctx.data(|data| data.get_temp(diff_options_id()))

@@ -778,6 +778,20 @@ const MENU_BAR_HEIGHT: f32 = 26.0;
 /// Height of the toolbar row under the menu bar (final design: 34 px).
 const TOOLBAR_HEIGHT: f32 = 34.0;
 
+/// Height of the footer (status line) at the window bottom.
+const FOOTER_HEIGHT: f32 = 25.0;
+
+/// Windows at least this wide dock the refs sidebar; narrower ones open it
+/// as a drawer over the view (narrow proposal).
+const REFS_DOCK_WIDTH: f32 = 1120.0;
+
+/// Width of the refs drawer.
+const REFS_DRAWER_WIDTH: f32 = 248.0;
+
+fn refs_drawer_id() -> egui::Id {
+    egui::Id::unique("refs-drawer")
+}
+
 /// Paints a count badge on the top-right corner of `rect`; nothing for zero.
 fn paint_badge(ui: &egui::Ui, rect: egui::Rect, count: u64) {
     if count == 0 {
@@ -1758,11 +1772,21 @@ struct Browser {
     /// last fetched commit.
     delete_remote: Option<(String, String)>,
     commit_stats_worker: Option<commit_stats::Worker>,
+    /// The chosen row of the narrow commit details' FILES list.
+    details_file: usize,
     /// What each open destructive dialog will remove, read in the background.
     consequences: std::collections::BTreeMap<&'static str, consequence::Lines>,
     /// Per open destructive dialog, the re-read of its lists on confirm.
     guards: std::collections::BTreeMap<&'static str, consequence::Guard>,
     refs_query: String,
+    /// The refs drawer is open (windows narrower than [`REFS_DOCK_WIDTH`]).
+    refs_drawer: bool,
+    /// Focus the drawer's filter on its next frame.
+    refs_drawer_focus: bool,
+    /// The drawer's keyboard cursor over [`refs_view::cursor_rows`].
+    refs_drawer_cursor: usize,
+    /// The filter the cursor was placed for.
+    refs_drawer_query: String,
     refs_width: f32,
     state: state::State,
     pending: Option<stream::Worker>,
@@ -1943,9 +1967,14 @@ impl Browser {
             branch_cursor: 0,
             delete_remote: None,
             commit_stats_worker: None,
+            details_file: 0,
             consequences: std::collections::BTreeMap::new(),
             guards: std::collections::BTreeMap::new(),
             refs_query: String::new(),
+            refs_drawer: false,
+            refs_drawer_focus: false,
+            refs_drawer_cursor: 0,
+            refs_drawer_query: String::new(),
             refs_width: 0.0,
             state: state::State::default(),
             pending: None,
@@ -3658,7 +3687,7 @@ impl Browser {
             FrameCommand::Shortcuts => self.help_shortcuts = true,
             FrameCommand::LocalChanges => *go_local = true,
             FrameCommand::History => *go_history = true,
-            FrameCommand::ToggleRefs => self.toggle_refs(),
+            FrameCommand::ToggleRefs => self.toggle_refs_or_drawer(ctx),
             FrameCommand::Filter(query) => {
                 self.state.query = query;
                 self.filter_changed();
@@ -3762,6 +3791,7 @@ impl Browser {
             }
             FrameCommand::SetDiffLayout(layout) => {
                 settings::set_diff_layout(ctx, layout);
+                settings::choose_reader_layout(ctx, layout);
                 self.remember(|prefs| prefs.diff_layout = layout);
             }
             FrameCommand::SetTheme(theme) => {
@@ -4361,6 +4391,313 @@ impl Browser {
         self.ctx_width < 1040.0
     }
 
+    /// Run what a refs sidebar or refs drawer row asked for.
+    fn apply_refs_action(&mut self, ctx: &egui::Context, action: refs_view::Action) {
+        match action {
+            refs_view::Action::OpenWorktree(path) => {
+                let (mut local, mut history) = (false, false);
+                self.run_frame_command(
+                    ctx,
+                    FrameCommand::OpenRecent(PathBuf::from(path)),
+                    &mut local,
+                    &mut history,
+                );
+            }
+            refs_view::Action::Switch(name) => self.start_branch(ctx, name, false),
+            refs_view::Action::Jump(id) => self.jump_to_ref(id),
+            refs_view::Action::Track(name) => {
+                self.track_dialog = Some(name);
+            }
+            refs_view::Action::OpenStash(index) => {
+                self.stash_picker.selected = index;
+                self.stash_picker.confirm_drop = false;
+                self.stash_picker.error = None;
+                egui::Popup::open_id(ctx, stash_picker_popup_id());
+            }
+            refs_view::Action::Merge(name) => {
+                self.merge_dialog = Some(MergeDialog {
+                    reference: name,
+                    no_ff: self.prefs.merge_no_ff,
+                    error: None,
+                });
+            }
+            refs_view::Action::Rebase(name) => {
+                self.rebase_dialog = Some(RebaseDialog {
+                    reference: name,
+                    autostash: self.prefs.rebase_autostash,
+                    error: None,
+                });
+            }
+            refs_view::Action::DeleteBranch(name) => {
+                self.branch_delete = Some(BranchDeleteDialog { name, error: None });
+            }
+            refs_view::Action::DeleteTag(name) => {
+                self.tag_delete = Some(TagDeleteDialog { name, error: None });
+            }
+            refs_view::Action::VerifyTag(name) => self.open_signature(ctx, name),
+            refs_view::Action::Rename(name) => {
+                self.rename_dialog = Some(RenameDialog {
+                    new: name.clone(),
+                    old: name,
+                    error: None,
+                });
+            }
+            refs_view::Action::SetUpstream(name) => {
+                let upstream = self
+                    .state
+                    .refs
+                    .tracking
+                    .iter()
+                    .find(|tracking| tracking.branch == name)
+                    .map(|tracking| tracking.upstream.clone())
+                    .unwrap_or_default();
+                self.upstream_dialog = Some(UpstreamDialog {
+                    branch: name,
+                    upstream,
+                    error: None,
+                });
+            }
+            refs_view::Action::NewBranchAt(commit, name) => {
+                self.create_branch = Some(CreateBranchDialog {
+                    name: String::new(),
+                    commit,
+                    selector: name,
+                    switch: self.prefs.branch_switch,
+                    recovery_source: None,
+                    error: None,
+                });
+            }
+            refs_view::Action::Compare(commit) => {
+                let location = self.capture_return_location();
+                self.open_compare(ctx, commit, location);
+            }
+            refs_view::Action::Push => self.start_push(ctx),
+            refs_view::Action::DeleteRemote(name, commit) => {
+                self.delete_remote = Some((name, commit));
+            }
+        }
+    }
+
+    /// The refs sidebar as a 248 px drawer over the dimmed view (narrow
+    /// proposal), for windows too narrow for the docked sidebar: opened by
+    /// the toolbar's sidebar button or Ctrl+\, focus in its filter, Up/Down
+    /// choose, Enter shows the ref in History and closes, Esc or a click
+    /// outside closes.
+    fn draw_refs_drawer(&mut self, ctx: &egui::Context) {
+        if !self.refs_drawer {
+            return;
+        }
+        if self.state.history.is_none() || ctx.content_rect().width() >= REFS_DOCK_WIDTH {
+            self.refs_drawer = false;
+            return;
+        }
+        let screen = ctx.content_rect();
+        let body = egui::Rect::from_min_max(
+            egui::pos2(
+                screen.left(),
+                screen.top() + MENU_BAR_HEIGHT + TOOLBAR_HEIGHT,
+            ),
+            egui::pos2(screen.right(), screen.bottom() - FOOTER_HEIGHT),
+        );
+        let drawer =
+            egui::Rect::from_min_size(body.min, egui::vec2(REFS_DRAWER_WIDTH, body.height()));
+        // A click outside the drawer (the dimmed view or the toolbar's
+        // sidebar button) closes it; the click that opened it does not.
+        let mut close = !self.refs_drawer_focus
+            && !egui::Popup::is_any_open(ctx)
+            && ctx.input(|i| {
+                i.pointer.primary_clicked()
+                    && i.pointer
+                        .interact_pos()
+                        .is_some_and(|p| !drawer.contains(p))
+            });
+        close |= ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::Backslash));
+        let rows = refs_view::cursor_rows(&self.state.refs, &self.refs_query);
+        // The drawer's first frame only sizes it, so focus is requested
+        // until the filter has it.
+        if self.refs_drawer_focus {
+            if ctx.memory(|m| m.has_focus(refs_view::filter_id())) {
+                self.refs_drawer_focus = false;
+            } else {
+                ctx.memory_mut(|m| m.request_focus(refs_view::filter_id()));
+            }
+        }
+        let (up, down, enter, escape) = ctx.input_mut(|i| {
+            (
+                i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp),
+                i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown),
+                i.key_pressed(egui::Key::Enter),
+                i.consume_key(egui::Modifiers::NONE, egui::Key::Escape),
+            )
+        });
+        if self.refs_query != self.refs_drawer_query {
+            self.refs_drawer_query = self.refs_query.clone();
+            self.refs_drawer_cursor = 0;
+        }
+        if down {
+            self.refs_drawer_cursor += 1;
+        }
+        if up {
+            self.refs_drawer_cursor = self.refs_drawer_cursor.saturating_sub(1);
+        }
+        self.refs_drawer_cursor = self.refs_drawer_cursor.min(rows.len().saturating_sub(1));
+        let cursor = rows.get(self.refs_drawer_cursor);
+        refs_view::set_cursor(cursor.map(|item| item.full_name.clone()));
+        let mut action = None;
+        if enter && let Some(item) = cursor {
+            action = Some(refs_view::Action::Jump(item.commit.clone()));
+        }
+        let refs = self.state.refs.clone();
+        let busy = self.branch.is_some()
+            || self.network.is_some()
+            || self.mutation.is_some()
+            || self.operation_busy();
+        let stashes = self
+            .local_summary
+            .as_ref()
+            .map(|summary| summary.stashes.clone())
+            .unwrap_or_default();
+        let worktrees = self
+            .local_summary
+            .as_ref()
+            .map(|summary| summary.worktrees.clone())
+            .unwrap_or_default();
+        egui::Area::new(refs_drawer_id())
+            .order(egui::Order::Foreground)
+            .fixed_pos(drawer.min)
+            .show(ctx, |ui| {
+                // The view behind the drawer is dimmed: painted first on the
+                // drawer's own layer, whose painter spans the window.
+                ui.ctx().layer_painter(ui.layer_id()).rect_filled(
+                    body,
+                    0.0,
+                    egui::Color32::from_black_alpha(110),
+                );
+                egui::Frame::side_top_panel(ui.style().as_ref())
+                    .inner_margin(8.0)
+                    .shadow(ui.visuals().popup_shadow)
+                    .show(ui, |ui| {
+                        let inner = drawer.size() - egui::vec2(16.0, 16.0);
+                        ui.set_min_size(inner);
+                        ui.set_max_size(inner);
+                        ui.vertical(|ui| {
+                            let footer = 20.0;
+                            ui.allocate_ui(egui::vec2(inner.x, inner.y - footer), |ui| {
+                                if let Some(chosen) = refs_view::show(
+                                    ui,
+                                    &refs,
+                                    &stashes,
+                                    &worktrees,
+                                    &mut self.refs_query,
+                                    busy,
+                                    &self.state.ref_lanes,
+                                ) {
+                                    action = Some(chosen);
+                                }
+                            });
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new("Enter: show in history · Esc: close")
+                                        .small()
+                                        .weak(),
+                                )
+                                .truncate(),
+                            );
+                        });
+                    });
+            });
+        refs_view::set_cursor(None);
+        if let Some(action) = action {
+            // Showing a ref in History closes the drawer; menu actions open
+            // their dialogs over it, closed too.
+            close = true;
+            self.apply_refs_action(ctx, action);
+        }
+        if close || escape {
+            self.refs_drawer = false;
+            crate::navigation::focus_content(ctx);
+        } else {
+            // A modal layer keeps History's keys and clicks away while the
+            // drawer stays open.
+            let layer = egui::LayerId::new(egui::Order::Foreground, refs_drawer_id());
+            ctx.memory_mut(|m| m.set_modal_layer(layer));
+        }
+    }
+
+    /// Move the History selection `distance` rows (j/k, arrows, paging).
+    fn step_selection(&mut self, ctx: &egui::Context, distance: i32) {
+        if self.state.count == 0 {
+            return;
+        }
+        if self.worker.is_some() {
+            let row = self.state.selected_row.unwrap_or(0);
+            let next = row
+                .saturating_add_signed(distance as isize)
+                .min(self.state.count - 1);
+            self.state.select_row(next);
+        } else {
+            self.state.move_selection(distance);
+        }
+        self.details_file = 0;
+        crate::navigation::focus_content(ctx);
+        self.scroll_to_selection = true;
+    }
+
+    /// Review the selected commit from the narrow details, opened on `path`
+    /// or the FILES row chosen there; Esc in Review returns to the details.
+    fn review_from_details(&mut self, ctx: &egui::Context, path: Option<String>) {
+        let shown = self
+            .state
+            .displayed_details()
+            .map(|commit| commit.id.clone());
+        let path = path.or_else(|| {
+            self.commit_stats
+                .as_ref()
+                .filter(|(id, _)| Some(id) == shown.as_ref())
+                .and_then(|(_, stats)| stats.rows.get(self.details_file))
+                .map(|file| file.path.clone())
+        });
+        let location = self.capture_return_location();
+        self.open_review(ctx, location);
+        if let Some(path) = path
+            && let Some(review) = self.review.take()
+        {
+            self.review = Some(review.select_path(path));
+        }
+    }
+
+    /// File and line counts of the displayed commit, counted in the
+    /// background; `None` until they arrive.
+    fn selected_commit_stats(&mut self, ctx: &egui::Context) -> Option<commit_stats::Stats> {
+        let id = self.state.displayed_details()?.id.clone();
+        if let Some(worker) = &self.commit_stats_worker
+            && let Some(stats) = worker.poll()
+        {
+            self.commit_stats = Some((worker.commit.clone(), stats));
+            self.commit_stats_worker = None;
+        }
+        let known = self
+            .commit_stats
+            .as_ref()
+            .filter(|(commit, _)| *commit == id)
+            .map(|(_, stats)| stats.clone());
+        let running = self
+            .commit_stats_worker
+            .as_ref()
+            .is_some_and(|worker| worker.commit == id);
+        if known.is_none()
+            && !running
+            && let Some(history) = &self.state.history
+        {
+            self.commit_stats_worker = Some(commit_stats::Worker::start(
+                history.path.clone(),
+                id,
+                ctx.clone(),
+            ));
+        }
+        known
+    }
+
     fn menu_table(&self, ready: &FrameReadiness) -> Vec<menus::Menu<FrameCommand>> {
         use menus::{Entry, Menu, item};
         let busy = "Wait for the current operation to finish";
@@ -4743,14 +5080,10 @@ impl Browser {
                     .checked(self.working.is_none() && self.review.is_none())
                     .entry(),
                 Entry::Separator,
+                // Narrower than the docked sidebar, it opens the drawer.
                 item("Refs sidebar", "Ctrl+\\", FrameCommand::ToggleRefs)
-                    .unless(if !ready.has_repo {
-                        Some(no_repo)
-                    } else {
-                        (!sidebar)
-                            .then_some("Resize the window to at least 1120 px to show the sidebar")
-                    })
-                    .checked(self.refs_shown() && sidebar)
+                    .unless((!ready.has_repo).then_some(no_repo))
+                    .checked((self.refs_shown() && sidebar) || self.refs_drawer)
                     .entry(),
                 item("Commit inspector", "Space", FrameCommand::ToggleDetails)
                     .unless(idle(ready.has_repo))
@@ -5075,6 +5408,24 @@ impl Browser {
         }
     }
 
+    /// The sidebar button and Ctrl+\: the docked sidebar when the window is
+    /// wide enough, otherwise the refs drawer.
+    fn toggle_refs_or_drawer(&mut self, ctx: &egui::Context) {
+        if ctx.content_rect().width() >= REFS_DOCK_WIDTH {
+            self.toggle_refs();
+        } else if self.state.history.is_some() {
+            self.refs_drawer = !self.refs_drawer;
+            self.refs_drawer_focus = self.refs_drawer;
+            // The cursor starts on the current branch.
+            let head = self.state.refs.head.as_ref().and_then(|h| h.name.clone());
+            self.refs_drawer_query = self.refs_query.clone();
+            self.refs_drawer_cursor = refs_view::cursor_rows(&self.state.refs, &self.refs_query)
+                .iter()
+                .position(|item| Some(&item.full_name) == head.as_ref())
+                .unwrap_or(0);
+        }
+    }
+
     fn toggle_refs(&mut self) {
         if self.working.is_some() || self.review.is_some() || self.conflict_view.is_some() {
             self.refs_visible_elsewhere = !self.refs_visible_elsewhere;
@@ -5263,7 +5614,9 @@ impl Browser {
                         } else {
                             switch_reason
                         };
-                        let label = if *current {
+                        let label = if *current && !tracking.is_empty() {
+                            format!("{branch}  {tracking}  ·  current")
+                        } else if *current {
                             format!("{branch}  ·  current")
                         } else {
                             branch.clone()
@@ -7990,6 +8343,11 @@ impl Browser {
                 .displayed_details()
                 .map(|c| c.subject().to_owned())
                 .unwrap_or_default();
+            let message = self
+                .state
+                .displayed_details()
+                .filter(|commit| commit.id == *id)
+                .map(|commit| commit.message.clone());
             let mut review = review_view::Review::new(
                 gg_engine::review::ReviewRequest {
                     path: history.path.clone(),
@@ -8000,6 +8358,9 @@ impl Browser {
                 subject,
                 ctx,
             );
+            if let Some(message) = message {
+                review = review.with_message(message);
+            }
             review.set_return_location(return_location);
             self.review = Some(review);
         }
@@ -9503,8 +9864,13 @@ impl Browser {
                             || i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight)
                     })
                 {
-                    let location = self.capture_return_location();
-                    self.open_review(ctx, location);
+                    if narrow && self.narrow_details {
+                        // Enter in the details reviews the chosen file.
+                        self.review_from_details(ctx, None);
+                    } else {
+                        let location = self.capture_return_location();
+                        self.open_review(ctx, location);
+                    }
                 }
                 if crate::navigation::activation_available(ctx)
                     && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Space))
@@ -9549,21 +9915,26 @@ impl Browser {
                     (egui::Modifiers::NONE, egui::Key::PageDown, page),
                     (egui::Modifiers::ALT, egui::Key::V, -page),
                 ] {
-                    if !(narrow && self.narrow_details)
-                        && ctx.input_mut(|i| i.consume_key(modifiers, key))
-                        && self.state.count > 0
+                    // In the narrow details j/k still step commits, while
+                    // Up/Down choose a file in the FILES list.
+                    let details = narrow && self.narrow_details;
+                    let file_key = matches!(key, egui::Key::ArrowUp | egui::Key::ArrowDown)
+                        && modifiers == egui::Modifiers::NONE;
+                    if details
+                        && (file_key
+                            || matches!(
+                                key,
+                                egui::Key::PageUp | egui::Key::PageDown | egui::Key::V
+                            ))
                     {
-                        if self.worker.is_some() {
-                            let row = self.state.selected_row.unwrap_or(0);
-                            let next = row
-                                .saturating_add_signed(distance as isize)
-                                .min(self.state.count - 1);
-                            self.state.select_row(next);
-                        } else {
-                            self.state.move_selection(distance);
+                        if file_key && ctx.input_mut(|i| i.consume_key(modifiers, key)) {
+                            self.details_file =
+                                self.details_file.saturating_add_signed(distance as isize);
                         }
-                        crate::navigation::focus_content(ctx);
-                        self.scroll_to_selection = true;
+                        continue;
+                    }
+                    if ctx.input_mut(|i| i.consume_key(modifiers, key)) {
+                        self.step_selection(ctx, distance);
                     }
                 }
                 if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::C))
@@ -9601,9 +9972,8 @@ impl Browser {
         }
         if shortcuts
             && ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::Backslash))
-            && ctx.content_rect().width() >= 1120.0
         {
-            self.toggle_refs();
+            self.toggle_refs_or_drawer(ctx);
         }
         let table = self.menu_table(&ready);
         let mut menu_command = None;
@@ -9652,21 +10022,23 @@ impl Browser {
                     // Without a repository the toolbar holds only search;
                     // the repository controls appear once one opens.
                     if has_repo {
+                    // Narrower than the docked sidebar, the button opens the
+                    // refs drawer over the view.
                     let sidebar = ui
-                        .add_enabled(
-                            sidebar_available,
+                        .add(
                             egui::Button::selectable(
-                                self.refs_shown() && sidebar_available,
+                                (self.refs_shown() && sidebar_available) || self.refs_drawer,
                                 crate::phosphor::icon(crate::phosphor::SIDEBAR_SIMPLE).size(17.0),
                             )
                             .min_size(egui::vec2(28.0, 26.0)),
                         )
-                        .on_hover_text("Refs sidebar")
-                        .on_disabled_hover_text(
-                            "Refs sidebar\nResize the window to at least 1120 px to show the sidebar",
-                        );
+                        .on_hover_text(if sidebar_available {
+                            "Refs sidebar  Ctrl+\\"
+                        } else {
+                            "Refs  Ctrl+\\\nThe window is narrower than 1120 px, so the refs open as a drawer over the view"
+                        });
                     if sidebar.clicked() {
-                        self.toggle_refs();
+                        self.toggle_refs_or_drawer(ctx);
                     }
                     ui.add_space(6.0);
                     let changes = ui
@@ -9868,7 +10240,11 @@ impl Browser {
                                 open_search = true;
                             }
                         }
-                        let compact = !wide || ui.available_width() < 230.0;
+                        // Below 1040 px the branch button is an icon; its
+                        // tooltip and menu name the branch and ↑↓.
+                        let compact = !wide
+                            || ui.available_width() < 230.0
+                            || ctx.content_rect().width() < 1040.0;
                         if has_repo
                             && let Some(pick) = self.branch_switcher_button(ui, &ready, compact)
                         {
@@ -10235,91 +10611,11 @@ impl Browser {
                     });
                 });
             self.refs_width = refs_panel.response.rect.width();
-            match action {
-                Some(refs_view::Action::OpenWorktree(path)) => {
-                    let (mut local, mut history) = (false, false);
-                    self.run_frame_command(
-                        ctx,
-                        FrameCommand::OpenRecent(PathBuf::from(path)),
-                        &mut local,
-                        &mut history,
-                    );
-                }
-                Some(refs_view::Action::Switch(name)) => self.start_branch(ctx, name, false),
-                Some(refs_view::Action::Jump(id)) => self.jump_to_ref(id),
-                Some(refs_view::Action::Track(name)) => {
-                    self.track_dialog = Some(name);
-                }
-                Some(refs_view::Action::OpenStash(index)) => {
-                    self.stash_picker.selected = index;
-                    self.stash_picker.confirm_drop = false;
-                    self.stash_picker.error = None;
-                    egui::Popup::open_id(ctx, stash_picker_popup_id());
-                }
-                Some(refs_view::Action::Merge(name)) => {
-                    self.merge_dialog = Some(MergeDialog {
-                        reference: name,
-                        no_ff: self.prefs.merge_no_ff,
-                        error: None,
-                    });
-                }
-                Some(refs_view::Action::Rebase(name)) => {
-                    self.rebase_dialog = Some(RebaseDialog {
-                        reference: name,
-                        autostash: self.prefs.rebase_autostash,
-                        error: None,
-                    });
-                }
-                Some(refs_view::Action::DeleteBranch(name)) => {
-                    self.branch_delete = Some(BranchDeleteDialog { name, error: None });
-                }
-                Some(refs_view::Action::DeleteTag(name)) => {
-                    self.tag_delete = Some(TagDeleteDialog { name, error: None });
-                }
-                Some(refs_view::Action::VerifyTag(name)) => self.open_signature(ctx, name),
-                Some(refs_view::Action::Rename(name)) => {
-                    self.rename_dialog = Some(RenameDialog {
-                        new: name.clone(),
-                        old: name,
-                        error: None,
-                    });
-                }
-                Some(refs_view::Action::SetUpstream(name)) => {
-                    let upstream = self
-                        .state
-                        .refs
-                        .tracking
-                        .iter()
-                        .find(|tracking| tracking.branch == name)
-                        .map(|tracking| tracking.upstream.clone())
-                        .unwrap_or_default();
-                    self.upstream_dialog = Some(UpstreamDialog {
-                        branch: name,
-                        upstream,
-                        error: None,
-                    });
-                }
-                Some(refs_view::Action::NewBranchAt(commit, name)) => {
-                    self.create_branch = Some(CreateBranchDialog {
-                        name: String::new(),
-                        commit,
-                        selector: name,
-                        switch: self.prefs.branch_switch,
-                        recovery_source: None,
-                        error: None,
-                    });
-                }
-                Some(refs_view::Action::Compare(commit)) => {
-                    let location = self.capture_return_location();
-                    self.open_compare(ctx, commit, location);
-                }
-                Some(refs_view::Action::Push) => self.start_push(ctx),
-                Some(refs_view::Action::DeleteRemote(name, commit)) => {
-                    self.delete_remote = Some((name, commit));
-                }
-                None => {}
+            if let Some(action) = action {
+                self.apply_refs_action(ctx, action);
             }
         }
+        self.draw_refs_drawer(ctx);
         if go_local {
             let conflicted = self
                 .mutation
@@ -11687,51 +11983,32 @@ impl Browser {
             }
         }
         self.details_rect = egui::Rect::NOTHING;
-        if !narrow && self.details_visible && self.state.history.is_some() {
+        // Narrow windows keep the inspector under the list with a Details
+        // button; Space replaces the list with the full details.
+        let narrow_inspector = narrow && !self.narrow_details;
+        if ((!narrow && self.details_visible) || narrow_inspector) && self.state.history.is_some() {
             // The commit inspector sits under the history list, as in the
             // History mockup; the refs sidebar keeps the full height.
+            let mut open_details = false;
             let details = egui::Panel::bottom("details")
                 .exact_size(details_view::INSPECTOR_HEIGHT)
                 .resizable(false)
                 .show(ui, |ui| {
                     ui.add_space(4.0);
+                    let stats = self.selected_commit_stats(ctx).map(|stats| stats.label());
                     let commit = self.state.displayed_details();
-                    let stats = commit.and_then(|commit| {
-                        if let Some(worker) = &self.commit_stats_worker
-                            && let Some(stats) = worker.poll()
-                        {
-                            self.commit_stats = Some((worker.commit.clone(), stats));
-                            self.commit_stats_worker = None;
-                        }
-                        let known = self
-                            .commit_stats
-                            .as_ref()
-                            .filter(|(id, _)| *id == commit.id)
-                            .map(|(_, stats)| stats.label());
-                        let running = self
-                            .commit_stats_worker
-                            .as_ref()
-                            .is_some_and(|worker| worker.commit == commit.id);
-                        if known.is_none()
-                            && !running
-                            && let Some(history) = &self.state.history
-                        {
-                            self.commit_stats_worker = Some(commit_stats::Worker::start(
-                                history.path.clone(),
-                                commit.id.clone(),
-                                ctx.clone(),
-                            ));
-                        }
-                        known
-                    });
                     let menu = self.commit_menu_entries();
                     let command = details_view::inspector(
                         ui,
                         commit,
                         stats.as_deref(),
                         &mut self.avatars,
+                        narrow.then_some(&mut open_details),
                         |ui| commit.and_then(|_| commit_action_menu(ui, &menu)),
                     );
+                    if open_details {
+                        self.narrow_details = true;
+                    }
                     if let Some(command) = command
                         && let Some(commit) = commit
                     {
@@ -11749,22 +12026,35 @@ impl Browser {
             if narrow && self.narrow_details {
                 self.history_rect = egui::Rect::NOTHING;
                 self.details_rect = ui.available_rect_before_wrap();
-                if ui.button("Back to history").clicked() {
-                    self.narrow_details = false;
-                }
-                ui.add_space(8.0);
+                let stats = self.selected_commit_stats(ctx);
                 let commit = self.state.displayed_details();
-                let loading = self.state.details.is_none();
+                let mut refs: Vec<gg_engine::refs::RefItem> = commit
+                    .map(|commit| self.state.refs.for_commit(&commit.id).cloned().collect())
+                    .unwrap_or_default();
+                let head_name = self.state.refs.head.as_ref().and_then(|h| h.name.clone());
+                history_view::sort_labels(&mut refs, head_name.as_deref());
+                let info = details_view::PageInfo {
+                    loading: self.state.details.is_none(),
+                    refs: &refs,
+                    stats: stats.as_ref(),
+                };
                 let menu = self.commit_menu_entries();
-                let command = details_view::show(ui, commit, loading, &mut self.avatars, |ui| {
+                let action = details_view::page(ui, commit, &info, &mut self.details_file, |ui| {
                     commit.and_then(|_| commit_action_menu(ui, &menu))
                 });
-                if let Some(command) = command
-                    && let Some(commit) = commit
-                {
-                    let id = commit.id.clone();
-                    let subject = commit.subject().to_owned();
-                    self.apply_commit_command(ctx, &id, &subject, command);
+                let ids = commit.map(|commit| (commit.id.clone(), commit.subject().to_owned()));
+                match action {
+                    Some(details_view::PageAction::Back) => self.narrow_details = false,
+                    Some(details_view::PageAction::Step(step)) => self.step_selection(ctx, step),
+                    Some(details_view::PageAction::Review(path)) => {
+                        self.review_from_details(ctx, path)
+                    }
+                    Some(details_view::PageAction::Command(command)) => {
+                        if let Some((id, subject)) = ids {
+                            self.apply_commit_command(ctx, &id, &subject, command);
+                        }
+                    }
+                    None => {}
                 }
                 return;
             }
@@ -11778,10 +12068,10 @@ impl Browser {
                 // The columns scroll sideways only below their minimum width;
                 // wider, the bar stays hidden so it never takes height and
                 // moves the rows.
-                let narrow = ui.available_width() < history_view::MIN_WIDTH;
+                let scroll_columns = ui.available_width() < history_view::MIN_WIDTH;
                 egui::ScrollArea::horizontal()
                     .id_salt("history-columns")
-                    .scroll_bar_visibility(if narrow {
+                    .scroll_bar_visibility(if scroll_columns {
                         egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded
                     } else {
                         egui::scroll_area::ScrollBarVisibility::AlwaysHidden
@@ -11906,6 +12196,12 @@ impl Browser {
                                             .cloned()
                                             .collect::<Vec<_>>();
                                         history_view::sort_labels(&mut refs, head_name.as_deref());
+                                        if narrow {
+                                            refs = history_view::merge_in_sync(
+                                                refs,
+                                                &self.state.refs.tracking,
+                                            );
+                                        }
                                         let graph = self.state.graphs.get(&row);
                                         let (response, ref_action) = ui
                                             .push_id(&commit.id, |ui| {
@@ -15115,8 +15411,8 @@ mod tests {
             );
             assert_eq!(
                 text.iter().filter(|line| **line == "Actions").count(),
-                usize::from(width >= 1040.0),
-                "the inspector's Actions button opens the menu at {width}"
+                1,
+                "the inspector's or the narrow details' Actions button opens the menu at {width}"
             );
             assert!(!text.contains(&"Selected commit actions…"));
         }
@@ -16819,6 +17115,175 @@ mod tests {
     }
 
     #[test]
+    fn narrow_refs_drawer_opens_over_the_list_jumps_and_closes() -> Result<(), String> {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        let branch = |name: &str, commit: usize| gg_engine::refs::RefItem {
+            name: name.into(),
+            full_name: format!("refs/heads/{name}"),
+            kind: gg_engine::refs::RefKind::Branch,
+            commit: format!("{commit:040x}"),
+        };
+        app.state.refs.items = vec![branch("main", 3), branch("topic", 7)];
+        let run = |app: &mut Browser, events| {
+            crate::tests::run_ui(&ctx, frame_input(720.0, 480.0, events), |ctx| {
+                app.draw_ui(ctx)
+            })
+        };
+        let _ = run(&mut app, vec![]);
+        let _ = run(
+            &mut app,
+            vec![key(egui::Key::Backslash, egui::Modifiers::COMMAND)],
+        );
+        assert!(app.refs_drawer, "Ctrl+\\ opens the drawer below 1120 px");
+        let _ = run(&mut app, vec![]);
+        let output = run(&mut app, vec![]);
+        assert_eq!(
+            ctx.memory(|m| m.focused()),
+            Some(refs_view::filter_id()),
+            "focus starts in the filter"
+        );
+        let drawer = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) if text.galley.job.text == "topic" => {
+                    Some(text.pos.x)
+                }
+                _ => None,
+            })
+            .ok_or("the drawer lists the branches")?;
+        assert!(drawer < REFS_DRAWER_WIDTH, "the drawer is at the left");
+        let _ = run(
+            &mut app,
+            vec![key(egui::Key::Escape, egui::Modifiers::NONE)],
+        );
+        assert!(!app.refs_drawer, "Esc closes the drawer");
+        // Enter shows the chosen ref in History and closes the drawer.
+        let _ = run(
+            &mut app,
+            vec![key(egui::Key::Backslash, egui::Modifiers::COMMAND)],
+        );
+        let _ = run(&mut app, vec![]);
+        let _ = run(
+            &mut app,
+            vec![key(egui::Key::ArrowDown, egui::Modifiers::NONE)],
+        );
+        let _ = run(&mut app, vec![key(egui::Key::Enter, egui::Modifiers::NONE)]);
+        assert!(!app.refs_drawer);
+        assert_eq!(app.state.selected, Some(format!("{:040x}", 7)));
+        Ok(())
+    }
+
+    #[test]
+    fn narrow_details_review_opens_on_the_chosen_file() -> Result<(), String> {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        let id = format!("{:040x}", 50);
+        let file = |path: &str| commit_stats::FileStat {
+            path: path.into(),
+            kind: gg_engine::review::ChangeKind::Modified,
+            lines: Some((1, 1)),
+        };
+        app.commit_stats = Some((
+            id.clone(),
+            commit_stats::Stats {
+                files: 2,
+                added: 2,
+                deleted: 2,
+                complete: true,
+                rows: vec![file("a.rs"), file("b.rs")],
+            },
+        ));
+        let run = |app: &mut Browser, events| {
+            crate::tests::run_ui(&ctx, frame_input(720.0, 480.0, events), |ctx| {
+                app.draw_ui(ctx)
+            })
+        };
+        let _ = run(&mut app, vec![]);
+        let _ = run(&mut app, vec![key(egui::Key::Space, egui::Modifiers::NONE)]);
+        assert!(app.narrow_details);
+        let output = run(&mut app, vec![]);
+        let texts = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) => Some(text.galley.job.text.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(texts.iter().any(|text| text == "FILES 2"), "{texts:?}");
+        let _ = run(
+            &mut app,
+            vec![key(egui::Key::ArrowDown, egui::Modifiers::NONE)],
+        );
+        assert_eq!(app.details_file, 1, "Down chooses the next file");
+        let _ = run(&mut app, vec![key(egui::Key::Enter, egui::Modifiers::NONE)]);
+        let review = app.review.as_ref().ok_or("Enter opens Review")?;
+        assert_eq!(review.pending_path(), Some("b.rs"), "on the chosen file");
+        assert!(matches!(
+            review.return_location(),
+            Some(return_location::ReturnLocation::Details(_))
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn narrow_history_drops_author_and_merges_in_sync_pills() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        let id = format!("{:040x}", 0);
+        app.state.selected = Some(id.clone());
+        app.state.reconcile_selection();
+        app.state.refs.items = vec![
+            gg_engine::refs::RefItem {
+                name: "main".into(),
+                full_name: "refs/heads/main".into(),
+                kind: gg_engine::refs::RefKind::Branch,
+                commit: id.clone(),
+            },
+            gg_engine::refs::RefItem {
+                name: "origin/main".into(),
+                full_name: "refs/remotes/origin/main".into(),
+                kind: gg_engine::refs::RefKind::Remote,
+                commit: id,
+            },
+        ];
+        app.state.refs.tracking = vec![gg_engine::refs::Tracking {
+            branch: "main".into(),
+            full_name: "refs/heads/main".into(),
+            upstream: "origin/main".into(),
+            upstream_full_name: "refs/remotes/origin/main".into(),
+            remote: "origin".into(),
+            remote_branch: "main".into(),
+            ahead: Some(0),
+            behind: Some(0),
+        }];
+        for (width, narrow) in [(720.0, true), (1120.0, false)] {
+            let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let output = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let texts = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) => Some(text.galley.job.text.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            let has = |label: &str| texts.iter().any(|text| text == label);
+            assert_eq!(has("Author"), !narrow, "Author column at {width}");
+            assert!(has("Date") && has("Hash"), "Hash and Date stay at {width}");
+            assert_eq!(has("main ⇄ origin"), narrow, "one pill at {width}");
+            assert_eq!(has("origin/main"), !narrow, "two pills at {width}");
+            assert_eq!(has("Details"), narrow, "Details button at {width}");
+        }
+    }
+
+    #[test]
     fn compact_layout_preserves_table_width_and_disjoint_panes() {
         for (width, height) in [(720.0, 480.0), (1120.0, 740.0), (1600.0, 900.0)] {
             for scale in [1.0, 2.0] {
@@ -16844,12 +17309,9 @@ mod tests {
                     app.history_rect.top() <= MENU_BAR_HEIGHT + 34.0 + OPERATION_AREA_HEIGHT + 50.0
                 );
                 assert!(app.history_rect.bottom() <= height - 20.0);
-                if width >= 1040.0 {
-                    assert!(!app.history_rect.intersects(app.details_rect));
-                    assert!(app.details_rect.right() <= width);
-                } else {
-                    assert_eq!(app.details_rect, egui::Rect::NOTHING);
-                }
+                // The inspector sits under the list at every width.
+                assert!(!app.history_rect.intersects(app.details_rect));
+                assert!(app.details_rect.right() <= width);
                 for label in ["Repository", "View", "Changes"] {
                     let shape = output.shapes.iter().find_map(|shape| match &shape.shape {
                         egui::epaint::Shape::Text(text) if text.galley.job.text == label => {

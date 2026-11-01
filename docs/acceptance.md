@@ -318,8 +318,8 @@ Covered by (interaction): `the_switcher_runs_the_row_under_the_keyboard_cursor` 
 ### FRM-42 Branch button at narrow width
 Fixture: `fx-branchy`, 720 px
 Layer: interaction
-- Then the branch button shrinks to an icon inside the window and still opens the same switcher
-Covered by (interaction): `the_branch_button_opens_the_switcher_at_both_widths` (apps/git-good/src/main.rs)
+- Then below 1040 px the branch button is an icon inside the window; its tooltip and the switcher's current row name the branch with its ↑↓ counts, and it opens the same switcher; every toolbar button (sidebar, Changes | History, Fetch Pull Push, New branch, Stash and Stashes, Interactive rebase from here, Recovery, branch, search) fits at 720 px
+Covered by (interaction): `the_branch_button_opens_the_switcher_at_both_widths`, `window_toolbar_holds_navigation_and_sync_in_place_across_views_and_widths` (apps/git-good/src/main.rs)
 
 ### Search
 
@@ -455,6 +455,14 @@ Layer: interaction
 - Then the footer is tinted amber: `Can’t switch to feature/rebase-ui: 3 changed files would be overwritten` with the primary **Stash and switch** (**Retry switch** when stashing is not the fix) and ×, which clears the retained intent
 Covered by (interaction): `a_blocked_switch_offers_stash_and_switch_in_amber`, `created_branch_is_reported_when_the_switch_is_blocked` (apps/git-good/src/main.rs)
 
+### FRM-76 Refs drawer below the docked sidebar width
+Fixture: `fx-branchy`, narrow
+Layer: interaction
+- Given History at 720 px
+- When the user clicks the toolbar's sidebar toggle (or presses `Ctrl+\`)
+- Then the refs sidebar's content opens as a 248 px drawer at the left over the dimmed list, with focus in **Filter refs**; Up/Down move an outline over the branches (any matching ref while filtering); `Enter` selects that ref's commit in History and closes the drawer; `Esc`, `Ctrl+\`, or a click outside closes it; right-click rows keep the branch actions
+Covered by (interaction): `narrow_refs_drawer_opens_over_the_list_jumps_and_closes` (apps/git-good/src/main.rs)
+
 ### Automatic refresh
 
 ### FRM-60 No Refresh command; Ctrl+R is Reword
@@ -500,7 +508,7 @@ Layer: interaction
 - Then History rows remain clickable and Up/Down still move selection beside them
 Covered by (Not automated)
 
-### FRM-76 Full-text windows are titled by their field
+### FRM-77 Full-text windows are titled by their field
 Fixture: `fx-linear` (Given: a commit whose subject is 212 characters)
 Layer: interaction
 - When the user clicks the "…" button at the end of the truncated subject in the commit inspector (a real button named *Show full commit subject*), then presses `Ctrl+C`, then `Esc`
@@ -848,13 +856,13 @@ Layer: interaction
 - Then rewrite entries (Reword…, Reopen for editing…, Fixup into…, Drop…) are disabled with a reason naming merge commits on hover
 Covered by (Not automated)
 
-### HIS-42 Narrow details overlay
+### HIS-42 Narrow commit details
 Fixture: `fx-linear`, narrow
 Layer: interaction
-- Given c20 selected
-- When Space (or Enter-less open of details)
-- Then details replace History (with **Commit actions**); Alt+A opens the details first then the popup; Escape/Left returns to History with c20 selected at the same pixel offset; Up/Down in details move through hidden history
-Covered by (interaction): `narrow_details_navigation_preserves_hidden_history_and_back_anchor`, `narrow_details_returns_to_the_same_selected_history_row`, `history_strip_leaves_the_narrow_details_overlay` (main.rs, interaction_tests.rs)
+- Given c20 selected; the inspector under the list shows **Details** `Space`, **Review** `Enter`, and **Actions** `Alt+A`
+- When Space (or **Details**)
+- Then the commit details replace the list (not a side pane): **‹ History** `Esc`, the subject, and newer/older buttons; Commit (copy button), Author with email, Date, Parent, Refs, Signature **Verify…**; the message; `FILES n` with `+x −y` and per-file counts; **Actions** `Alt+A` and the filled primary **Review** `Enter` at the bottom. `j`/`k` show the older/newer commit with the details still open; Up/Down choose a file without moving the history selection; `Enter`, **Review**, or a double click opens Review on the chosen file and Esc there returns to the details; Alt+A opens the details first then the popup; Escape/Left returns to History with c20 selected at the same pixel offset
+Covered by (interaction): `narrow_details_navigation_preserves_hidden_history_and_back_anchor`, `narrow_details_step_commits_with_j_and_k`, `narrow_details_returns_to_the_same_selected_history_row`, `history_strip_leaves_the_narrow_details_overlay` (interaction_tests.rs, main.rs); `narrow_details_review_opens_on_the_chosen_file`, `scoped_commit_actions_menu_lists_grouped_actions` (main.rs)
 
 ### HIS-43 Enter opens Review and Back restores place — see REV-02
 
@@ -1088,6 +1096,12 @@ Layer: product
 - When a terminal moves `old` to a new commit not in `main` (`git update-ref refs/heads/old <commit>`) and the user confirms
 - Then nothing is deleted; the list refreshes to `NOT IN THE CURRENT BRANCH` with that commit, the primary becomes `Delete old and 1 unmerged commit`, and the notice reads `The repository changed; review the updated list and confirm again.`; a second confirm deletes it
 Covered by (interaction, partial): `guard_confirms_only_what_the_dialog_showed` (apps/git-good/src/consequence.rs) (the shared re-read guard; the Delete branch dialog is not driven)
+
+### HIS-80 Narrow columns and one pill for an in-sync branch
+Fixture: `fx-remote-even`, narrow then 1120 px
+Layer: visual
+- Then at 720 px the History header reads `Commit · n`, `Hash`, `Date` (no Author), and below a 600 px list Date drops too, so subjects never truncate before them; `main` at the tip shows one pill `main ⇄ origin`; at 1120 px Author is back and the pills read `main` and `origin/main`
+Covered by (interaction): `narrow_history_drops_author_and_merges_in_sync_pills` (main.rs); `author_drops_first_then_date_below_600`, `a_branch_in_sync_with_its_upstream_shows_one_pill` (history_view.rs)
 
 ### HIS-78 Status hint at narrow width — see FRM-55
 
@@ -1439,10 +1453,10 @@ Covered by (interaction): `reading_mode_exposes_file_and_change_navigation_at_bo
 ### REV-51 Narrow layout: list then reader
 Fixture: `fx-linear`, narrow
 Layer: interaction
-- Given Review narrow showing only the file list
+- Given Review narrow showing the file list over MESSAGE (the commit body and `author · date`); the identity row reads **‹ History** `Esc`, the subject, the ID pill, and `vs parent <id>` (choosing HEAD there compares with HEAD)
 - When the user presses `Enter` on a file
-- Then a full-width reading view opens with `‹ Files`; `Esc` returns to the list with the same file selected and the list offset preserved
-Covered by (interaction): `enter_and_left_open_and_return_to_files_at_both_widths` (review_view.rs), `narrow_diff_back_preserves_file_selection_and_offset` (review_view.rs)
+- Then a full-width reading view opens whose one header row reads **‹ Files** `1/3`, the path (start elided), Diff | Full file, Inline | Side by side, ‹ ›, ⋯ (Blame and File history inside; `B` and `H` still work); there are no Prev/Next file buttons (`Alt+Up/Down` change files) and no endpoint text; `F`, **‹ Files**, or Left return to the list with the same file selected and the list offset preserved; `Esc` returns to History
+Covered by (interaction): `enter_and_left_open_and_return_to_files_at_both_widths`, `narrow_files_key_returns_to_the_list_and_escape_to_the_caller`, `reading_mode_exposes_file_and_change_navigation_at_both_widths` (review_view.rs)
 
 ### REV-52 Narrow reader folds tools
 Fixture: `fx-linear`, reader width < 760 px
@@ -1539,7 +1553,7 @@ Covered by (Not automated)
 ### REV-65 Narrow history
 Fixture: `fx-file-history`, narrow
 Layer: interaction
-- Then the version list sits in a seven-row pane above the full-width reader; `Esc` closes history first, then the reader, then Review
+- Then the version list sits in a seven-row pane above the full-width reader; `Esc` closes history first, then leaves Review (`F` returns to the file list)
 Covered by (interaction): `narrow_history_uses_the_reading_layout_and_escape_closes_it_first` (review_view.rs)
 
 ### REV-66 Failed history page keeps loaded versions
@@ -1596,9 +1610,16 @@ Layer: product
 - `git good show <c> --file big.log --export after --output out.log` → JSON receipt, exact bytes, existing destination refused; `git good blame src/lib.rs --lines 20,30` → bounded attributed JSON; bad range → error
 Covered by (end-to-end): `export_is_exact_beyond_diff_budget_and_preserves_existing_destinations`, `blame_cli_reports_attributed_ranges_and_errors` (tests/cli.rs)
 
+### REV-74 Inline by default below 1040 px
+Fixture: `fx-linear` with Preferences › Diff › Default layout **Side by side**
+Layer: interaction
+- When a reader opens at 720 px
+- Then it shows **Inline**; choosing **Side by side** there switches it for the session without changing the preference; at 1120 px the reader follows the preference
+Covered by (interaction): `narrow_windows_start_inline_whatever_the_preference`, `side_by_side_shows_before_and_after_columns` (diff_view.rs)
+
 ## Local Changes
 
-Sources: docs/architecture.md "Working status · M2" (Working diffs, File staging, Hunk/line/drop actions, Dropping working changes, Committing, Whole-file unstaging), "Amend", "Signing", rebase-stop commit labels, Preferences › Commit, Automatic refresh, empty states, destructive confirmations; docs/final-design.md Changes menu; docs/user-flows.md F03–F04; docs/cli.md "Stage and commit". The wide layout starts at 900 px of workspace width.
+Sources: docs/architecture.md "Working status · M2" (Working diffs, File staging, Hunk/line/drop actions, Dropping working changes, Committing, Whole-file unstaging), "Amend", "Signing", rebase-stop commit labels, Preferences › Commit, Automatic refresh, empty states, destructive confirmations; docs/final-design.md Changes menu; docs/user-flows.md F03–F04; docs/cli.md "Stage and commit". The wide layout starts at 1040 px of workspace width.
 
 Expected `fx-dirty` rows (renames appear as deletion + addition, untracked folders as one row per file):
 - **Unstaged**: `~ a.txt`, `~ c.txt`, `− d.txt`, `~ run.sh`, `~ logo.png`, `~ crlf.txt`, `~ ws.txt`, `? new.txt`, `? notes/<file1>`, `? notes/<file2>` → header `UNSTAGED 10`.
@@ -1994,9 +2015,10 @@ Covered by (interaction): `commit_draft_survives_history_navigation`, `commit_dr
 ### CHG-56 Commit editor expands and collapses
 Fixture: `fx-dirty`
 Layer: interaction
-- When the user clicks the expand control (*Expand the commit message editor*)
+- When the user clicks the expand control (*Expand the commit message editor*) at 1440 px
 - Then the editor grows; collapsing restores the file lists' slots
-Covered by (interaction): `commit_editor_expands_and_collapses` (status_view.rs)
+- At 720 px there is no Expand: dragging the commit form's top edge up makes the message box taller (up to 60% of the height)
+Covered by (interaction): `commit_editor_expands_and_collapses`, `narrow_commit_form_leaves_sign_to_preferences_and_resizes_its_box` (status_view.rs)
 
 ### CHG-57 Amend HEAD: banner, base, message, Staged shows HEAD parent → index
 Fixture: `fx-dirty`
@@ -2039,7 +2061,8 @@ Fixture: `fx-signed` with `commit.gpgsign=true`; `fx-dirty` (no key)
 Layer: product
 - Then **Sign** next to Amend starts checked in `fx-signed`; in `fx-dirty` it is disabled with *Signing key or tool is unavailable.*
 - When committing in `fx-signed` with Sign checked, status reads **Committed <id> (signed) · N files**
-Covered by (interaction): `the_sign_checkbox_starts_from_the_commit_preference` (status_view.rs)
+- At 720 px the commit form has no Sign checkbox; commits sign as Preferences › Commit › Sign commits says
+Covered by (interaction): `the_sign_checkbox_starts_from_the_commit_preference`, `narrow_commit_form_leaves_sign_to_preferences_and_resizes_its_box` (status_view.rs)
 
 ### CHG-63 Signing failure has no unsigned fallback — see SIG-09
 
@@ -2072,8 +2095,8 @@ Covered by (Not automated)
 ### CHG-68 Narrow layout
 Fixture: `fx-dirty` (720×480)
 Layer: interaction
-- Then bounded, collapsible `UNSTAGED`/`STAGED` groups (*Collapse this group* / *Show this group*) sit above the reader; the commit form below it fits in the window; status hints shorten; the reader folds Blame/File history into ⋯
-Covered by (interaction): `wide_and_narrow_geometry_place_both_groups_above_or_beside_the_reader`, `commit_panel_is_visible_at_both_widths` (status_view.rs); `status_hints_shorten_at_narrow_widths` (main.rs)
+- Then `UNSTAGED`/`STAGED` groups sit above the reader, each folding with ▾/▸ in its header (*Collapse this group* / *Show this group*); an empty group starts folded once the scan finishes; the open groups show at most six rows together (fewer in a short window), so the reader keeps the rest (about 430 px at 720×740); the reader header stays one row; the commit form stays at the bottom; the footer carries both counts; status hints shorten; the reader folds Blame/File history into ⋯
+Covered by (interaction): `wide_and_narrow_geometry_place_both_groups_above_or_beside_the_reader`, `commit_panel_is_visible_at_both_widths`, `narrow_groups_fold_with_carets_and_empty_ones_start_folded`, `narrow_groups_share_six_rows_and_folded_groups_take_none`, `empty_groups_say_so_after_the_scan_and_stack` (status_view.rs); `status_hints_shorten_at_narrow_widths` (main.rs)
 
 ### CHG-69 Reopened-stop commit button labels
 Fixture: `fx-rewrite-reopened`

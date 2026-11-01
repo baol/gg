@@ -189,6 +189,14 @@ pub struct DiffView {
     /// History stays pressed while the version list is open.
     history_open: bool,
     history_request: bool,
+    /// Narrow review: `‹ Files 1/3` starts the header row and the endpoints
+    /// move to the identity row's `vs` picker; the label is the
+    /// file position.
+    files_button: Option<String>,
+    files_request: bool,
+    /// Narrow windows: the change position lives in the ‹ › tooltips and the
+    /// path may shrink to 120 px, so the header stays one row.
+    compact_header: bool,
     offset: f32,
     reset: bool,
     mode: Mode,
@@ -282,6 +290,9 @@ impl Default for DiffView {
             history_button: None,
             history_open: false,
             history_request: false,
+            files_button: None,
+            files_request: false,
+            compact_header: false,
             offset: 0.0,
             reset: false,
             mode: Mode::Diff,
@@ -447,6 +458,18 @@ impl DiffView {
     pub fn set_history_button(&mut self, button: Option<bool>, open: bool) {
         self.history_button = button;
         self.history_open = open;
+    }
+
+    /// Narrow review: start the header row with `‹ Files <position>`
+    /// (`Some`), and keep the header to one row (`compact`).
+    pub fn set_narrow_header(&mut self, files: Option<String>, compact: bool) {
+        self.files_button = files;
+        self.compact_header = compact;
+    }
+
+    /// Take a click on `‹ Files`.
+    pub fn take_files_request(&mut self) -> bool {
+        std::mem::take(&mut self.files_request)
     }
 
     /// Take a click on the mode row's History button.
@@ -1858,7 +1881,10 @@ impl DiffView {
             .displayed_working
             .clone()
             .or_else(|| self.working.clone());
-        let endpoints = if let Some(working) = &displayed_working {
+        // The narrow review moves the endpoints into its `vs` picker.
+        let endpoints = if self.files_button.is_some() {
+            None
+        } else if let Some(working) = &displayed_working {
             Some(self.working_route(working))
         } else if self.displayed.is_none() || self.displayed_generation == self.generation {
             match (&self.before_endpoint, &self.after_endpoint) {
@@ -1883,14 +1909,25 @@ impl DiffView {
                 .min(rect.width() * 0.6);
             let path_rect =
                 egui::Rect::from_min_size(rect.min, egui::vec2(path_width + 1.0, rect.height()));
-            bounded_text::paint_named(
-                ui,
-                path_rect,
-                &change.path,
-                path_font,
-                ui.visuals().text_color(),
-                "Path",
-            );
+            if self.compact_header {
+                // A long path loses its start, keeping the file name.
+                bounded_text::paint_path(
+                    ui,
+                    path_rect,
+                    &change.path,
+                    path_font,
+                    ui.visuals().text_color(),
+                );
+            } else {
+                bounded_text::paint_named(
+                    ui,
+                    path_rect,
+                    &change.path,
+                    path_font,
+                    ui.visuals().text_color(),
+                    "Path",
+                );
+            }
             if let Some(endpoints) = &endpoints {
                 let endpoint_rect = egui::Rect::from_min_max(
                     egui::pos2(path_rect.right() + 12.0, rect.top()),
@@ -2244,7 +2281,7 @@ impl DiffView {
             }
             self.mode_seeded = true;
         }
-        self.follow_layout(crate::settings::diff_layout(&ctx));
+        self.follow_layout(crate::settings::reader_layout(&ctx));
         self.follow_options(&ctx);
         self.poll_blame();
         self.sync_blame(&ctx);
@@ -2299,9 +2336,10 @@ impl DiffView {
         // mode controls; narrow readers wrap the controls to a second line.
         self.fold_tools = ui.available_width() < FOLD_TOOLS_BELOW;
         // When the controls leave the path less than 220 px, the path takes
-        // the first line and the controls wrap below it.
+        // the first line and the controls wrap below it. The compact narrow
+        // header keeps one row down to a 120 px path (narrow proposal).
         let spare = ui.available_width() - self.header_controls - 8.0;
-        let fits = spare >= 220.0;
+        let fits = spare >= if self.compact_header { 120.0 } else { 220.0 };
         let path_width = if fits {
             spare.min(560.0)
         } else {
@@ -2311,6 +2349,14 @@ impl DiffView {
         // the layout slot, and Diff | Full file, Blame and ‹ › are hidden.
         let binary = self.preview.is_some();
         let header = ui.horizontal_wrapped(|ui| {
+            if let Some(position) = &self.files_button
+                && ui
+                    .button(("‹ Files", egui::RichText::new(position).small().weak()))
+                    .on_hover_text("Back to the file list · F")
+                    .clicked()
+            {
+                self.files_request = true;
+            }
             self.draw_header(ui, &change, path_width);
             if binary {
                 ui.separator();
@@ -2439,7 +2485,7 @@ impl DiffView {
                         {
                             ui.weak("No changes");
                         }
-                    } else if total > 1 {
+                    } else if total > 1 && !self.compact_header {
                         let label = if self.change_number().is_some() {
                             format!("Change {index} of {total}")
                         } else {
@@ -2499,7 +2545,7 @@ impl DiffView {
             match action {
                 Action::Mode(mode) => self.set_mode(mode, &ctx),
                 Action::Layout(layout) => {
-                    crate::settings::set_diff_layout(&ctx, layout);
+                    crate::settings::choose_reader_layout(&ctx, layout);
                     self.follow_layout(layout);
                 }
                 Action::Side(side) => self.set_side(side, &ctx),
@@ -5149,10 +5195,45 @@ mod tests {
     }
 
     #[test]
+    fn narrow_windows_start_inline_whatever_the_preference() {
+        for (width, expected) in [
+            (720.0, DiffLayout::Inline),
+            (1120.0, DiffLayout::SideBySide),
+        ] {
+            let ctx = egui::Context::default();
+            crate::settings::set_diff_layout(&ctx, DiffLayout::SideBySide);
+            let mut view = DiffView {
+                change: Some(file("a", true, true)),
+                generation: 1,
+                ..Default::default()
+            };
+            view.accept(diff_update(1, split_fixture()), None);
+            view.change = None;
+            let _ = crate::tests::run_ui(
+                &ctx,
+                crate::tests::frame_input(width, 480.0, vec![]),
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| view.draw_reading(ui));
+                },
+            );
+            assert_eq!(view.layout, expected, "at {width}");
+            // Choosing Side by side in the narrow window keeps the preference.
+            if width < 1040.0 {
+                crate::settings::choose_reader_layout(&ctx, DiffLayout::SideBySide);
+                assert_eq!(crate::settings::reader_layout(&ctx), DiffLayout::SideBySide);
+                crate::settings::choose_reader_layout(&ctx, DiffLayout::Inline);
+                assert_eq!(crate::settings::diff_layout(&ctx), DiffLayout::SideBySide);
+            }
+        }
+    }
+
+    #[test]
     fn side_by_side_shows_before_and_after_columns() -> Result<(), Box<dyn std::error::Error>> {
         for width in [720.0, 1120.0] {
             let ctx = egui::Context::default();
             crate::settings::set_diff_layout(&ctx, crate::settings::DiffLayout::SideBySide);
+            // Narrow windows start Inline; Side by side stays available.
+            crate::settings::set_narrow_layout(&ctx, crate::settings::DiffLayout::SideBySide);
             let mut view = DiffView {
                 change: Some(file("a", true, true)),
                 generation: 1,

@@ -28,6 +28,16 @@ The old navigation strip is merged into the toolbar; no other row repeats the ta
 
 Menus are egui's in-window menu bar on every platform. Every menu and dropdown (menu bar menus, submenus, the branch switcher, the rebase action chip, Commit actions, and every choice list) draws the same 24 px rows: a 14 px check column, the label, then the shortcut. The chosen or active item shows a checkmark in that column; no item gets a selected fill. Rows have no frame until hovered. gg does not create native OS menus (the macOS menu bar and KDE's global menu stay empty) and uses no Tauri or Tauri-ecosystem crates such as `muda`.
 
+## Narrow windows
+
+Accepted 2026-11-01 (canvas **Proposals** page, *Narrow 720 px · proposal*). 720 px is the minimum supported width; 1040 px starts the wide layouts.
+
+- **Toolbar**: every button stays at 720 px; below 1040 px the branch button is an icon (branch and ↑↓ in its tooltip and switcher) and search is a `Ctrl+K` icon when the field does not fit.
+- **History**: the Author column drops first, then Date below a 600 px list, so subjects never truncate before them; a branch in sync with its upstream shows one pill (`main ⇄ origin`). The inspector stays under the list with **Details** (`Space`), which replaces the list with the commit details: **‹ History** (`Esc`), j/k step through commits, a label grid, the message, and FILES (Enter opens Review on the chosen file); **Review** is the primary action.
+- **Refs**: below the docked sidebar's 1120 px the sidebar toggle (`Ctrl+\`) opens a 248 px drawer over the dimmed view, focus in its filter; Enter shows the ref in History and closes, Esc closes.
+- **Review**: the file list folds behind **‹ Files** `1/3` and the reader takes the full width; its header stays one row (endpoints in the identity row's `vs` picker, Blame and File history in ⋯, `B`/`H` still work); Inline is the default, Side by side stays available; Enter reads a file, `F` or ‹ Files returns, and the list's free space shows the commit message.
+- **Local Changes**: groups stay above the reader, fold with ▾/▸ (empty ones start folded), and show at most six rows together; the commit form stays at the bottom with a resizable message box; counts are in the footer; Sign lives in Preferences › Commit.
+
 ## Command placement
 
 Every command has exactly one menu home. The toolbar, shortcuts, context menus, and search point back to it and share its readiness reason and confirmation.

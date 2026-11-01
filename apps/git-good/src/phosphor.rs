@@ -29,6 +29,8 @@ pub const ARROW_SQUARE_OUT: &str = "\u{E5DE}";
 pub const CARET_LEFT: &str = "\u{E138}";
 pub const CARET_RIGHT: &str = "\u{E13A}";
 pub const DOTS_THREE: &str = "\u{E1FE}";
+pub const CARET_UP: &str = "\u{E13C}";
+pub const COPY: &str = "\u{E1CA}";
 
 /// Glyphs used by the interactive rebase dialog.
 #[cfg(test)]
@@ -98,7 +100,7 @@ mod tests {
         install(&ctx);
         let font = egui::FontId::new(10.0, FontFamily::Name(FAMILY.into()));
         let _ = crate::tests::run_ui(&ctx, egui::RawInput::default(), |_ui| {});
-        for glyph in [ARROW_UP, ARROW_DOWN, CHECK]
+        for glyph in [ARROW_UP, ARROW_DOWN, CHECK, CARET_UP, COPY]
             .into_iter()
             .chain(TOOLBAR)
             .chain(REBASE)
