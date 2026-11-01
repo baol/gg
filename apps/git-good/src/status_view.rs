@@ -1417,11 +1417,17 @@ impl StatusView {
                         + self.stop_commits.len().min(4) as f32 * crate::density::row()
                         + 4.0
                 });
+                // Stacked, as in the Changes mockup: UNSTAGED takes the rows
+                // it has (at most 60%), STAGED follows right below it.
                 let lists = height - made.unwrap_or(0.0);
-                let each = ((lists - 6.0) / 2.0 - GROUP_HEADER - 2.0).max(40.0);
-                let (first_click, first_toggle) = self.draw_group(ui, 0, each, false);
+                let row = crate::density::row();
+                let body = (lists - 6.0 - 2.0 * GROUP_HEADER - 4.0).max(80.0);
+                let wanted = (self.lists[0].count.max(1) as f32) * row + 4.0;
+                let first = wanted.clamp(row + 4.0, (body * 0.6).max(row + 4.0));
+                let second = (body - first).max(40.0);
+                let (first_click, first_toggle) = self.draw_group(ui, 0, first, false);
                 ui.add_space(2.0);
-                let (second_click, second_toggle) = self.draw_group(ui, 1, each, false);
+                let (second_click, second_toggle) = self.draw_group(ui, 1, second, false);
                 if made.is_some() {
                     ui.add_space(4.0);
                     ui.label(
@@ -4548,7 +4554,7 @@ mod tests {
     }
 
     #[test]
-    fn empty_groups_say_so_after_the_scan_and_keep_their_slot() {
+    fn empty_groups_say_so_after_the_scan_and_stack() {
         for width in [720.0, 1120.0] {
             let ctx = egui::Context::default();
             let mut busy = fixture(3, 1);
@@ -4581,11 +4587,17 @@ mod tests {
                 text.contains(&"No unstaged changes.".to_string()),
                 "{text:?}"
             );
-            assert_eq!(
-                header_y(&output, "STAGED "),
-                staged_header,
-                "the Staged group stays put when Unstaged empties"
-            );
+            // Wide layouts stack the lists; narrow ones keep collapsible
+            // groups of their own.
+            let staged = header_y(&output, "STAGED ");
+            if width >= 1120.0 {
+                assert!(
+                    staged < staged_header,
+                    "stacked: the Staged group follows the shorter Unstaged list"
+                );
+            } else {
+                assert_eq!(staged, staged_header);
+            }
         }
     }
 

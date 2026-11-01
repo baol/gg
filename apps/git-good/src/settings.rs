@@ -483,7 +483,8 @@ impl Default for Prefs {
             backup_days: 0,
             confirm_destructive: true,
             avatar_sources: vec![AvatarSource::Github, AvatarSource::Gravatar],
-            history_avatars: true,
+            // Off by default, as in the History mockup (plain author names).
+            history_avatars: false,
             history_tags: true,
             relative_dates: false,
             diff_context: 3,
@@ -677,7 +678,7 @@ mod tests {
         prefs.sign_tags = true;
         prefs.run_hooks = false;
         prefs.subject_guide = 50;
-        prefs.history_avatars = false;
+        prefs.history_avatars = true;
         prefs.avatar_sources = vec![AvatarSource::Gitlab, AvatarSource::Libravatar];
         prefs.pull_strategy = PullStrategy::FastForward;
         prefs.clone_named_after_repo = false;

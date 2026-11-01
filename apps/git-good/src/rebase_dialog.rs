@@ -15,7 +15,8 @@ use eframe::egui;
 use gg_engine::rewrite::{Action, RangeCommit, Step};
 use std::path::PathBuf;
 
-const ROW: f32 = 28.0;
+/// Two-line plan rows, as in the rebase mockup: subject, then consequence.
+const ROW: f32 = 40.0;
 /// Height reserved for the selected commit's message or reword field.
 const MESSAGE_SLOT: f32 = 86.0;
 
@@ -222,47 +223,58 @@ impl Dialog {
         }
         self.selected = self.selected.min(self.plan.rows.len() - 1);
         let mut outcome = self.keys(ctx, blocked.is_some());
+        // Below the menu bar and toolbar, as in the rebase mockup: the
+        // frame stays visible above the pop-up.
         let screen = ctx.content_rect();
+        let top = screen.top() + 26.0 + 34.0 + 12.0;
         let size = egui::vec2(
             (screen.width() - 48.0).clamp(560.0, 1400.0),
-            (screen.height() - 64.0).clamp(420.0, 1000.0),
+            (screen.bottom() - top - 28.0).clamp(420.0, 1000.0),
         );
-        egui::Modal::new(egui::Id::unique("interactive-rebase")).show(ctx, |ui| {
-            ui.set_min_size(size);
-            ui.set_max_size(size);
-            if let Some(chosen) = self.header(ui, blocked) {
-                outcome = Some(chosen);
-            }
-            ui.separator();
-            let footer = 70.0;
-            let body = egui::Rect::from_min_size(
-                ui.cursor().min,
-                egui::vec2(size.x, (ui.available_height() - footer).max(160.0)),
-            );
-            let plan_width = (size.x * 0.48).clamp(320.0, 620.0);
-            let left =
-                egui::Rect::from_min_max(body.min, egui::pos2(body.min.x + plan_width, body.max.y));
-            let right =
-                egui::Rect::from_min_max(egui::pos2(left.max.x + 12.0, body.min.y), body.max);
-            ui.scope_builder(egui::UiBuilder::new().max_rect(left), |ui| {
-                ui.set_clip_rect(left);
-                self.draw_plan(ui);
-            });
-            ui.painter().vline(
-                left.max.x + 6.0,
-                body.y_range(),
-                ui.visuals().widgets.noninteractive.bg_stroke,
-            );
-            ui.scope_builder(egui::UiBuilder::new().max_rect(right), |ui| {
-                ui.set_clip_rect(right);
-                if let Some(chosen) = self.draw_selected(ui) {
+        let id = egui::Id::unique("interactive-rebase");
+        egui::Modal::new(id)
+            .area(egui::Modal::default_area(id).anchor(
+                egui::Align2::CENTER_TOP,
+                egui::vec2(0.0, top - screen.top()),
+            ))
+            .show(ctx, |ui| {
+                ui.set_min_size(size);
+                ui.set_max_size(size);
+                if let Some(chosen) = self.header(ui, blocked) {
                     outcome = Some(chosen);
                 }
+                ui.separator();
+                let footer = 70.0;
+                let body = egui::Rect::from_min_size(
+                    ui.cursor().min,
+                    egui::vec2(size.x, (ui.available_height() - footer).max(160.0)),
+                );
+                let plan_width = (size.x * 0.48).clamp(320.0, 620.0);
+                let left = egui::Rect::from_min_max(
+                    body.min,
+                    egui::pos2(body.min.x + plan_width, body.max.y),
+                );
+                let right =
+                    egui::Rect::from_min_max(egui::pos2(left.max.x + 12.0, body.min.y), body.max);
+                ui.scope_builder(egui::UiBuilder::new().max_rect(left), |ui| {
+                    ui.set_clip_rect(left);
+                    self.draw_plan(ui);
+                });
+                ui.painter().vline(
+                    left.max.x + 6.0,
+                    body.y_range(),
+                    ui.visuals().widgets.noninteractive.bg_stroke,
+                );
+                ui.scope_builder(egui::UiBuilder::new().max_rect(right), |ui| {
+                    ui.set_clip_rect(right);
+                    if let Some(chosen) = self.draw_selected(ui) {
+                        outcome = Some(chosen);
+                    }
+                });
+                ui.allocate_rect(body, egui::Sense::hover());
+                ui.separator();
+                self.footer(ui);
             });
-            ui.allocate_rect(body, egui::Sense::hover());
-            ui.separator();
-            self.footer(ui);
-        });
         outcome
     }
 
@@ -358,6 +370,13 @@ impl Dialog {
                     if index == self.selected {
                         ui.painter()
                             .rect_filled(rect, 0.0, crate::colors::selection(ui.visuals()));
+                    } else if self.plan.rows[index].action == Action::Drop {
+                        // Dropped rows keep a faint red ground, as in the mockup.
+                        ui.painter().rect_filled(
+                            rect,
+                            0.0,
+                            ui.visuals().error_fg_color.gamma_multiply(0.08),
+                        );
                     }
                     if response.clicked() {
                         self.selected = index;
@@ -473,36 +492,36 @@ impl Dialog {
                 .frame_when_inactive(false)
                 .min_size(egui::vec2(18.0, 18.0))
         };
-        if ui
-            .add_enabled(index > 0, small(phosphor::ARROW_UP))
-            .on_hover_text(format!("Move up · Alt+{}", phosphor::ARROW_UP))
-            .clicked()
-        {
-            moved = Some(true);
-        }
-        if ui
-            .add_enabled(index + 1 < count, small(phosphor::ARROW_DOWN))
-            .on_hover_text(format!("Move down · Alt+{}", phosphor::ARROW_DOWN))
-            .clicked()
-        {
-            moved = Some(false);
-        }
+        // Up and down stacked, as in the mockup.
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            if ui
+                .add_enabled(index > 0, small(phosphor::ARROW_UP))
+                .on_hover_text(format!("Move up · Alt+{}", phosphor::ARROW_UP))
+                .clicked()
+            {
+                moved = Some(true);
+            }
+            if ui
+                .add_enabled(index + 1 < count, small(phosphor::ARROW_DOWN))
+                .on_hover_text(format!("Move down · Alt+{}", phosphor::ARROW_DOWN))
+                .clicked()
+            {
+                moved = Some(false);
+            }
+        });
         let row = &self.plan.rows[index];
         let action = row.action;
         // Combined rows sit 12 px in, under the commit they join (mockup).
         if matches!(action, Action::Squash | Action::Fixup) {
             ui.add_space(12.0);
         }
-        ui.label(
-            egui::RichText::new(rebase_plan::short(&row.commit.id))
-                .monospace()
-                .weak(),
-        )
-        .on_hover_text(if row.refs.is_empty() {
+        let short = rebase_plan::short(&row.commit.id).to_string();
+        let hover = if row.refs.is_empty() {
             row.commit.id.clone()
         } else {
             format!("{} · {}", row.commit.id, row.refs.join(", "))
-        });
+        };
         let badge = self.plan.badge(index);
         let subject = row.commit.subject.clone();
         let refs = row.refs.clone();
@@ -557,34 +576,70 @@ impl Dialog {
                         }
                     }
                 });
-            if let Some(badge) = &badge {
-                let color = match action {
-                    Action::Drop => ui.visuals().error_fg_color,
-                    Action::Edit => ui.visuals().warn_fg_color,
-                    _ => ui.visuals().weak_text_color(),
+            // Two lines: hash, subject, and refs; then the consequence.
+            ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                ui.spacing_mut().item_spacing.y = 1.0;
+                let (line, color) = match &badge {
+                    Some(badge) => (
+                        badge.clone(),
+                        match action {
+                            Action::Drop => ui.visuals().error_fg_color,
+                            Action::Edit => egui::Color32::from_rgb(200, 192, 245),
+                            Action::Squash | Action::Fixup => egui::Color32::from_rgb(240, 195, 90),
+                            _ => ui.visuals().weak_text_color(),
+                        },
+                    ),
+                    None if action == Action::Reword => {
+                        ("reworded".to_string(), ui.visuals().hyperlink_color)
+                    }
+                    None => (String::new(), ui.visuals().weak_text_color()),
                 };
-                ui.add(
-                    egui::Label::new(egui::RichText::new(badge).small().color(color)).truncate(),
-                );
-            }
-            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                // Pills only where they fit; the hash hover names the refs too.
-                let pills = ui.available_width() > 220.0;
-                for name in refs.iter().filter(|_| pills) {
-                    ui.label(
-                        egui::RichText::new(name)
-                            .small()
-                            .background_color(ui.visuals().faint_bg_color),
+                // Centered on the chip: one line when there is no consequence.
+                let height = if line.is_empty() { 16.0 } else { 31.0 };
+                ui.add_space(((ui.available_height() - height) / 2.0).max(0.0));
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new(&short).monospace().weak())
+                        .on_hover_text(&hover);
+                    let mut text = egui::RichText::new(&subject);
+                    text = match action {
+                        Action::Drop => text.strikethrough().weak(),
+                        Action::Squash | Action::Fixup => text.weak(),
+                        _ => text,
+                    };
+                    // Pills only where they fit; the hash hover names the refs too.
+                    let pills = ui.available_width() > 320.0;
+                    // Room for the pills first, so a long subject truncates
+                    // before them instead of running under the chip.
+                    let reserved: f32 = if pills {
+                        refs.iter()
+                            .map(|name| name.chars().count() as f32 * 6.0 + 16.0)
+                            .sum()
+                    } else {
+                        0.0
+                    };
+                    let room = (ui.available_width() - reserved).max(40.0);
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(room, 16.0),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            ui.add(egui::Label::new(text).truncate())
+                                .on_hover_text(&subject);
+                        },
+                    );
+                    for name in refs.iter().filter(|_| pills) {
+                        ui.label(
+                            egui::RichText::new(format!(" {name} "))
+                                .small()
+                                .color(egui::Color32::from_rgb(156, 202, 245))
+                                .background_color(egui::Color32::from_rgb(29, 58, 87)),
+                        );
+                    }
+                });
+                if !line.is_empty() {
+                    ui.add(
+                        egui::Label::new(egui::RichText::new(line).small().color(color)).truncate(),
                     );
                 }
-                let mut text = egui::RichText::new(&subject);
-                text = match action {
-                    Action::Drop => text.strikethrough().weak(),
-                    Action::Squash | Action::Fixup => text.weak(),
-                    _ => text,
-                };
-                ui.add(egui::Label::new(text).truncate())
-                    .on_hover_text(&subject);
             });
         });
         (chosen.is_some() || moved.is_some()).then_some((chosen, moved))

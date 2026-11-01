@@ -161,7 +161,8 @@ fn paint_refs_and_subject(
     for item in refs.iter().take(max_labels) {
         let (background, foreground) = ref_label_colors(ui.visuals(), item.kind, selected);
         let galley = painter.layout_no_wrap(item.name.clone(), font.clone(), foreground);
-        let width = galley.size().x + 18.0;
+        // Plain text pills, as in the History mockup: kind by color only.
+        let width = galley.size().x + 8.0;
         if x + width > inner.right() - 24.0 {
             break;
         }
@@ -169,18 +170,9 @@ fn paint_refs_and_subject(
             egui::pos2(x, inner.center().y - 7.5),
             egui::vec2(width, 15.0),
         );
-        painter.rect_filled(pill, 4.0, background);
-        crate::refs_view::paint_icon(
-            &painter,
-            egui::Rect::from_center_size(
-                egui::pos2(pill.left() + 7.0, pill.center().y),
-                egui::vec2(9.0, 9.0),
-            ),
-            item.kind,
-            foreground,
-        );
+        painter.rect_filled(pill, 3.0, background);
         painter.galley(
-            egui::pos2(pill.left() + 13.0, pill.center().y - galley.size().y / 2.0),
+            egui::pos2(pill.left() + 4.0, pill.center().y - galley.size().y / 2.0),
             galley,
             foreground,
         );
