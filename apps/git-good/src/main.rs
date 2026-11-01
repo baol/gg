@@ -435,8 +435,13 @@ struct StashSwitchDialog {
 
 struct PullRebase {
     path: PathBuf,
+    /// The local branch's full ref name.
+    branch: String,
     remote: String,
+    /// The upstream's full remote-tracking ref name.
     upstream: String,
+    /// The upstream's short name for messages, such as `origin/main`.
+    upstream_label: String,
 }
 
 struct ForcePushDialog {
@@ -1024,7 +1029,17 @@ struct RebaseDialog {
 }
 
 struct RewriteJob {
-    receiver: std::sync::mpsc::Receiver<Result<gg_engine::rewrite::Receipt, String>>,
+    /// The receipt with how the rewritten branch stands against its upstream.
+    #[allow(clippy::type_complexity)]
+    receiver: std::sync::mpsc::Receiver<
+        Result<
+            (
+                gg_engine::rewrite::Receipt,
+                Option<gg_engine::sync::UpstreamRelation>,
+            ),
+            String,
+        >,
+    >,
     restore_row: Option<usize>,
 }
 
@@ -1300,6 +1315,10 @@ enum RecoveryAction {
     PullRebase,
     /// Push the rewritten branch with force-with-lease.
     ForcePush,
+    /// Push a rewritten branch whose upstream is still an ancestor.
+    Push,
+    /// Fetch after a rejected push, to see the remote's new commits.
+    Fetch,
 }
 
 struct Outcome {
@@ -1325,6 +1344,36 @@ fn recovery_label(action: RecoveryAction) -> &'static str {
         RecoveryAction::StashAndSwitch => "Stash and switch…",
         RecoveryAction::PullRebase => "Pull",
         RecoveryAction::ForcePush => "Push with force-with-lease…",
+        RecoveryAction::Push => "Push",
+        RecoveryAction::Fetch => "Fetch",
+    }
+}
+
+/// The follow-up after a rewrite: the push the rewritten branch needs, from
+/// how it now stands against its upstream (local refs only).
+fn rewrite_follow_up(
+    conflicts: bool,
+    offer_force_lease: bool,
+    relation: Option<gg_engine::sync::UpstreamRelation>,
+) -> RecoveryAction {
+    use gg_engine::sync::UpstreamRelation;
+    match relation {
+        _ if conflicts => RecoveryAction::ResolveConflicts,
+        // Only unpublished commits changed: a plain push publishes them.
+        Some(UpstreamRelation::Ahead) => RecoveryAction::Push,
+        // Published commits were rewritten: replacing them needs a lease.
+        Some(UpstreamRelation::Diverged) if offer_force_lease => RecoveryAction::ForcePush,
+        _ => RecoveryAction::Backups,
+    }
+}
+
+/// The follow-up after a failed push: Fetch for a rejection, Retry push only
+/// when a retry can help.
+fn push_failure_follow_up(error: &str) -> Option<RecoveryAction> {
+    match gg_git::sync::push_failure(error) {
+        gg_engine::sync::PushFailure::Rejected => Some(RecoveryAction::Fetch),
+        gg_engine::sync::PushFailure::Transient => Some(RecoveryAction::RetryPush),
+        gg_engine::sync::PushFailure::Other => None,
     }
 }
 
@@ -1857,8 +1906,10 @@ impl Browser {
             .find(|tracking| tracking.full_name == full_name)?;
         Some(PullRebase {
             path,
+            branch: tracking.full_name.clone(),
             remote: tracking.remote.clone(),
             upstream: tracking.upstream_full_name.clone(),
+            upstream_label: tracking.upstream.clone(),
         })
     }
 
@@ -1884,11 +1935,22 @@ impl Browser {
             self.branch_error = Some("The current branch has no upstream to pull from.".into());
             return;
         };
-        let remote = target.remote.clone();
-        self.pull_rebase = Some(target);
-        self.start_fetch(ctx, Some(remote), self.prefs.fetch_prune);
-        if self.network.is_none() {
-            self.pull_rebase = None;
+        self.force_push_pending = false;
+        match network::Worker::pull(
+            ctx,
+            target.path.clone(),
+            target.remote.clone(),
+            target.branch.clone(),
+            self.prefs.fetch_prune,
+        ) {
+            Ok(worker) => {
+                self.pull_rebase = Some(target);
+                self.network = Some(worker);
+                self.network_progress = None;
+                self.network_error = None;
+                self.network_notice = None;
+            }
+            Err(error) => self.network_error = Some(error),
         }
     }
 
@@ -3030,6 +3092,11 @@ impl Browser {
             Ok(network::Outcome::Fetch(receipt)) => {
                 self.network_error = None;
                 self.network_notice = Some(format!("Fetched {}", receipt.remote));
+                self.load(ctx);
+            }
+            Ok(network::Outcome::Pull { fetch, relation }) => {
+                self.network_error = None;
+                self.network_notice = Some(format!("Fetched {}", fetch.remote));
                 let pull = self
                     .pull_rebase
                     .take()
@@ -3037,6 +3104,27 @@ impl Browser {
                 self.load(ctx);
                 if let Some(pull) = pull {
                     self.network_notice = None;
+                    let Some(relation) = relation else {
+                        self.set_outcome(
+                            OutcomeSeverity::Error,
+                            format!(
+                                "{} was not found on {}. Check the branch's upstream.",
+                                pull.upstream_label, pull.remote
+                            ),
+                            None,
+                            None,
+                        );
+                        return;
+                    };
+                    if !relation.has_incoming() {
+                        self.set_outcome(
+                            OutcomeSeverity::Info,
+                            format!("Already up to date with {}.", pull.upstream_label),
+                            None,
+                            None,
+                        );
+                        return;
+                    }
                     let started = match self.prefs.pull_strategy {
                         settings::PullStrategy::Rebase => {
                             self.start_rebase(ctx, &pull.upstream, false)
@@ -3116,12 +3204,19 @@ impl Browser {
                     };
                 let recovery = match operation {
                     Some(gg_engine::sync::Operation::Push) if !force_push => {
-                        Some(RecoveryAction::RetryPush)
+                        push_failure_follow_up(&error)
                     }
                     Some(gg_engine::sync::Operation::Fetch) => Some(RecoveryAction::RetryFetch),
                     _ => None,
                 };
-                self.set_outcome(OutcomeSeverity::Error, error.clone(), None, recovery);
+                // The first line is the status line; Git's output sits behind Details….
+                let (summary, details) = match error.split_once('\n') {
+                    Some((summary, details)) if !details.trim().is_empty() => {
+                        (summary.to_string(), Some(details.trim().to_string()))
+                    }
+                    _ => (error.trim().to_string(), None),
+                };
+                self.set_outcome(OutcomeSeverity::Error, summary, details, recovery);
                 self.network_error = None;
             }
         }
@@ -5662,6 +5757,15 @@ impl Browser {
                     self.force_push = Some(target);
                 }
             }
+            RecoveryAction::Push => self.start_push(ctx),
+            RecoveryAction::Fetch => {
+                let remote = self
+                    .state
+                    .refs
+                    .current_tracking()
+                    .map(|tracking| tracking.remote.clone());
+                self.start_fetch(ctx, remote, self.prefs.fetch_prune);
+            }
         }
     }
 
@@ -6063,7 +6167,13 @@ impl Browser {
         std::thread::Builder::new()
             .name("gg-rewrite".into())
             .spawn(move || {
-                let result = gg_git::rewrite::rewrite(&path, &from, &steps, autostash);
+                // The follow-up push depends on how the result stands against
+                // the upstream; read it here, off the UI thread.
+                let result =
+                    gg_git::rewrite::rewrite(&path, &from, &steps, autostash).map(|receipt| {
+                        let relation = gg_git::sync::upstream_relation(&path, None).ok().flatten();
+                        (receipt, relation)
+                    });
                 let _ = sender.send(result);
                 repaint.request_repaint();
             })
@@ -6081,6 +6191,7 @@ impl Browser {
         &mut self,
         ctx: &egui::Context,
         receipt: gg_engine::rewrite::Receipt,
+        relation: Option<gg_engine::sync::UpstreamRelation>,
         restore_row: Option<usize>,
     ) -> u64 {
         self.refresh_local_summary(ctx);
@@ -6116,14 +6227,11 @@ impl Browser {
             },
             summary,
             (!details.is_empty()).then(|| details.join("\n")),
-            Some(if conflicts {
-                RecoveryAction::ResolveConflicts
-            } else if self.prefs.offer_force_lease && self.state.refs.current_tracking().is_some() {
-                // The branch was published: the rewrite needs a forced push.
-                RecoveryAction::ForcePush
-            } else {
-                RecoveryAction::Backups
-            }),
+            Some(rewrite_follow_up(
+                conflicts,
+                self.prefs.offer_force_lease,
+                relation,
+            )),
         );
         self.conflict_view = None;
         self.restore_row = restore_row;
@@ -6177,9 +6285,8 @@ impl Browser {
             Some("Wait for the current operation to finish")
         } else if tracking.is_none() {
             Some("The current branch has no upstream to pull from")
-        } else if behind == 0 {
-            Some("Up to date with the upstream; fetch to check again")
         } else {
+            // Cached counts may be stale: Pull fetches first, then decides.
             None
         };
         let stash_idle =
@@ -8826,8 +8933,8 @@ impl Browser {
             self.operation_repo = None;
             if same_repository {
                 match result {
-                    Ok(receipt) => {
-                        let generation = self.finish_rewrite(ctx, receipt, restore_row);
+                    Ok((receipt, relation)) => {
+                        let generation = self.finish_rewrite(ctx, receipt, relation, restore_row);
                         self.rewrite_refresh = Some(generation);
                     }
                     Err(error) => {
@@ -16945,39 +17052,141 @@ mod tests {
         assert_eq!(ready.branch_rewrite_reason, None);
     }
 
-    #[test]
-    fn pull_is_ready_only_when_the_current_branch_is_behind() {
-        let mut app = layout_fixture();
-        assert_eq!(
-            app.frame_readiness().pull_reason,
-            Some("The current branch has no upstream to pull from")
-        );
+    fn tracking_fixture(app: &mut Browser, ahead: u64, behind: u64) {
         app.state.refs.head = Some(gg_engine::refs::Head {
             name: Some("refs/heads/feature".into()),
             detached: false,
             commit: Some("a".repeat(40)),
         });
-        let tracking = |behind| gg_engine::refs::Tracking {
+        app.state.refs.tracking = vec![gg_engine::refs::Tracking {
             branch: "feature".into(),
             full_name: "refs/heads/feature".into(),
             upstream: "origin/feature".into(),
             upstream_full_name: "refs/remotes/origin/feature".into(),
             remote: "origin".into(),
             remote_branch: "feature".into(),
-            ahead: Some(0),
+            ahead: Some(ahead),
             behind: Some(behind),
-        };
-        app.state.refs.tracking = vec![tracking(0)];
+        }];
+    }
+
+    #[test]
+    fn pull_is_ready_whenever_the_current_branch_has_an_upstream() {
+        let mut app = layout_fixture();
+        assert_eq!(
+            app.frame_readiness().pull_reason,
+            Some("The current branch has no upstream to pull from")
+        );
+        // Cached tracking may be stale: Pull fetches before deciding.
+        tracking_fixture(&mut app, 0, 0);
         let ready = app.frame_readiness();
         assert_eq!(ready.behind, 0);
-        assert_eq!(
-            ready.pull_reason,
-            Some("Up to date with the upstream; fetch to check again")
-        );
-        app.state.refs.tracking = vec![tracking(3)];
-        let ready = app.frame_readiness();
-        assert_eq!(ready.behind, 3);
         assert_eq!(ready.pull_reason, None);
+        tracking_fixture(&mut app, 0, 3);
+        let ready = app.frame_readiness();
+        assert_eq!(ready.behind, 3, "the badge keeps the cached count");
+        assert_eq!(ready.pull_reason, None);
+        app.state.refs.head = Some(gg_engine::refs::Head {
+            name: None,
+            detached: true,
+            commit: Some("a".repeat(40)),
+        });
+        assert_eq!(
+            app.frame_readiness().pull_reason,
+            Some("The current branch has no upstream to pull from")
+        );
+    }
+
+    #[test]
+    fn pull_reports_already_up_to_date_after_fetching() {
+        let ctx = egui::Context::default();
+        for relation in [
+            gg_engine::sync::UpstreamRelation::UpToDate,
+            gg_engine::sync::UpstreamRelation::Ahead,
+        ] {
+            let mut app = layout_fixture();
+            tracking_fixture(&mut app, 0, 0);
+            app.pull_rebase = app.pull_rebase_target("refs/heads/feature");
+            assert!(app.pull_rebase.is_some());
+            app.finish_network(
+                &ctx,
+                Ok(network::Outcome::Pull {
+                    fetch: gg_engine::sync::FetchReceipt {
+                        remote: "origin".into(),
+                        pruned: false,
+                    },
+                    relation: Some(relation),
+                }),
+                Some(gg_engine::sync::Operation::Fetch),
+            );
+            assert!(app.pull_rebase.is_none());
+            assert!(app.operation_worker.is_none(), "nothing to integrate");
+            assert_eq!(
+                app.outcome.as_ref().map(|outcome| outcome.summary.as_str()),
+                Some("Already up to date with origin/feature.")
+            );
+        }
+    }
+
+    #[test]
+    fn push_failures_offer_the_follow_up_that_can_help() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        tracking_fixture(&mut app, 1, 1);
+        let push = Some(gg_engine::sync::Operation::Push);
+        app.finish_network(
+            &ctx,
+            Err("Push rejected: origin/feature has commits you don't have. Fetch to see them.\n ! [rejected]        feature -> feature (fetch first)".into()),
+            push,
+        );
+        let outcome = app.outcome.as_ref();
+        assert_eq!(
+            outcome.map(|outcome| outcome.summary.as_str()),
+            Some("Push rejected: origin/feature has commits you don't have. Fetch to see them.")
+        );
+        assert!(
+            outcome
+                .and_then(|outcome| outcome.details.as_deref())
+                .is_some_and(|details| details.contains("[rejected]")),
+            "Git's output is behind Details…"
+        );
+        let recovery = outcome.and_then(|outcome| outcome.recovery);
+        assert!(matches!(recovery, Some(RecoveryAction::Fetch)));
+        assert_eq!(recovery.map(recovery_label), Some("Fetch"));
+
+        app.finish_network(
+            &ctx,
+            Err("Push feature to origin/feature failed (exit status: 128)\nfatal: unable to access 'https://example.org/gg.git/': Could not resolve host: example.org".into()),
+            push,
+        );
+        let recovery = app.outcome.as_ref().and_then(|outcome| outcome.recovery);
+        assert_eq!(recovery.map(recovery_label), Some("Retry push"));
+
+        app.finish_network(
+            &ctx,
+            Err("Push feature to origin/feature failed (exit status: 1)\n ! [remote rejected] feature -> feature (pre-receive hook declined)".into()),
+            push,
+        );
+        let recovery = app.outcome.as_ref().and_then(|outcome| outcome.recovery);
+        assert_eq!(recovery.map(recovery_label), None);
+    }
+
+    #[test]
+    fn rewrite_follow_up_offers_the_push_the_result_needs() {
+        use gg_engine::sync::UpstreamRelation as R;
+        let label = |conflicts, offer, relation| {
+            recovery_label(rewrite_follow_up(conflicts, offer, relation))
+        };
+        assert_eq!(label(false, true, Some(R::Ahead)), "Push");
+        assert_eq!(label(false, false, Some(R::Ahead)), "Push");
+        assert_eq!(
+            label(false, true, Some(R::Diverged)),
+            "Push with force-with-lease…"
+        );
+        assert_eq!(label(false, false, Some(R::Diverged)), "Recovery…");
+        assert_eq!(label(false, true, Some(R::UpToDate)), "Recovery…");
+        assert_eq!(label(false, true, None), "Recovery…");
+        assert_eq!(label(true, true, Some(R::Diverged)), "Resolve conflicts…");
     }
 
     #[test]

@@ -14,7 +14,7 @@ The frame has two rows above every view. Both rows keep the same order and posit
 2. **Toolbar**, 34 px, left to right:
    - Refs sidebar toggle (`Ctrl+\`), pressed while the sidebar is shown.
    - **Changes | History** tabs. Changes is always present; its count badge appears only when there are local changes.
-   - Fetch · Pull (rebase) · Push. Pull is enabled only when the current branch is behind its upstream and shows the behind count as a badge; otherwise it is disabled with the reason.
+   - Fetch · Pull (rebase) · Push. Pull is enabled whenever the current branch has an upstream and shows the cached behind count as a badge; without an upstream it is disabled with the reason. Pull fetches first and reports `Already up to date with origin/main.` when there is nothing to integrate.
    - New branch · New tag · Merge into current.
    - Stash changes (disabled on a clean worktree) · Stashes (picker with count and caret; disabled when there are none).
    - Interactive rebase of the current branch (the commits its upstream lacks, else the commits the default branch lacks; independent of the selection) · Recovery. **Commit › Interactive rebase from here…** starts at the selected commit.
