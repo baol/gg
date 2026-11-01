@@ -205,9 +205,9 @@ Covered by (interaction): `menu_bar_is_one_row_and_view_shortcuts_switch_views` 
 ### FRM-22 Help › Keyboard shortcuts
 Fixture: `fx-linear`
 Layer: interaction
-- When **Help › Keyboard shortcuts** (`?`, list focused)
-- Then a non-modal window lists the full key set (incl. `Ctrl+K` Search, `Ctrl+F` search from the History filter, `Ctrl+R` Reword…); About gg is DLG-11
-Covered by (interaction, partial): `help_shortcuts_window_renders` (apps/git-good/src/main.rs)
+- When **Help › Keyboard shortcuts** (`?`, list focused, or Preferences › Keyboard › **Show keyboard shortcuts…**), then `reword` is typed in **Filter shortcuts**, then **Edit keys…** is clicked; reopened, `Esc`
+- Then a non-modal window shows one key | action table generated from the command table, grouped by menu (Repository, Branch, Commit, Changes, View, Help) then by list scope (History list, Changes list, Review, Rebase list, Conflicts, Stashes), including `Ctrl+O`, `Ctrl+B`, `Ctrl+Shift+B/F/L/P/S/U/Z`, `Ctrl+1`, `Ctrl+2`, `Ctrl+\`, `F2`, `Ctrl+Enter` and `Ctrl+R` Reword… and no Refresh row; the filter keeps only rows whose key or action matches and hides empty groups; **Edit keys…** closes it and opens Preferences › Keyboard; `Esc` closes it. About gg is DLG-11
+Covered by (interaction): `help_shortcuts_window_renders`, `keyboard_shortcuts_come_from_the_command_table`, `keyboard_shortcuts_close_on_escape_and_edit_keys_opens_preferences` (apps/git-good/src/main.rs); `groups_follow_the_menus_then_the_list_scopes`, `the_filter_matches_keys_or_actions_and_hides_empty_groups`, `no_row_offers_refresh` (apps/git-good/src/shortcuts.rs)
 
 ### Toolbar
 
@@ -425,8 +425,8 @@ Covered by (interaction): `receipts_fade_after_eight_seconds`, `receipts_and_fai
 Fixture: `fx-remote-auth`
 Layer: product
 - When Push runs and fails authentication
-- Then the footer is tinted red with the failure, one recovery action, **Details…** (selectable, copyable full text in a non-modal window), and ×; it outranks a running job and stays until dismissed or the next job starts; authentication offers **Retry push**, a non-fast-forward rejection offers **Fetch** (NET-20)
-Covered by (interaction): `operation_outcome_shows_details_and_recovery`, `operation_details_window_lists_full_text`, `receipts_and_failures_read_without_prefixes` (apps/git-good/src/main.rs)
+- Then the footer is tinted red with the failure, one recovery action, **Details…** (a non-modal, resizable window titled by the operation, such as `Push rejected · details`, with the summary line, then Git's output in selectable monospace, **Copy details**, **Close** `Esc`, and the footer's same recovery action as the filled primary), and ×; it outranks a running job and stays until dismissed or the next job starts; authentication offers **Retry push**, a non-fast-forward rejection offers **Fetch** (NET-20)
+Covered by (interaction): `operation_outcome_shows_details_and_recovery`, `operation_details_window_lists_full_text`, `receipts_and_failures_read_without_prefixes` (apps/git-good/src/main.rs); `the_title_names_the_operation` (apps/git-good/src/outcome_details.rs)
 
 ### FRM-58 Network progress offers Cancel without clipping
 Fixture: `fx-remote`
@@ -3895,8 +3895,8 @@ Covered by (interaction, partial): `one_recent_limit_for_the_welcome_list_open_r
 Fixture: `fx-linear`
 Layer: visual
 - When **Help › About gg**
-- Then logo, version, authors (people only), license with link, source link, AI-assistance/no-warranty note; **Copy version info** copies gg version, OS/arch and `git --version`; **Close** closes
-Covered by (interaction, partial): `about_names_the_license_and_the_human_authors` (apps/git-good/src/branding.rs); copy not automated
+- Then the dialog frame (title **About gg** and × in one row, footer below) shows the logo, version, **Commit** (8 characters), **Built** (`YYYY-MM-DD · <target triple>`), authors (people only), license with link, source link, AI-assistance/no-warranty note; **Copy version info** copies four plain lines (`gg <version>`, `commit <id>`, `built <date>`, `target <triple>`); **Close** or `Esc` closes
+Covered by (interaction, partial): `about_names_the_license_and_the_human_authors`, `version_info_is_four_plain_build_lines` (apps/git-good/src/branding.rs); the rendered frame is checked by native review
 
 ### DLG-12 Decision dialogs are modal — see FRM-64
 
@@ -4513,7 +4513,7 @@ Covered by (end-to-end, partial): `show_file_uses_exact_non_utf8_path_bytes` (ap
 
 Contradictions and gaps found while writing these cases. Each needs a decision; the affected cases follow the code where the specs disagree, or the proposed contract where marked *Proposed*.
 
-1. **View menu.** architecture.md says **Commit details** (`Space`) in one place and **Commit inspector** in another; final-design.md also lists diff layout, density and theme items there. Only final-design.md gives Help › Keyboard shortcuts `?`. (The architecture.md keyboard table still lists `Ctrl+R` refresh and `Ctrl+F` filter; FRM-60 and FRM-53 follow the decided behavior.)
+1. **View menu.** architecture.md says **Commit details** (`Space`) in one place and **Commit inspector** in another; final-design.md also lists diff layout, density and theme items there. Only final-design.md gives Help › Keyboard shortcuts `?`. (FRM-60 and FRM-53 follow the decided behavior: `Ctrl+R` is Reword.)
 2. **Search Files group.** final-design.md calls it later work; the code and architecture.md ship it.
 3. **Network Cancel location.** architecture.md says the status line (footer); a test name says operation area.
 4. **Branch work called "later".** architecture.md §Branch switching says delete, rename, tracking and tag creation remain later work; they ship.

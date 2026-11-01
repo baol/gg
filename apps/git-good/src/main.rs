@@ -41,6 +41,7 @@ mod navigation;
 mod network;
 mod new_repository;
 mod operation_band;
+mod outcome_details;
 mod phosphor;
 mod reader;
 mod rebase_cli;
@@ -60,6 +61,7 @@ mod review_worker;
 mod rewrite_cli;
 mod search;
 mod settings;
+mod shortcuts;
 mod signature_cli;
 mod signature_worker;
 mod split_rows;
@@ -1616,6 +1618,8 @@ struct Browser {
     search: Option<SearchPalette>,
     branch_filter: String,
     help_shortcuts: bool,
+    /// The Keyboard shortcuts window's filter text.
+    shortcuts_filter: String,
     conflict_view: Option<ConflictView>,
     reset_confirm: Option<(String, gg_engine::reset::Mode)>,
     branch_delete: Option<BranchDeleteDialog>,
@@ -1804,6 +1808,7 @@ impl Browser {
                 None
             },
             help_shortcuts: false,
+            shortcuts_filter: String::new(),
             conflict_view: None,
             reset_confirm: None,
             branch_delete: None,
@@ -2966,7 +2971,7 @@ impl Browser {
                                         ui.end_row();
                                     }
                                 });
-                            if ui.button("Show keyboard shortcuts window…").clicked() {
+                            if ui.button("Show keyboard shortcuts…").clicked() {
                                 show_shortcuts = true;
                             }
                         }
@@ -3652,6 +3657,20 @@ impl Browser {
     /// their Ctrl twins (Ctrl+Shift+F over the filter's Ctrl+F). Each runs
     /// only when its menu item is enabled.
     fn menu_shortcuts(&mut self, ctx: &egui::Context) {
+        // The non-modal help and details windows take Esc before any view.
+        if (self.help_shortcuts || self.about_open || self.outcome_details_open)
+            && ctx.memory(|m| m.top_modal_layer()).is_none()
+            && !egui::Popup::is_any_open(ctx)
+            && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+        {
+            if self.outcome_details_open {
+                self.outcome_details_open = false;
+            } else if self.help_shortcuts {
+                self.help_shortcuts = false;
+            } else {
+                self.about_open = false;
+            }
+        }
         if !crate::navigation::available(ctx) {
             return;
         }
@@ -3984,64 +4003,8 @@ impl Browser {
                 self.discard_confirm = false;
             }
         }
-        if self.about_open {
-            let mut open = true;
-            let mut close_about = false;
-            egui::Window::new("About gg")
-                .id(egui::Id::unique("about-gg"))
-                .open(&mut open)
-                .collapsible(false)
-                .resizable(false)
-                .default_pos(ctx.content_rect().center())
-                .pivot(egui::Align2::CENTER_CENTER)
-                .show(ctx, |ui| {
-                    let about = branding::about();
-                    ui.set_max_width(320.0);
-                    ui.vertical_centered(|ui| {
-                        branding::logo(ui, &mut self.about_logo, 96.0);
-                        ui.heading("gg · good git");
-                        ui.weak(format!("Version {}", about.version));
-                    });
-                    ui.add_space(8.0);
-                    egui::Grid::new("about-gg-facts")
-                        .num_columns(2)
-                        .spacing([12.0, 4.0])
-                        .show(ui, |ui| {
-                            ui.weak("Author");
-                            ui.label(about.authors.join(", "));
-                            ui.end_row();
-                            ui.weak("License");
-                            ui.hyperlink_to(
-                                about.license,
-                                "https://www.apache.org/licenses/LICENSE-2.0",
-                            );
-                            ui.end_row();
-                            ui.weak("Source");
-                            ui.hyperlink_to("github.com/baol/gg", "https://github.com/baol/gg");
-                            ui.end_row();
-                        });
-                    ui.add_space(8.0);
-                    ui.add(egui::Label::new(egui::RichText::new(about.note).weak()).wrap());
-                    ui.add_space(6.0);
-                    ui.horizontal(|ui| {
-                        // Plain text for bug reports (dialogs proposal).
-                        if ui.button("Copy version info").clicked() {
-                            ui.ctx().copy_text(format!(
-                                "gg {}\n{} {}\n{}",
-                                about.version,
-                                std::env::consts::OS,
-                                std::env::consts::ARCH,
-                                git_version().unwrap_or_else(|| "git: unavailable".into())
-                            ));
-                        }
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            close_about |= ui
-                                .button(("Close", egui::RichText::new("Esc").small().weak()))
-                                .clicked();
-                        });
-                    });
-                });
-            self.about_open = open && !close_about;
+        if self.about_open && branding::show_about(ctx, &mut self.about_logo) {
+            self.about_open = false;
         }
         if reload {
             self.load(ctx);
@@ -11304,37 +11267,15 @@ impl Browser {
         }
 
         if self.help_shortcuts {
-            let mut open = true;
-            egui::Window::new("Keyboard shortcuts")
-                .id(egui::Id::unique("keyboard-shortcuts"))
-                .open(&mut open)
-                .collapsible(false)
-                .resizable(false)
-                .default_width(420.0)
-                .default_pos(ctx.content_rect().center())
-                .pivot(egui::Align2::CENTER_CENTER)
-                .show(ctx, |ui| {
-                    for (group, keys) in [
-                        (
-                            "Navigation",
-                            "Up/Down or j/k: move · PgUp/PgDn: page · Enter: review · Space: details · Esc: back",
-                        ),
-                        (
-                            "Repository",
-                            "Ctrl/Cmd+K: search · Ctrl/Cmd+R: refresh · Ctrl/Cmd+F: filter · Ctrl/Cmd+C: copy ID",
-                        ),
-                        (
-                            "Commit actions",
-                            "Alt+A: actions for the selected commit · R: interactive rebase · menus: Repository, Branch, Commit, Changes, View, Help",
-                        ),
-                    ] {
-                        ui.strong(group);
-                        ui.label(keys);
-                        ui.add_space(6.0);
-                    }
-                });
-            if !open {
-                self.help_shortcuts = false;
+            let ready = self.frame_readiness();
+            let groups = shortcuts::groups(&self.menu_table(&ready));
+            match shortcuts::show(ctx, &mut self.shortcuts_filter, &groups) {
+                Some(shortcuts::Act::Close) => self.help_shortcuts = false,
+                Some(shortcuts::Act::EditKeys) => {
+                    self.help_shortcuts = false;
+                    self.open_preferences(PrefSection::Keyboard);
+                }
+                None => {}
             }
         }
 
@@ -11922,31 +11863,22 @@ impl Browser {
             None => {}
         }
         if self.outcome_details_open {
-            let details = self
-                .outcome
-                .as_ref()
-                .and_then(|outcome| outcome.details.clone());
-            if let Some(details) = details {
-                let mut open = true;
-                egui::Window::new("Operation details")
-                    .id(egui::Id::unique("operation-details"))
-                    .open(&mut open)
-                    .collapsible(false)
-                    .resizable(true)
-                    .default_width(560.0)
-                    .default_height(240.0)
-                    .default_pos(ctx.content_rect().center())
-                    .pivot(egui::Align2::CENTER_CENTER)
-                    .show(ctx, |ui| {
-                        if ui.button("Copy details").clicked() {
-                            ui.ctx().copy_text(details.clone());
+            let shown = self.outcome.as_ref().and_then(|outcome| {
+                outcome
+                    .details
+                    .clone()
+                    .map(|details| (outcome.summary.clone(), details, outcome.recovery))
+            });
+            if let Some((summary, details, recovery)) = shown {
+                match outcome_details::show(ctx, &summary, &details, recovery.map(recovery_label)) {
+                    Some(outcome_details::Act::Close) => self.outcome_details_open = false,
+                    Some(outcome_details::Act::Recovery) => {
+                        self.outcome_details_open = false;
+                        if let Some(action) = recovery {
+                            self.run_recovery_action(ctx, action);
                         }
-                        egui::ScrollArea::vertical().show(ui, |ui| {
-                            ui.add(egui::Label::new(&details).wrap().selectable(true));
-                        });
-                    });
-                if !open {
-                    self.outcome_details_open = false;
+                    }
+                    None => {}
                 }
             } else {
                 self.outcome_details_open = false;
@@ -15412,13 +15344,121 @@ mod tests {
             })
             .collect::<Vec<_>>();
         assert!(text.contains(&"Keyboard shortcuts"));
-        assert!(text.contains(&"Navigation"));
-        assert!(text.contains(&"Actions"));
-        assert!(text.iter().any(|line| line.contains("Alt+A")));
+        assert!(text.contains(&"REPOSITORY"));
+        assert!(text.contains(&"Ctrl+O"));
+        assert!(text.contains(&"Edit keys…"));
         assert!(
-            text.iter().all(|line| !line.contains("View, Stash, Help")),
-            "the retired top-level Stash menu is still advertised: {text:?}"
+            text.iter()
+                .all(|line| !line.to_lowercase().contains("refresh")),
+            "no Refresh shortcut is advertised: {text:?}"
         );
+    }
+
+    #[test]
+    fn keyboard_shortcuts_come_from_the_command_table() {
+        let app = layout_fixture();
+        let groups = shortcuts::groups(&app.menu_table(&app.frame_readiness()));
+        let rows = groups
+            .iter()
+            .flat_map(|group| &group.rows)
+            .map(|row| (row.key.as_str(), row.action.as_str()))
+            .collect::<Vec<_>>();
+        for key in [
+            "Ctrl+O",
+            "Ctrl+B",
+            "Ctrl+Shift+B",
+            "Ctrl+Shift+F",
+            "Ctrl+Shift+L",
+            "Ctrl+Shift+P",
+            "Ctrl+Shift+S",
+            "Ctrl+Shift+U",
+            "Ctrl+Shift+Z",
+            "Ctrl+1",
+            "Ctrl+2",
+            "Ctrl+\\",
+            "F2",
+            "Ctrl+Enter",
+        ] {
+            assert!(rows.iter().any(|(k, _)| *k == key), "missing {key}");
+        }
+        assert!(rows.contains(&("Ctrl+R", "Reword…")));
+        let titles = groups.iter().map(|g| g.title.as_str()).collect::<Vec<_>>();
+        for scope in [
+            "Changes list",
+            "Review",
+            "Rebase list",
+            "Conflicts",
+            "Stashes",
+        ] {
+            assert!(titles.contains(&scope), "missing scope {scope}");
+        }
+        let reword = shortcuts::filter(&groups, "reword");
+        assert!(reword.iter().all(|g| {
+            g.rows
+                .iter()
+                .all(|r| r.action.to_lowercase().contains("reword"))
+        }));
+    }
+
+    #[test]
+    fn keyboard_shortcuts_close_on_escape_and_edit_keys_opens_preferences() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        app.help_shortcuts = true;
+        let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        let edit = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) if text.galley.job.text == "Edit keys…" => {
+                    Some(text.pos + egui::vec2(4.0, 4.0))
+                }
+                _ => None,
+            })
+            .unwrap_or_default();
+        let button = |pressed| egui::Event::PointerButton {
+            pos: edit,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let _ = crate::tests::run_ui(
+            &ctx,
+            frame_input(
+                1120.0,
+                740.0,
+                vec![egui::Event::PointerMoved(edit), button(true)],
+            ),
+            |ctx| app.draw_ui(ctx),
+        );
+        let _ = crate::tests::run_ui(
+            &ctx,
+            frame_input(1120.0, 740.0, vec![button(false)]),
+            |ctx| app.draw_ui(ctx),
+        );
+        assert!(!app.help_shortcuts);
+        assert_eq!(
+            app.folders_dialog.as_ref().map(|dialog| dialog.section),
+            Some(PrefSection::Keyboard)
+        );
+        app.folders_dialog = None;
+        app.help_shortcuts = true;
+        let escape = egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![escape]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        assert!(!app.help_shortcuts, "Esc closes the window");
     }
 
     #[test]
@@ -15487,8 +15527,13 @@ mod tests {
                 _ => None,
             })
             .collect::<Vec<_>>();
-        assert!(text.contains(&"Operation details"));
+        assert!(text.contains(&"Rewrote 2 commit(s) · details"));
+        assert!(text.contains(&"Rewrote 2 commit(s)"));
         assert!(text.contains(&"Backup: refs/gg/backup/rewrite/1"));
+        assert!(
+            text.contains(&"Recovery…"),
+            "the footer's recovery action is the window's primary"
+        );
     }
 
     #[test]
