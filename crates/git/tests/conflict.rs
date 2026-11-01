@@ -407,6 +407,191 @@ fn blocks_name_why_a_file_needs_a_whole_side() -> Result {
         Ok(_) => return Err("delete/modify produced blocks".into()),
         Err(error) => error,
     };
-    assert!(error.contains("Choose a whole side"), "{error}");
+    assert!(error.contains("Keep deletion or a whole side"), "{error}");
+    Ok(())
+}
+
+/// `feature` deletes `a`; `main` modifies it; merging `feature` stops on a
+/// delete/modify conflict.
+fn delete_modify_conflict(p: &Path) -> Result {
+    git(p, &["switch", "-qc", "feature"])?;
+    git(p, &["rm", "-q", "a"])?;
+    git(p, &["commit", "-qm", "delete a"])?;
+    git(p, &["switch", "-q", "main"])?;
+    std::fs::write(p.join("a"), b"main\n")?;
+    git(p, &["commit", "-qam", "main"])?;
+    gg_git::merge::merge(p, "feature", false)?;
+    Ok(())
+}
+
+#[test]
+fn keeping_a_deletion_stages_the_removal() -> Result {
+    use gg_engine::conflict::{Resolution, Side};
+    let dir = repo()?;
+    let p = dir.path();
+    delete_modify_conflict(p)?;
+    let content = gg_git::conflict::read(p, "a")?;
+    assert_eq!(content.deleted_side(), Some(Side::Theirs));
+    let snapshot = gg_git::conflict::snapshot(p, "a")?;
+    gg_git::conflict::publish(p, "a", &snapshot, Resolution::Deletion)?;
+    assert!(!p.join("a").exists(), "the working file is removed");
+    assert!(gg_git::conflict::unmerged(p)?.is_empty());
+    assert!(
+        git(p, &["ls-files", "--", "a"])?.is_empty(),
+        "the removal is staged"
+    );
+
+    // The modified side still keeps the file.
+    let dir = repo()?;
+    let p = dir.path();
+    delete_modify_conflict(p)?;
+    let snapshot = gg_git::conflict::snapshot(p, "a")?;
+    gg_git::conflict::publish(p, "a", &snapshot, Resolution::Ours)?;
+    assert_eq!(std::fs::read(p.join("a"))?, b"main\n");
+    assert!(gg_git::conflict::unmerged(p)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn keeping_a_deletion_is_refused_without_a_deleted_side_or_after_an_edit() -> Result {
+    use gg_engine::conflict::Resolution;
+    let dir = repo()?;
+    let p = dir.path();
+    conflicting(p)?;
+    assert_eq!(gg_git::conflict::read(p, "a")?.deleted_side(), None);
+    let snapshot = gg_git::conflict::snapshot(p, "a")?;
+    let error = match gg_git::conflict::publish(p, "a", &snapshot, Resolution::Deletion) {
+        Ok(()) => return Err("a modify/modify conflict was deleted".into()),
+        Err(error) => error,
+    };
+    assert!(error.contains("one side deleted"), "{error}");
+    assert!(p.join("a").exists());
+    match gg_git::conflict::keep_deletion(p, "a") {
+        Ok(()) => return Err("the CLI deleted a modify/modify conflict".into()),
+        Err(error) => assert!(error.contains("one side deleted"), "{error}"),
+    }
+
+    let dir = repo()?;
+    let p = dir.path();
+    delete_modify_conflict(p)?;
+    let stale = gg_git::conflict::snapshot(p, "a")?;
+    std::fs::write(p.join("a"), b"edited after preview\n")?;
+    assert!(gg_git::conflict::publish(p, "a", &stale, Resolution::Deletion).is_err());
+    assert_eq!(std::fs::read(p.join("a"))?, b"edited after preview\n");
+    assert_eq!(gg_git::conflict::unmerged(p)?, vec!["a".to_string()]);
+
+    // The CLI keeps the deletion without a preview.
+    gg_git::conflict::keep_deletion(p, "a")?;
+    assert!(!p.join("a").exists());
+    assert!(gg_git::conflict::unmerged(p)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn use_side_points_the_deleted_side_to_keep_deletion() -> Result {
+    let dir = repo()?;
+    let p = dir.path();
+    delete_modify_conflict(p)?;
+    let error = match gg_git::conflict::use_side(p, "a", gg_engine::conflict::Side::Theirs) {
+        Ok(()) => return Err("the deleted side was checked out".into()),
+        Err(error) => error,
+    };
+    assert!(error.contains("--use deletion"), "{error}");
+    assert_eq!(gg_git::conflict::unmerged(p)?, vec!["a".to_string()]);
+    Ok(())
+}
+
+#[test]
+fn a_hand_edited_working_file_is_told_apart_from_what_git_wrote() -> Result {
+    use gg_engine::conflict::edited_outside;
+    for style in ["merge", "diff3", "zdiff3"] {
+        let dir = repo()?;
+        let p = dir.path();
+        git(p, &["config", "merge.conflictStyle", style])?;
+        two_block_conflict(p)?;
+        let segments = gg_git::conflict::blocks(p, "b")?;
+        let written = String::from_utf8(std::fs::read(p.join("b"))?)?;
+        assert!(
+            !edited_outside(&segments, written.as_bytes()),
+            "Git's own {style} output is not an edit: {written}"
+        );
+        // Resolving one block by hand leaves markers but changes a side.
+        let first = written.find("<<<<<<<").ok_or("no marker")?;
+        let end = written[first..].find(">>>>>>>").ok_or("no end marker")? + first;
+        let end = written[end..]
+            .find('\n')
+            .map_or(written.len(), |n| end + n + 1);
+        let partly = format!("{}x by hand\n{}", &written[..first], &written[end..]);
+        assert!(edited_outside(&segments, partly.as_bytes()), "{style}");
+        // A fully hand-resolved file has no markers.
+        assert!(
+            edited_outside(&segments, b"top\nx\nmiddle\ny\nend\n"),
+            "{style}"
+        );
+    }
+    Ok(())
+}
+
+fn short(p: &Path, rev: &str) -> Result<String> {
+    Ok(
+        String::from_utf8(git(p, &["rev-parse", "--short=8", rev])?)?
+            .trim()
+            .to_string(),
+    )
+}
+
+#[test]
+fn side_names_follow_the_operation() -> Result {
+    use gg_engine::conflict::SideNames;
+    // Merge: the current branch and the merged branch.
+    let dir = repo()?;
+    let p = dir.path();
+    conflicting(p)?;
+    assert_eq!(
+        gg_git::conflict::side_names(p)?,
+        Some(SideNames {
+            ours: "main".into(),
+            theirs: "feature".into(),
+        })
+    );
+
+    // Rebase: Ours is the base being rebased onto, Theirs the replayed commit.
+    let dir = repo()?;
+    let p = dir.path();
+    git(p, &["switch", "-qc", "feature"])?;
+    std::fs::write(p.join("a"), b"feature\n")?;
+    git(p, &["commit", "-qam", "Replay this change"])?;
+    git(p, &["switch", "-q", "main"])?;
+    std::fs::write(p.join("a"), b"main\n")?;
+    git(p, &["commit", "-qam", "main"])?;
+    git(p, &["switch", "-q", "feature"])?;
+    let replayed = short(p, "feature")?;
+    assert!(git(p, &["rebase", "main"]).is_err(), "the rebase stops");
+    assert_eq!(
+        gg_git::conflict::side_names(p)?,
+        Some(SideNames {
+            ours: "onto main".into(),
+            theirs: format!("{replayed} Replay this change"),
+        })
+    );
+    git(p, &["rebase", "--abort"])?;
+
+    // Cherry-pick: HEAD's branch and the picked commit.
+    git(p, &["switch", "-q", "main"])?;
+    assert!(
+        git(p, &["cherry-pick", "feature"]).is_err(),
+        "the pick stops"
+    );
+    assert_eq!(
+        gg_git::conflict::side_names(p)?,
+        Some(SideNames {
+            ours: "main".into(),
+            theirs: format!("{replayed} Replay this change"),
+        })
+    );
+    git(p, &["cherry-pick", "--abort"])?;
+
+    // No operation, no names.
+    assert_eq!(gg_git::conflict::side_names(p)?, None);
     Ok(())
 }

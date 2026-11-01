@@ -2174,6 +2174,53 @@ fn conflict_cli_lists_reads_and_resolves() -> Result {
 }
 
 #[test]
+fn conflict_cli_keeps_a_deletion() -> Result {
+    let repo = tempfile::tempdir()?;
+    init(repo.path(), &["-b", "main"])?;
+    git(repo.path(), &["config", "user.name", "Test"])?;
+    git(repo.path(), &["config", "user.email", "test@example.org"])?;
+    std::fs::write(repo.path().join("docs.md"), b"base\n")?;
+    git(repo.path(), &["add", "docs.md"])?;
+    git(repo.path(), &["commit", "-qm", "base"])?;
+    git(repo.path(), &["switch", "-qc", "feature"])?;
+    git(repo.path(), &["rm", "-q", "docs.md"])?;
+    git(repo.path(), &["commit", "-qm", "delete docs"])?;
+    git(repo.path(), &["switch", "-q", "main"])?;
+    std::fs::write(repo.path().join("docs.md"), b"main\n")?;
+    git(repo.path(), &["commit", "-qam", "main"])?;
+    let _ = git_output(repo.path(), &["merge", "feature"]);
+
+    let binary = env!("CARGO_BIN_EXE_git-good");
+    let out = Command::new(binary)
+        .args(["conflict", "--file", "docs.md", "--use", "theirs", "--repo"])
+        .arg(repo.path())
+        .output()?;
+    assert!(!out.status.success(), "theirs deleted the file");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("--use deletion"));
+
+    let out = Command::new(binary)
+        .args([
+            "conflict", "--file", "docs.md", "--use", "deletion", "--repo",
+        ])
+        .arg(repo.path())
+        .output()?;
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let receipt: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(receipt["operation"], "conflict-resolve");
+    assert_eq!(receipt["side"], "deletion");
+    assert!(!repo.path().join("docs.md").exists());
+    assert_eq!(
+        git_output(repo.path(), &["ls-files", "--", "docs.md"])?,
+        b""
+    );
+    Ok(())
+}
+
+#[test]
 fn reset_cli_applies_soft_mixed_and_hard() -> Result {
     let repo = tempfile::tempdir()?;
     init(repo.path(), &["-b", "main"])?;

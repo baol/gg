@@ -42,7 +42,7 @@ pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::
             Some("--use") => {
                 side = Some(
                     args.next()
-                        .ok_or("--use needs ours or theirs")?
+                        .ok_or("--use needs ours, theirs, or deletion")?
                         .into_string()
                         .map_err(|_| "Side must be UTF-8")?,
                 );
@@ -51,18 +51,29 @@ pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::
             Some(value) if value.starts_with("--") => return Err("Unknown conflict option".into()),
             _ => {
                 return Err(
-                    "Usage: git good conflict --file PATH [--use ours|theirs|--stage] [--repo PATH]"
+                    "Usage: git good conflict --file PATH [--use ours|theirs|deletion|--stage] [--repo PATH]"
                         .into(),
                 );
             }
         }
     }
     let file = file.ok_or("Conflict resolution requires --file PATH")?;
+    if side.as_deref() == Some("deletion") {
+        gg_git::conflict::keep_deletion(&path, &file)?;
+        write_receipt(serde_json::json!({
+            "operation": "conflict-resolve",
+            "repository": display_repository(&path),
+            "path": file,
+            "side": "deletion",
+            "complete": true,
+        }))?;
+        return Ok(());
+    }
     if let Some(side) = side {
         let side = match side.as_str() {
             "ours" => Side::Ours,
             "theirs" => Side::Theirs,
-            _ => return Err("--use accepts ours or theirs".into()),
+            _ => return Err("--use accepts ours, theirs, or deletion".into()),
         };
         gg_git::conflict::use_side(&path, &file, side)?;
         write_receipt(serde_json::json!({

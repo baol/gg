@@ -19,6 +19,27 @@ pub struct Content {
     pub truncated: bool,
 }
 
+impl Content {
+    /// The side that deleted the file in a delete/modify conflict: exactly
+    /// one of Ours and Theirs is absent.
+    pub fn deleted_side(&self) -> Option<Side> {
+        match (&self.ours, &self.theirs) {
+            (None, Some(_)) => Some(Side::Ours),
+            (Some(_), None) => Some(Side::Theirs),
+            _ => None,
+        }
+    }
+}
+
+/// Who Ours and Theirs are for the operation in progress, such as `main` and
+/// `feature/login` for a merge, or `onto main` and `1a2b3c4d Add login` for a
+/// rebase. Either is empty when the repository records no identity for it.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SideNames {
+    pub ours: String,
+    pub theirs: String,
+}
+
 /// Exact conflict inputs captured when a resolution preview is opened.
 ///
 /// Stage object IDs and the working bytes are validated again at publication,
@@ -43,6 +64,8 @@ pub enum Resolution {
     Ours,
     Theirs,
     Working,
+    /// Keep the deletion of a delete/modify conflict: remove the path.
+    Deletion,
 }
 
 /// One piece of a three-way merge: text both sides agree on, or a conflict
@@ -188,6 +211,29 @@ pub fn compose(segments: &[Segment], choices: &[Option<BlockChoice>]) -> String 
     text
 }
 
+/// One side of every segment: common text plus Ours (or Theirs) of each block.
+fn side_text(segments: &[Segment], choice: BlockChoice) -> String {
+    compose(segments, &vec![Some(choice); block_count(segments)])
+}
+
+/// The working file no longer holds what the merge wrote at conflict time:
+/// it has no conflict markers left, or its Ours or Theirs text differs from
+/// the fresh merge of the stages in `segments`. Marker labels, CRLF line
+/// endings, and the conflict style (merge, diff3, zdiff3) are not edits.
+pub fn edited_outside(segments: &[Segment], working: &[u8]) -> bool {
+    let Ok(text) = std::str::from_utf8(working) else {
+        return true;
+    };
+    let text = text.replace("\r\n", "\n");
+    let Ok(found) = parse_diff3(&text) else {
+        return true;
+    };
+    block_count(&found) == 0
+        || [BlockChoice::Ours, BlockChoice::Theirs]
+            .into_iter()
+            .any(|choice| side_text(&found, choice) != side_text(segments, choice))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -248,5 +294,35 @@ mod tests {
             vec![Segment::Common("<<<<<<<<< not a marker\n".into())]
         );
         Ok(())
+    }
+
+    #[test]
+    fn working_files_count_as_edited_only_when_a_side_changed() -> Result<(), String> {
+        let segments = parse_diff3(MERGED)?;
+        // The merge style: other labels, no base section, CRLF endings.
+        let merge = "top\r\n<<<<<<< HEAD\r\nours 1\r\n=======\r\ntheirs 1\r\n>>>>>>> feature\r\nmiddle\r\n<<<<<<< HEAD\r\nours 2\r\n=======\r\n>>>>>>> feature\r\nend\r\n";
+        assert!(!edited_outside(&segments, merge.as_bytes()));
+        assert!(!edited_outside(&segments, MERGED.as_bytes()));
+        let changed = MERGED.replace("theirs 1", "theirs 1 by hand");
+        assert!(edited_outside(&segments, changed.as_bytes()));
+        assert!(edited_outside(&segments, b"top\nmiddle\nend\n"));
+        assert!(edited_outside(&segments, b"<<<<<<< ours\nx\n"));
+        assert!(edited_outside(&segments, &[0xff, 0xfe]));
+        Ok(())
+    }
+
+    #[test]
+    fn a_deleted_side_is_one_absent_side() {
+        let content = |ours: Option<&str>, theirs: Option<&str>| Content {
+            path: "a".into(),
+            base: Some("base".into()),
+            ours: ours.map(str::to_string),
+            theirs: theirs.map(str::to_string),
+            binary: false,
+            truncated: false,
+        };
+        assert_eq!(content(None, Some("t")).deleted_side(), Some(Side::Ours));
+        assert_eq!(content(Some("o"), None).deleted_side(), Some(Side::Theirs));
+        assert_eq!(content(Some("o"), Some("t")).deleted_side(), None);
     }
 }
