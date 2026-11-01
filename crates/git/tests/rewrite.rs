@@ -120,7 +120,12 @@ fn rewrite_reorders_commits_and_records_the_previous_tip() -> Result {
         gg_engine::rewrite::Step::new(gg_engine::rewrite::Action::Pick, &first),
         gg_engine::rewrite::Step::new(gg_engine::rewrite::Action::Pick, &third),
     ];
-    let receipt = gg_git::rewrite::rewrite(p, &first, &steps, false)?;
+    // The backup is reported before Git rewrites anything.
+    let mut observed = None;
+    let receipt = gg_git::rewrite::rewrite_observed(p, &first, &steps, false, &mut |backup| {
+        observed = Some(backup.to_string());
+    })?;
+    assert_eq!(observed, receipt.backup);
     assert!(receipt.applied);
     assert!(!receipt.in_progress);
     assert_eq!(receipt.steps, 3);

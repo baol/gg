@@ -595,3 +595,42 @@ fn side_names_follow_the_operation() -> Result {
     assert_eq!(gg_git::conflict::side_names(p)?, None);
     Ok(())
 }
+
+#[test]
+fn a_staged_resolution_reopens_as_a_conflict() -> Result {
+    let dir = repo()?;
+    let p = dir.path();
+    // A clean change beside the conflict is listed as also changed.
+    git(p, &["switch", "-qc", "feature"])?;
+    std::fs::write(p.join("a"), b"feature\n")?;
+    std::fs::write(p.join("b"), b"new\n")?;
+    git(p, &["add", "b"])?;
+    git(p, &["commit", "-qam", "feature"])?;
+    git(p, &["switch", "-q", "main"])?;
+    std::fs::write(p.join("a"), b"main\n")?;
+    git(p, &["commit", "-qam", "main"])?;
+    gg_git::merge::merge(p, "feature", false)?;
+    assert_eq!(gg_git::conflict::also_changed(p)?, vec!["b".to_string()]);
+
+    std::fs::write(p.join("a"), b"resolved\n")?;
+    gg_git::conflict::stage(p, "a")?;
+    assert!(gg_git::conflict::unmerged(p)?.is_empty());
+    assert_eq!(
+        gg_git::conflict::also_changed(p)?,
+        vec!["a".to_string(), "b".to_string()]
+    );
+
+    assert!(
+        gg_git::conflict::reopen(p, "a")?,
+        "Git recreates the conflict"
+    );
+    assert_eq!(gg_git::conflict::unmerged(p)?, vec!["a".to_string()]);
+    let working = std::fs::read_to_string(p.join("a"))?;
+    assert!(working.contains("<<<<<<<"), "markers are back: {working}");
+
+    // A path with no conflict to recreate is unstaged to a plain change.
+    assert!(!gg_git::conflict::reopen(p, "b")?);
+    assert!(!gg_git::conflict::also_changed(p)?.contains(&"b".to_string()));
+    assert!(p.join("b").exists(), "the working file stays");
+    Ok(())
+}
