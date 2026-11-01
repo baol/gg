@@ -119,6 +119,8 @@ pub fn change_count(path: &Path) -> Result<usize, String> {
     let output = run(
         path,
         &[
+            // A read: never take index.lock from a mutation running now.
+            "--no-optional-locks".into(),
             "status".into(),
             "--porcelain".into(),
             "-z".into(),

@@ -67,7 +67,13 @@ pub fn read(
         .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
         .filter(|value| !value.is_empty());
     let dirty = initialized
-        .then(|| run(&nested, &["status", "--porcelain", "-z"]).ok())
+        .then(|| {
+            run(
+                &nested,
+                &["--no-optional-locks", "status", "--porcelain", "-z"],
+            )
+            .ok()
+        })
         .flatten()
         .and_then(|output| output.status.success().then_some(!output.stdout.is_empty()));
     let target = recorded.or(index.as_deref());

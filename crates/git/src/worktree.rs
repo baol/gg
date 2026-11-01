@@ -65,7 +65,7 @@ pub fn list(path: &Path) -> Result<Snapshot, String> {
         }
         let worktree_path = path_from_bytes(&worktree.path_bytes);
         let status = command(&worktree_path)
-            .args(["status", "--porcelain", "-z"])
+            .args(["--no-optional-locks", "status", "--porcelain", "-z"])
             .output();
         worktree.dirty = status
             .ok()
