@@ -12,6 +12,7 @@ mod commit_cli;
 mod commit_stats;
 mod conflict_blocks;
 mod conflict_cli;
+mod consequence;
 mod density;
 mod details_view;
 mod diff_view;
@@ -699,6 +700,7 @@ enum FrameCommand {
     /// Open the latest commit that changed this path, on that file.
     OpenFile(String),
     OpenRecent(PathBuf),
+    ClearRecent,
     Backups,
     Reflog,
     Quit,
@@ -915,6 +917,18 @@ fn numbered(text: &str) -> String {
 
 /// `Name <email>` from the repository's Git config, for Preferences ›
 /// Commit; `None` when Git has no identity.
+/// `git version 2.x`, for Copy version info.
+fn git_version() -> Option<String> {
+    let output = std::process::Command::new("git")
+        .arg("--version")
+        .output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+}
+
 fn git_identity(repo: &Path) -> Option<String> {
     let read = |key: &str| {
         std::process::Command::new("git")
@@ -1520,6 +1534,8 @@ struct Browser {
     /// File and line counts for the inspected commit, and their worker.
     commit_stats: Option<(String, commit_stats::Stats)>,
     commit_stats_worker: Option<commit_stats::Worker>,
+    /// What each open destructive dialog will remove, read in the background.
+    consequences: std::collections::BTreeMap<&'static str, consequence::Lines>,
     refs_query: String,
     refs_width: f32,
     state: state::State,
@@ -1687,6 +1703,7 @@ impl Browser {
             refs_visible_elsewhere: false,
             commit_stats: None,
             commit_stats_worker: None,
+            consequences: std::collections::BTreeMap::new(),
             refs_query: String::new(),
             refs_width: 0.0,
             state: state::State::default(),
@@ -1981,6 +1998,26 @@ impl Browser {
     }
 
     fn draw_force_push(&mut self, ctx: &egui::Context) {
+        let Some(dialog) = &self.force_push else {
+            self.consequences.remove("force-replaced");
+            self.consequences.remove("force-new");
+            return;
+        };
+        // What the push replaces on the remote and what replaces it.
+        let (lease, branch) = (dialog.lease.clone(), dialog.branch.clone());
+        let replaced_range = format!("{branch}..{lease}");
+        let new_range = format!("{lease}..{branch}");
+        let mut replaced = self.take_consequence(
+            "force-replaced",
+            &["log", "--oneline", "--no-decorate", &replaced_range],
+            ctx,
+        );
+        let mut new = self.take_consequence(
+            "force-new",
+            &["log", "--oneline", "--no-decorate", &new_range],
+            ctx,
+        );
+        let count = replaced.as_mut().and_then(consequence::Lines::count);
         let Some(dialog) = &mut self.force_push else {
             return;
         };
@@ -2005,23 +2042,56 @@ impl Browser {
                     dialog.upstream,
                     short_id(&dialog.lease)
                 ));
+                ui.set_width(480.0);
+                if let Some(replaced) = &mut replaced {
+                    consequence::list(
+                        ui,
+                        "REPLACED ON THE REMOTE",
+                        replaced,
+                        egui::Color32::from_rgb(245, 160, 160),
+                    );
+                }
+                if let Some(new) = &mut new {
+                    consequence::list(
+                        ui,
+                        "PUSHED IN THEIR PLACE",
+                        new,
+                        egui::Color32::from_rgb(150, 220, 170),
+                    );
+                }
                 ui.weak("Git rejects this push if the remote branch no longer points at that lease, leaving the remote unchanged. This never uses bare --force.");
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
-                    if ui
-                        .add_enabled(
-                            self.network.is_none() && self.branch.is_none(),
-                            egui::Button::new("Force push with lease"),
-                        )
-                        .clicked()
-                    {
-                        submit = true;
-                    }
-                    if ui.button("Cancel").clicked() {
-                        cancel = true;
-                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let ready = self.network.is_none() && self.branch.is_none();
+                        let label = match count {
+                            Some(0) | None => "Force push with lease".to_string(),
+                            Some(count) => format!(
+                                "Replace {}",
+                                consequence::counted(count, "remote commit", "remote commits")
+                            ),
+                        };
+                        if ui
+                            .add_enabled(ready, consequence::danger_button(label, ready))
+                            .clicked()
+                        {
+                            submit = true;
+                        }
+                        if ui
+                            .button(("Cancel", egui::RichText::new("Esc").small().weak()))
+                            .clicked()
+                        {
+                            cancel = true;
+                        }
+                    });
                 });
             });
+        if let Some(replaced) = replaced {
+            self.consequences.insert("force-replaced", replaced);
+        }
+        if let Some(new) = new {
+            self.consequences.insert("force-new", new);
+        }
         if submit && let Some(dialog) = self.force_push.take() {
             self.start_force_push(ctx, dialog);
         }
@@ -3178,6 +3248,12 @@ impl Browser {
                 *go_history = true;
             }
             FrameCommand::OpenFile(file) => self.open_file(ctx, file),
+            FrameCommand::ClearRecent => {
+                self.recent.clear();
+                if let Err(error) = settings::save_recent(&self.recent) {
+                    self.set_outcome(OutcomeSeverity::Warning, error, None, None);
+                }
+            }
             FrameCommand::OpenRecent(path) => {
                 self.path = path.to_string_lossy().into_owned();
                 self.load(ctx);
@@ -3529,10 +3605,16 @@ impl Browser {
                 self.delete_pick = None;
             }
         }
+        if !self.discard_confirm {
+            self.consequences.remove("discard");
+        }
         if self.discard_confirm {
             let mut open = true;
             let mut cancel = false;
             let mut confirm = false;
+            let mut files =
+                self.take_consequence("discard", &["status", "--porcelain=v1", "-uno"], ctx);
+            let count = files.as_mut().and_then(consequence::Lines::count);
             egui::Window::new("Discard all changes")
                 .id(egui::Id::unique("discard-all"))
                 .modal(ctx, egui::Id::unique("discard-all"))
@@ -3542,21 +3624,45 @@ impl Browser {
                 .default_pos(ctx.content_rect().center())
                 .pivot(egui::Align2::CENTER_CENTER)
                 .show(ctx, |ui| {
+                    ui.set_width(460.0);
                     ui.label("Restore every tracked file, staged and unstaged, to HEAD?");
-                    ui.colored_label(
-                        ui.visuals().warn_fg_color,
-                        "This cannot be undone. Untracked files are kept.",
-                    );
+                    if let Some(files) = &mut files {
+                        consequence::list(
+                            ui,
+                            "WILL BE RESTORED TO HEAD",
+                            files,
+                            egui::Color32::from_rgb(220, 195, 125),
+                        );
+                    }
+                    ui.weak("This cannot be undone. Untracked files are kept.");
+                    ui.add_space(4.0);
                     ui.horizontal(|ui| {
-                        confirm |= ui
-                            .button(
-                                egui::RichText::new("Discard all")
-                                    .color(ui.visuals().error_fg_color),
-                            )
-                            .clicked();
-                        cancel |= ui.button("Cancel").clicked();
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let label = match count {
+                                Some(count) => format!(
+                                    "Discard {}",
+                                    consequence::counted(count, "file", "files")
+                                ),
+                                None => "Discard all".into(),
+                            };
+                            let ready = count.is_some_and(|count| count > 0);
+                            confirm |= ui
+                                .add_enabled(ready, consequence::danger_button(label, ready))
+                                .clicked();
+                            cancel |= ui
+                                .button(("Cancel", egui::RichText::new("Esc").small().weak()))
+                                .clicked();
+                        });
                     });
+                    if count.is_some_and(|count| count > 0)
+                        && ui.input(|i| i.key_pressed(egui::Key::Enter))
+                    {
+                        confirm = true;
+                    }
                 });
+            if let Some(files) = files {
+                self.consequences.insert("discard", files);
+            }
             if cancel {
                 open = false;
             }
@@ -3569,6 +3675,7 @@ impl Browser {
         }
         if self.about_open {
             let mut open = true;
+            let mut close_about = false;
             egui::Window::new("About gg")
                 .id(egui::Id::unique("about-gg"))
                 .open(&mut open)
@@ -3604,8 +3711,26 @@ impl Browser {
                         });
                     ui.add_space(8.0);
                     ui.add(egui::Label::new(egui::RichText::new(about.note).weak()).wrap());
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        // Plain text for bug reports (dialogs proposal).
+                        if ui.button("Copy version info").clicked() {
+                            ui.ctx().copy_text(format!(
+                                "gg {}\n{} {}\n{}",
+                                about.version,
+                                std::env::consts::OS,
+                                std::env::consts::ARCH,
+                                git_version().unwrap_or_else(|| "git: unavailable".into())
+                            ));
+                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            close_about |= ui
+                                .button(("Close", egui::RichText::new("Esc").small().weak()))
+                                .clicked();
+                        });
+                    });
                 });
-            self.about_open = open;
+            self.about_open = open && !close_about;
         }
         if reload {
             self.load(ctx);
@@ -3906,18 +4031,45 @@ impl Browser {
                     .entry(),
             ]
         } else {
-            self.recent
+            // Folder name first, the path after it; the open repository is
+            // checked and a missing folder stays listed but disabled.
+            let home = std::env::var("HOME").ok();
+            let open = self
+                .state
+                .history
+                .as_ref()
+                .map(|history| history.path.clone());
+            let mut entries = self
+                .recent
                 .iter()
+                .filter(|path| path.is_absolute())
                 .map(|path| {
+                    let name = path
+                        .file_name()
+                        .map(|name| name.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| path.display().to_string());
+                    let shown = window_title(&path.display().to_string(), home.as_deref(), None);
+                    let missing = !path.exists();
                     item(
-                        path.display().to_string(),
+                        format!("{name}   {}", shown.trim_start_matches("gg — ")),
                         "",
                         FrameCommand::OpenRecent(path.clone()),
                     )
-                    .unless(self.repository_switch_pending().then_some(busy))
+                    .checked(open.as_deref().is_some_and(|open| {
+                        open == path.as_path()
+                            || open.canonicalize().ok().as_deref() == Some(path.as_path())
+                    }))
+                    .unless(if missing {
+                        Some("Not found: the folder is missing")
+                    } else {
+                        self.repository_switch_pending().then_some(busy)
+                    })
                     .entry()
                 })
-                .collect()
+                .collect::<Vec<_>>();
+            entries.push(menus::Entry::Separator);
+            entries.push(item("Clear recent", "", FrameCommand::ClearRecent).entry());
+            entries
         };
         let quit = if cfg!(target_os = "macos") {
             "Cmd+Q"
@@ -4481,6 +4633,30 @@ impl Browser {
             self.refs_visible_elsewhere = !self.refs_visible_elsewhere;
         } else {
             self.refs_visible = !self.refs_visible;
+        }
+    }
+
+    /// Take the consequence list for `slot` out of its slot, (re)reading it
+    /// when its Git arguments change; put it back with `self.consequences`
+    /// while the dialog stays open.
+    fn take_consequence(
+        &mut self,
+        slot: &'static str,
+        args: &[&str],
+        ctx: &egui::Context,
+    ) -> Option<consequence::Lines> {
+        let repo = self.state.history.as_ref()?.path.clone();
+        match self.consequences.remove(slot) {
+            Some(lines)
+                if lines
+                    .key
+                    .iter()
+                    .map(String::as_str)
+                    .eq(args.iter().copied()) =>
+            {
+                Some(lines)
+            }
+            _ => Some(consequence::Lines::git(&repo, args, ctx)),
         }
     }
 
@@ -9192,44 +9368,152 @@ impl Browser {
             self.mutation_error = Some(error);
         }
         if self.edit_path {
-            egui::Panel::top("open-repository").show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    let response = ui.add(
-                        egui::TextEdit::singleline(&mut self.path)
-                            .desired_width((ui.available_width() - 156.0).max(100.0))
-                            .hint_text("Repository path"),
-                    );
-                    if ui
-                        .button("Browse…")
-                        .on_hover_text("Choose a repository folder with the desktop dialog")
-                        .clicked()
-                        && let Some(path) = folder_picker::pick_folder(
-                            "Open repository",
-                            Some(Path::new(&self.path)),
-                        )
-                    {
-                        self.path = path.to_string_lossy().into_owned();
+            // Repository › Open… as a modal (proposal): folder field with
+            // Browse…, the recent repositories filtered by what is typed,
+            // Clone… to switch dialogs, Cancel (Esc) and Open (Enter).
+            let open_ready = self.pending.is_none() && !self.repository_switch_pending();
+            let mut open = None;
+            let mut cancel = false;
+            let mut clone = false;
+            let home = std::env::var("HOME").ok();
+            let recent = self
+                .recent
+                .iter()
+                .filter(|path| path.is_absolute())
+                .cloned()
+                .collect::<Vec<_>>();
+            let modal = egui::Modal::new(egui::Id::unique("open-repository"))
+                .backdrop_color(egui::Color32::from_black_alpha(140))
+                .show(ctx, |ui| {
+                    ui.set_width(520.0);
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new("Open repository").size(16.0));
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            cancel |= ui.button("×").on_hover_text("Close (Esc)").clicked();
+                        });
+                    });
+                    ui.separator();
+                    ui.label(egui::RichText::new("FOLDER").small().weak());
+                    let response = ui
+                        .horizontal(|ui| {
+                            let response = ui.add(
+                                egui::TextEdit::singleline(&mut self.path)
+                                    .desired_width(420.0)
+                                    .hint_text("Repository path"),
+                            );
+                            if ui
+                                .button("Browse…")
+                                .on_hover_text("Choose a repository folder with the desktop dialog")
+                                .clicked()
+                                && let Some(path) = folder_picker::pick_folder(
+                                    "Open repository",
+                                    Some(Path::new(&self.path)),
+                                )
+                            {
+                                self.path = path.to_string_lossy().into_owned();
+                            }
+                            response
+                        })
+                        .inner;
+                    if !response.has_focus() && self.path.is_empty() {
+                        response.request_focus();
                     }
-                    let open_ready = self.pending.is_none() && !self.repository_switch_pending();
                     let enter =
                         response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                    if ui
-                        .add_enabled(open_ready, egui::Button::new("Open"))
-                        .clicked()
-                        || (open_ready && enter)
-                    {
-                        self.recovery = None;
-                        if let Some(working) = &self.working {
-                            self.working_drafts
-                                .insert(working.repository_key(), working.capture_draft());
-                        }
-                        self.working = None;
-                        self.review = None;
-                        self.load(ctx);
-                        self.edit_path = false;
-                    }
+                    let typed = self.path.trim().to_lowercase();
+                    let matches = recent
+                        .iter()
+                        .filter(|path| {
+                            typed.is_empty()
+                                || path.to_string_lossy().to_lowercase().contains(&typed)
+                        })
+                        .take(8)
+                        .collect::<Vec<_>>();
+                    ui.add_space(6.0);
+                    ui.label(egui::RichText::new("RECENT").small().weak());
+                    // A fixed slot so filtering never resizes the dialog.
+                    let slot = 8.0 * crate::density::row();
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(500.0, slot),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
+                            ui.set_min_size(egui::vec2(500.0, slot));
+                            if matches.is_empty() {
+                                ui.weak(if recent.is_empty() {
+                                    "Repositories you open are listed here."
+                                } else {
+                                    "No recent repository matches."
+                                });
+                            }
+                            for path in matches {
+                                let name = path
+                                    .file_name()
+                                    .map(|name| name.to_string_lossy().into_owned())
+                                    .unwrap_or_default();
+                                let shown = window_title(
+                                    &path.display().to_string(),
+                                    home.as_deref(),
+                                    None,
+                                );
+                                let row = ui.add(
+                                    egui::Button::new((
+                                        egui::RichText::new(name),
+                                        egui::RichText::new(shown.trim_start_matches("gg — "))
+                                            .small()
+                                            .weak(),
+                                    ))
+                                    .frame_when_inactive(false)
+                                    .truncate()
+                                    .min_size(egui::vec2(500.0, crate::density::row())),
+                                );
+                                if row.clicked() && open_ready {
+                                    open = Some(path.display().to_string());
+                                }
+                            }
+                        },
+                    );
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        clone |= ui.button("Clone…").clicked();
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let primary = egui::Button::new((
+                                egui::RichText::new("Open").color(egui::Color32::WHITE),
+                                egui::RichText::new("Enter")
+                                    .small()
+                                    .color(egui::Color32::from_rgb(184, 212, 230)),
+                            ))
+                            .fill(egui::Color32::from_rgb(11, 85, 119));
+                            let ready = open_ready && !self.path.trim().is_empty();
+                            if ui.add_enabled(ready, primary).clicked() || (ready && enter) {
+                                open = Some(self.path.trim().to_string());
+                            }
+                            cancel |= ui
+                                .button(("Cancel", egui::RichText::new("Esc").small().weak()))
+                                .clicked();
+                        });
+                    });
                 });
-            });
+            if modal.should_close() {
+                cancel = true;
+            }
+            if let Some(path) = open {
+                self.path = path;
+                self.recovery = None;
+                if let Some(working) = &self.working {
+                    self.working_drafts
+                        .insert(working.repository_key(), working.capture_draft());
+                }
+                self.working = None;
+                self.review = None;
+                self.load(ctx);
+                self.edit_path = false;
+            } else if clone {
+                self.edit_path = false;
+                let (mut local, mut history) = (false, false);
+                self.run_frame_command(ctx, FrameCommand::Clone, &mut local, &mut history);
+            } else if cancel {
+                self.edit_path = false;
+            }
         }
         if wide_refs {
             let refs = self.state.refs.clone();
@@ -9366,75 +9650,63 @@ impl Browser {
                         dialog.sync_name();
                     }
                     ui.add_space(4.0);
-                    ui.label("Destination");
-                    ui.horizontal(|ui| {
-                        let selected = if candidates
-                            .iter()
-                            .any(|candidate| candidate.to_string_lossy() == dialog.folder.trim())
-                        {
-                            dialog.folder.trim().to_owned()
-                        } else {
-                            "Custom folder".to_owned()
-                        };
-                        egui::ComboBox::from_id_salt("clone-folder")
-                            .selected_text(selected)
-                            .width(150.0)
-                            .show_ui(ui, |ui| {
-                                for candidate in &candidates {
-                                    let label = candidate.to_string_lossy().into_owned();
-                                    let text = clone_folder_label(candidate, &default_folder);
-                                    if crate::menus::choice(ui, dialog.folder.trim() == label, text)
+                    // One folder control (proposal): the saved folders, the
+                    // launch folder, another folder, and the folder list.
+                    let mut choose_other = false;
+                    ui.horizontal_top(|ui| {
+                        ui.vertical(|ui| {
+                            ui.label(egui::RichText::new("INTO FOLDER").small().weak());
+                            let home = std::env::var("HOME").ok();
+                            let shown = window_title(dialog.folder.trim(), home.as_deref(), None);
+                            egui::ComboBox::from_id_salt("clone-folder")
+                                .selected_text(shown.trim_start_matches("gg — ").to_string())
+                                .width(260.0)
+                                .show_ui(ui, |ui| {
+                                    for candidate in &candidates {
+                                        let label = candidate.to_string_lossy().into_owned();
+                                        let text = clone_folder_label(candidate, &default_folder);
+                                        if crate::menus::choice(
+                                            ui,
+                                            dialog.folder.trim() == label,
+                                            text,
+                                        )
                                         .clicked()
-                                    {
-                                        dialog.folder = label;
-                                        chosen_clone_folder = Some(candidate.clone());
+                                        {
+                                            dialog.folder = label;
+                                            chosen_clone_folder = Some(candidate.clone());
+                                        }
                                     }
-                                }
-                            });
-                        let folder = ui.add(
-                            egui::TextEdit::singleline(&mut dialog.folder)
-                                .hint_text("Parent folder")
-                                .desired_width(170.0),
-                        );
-                        if folder.lost_focus() {
-                            field_lost_focus = true;
-                            let typed = PathBuf::from(dialog.folder.trim());
-                            if typed.is_absolute() {
-                                chosen_clone_folder = Some(typed);
+                                    ui.separator();
+                                    choose_other |= ui
+                                        .add(crate::menus::row(false, "Choose another folder…"))
+                                        .clicked();
+                                    open_folders |= ui
+                                        .add(crate::menus::row(false, "Manage clone folders…"))
+                                        .clicked();
+                                });
+                        });
+                        ui.vertical(|ui| {
+                            ui.label(egui::RichText::new("NAME").small().weak());
+                            let name = ui.add(
+                                egui::TextEdit::singleline(&mut dialog.name)
+                                    .hint_text("Project folder")
+                                    .desired_width(200.0),
+                            );
+                            if name.changed() {
+                                dialog.name_from_url = false;
                             }
-                        }
-                        if ui
-                            .button("Browse…")
-                            .on_hover_text("Choose the parent folder with the desktop dialog")
-                            .clicked()
-                            && let Some(path) = folder_picker::pick_folder(
-                                "Clone destination",
-                                Some(Path::new(dialog.folder.trim())),
-                            )
-                        {
-                            dialog.folder = path.to_string_lossy().into_owned();
-                            chosen_clone_folder = Some(path);
-                        }
-                        if ui
-                            .button("Folders…")
-                            .on_hover_text("Edit the development base folders and the default")
-                            .clicked()
-                        {
-                            open_folders = true;
-                        }
+                            field_lost_focus |= name.lost_focus();
+                        });
                     });
-                    ui.horizontal(|ui| {
-                        ui.label("Name");
-                        let name = ui.add(
-                            egui::TextEdit::singleline(&mut dialog.name)
-                                .hint_text("Project folder")
-                                .desired_width(220.0),
-                        );
-                        if name.changed() {
-                            dialog.name_from_url = false;
-                        }
-                        field_lost_focus |= name.lost_focus();
-                    });
+                    if choose_other
+                        && let Some(path) = folder_picker::pick_folder(
+                            "Clone destination",
+                            Some(Path::new(dialog.folder.trim())),
+                        )
+                    {
+                        dialog.folder = path.to_string_lossy().into_owned();
+                        chosen_clone_folder = Some(path);
+                    }
                     let destination = dialog.destination();
                     match &destination {
                         Some(path) => {
@@ -9730,6 +10002,27 @@ impl Browser {
 
         let mut branch_delete_action = None;
         let mut branch_delete_open = true;
+        // The commits only this branch has (dialogs proposal): an unmerged
+        // branch names them and its one button forces the delete.
+        let mut unmerged = match self
+            .branch_delete
+            .as_ref()
+            .map(|dialog| dialog.name.clone())
+        {
+            Some(name) => {
+                let range = format!("HEAD..refs/heads/{name}");
+                self.take_consequence(
+                    "delete-branch",
+                    &["log", "--oneline", "--no-decorate", &range],
+                    ctx,
+                )
+            }
+            None => {
+                self.consequences.remove("delete-branch");
+                None
+            }
+        };
+        let unmerged_count = unmerged.as_mut().and_then(consequence::Lines::count);
         if let Some(dialog) = &mut self.branch_delete {
             let mut cancelled = false;
             egui::Window::new("Delete branch")
@@ -9741,22 +10034,56 @@ impl Browser {
                 .default_pos(ctx.content_rect().center())
                 .pivot(egui::Align2::CENTER_CENTER)
                 .show(ctx, |ui| {
+                    ui.set_width(460.0);
                     ui.label(format!("Delete local branch {}?", dialog.name));
+                    if let Some(unmerged) = &mut unmerged {
+                        consequence::list(
+                            ui,
+                            "NOT IN THE CURRENT BRANCH",
+                            unmerged,
+                            egui::Color32::from_rgb(245, 160, 160),
+                        );
+                    }
                     if let Some(error) = &dialog.error {
                         ui.colored_label(ui.visuals().error_fg_color, error);
                     }
                     ui.horizontal(|ui| {
-                        if ui.button("Delete").clicked() {
-                            branch_delete_action = Some((dialog.name.clone(), false));
-                        }
-                        if ui.button("Force delete").clicked() {
-                            branch_delete_action = Some((dialog.name.clone(), true));
-                        }
-                        if ui.button("Cancel").clicked() {
-                            cancelled = true;
-                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let (label, force) = match unmerged_count {
+                                Some(0) => (format!("Delete {}", dialog.name), false),
+                                Some(count) => (
+                                    format!(
+                                        "Delete {} and {}",
+                                        dialog.name,
+                                        consequence::counted(
+                                            count,
+                                            "unmerged commit",
+                                            "unmerged commits"
+                                        )
+                                    ),
+                                    true,
+                                ),
+                                None => (format!("Delete {}", dialog.name), false),
+                            };
+                            let ready = unmerged_count.is_some();
+                            if ui
+                                .add_enabled(ready, consequence::danger_button(label, ready))
+                                .clicked()
+                            {
+                                branch_delete_action = Some((dialog.name.clone(), force));
+                            }
+                            if ui
+                                .button(("Cancel", egui::RichText::new("Esc").small().weak()))
+                                .clicked()
+                            {
+                                cancelled = true;
+                            }
+                        });
                     });
                 });
+            if let Some(unmerged) = unmerged.take() {
+                self.consequences.insert("delete-branch", unmerged);
+            }
             if cancelled {
                 branch_delete_open = false;
             }
@@ -9814,8 +10141,27 @@ impl Browser {
         let mut reset_submit = None;
         let mut reset_cancel = false;
         let mut reset_mode = None;
+        if self.reset_confirm.is_none() {
+            self.consequences.remove("reset-commits");
+            self.consequences.remove("reset-files");
+        }
         if let Some((commit, mode)) = self.reset_confirm.clone() {
             let summary = self.commit_summary(&commit);
+            // The commits that leave the branch, and for a hard reset the
+            // files whose changes are lost (dialogs proposal).
+            let range = format!("{commit}..HEAD");
+            let mut leaving = self.take_consequence(
+                "reset-commits",
+                &["log", "--oneline", "--no-decorate", &range],
+                ctx,
+            );
+            let hard = mode == gg_engine::reset::Mode::Hard;
+            let mut lost = if hard {
+                self.take_consequence("reset-files", &["status", "--porcelain=v1", "-uno"], ctx)
+            } else {
+                self.consequences.remove("reset-files");
+                None
+            };
             egui::Window::new("Reset here")
                 .id(egui::Id::unique("reset-here"))
                 .modal(ctx, egui::Id::unique("reset-here"))
@@ -9857,21 +10203,55 @@ impl Browser {
                             }
                         }
                     });
-                    if mode == gg_engine::reset::Mode::Hard {
-                        ui.colored_label(
-                            ui.visuals().warn_fg_color,
-                            "Hard reset discards staged and working changes.",
+                    if let Some(leaving) = &mut leaving {
+                        consequence::list(
+                            ui,
+                            "LEAVE THE BRANCH (RECOVERABLE FROM THE REFLOG)",
+                            leaving,
+                            ui.visuals().text_color(),
+                        );
+                    }
+                    if let Some(lost) = &mut lost {
+                        consequence::list(
+                            ui,
+                            "CHANGES LOST",
+                            lost,
+                            egui::Color32::from_rgb(245, 160, 160),
                         );
                     }
                     ui.horizontal(|ui| {
-                        if ui.button("Reset").clicked() {
-                            reset_submit = Some((commit.clone(), mode));
-                        }
-                        if ui.button("Cancel").clicked() {
-                            reset_cancel = true;
-                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let submit = if hard {
+                                ui.add(consequence::danger_button("Hard reset", true))
+                            } else {
+                                ui.add(
+                                    egui::Button::new((
+                                        egui::RichText::new("Reset").color(egui::Color32::WHITE),
+                                        egui::RichText::new("Enter")
+                                            .small()
+                                            .color(egui::Color32::from_rgb(184, 212, 230)),
+                                    ))
+                                    .fill(egui::Color32::from_rgb(11, 85, 119)),
+                                )
+                            };
+                            if submit.clicked() {
+                                reset_submit = Some((commit.clone(), mode));
+                            }
+                            if ui
+                                .button(("Cancel", egui::RichText::new("Esc").small().weak()))
+                                .clicked()
+                            {
+                                reset_cancel = true;
+                            }
+                        });
                     });
                 });
+            if let Some(leaving) = leaving {
+                self.consequences.insert("reset-commits", leaving);
+            }
+            if let Some(lost) = lost {
+                self.consequences.insert("reset-files", lost);
+            }
         }
         if let (Some(mode), Some((_, current))) = (reset_mode, &mut self.reset_confirm) {
             *current = mode;
@@ -11270,11 +11650,13 @@ mod tests {
                 })
                 .collect::<Vec<_>>()
         };
+        // Clone offers the picker as "Choose another folder…" in its one
+        // folder control.
         app.clone_dialog = Some(CloneDialog::from_url(
             Some("https://example.org/gg.git".into()),
             folders::starting_folder(),
         ));
-        assert!(rendered(&mut app).iter().any(|line| line == "Browse…"));
+        assert!(rendered(&mut app).iter().any(|line| line == "INTO FOLDER"));
         app.clone_dialog = None;
         app.folders_dialog = Some(FoldersDialog::new(PrefSection::General));
         assert!(rendered(&mut app).iter().any(|line| line == "Browse…"));
@@ -11319,16 +11701,16 @@ mod tests {
         });
         let window = ctx.memory(|memory| memory.area_rect(egui::Id::unique("clone-repository")));
         assert!(window.is_some(), "the clone dialog did not render");
-        let browse = output.shapes.iter().find_map(|shape| match &shape.shape {
-            egui::epaint::Shape::Text(text) if text.galley.job.text == "Browse…" => {
+        let name = output.shapes.iter().find_map(|shape| match &shape.shape {
+            egui::epaint::Shape::Text(text) if text.galley.job.text == "NAME" => {
                 Some(egui::Rect::from_min_size(text.pos, text.galley.size()))
             }
             _ => None,
         });
-        assert!(browse.is_some(), "the folder picker button is missing");
+        assert!(name.is_some(), "the name field is missing");
         assert!(
-            window.is_some_and(|window| browse.is_some_and(|button| window.contains_rect(button))),
-            "the folder picker button is clipped: {browse:?} in {window:?}"
+            window.is_some_and(|window| name.is_some_and(|label| window.contains_rect(label))),
+            "the folder and name controls are clipped: {name:?} in {window:?}"
         );
     }
 
@@ -11648,7 +12030,7 @@ mod tests {
                     .collect::<Vec<_>>();
                 if clone {
                     assert!(text.iter().any(|line| line.contains("Clone repository")));
-                    assert!(text.iter().any(|line| line.contains("Destination")));
+                    assert!(text.iter().any(|line| line.contains("INTO FOLDER")));
                 } else {
                     assert!(text.iter().any(|line| line.contains("Track remote branch")));
                     assert!(text.iter().any(|line| line.contains("Track branch")));
@@ -12148,7 +12530,11 @@ mod tests {
                 .collect::<Vec<_>>();
             assert!(text.iter().any(|line| line.contains("Delete branch")));
             assert!(text.iter().any(|line| line.contains("feature")));
-            assert!(text.iter().any(|line| line.contains("Force delete")));
+            assert!(
+                text.iter()
+                    .any(|line| line.contains("NOT IN THE CURRENT BRANCH"))
+            );
+            assert!(text.iter().any(|line| line.starts_with("Delete feature")));
 
             app.branch_delete = None;
             app.tag_delete = Some(TagDeleteDialog {
@@ -12195,7 +12581,8 @@ mod tests {
                 })
                 .collect::<Vec<_>>();
             assert!(text.iter().any(|line| line.contains("Reset here")));
-            assert!(text.iter().any(|line| line.contains("Hard reset discards")));
+            assert!(text.iter().any(|line| line == &"Hard reset"));
+            assert!(text.iter().any(|line| line.contains("CHANGES LOST")));
             assert!(text.iter().any(|line| line.contains("Reset")));
             assert!(text.iter().any(|line| line.contains("Cancel")));
         }
