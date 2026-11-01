@@ -738,9 +738,10 @@ Covered by (interaction): `extra_ref_labels_show_an_overflow_count`, `long_field
 ### HIS-24 Clicking a pill inspects without moving HEAD
 Fixture: `fx-branchy`
 Layer: product
-- When the user clicks the `feature/login` pill, then the `v0.1.0` pill, then the `main` pill
+- When the user single-clicks the `feature/login` pill, then the `v0.1.0` pill, then the `main` pill
 - Then each selects its target commit; HEAD, index, worktree and refs are unchanged; no switch is requested
-Covered by (interaction): `clicking_a_branch_pill_selects_its_commit_without_switching`, `clicking_a_tag_pill_selects_its_commit`, `clicking_the_current_branch_pill_only_selects_it` (history_view.rs)
+- And a double-click switches only on a branch or remote pill that is not the current branch (HIS-54, HIS-65); tag pills and the current branch's pill only select
+Covered by (interaction): `clicking_a_branch_pill_selects_and_double_clicking_switches`, `clicking_a_tag_pill_selects_its_commit`, `clicking_the_current_branch_pill_only_selects_it` (history_view.rs)
 
 ### HIS-25 Show tags in rows off
 Fixture: `fx-branchy`
@@ -928,15 +929,15 @@ Covered by (interaction, partial): `refs_menu_offers_the_explicit_switch_command
 Fixture: `fx-remote` / `fx-branchy`
 Layer: interaction
 - When right-clicking `origin/release`, then `v0.2.0`
-- Then the remote offers Create tracking branch…, Merge, Rebase, Compare, New branch here…, Copy name, Copy ID, **Delete on origin…** (red); the tag offers Merge, Rebase, Compare, New branch here…, Signature details…, the copies, Delete tag… (red)
+- Then the remote offers Switch to release (its local branch, or a new one tracking it), Merge, Rebase, Compare, New branch here…, Copy name, Copy ID, **Delete on origin…** (red); the tag offers Merge, Rebase, Compare, New branch here…, Signature details…, the copies, Delete tag… (red)
 Covered by (Not automated)
 
 ### HIS-54 Switch branch (clean)
 Fixture: `fx-branchy`
 Layer: product
-- When **Switch to feature/login** from the ref menu (or double-click the row)
+- When **Switch to feature/login** from the ref menu (or double-click the row or its History pill)
 - Then HEAD moves to `feature/login`, filter clears, the new HEAD is selected, refs/history reload, the current branch row is bold/checked
-Covered by (backend, interaction, end-to-end): `double_clicking_a_branch_row_switches` (refs_view.rs), `switches_branches_only_when_clean` (crates/git/tests/branch.rs), `switch_cli_changes_branches_and_reports_dirty_worktrees` (cli.rs)
+Covered by (backend, interaction, end-to-end): `double_clicking_a_branch_row_switches` (refs_view.rs), `clicking_a_branch_pill_selects_and_double_clicking_switches` (history_view.rs), `switches_branches_only_when_clean` (crates/git/tests/branch.rs), `switch_cli_changes_branches_and_reports_dirty_worktrees` (cli.rs)
 
 ### HIS-55 Switch to the current branch is disabled/no-op
 Fixture: `fx-branchy`
@@ -1010,10 +1011,10 @@ Covered by (backend, partial): `upstream_without_tracking_ref_has_no_counts` (re
 ### HIS-65 Track remote branch
 Fixture: `fx-remote`
 Layer: product
-- When **Branch › Track remote branch…** (or **Create tracking branch…** on `origin/release`), **Track branch**
-- Then local `release` is created tracking `origin/release` and HEAD switches to it; on a dirty tree or existing name it is refused
-- Negative: double-clicking `origin/release` creates nothing
-Covered by (backend, interaction): `creates_a_tracking_branch_only_when_clean_and_absent` (branch.rs), `double_clicking_a_remote_row_never_creates_a_tracking_branch` (refs_view.rs), `clone_and_tracking_dialogs_render_at_supported_widths` (main.rs)
+- When **Branch › Track remote branch…** and **Track branch**, or **Switch to release** on `origin/release` (one step, no dialog), or a double-click on its row or pill
+- Then local `release` is created tracking `origin/release` and HEAD switches to it; a dirty tree is refused, and the dialog refuses an existing local name
+- And with a local `release` already present, the menu item, double-click and pill switch to it instead of creating one
+Covered by (backend, interaction): `creates_a_tracking_branch_only_when_clean_and_absent` (branch.rs), `double_clicking_a_remote_row_switches_to_it` (refs_view.rs), `double_clicking_a_remote_pill_switches_to_it` (history_view.rs), `switching_to_a_remote_branch_uses_its_local_branch_or_tracks_it`, `clone_and_tracking_dialogs_render_at_supported_widths` (main.rs)
 
 ### HIS-66 Delete merged branch
 Fixture: `fx-branchy`
@@ -4262,7 +4263,7 @@ Rules every area relies on, cases that span areas, and the CLI contract. Area ca
 
 ## Shared rules
 
-1. **RULE-01 Inspecting never moves HEAD.** Selecting a commit, ref pill, sidebar row or search result, opening Review, file history, blame, signature or submodule/LFS details never switches branches, moves HEAD, or writes the index, worktree or refs (FRM-51, HIS-24, HIS-49, REV-69, SIG-07).
+1. **RULE-01 Inspecting never moves HEAD.** Selecting (a single click) a commit, ref pill, sidebar row or search result, opening Review, file history, blame, signature or submodule/LFS details never switches branches, moves HEAD, or writes the index, worktree or refs (FRM-51, HIS-24, HIS-49, REV-69, SIG-07).
 2. **RULE-02 Failed actions preserve work and inputs.** A refused or failed action keeps the commit draft, dialog fields, line picks, rebase plan and conflict choices, and leaves the repository as it was, or names exactly what did change (CHG-47, HIS-60, INT-32, RWR-43).
 3. **RULE-03 Stale asynchronous results never replace current content.** Results carry the identity and generation they were requested for; a result for a superseded selection, filter, comparison or repository is dropped (HIS-15, HIS-33, REV-20).
 4. **RULE-04 Navigation restores the caller's place.** Back from Review, a reader, file history, Recovery or the rebase plan returns once to the same selection, filter, entry and pixel offset (REV-02, REV-62, RWR-35, RWR-72).

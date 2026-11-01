@@ -2,6 +2,7 @@
 use crate::avatars::Avatars;
 use eframe::egui;
 use gg_engine::Commit;
+use gg_engine::refs::RefKind;
 
 /// Compact row height; runtime code uses `crate::density::row()`.
 #[cfg(test)]
@@ -18,6 +19,11 @@ pub const DATE_FROM: f32 = 600.0;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RefAction {
     Select,
+    /// Double-click on a local branch pill: switch to it.
+    Switch(String),
+    /// Double-click on a remote branch pill (`origin/feature`): switch to the
+    /// local branch of that name, or create one tracking it.
+    SwitchRemote(String),
 }
 
 thread_local! {
@@ -245,8 +251,11 @@ fn paint_refs_and_subject(
             foreground,
         );
         let current = Some(item.full_name.as_str()) == head_name;
+        let switchable = !current && matches!(item.kind, RefKind::Branch | RefKind::Remote);
         let hint = if current {
             "Current branch · click to inspect this commit"
+        } else if switchable {
+            "Click to inspect this commit · double-click to switch"
         } else {
             "Click to inspect this commit"
         };
@@ -265,7 +274,12 @@ fn paint_refs_and_subject(
                 format!("{:?} {}", item.kind, item.name),
             )
         });
-        if response.clicked() {
+        if response.double_clicked() && switchable {
+            action = Some(match item.kind {
+                RefKind::Remote => RefAction::SwitchRemote(item.name.clone()),
+                _ => RefAction::Switch(item.name.clone()),
+            });
+        } else if response.clicked() {
             action = Some(RefAction::Select);
         }
         x = pill.right() + 4.0;
@@ -782,7 +796,7 @@ mod tests {
     }
 
     #[test]
-    fn clicking_a_branch_pill_selects_its_commit_without_switching() {
+    fn clicking_a_branch_pill_selects_and_double_clicking_switches() {
         let id = "a".repeat(40);
         let refs = [gg_engine::refs::RefItem {
             name: "main".into(),
@@ -792,7 +806,23 @@ mod tests {
         }];
         let (_, first, second) = click_pill_twice(&refs, None);
         assert_eq!(first, Some(RefAction::Select));
-        assert_eq!(second, Some(RefAction::Select));
+        assert_eq!(second, Some(RefAction::Switch("main".into())));
+    }
+
+    #[test]
+    fn double_clicking_a_remote_pill_switches_to_it() {
+        let refs = [gg_engine::refs::RefItem {
+            name: "origin/feature".into(),
+            full_name: "refs/remotes/origin/feature".into(),
+            kind: gg_engine::refs::RefKind::Remote,
+            commit: "c".repeat(40),
+        }];
+        let (_, first, second) = click_pill_twice(&refs, None);
+        assert_eq!(first, Some(RefAction::Select));
+        assert_eq!(
+            second,
+            Some(RefAction::SwitchRemote("origin/feature".into()))
+        );
     }
 
     #[test]

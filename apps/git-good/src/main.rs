@@ -620,6 +620,29 @@ struct StashPicker {
 
 use recovery_view::RecoveryView;
 
+/// What switching to a remote branch does.
+#[derive(Debug, PartialEq, Eq)]
+enum RemoteSwitch {
+    /// A local branch of the same name exists: switch to it.
+    Local(String),
+    /// Create a local branch tracking the remote one and switch to it.
+    Track(String),
+}
+
+fn remote_switch(remote_branch: &str, refs: &[gg_engine::refs::RefItem]) -> RemoteSwitch {
+    let local = remote_branch
+        .split_once('/')
+        .map_or(remote_branch, |(_, local)| local);
+    if refs
+        .iter()
+        .any(|item| item.kind == gg_engine::refs::RefKind::Branch && item.name == local)
+    {
+        RemoteSwitch::Local(local.to_string())
+    } else {
+        RemoteSwitch::Track(remote_branch.to_string())
+    }
+}
+
 /// Command readiness shared by the menu bar and the icon toolbar.
 #[derive(Clone, Copy, Debug)]
 struct FrameReadiness {
@@ -2154,6 +2177,16 @@ impl Browser {
                 self.network_notice = None;
             }
             Err(error) => self.network_error = Some(error),
+        }
+    }
+
+    /// Switch to a remote branch (`origin/feature`) as the branch switcher
+    /// does: to the local branch of that name when there is one, otherwise
+    /// to a new local branch tracking it.
+    fn switch_remote(&mut self, ctx: &egui::Context, remote_branch: String) {
+        match remote_switch(&remote_branch, &self.state.refs.items) {
+            RemoteSwitch::Local(name) => self.start_branch(ctx, name, false),
+            RemoteSwitch::Track(remote) => self.start_track(ctx, remote),
         }
     }
 
@@ -4393,6 +4426,10 @@ impl Browser {
 
     /// Run what a refs sidebar or refs drawer row asked for.
     fn apply_refs_action(&mut self, ctx: &egui::Context, action: refs_view::Action) {
+        // The action is applied after the frame that drew the click; draw
+        // again now so a dialog or the job it starts shows at once instead
+        // of waiting for the next mouse move.
+        ctx.request_repaint();
         match action {
             refs_view::Action::OpenWorktree(path) => {
                 let (mut local, mut history) = (false, false);
@@ -4404,10 +4441,8 @@ impl Browser {
                 );
             }
             refs_view::Action::Switch(name) => self.start_branch(ctx, name, false),
+            refs_view::Action::SwitchRemote(name) => self.switch_remote(ctx, name),
             refs_view::Action::Jump(id) => self.jump_to_ref(id),
-            refs_view::Action::Track(name) => {
-                self.track_dialog = Some(name);
-            }
             refs_view::Action::OpenStash(index) => {
                 self.stash_picker.selected = index;
                 self.stash_picker.confirm_drop = false;
@@ -12020,6 +12055,8 @@ impl Browser {
             self.details_rect = details.response.rect;
         }
         let mut pending_commit_command: Option<(String, String, CommitCommand)> = None;
+        // A double-clicked branch pill: its name and whether it is remote.
+        let mut pill_switch: Option<(String, bool)> = None;
         let mut right_clicked_row: Option<usize> = None;
         let mut welcome_command: Option<welcome_view::Command> = None;
         egui::CentralPanel::default().show(ui, |ui| {
@@ -12244,6 +12281,12 @@ impl Browser {
                                             }
                                             match action {
                                                 history_view::RefAction::Select => {}
+                                                history_view::RefAction::Switch(name) => {
+                                                    pill_switch = Some((name, false));
+                                                }
+                                                history_view::RefAction::SwitchRemote(name) => {
+                                                    pill_switch = Some((name, true));
+                                                }
                                             }
                                         } else {
                                             if response.clicked() {
@@ -12302,6 +12345,14 @@ impl Browser {
             self.state.select_row(row);
             if self.worker.is_none() {
                 self.state.details = self.state.rows.get(&row).cloned();
+            }
+        }
+        if let Some((name, remote)) = pill_switch {
+            ctx.request_repaint();
+            if remote {
+                self.switch_remote(ctx, name);
+            } else {
+                self.start_branch(ctx, name, false);
             }
         }
         if let Some((id, subject, command)) = pending_commit_command {
@@ -19221,6 +19272,35 @@ mod tests {
         frame(&mut app, vec![key(egui::Key::K, egui::Modifiers::COMMAND)]);
         frame(&mut app, vec![key(egui::Key::K, egui::Modifiers::COMMAND)]);
         assert!(app.search.is_none(), "Ctrl+K toggles search closed");
+    }
+
+    #[test]
+    fn switching_to_a_remote_branch_uses_its_local_branch_or_tracks_it() {
+        let item = |name: &str, kind| gg_engine::refs::RefItem {
+            name: name.into(),
+            full_name: String::new(),
+            kind,
+            commit: "a".repeat(40),
+        };
+        let refs = [
+            item("main", gg_engine::refs::RefKind::Branch),
+            item("origin/main", gg_engine::refs::RefKind::Remote),
+            item("origin/feature", gg_engine::refs::RefKind::Remote),
+            item("feature", gg_engine::refs::RefKind::Tag),
+        ];
+        assert_eq!(
+            remote_switch("origin/main", &refs),
+            RemoteSwitch::Local("main".into())
+        );
+        // A tag of the same name is not a branch to switch to.
+        assert_eq!(
+            remote_switch("origin/feature", &refs),
+            RemoteSwitch::Track("origin/feature".into())
+        );
+        assert_eq!(
+            remote_switch("upstream/team/feature", &refs),
+            RemoteSwitch::Track("upstream/team/feature".into())
+        );
     }
 
     #[test]
