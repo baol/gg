@@ -5,12 +5,26 @@ fn disclosure_id() -> egui::Id {
     egui::Id::unique("full-text-disclosure")
 }
 
+/// What the full-text window shows: its title names the source field
+/// (`Commit subject`, `Path`, `Parents`, `Error`); paths and IDs are mono.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Disclosure {
+    title: String,
+    value: String,
+    mono: bool,
+}
+
 pub fn field(ui: &mut egui::Ui, value: &str, font: egui::FontId, height: f32) {
+    field_named(ui, value, font, height, "Full text");
+}
+
+/// [`field`] whose "…" opens a window titled `title`.
+pub fn field_named(ui: &mut egui::Ui, value: &str, font: egui::FontId, height: f32, title: &str) {
     let (rect, _) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), height),
         egui::Sense::hover(),
     );
-    paint(ui, rect, value, font, ui.visuals().text_color());
+    paint_named(ui, rect, value, font, ui.visuals().text_color(), title);
 }
 
 pub fn paint(
@@ -20,7 +34,19 @@ pub fn paint(
     font: egui::FontId,
     color: egui::Color32,
 ) -> Option<egui::Rect> {
-    paint_weighted(ui, rect, value, font, color, false)
+    paint_weighted(ui, rect, value, font, color, false, "Full text")
+}
+
+/// [`paint`] whose "…" opens a window titled `title`.
+pub fn paint_named(
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    value: &str,
+    font: egui::FontId,
+    color: egui::Color32,
+    title: &str,
+) -> Option<egui::Rect> {
+    paint_weighted(ui, rect, value, font, color, false, title)
 }
 
 /// Paint one-line text with a faux-bold weight on the selected row.
@@ -31,7 +57,7 @@ pub fn paint_bold(
     font: egui::FontId,
     color: egui::Color32,
 ) -> Option<egui::Rect> {
-    paint_weighted(ui, rect, value, font, color, true)
+    paint_weighted(ui, rect, value, font, color, true, "Full text")
 }
 
 fn paint_weighted(
@@ -41,6 +67,7 @@ fn paint_weighted(
     font: egui::FontId,
     color: egui::Color32,
     bold: bool,
+    title: &str,
 ) -> Option<egui::Rect> {
     let single_line = value.replace(['\n', '\r', '\t'], " ");
     let layout = |width: f32| {
@@ -68,8 +95,13 @@ fn paint_weighted(
                 egui::Sense::click(),
             )
             .on_hover_text(value);
+        // A real button named for its field, for screen readers.
         response.widget_info(|| {
-            egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), "Show full text")
+            egui::WidgetInfo::labeled(
+                egui::Role::Button,
+                ui.is_enabled(),
+                format!("Show full {}", title.to_lowercase()),
+            )
         });
         let painter = ui.painter().with_clip_rect(button);
         let at = button.center();
@@ -84,8 +116,13 @@ fn paint_weighted(
             );
         }
         if response.clicked() {
+            let disclosure = Disclosure {
+                title: title.to_owned(),
+                value: value.to_owned(),
+                mono: font.family == egui::FontFamily::Monospace,
+            };
             ui.ctx()
-                .data_mut(|data| data.insert_temp(disclosure_id(), value.to_owned()));
+                .data_mut(|data| data.insert_temp(disclosure_id(), disclosure));
         }
         button
     });
@@ -145,27 +182,85 @@ pub fn paint_path(
     shown != value
 }
 
+/// Keys for an open full-text window, read before any view: `Esc` closes
+/// it and `Ctrl+C` copies its text.
+pub fn disclosure_keys(ctx: &egui::Context) {
+    let Some(shown) = ctx.data(|data| data.get_temp::<Disclosure>(disclosure_id())) else {
+        return;
+    };
+    if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+        ctx.data_mut(|data| data.remove::<Disclosure>(disclosure_id()));
+    } else if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::C)) {
+        ctx.copy_text(shown.value);
+    }
+}
+
+/// The full-text window: titled by its field, the exact text selectable
+/// (mono for paths and IDs), then the character count and **Close** (`Esc`)
+/// beside the primary **Copy** (`Ctrl+C`). It is not modal.
 pub fn show_disclosure(ctx: &egui::Context) {
-    let value = ctx.data(|data| data.get_temp::<String>(disclosure_id()));
-    if let Some(value) = value {
-        let mut open = true;
-        egui::Window::new("Full text")
-            .id(disclosure_id())
-            .open(&mut open)
-            .default_width(560.0)
-            .default_height(240.0)
-            .resizable(true)
-            .show(ctx, |ui| {
-                if ui.button("Copy full text").clicked() {
-                    ui.ctx().copy_text(value.clone());
-                }
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    ui.add(egui::Label::new(&value).wrap().selectable(true));
+    let Some(shown) = ctx.data(|data| data.get_temp::<Disclosure>(disclosure_id())) else {
+        return;
+    };
+    let mut close = false;
+    let mut copy = false;
+    egui::Window::new(&shown.title)
+        .id(disclosure_id())
+        .title_bar(false)
+        .collapsible(false)
+        .default_width(560.0)
+        .default_height(240.0)
+        .resizable(true)
+        .show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(&shown.title).size(16.0));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    close |= ui.button("×").on_hover_text("Close (Esc)").clicked();
                 });
             });
-        if !open {
-            ctx.data_mut(|data| data.remove::<String>(disclosure_id()));
-        }
+            ui.separator();
+            let footer = 34.0;
+            egui::ScrollArea::vertical()
+                .max_height((ui.available_height() - footer).max(60.0))
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    let text = if shown.mono {
+                        egui::RichText::new(&shown.value).monospace()
+                    } else {
+                        egui::RichText::new(&shown.value)
+                    };
+                    ui.add(egui::Label::new(text).wrap().selectable(true));
+                });
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.weak(format!(
+                    "{} characters · text is selectable",
+                    shown.value.chars().count()
+                ));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let primary = egui::Button::new((
+                        egui::RichText::new("Copy").color(egui::Color32::WHITE),
+                        egui::RichText::new("Ctrl+C")
+                            .small()
+                            .color(egui::Color32::from_rgb(184, 212, 230)),
+                    ))
+                    .fill(crate::welcome_view::PRIMARY);
+                    copy |= ui.add(primary).clicked();
+                    close |= ui
+                        .button(("Close", egui::RichText::new("Esc").small().weak()))
+                        .clicked();
+                });
+            });
+        });
+    ctx.input_mut(|i| {
+        close |= i.consume_key(egui::Modifiers::NONE, egui::Key::Escape);
+        copy |= i.consume_key(egui::Modifiers::COMMAND, egui::Key::C);
+    });
+    if copy {
+        ctx.copy_text(shown.value.clone());
+    }
+    if close {
+        ctx.data_mut(|data| data.remove::<Disclosure>(disclosure_id()));
     }
 }
 
@@ -218,6 +313,52 @@ mod tests {
             assert!(width <= slot.width() + 0.5, "{width}");
             assert!(texts.iter().any(|text| text.galley.job.text == "src/a.rs"));
         }
+    }
+
+    #[test]
+    fn the_full_text_window_is_titled_by_its_field_with_copy_primary() {
+        let ctx = egui::Context::default();
+        ctx.data_mut(|data| {
+            data.insert_temp(
+                disclosure_id(),
+                Disclosure {
+                    title: "Commit subject".into(),
+                    value: "Keep the tracking branch visible".into(),
+                    mono: false,
+                },
+            )
+        });
+        let input = |events| crate::tests::frame_input(720.0, 480.0, events);
+        let _ = crate::tests::run_ui(&ctx, input(vec![]), |ui| show_disclosure(ui.ctx()));
+        let output = crate::tests::run_ui(&ctx, input(vec![]), |ui| show_disclosure(ui.ctx()));
+        let text = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) => Some(text.galley.job.text.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        for expected in ["Commit subject", "Copy", "Ctrl+C", "Close", "Esc"] {
+            assert!(
+                text.iter().any(|t| t == expected),
+                "missing {expected}: {text:?}"
+            );
+        }
+        assert!(!text.iter().any(|t| t == "Copy full text"));
+        let escape = egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let _ = crate::tests::run_ui(&ctx, input(vec![escape]), |ui| show_disclosure(ui.ctx()));
+        assert!(
+            ctx.data(|data| data.get_temp::<Disclosure>(disclosure_id()))
+                .is_none(),
+            "Esc closes it"
+        );
     }
 
     #[test]
@@ -279,7 +420,8 @@ mod tests {
                 &mut draw,
             );
             assert_eq!(
-                ctx.data(|data| data.get_temp::<String>(disclosure_id())),
+                ctx.data(|data| data.get_temp::<Disclosure>(disclosure_id()))
+                    .map(|shown| shown.value),
                 Some(value)
             );
         }

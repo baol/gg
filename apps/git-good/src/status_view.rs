@@ -925,8 +925,13 @@ impl StatusView {
     }
 
     /// Take an LFS-details request raised by the reader.
-    /// Take the path chosen with ⋯ › Open in editor.
-    pub fn take_editor_request(&mut self) -> Option<String> {
+    /// The footer receipt of a finished ⋯ › Export.
+    pub fn take_export_receipt(&mut self) -> Option<String> {
+        self.reader.take_export_receipt()
+    }
+
+    /// Take the path chosen with ⋯ › Open in editor or Reveal in folder.
+    pub fn take_editor_request(&mut self) -> Option<crate::editor::Request> {
         self.reader.take_editor_request()
     }
 
@@ -1530,7 +1535,7 @@ impl StatusView {
             });
         }
         if let Some(error) = self.stage.error().map(str::to_owned) {
-            bounded_text::field(ui, &error, egui::FontId::proportional(12.0), 22.0);
+            bounded_text::field_named(ui, &error, egui::FontId::proportional(12.0), 22.0, "Error");
         }
         if let Some(selected) = self.active.clone()
             && self.active_entry.is_none()
@@ -2725,6 +2730,66 @@ mod tests {
         Ok(())
     }
     #[test]
+    fn file_actions_are_menu_rows_with_discard_last_in_red()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        generated(dir.path())?;
+        let ctx = egui::Context::default();
+        let mut view = StatusView::new(dir.path().into(), &ctx);
+        settle(&ctx, &mut view, 1120.0);
+        select_area(&mut view, &ctx, Area::Unstaged);
+        ready(&ctx, &mut view, 1120.0);
+        let output = run(&ctx, &mut view, 1120.0, vec![]);
+        let menu = text_pos(&output, crate::phosphor::DOTS_THREE).ok_or("missing File actions")?;
+        click(&ctx, &mut view, 1120.0, menu + egui::vec2(5.0, 0.0));
+        let output = run(&ctx, &mut view, 1120.0, vec![]);
+        let labels = [
+            "Open in editor",
+            "Reveal in folder",
+            "Copy path",
+            "Export before…",
+            "Export after…",
+            "File details",
+            "Discard file…",
+        ];
+        let rows = labels
+            .iter()
+            .map(|label| {
+                output.shapes.iter().find_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) if text.galley.job.text == *label => {
+                        Some((text.pos.y, text.fallback_color, text.galley.clone()))
+                    }
+                    _ => None,
+                })
+            })
+            .collect::<Option<Vec<_>>>()
+            .ok_or("missing a File actions row")?;
+        assert!(
+            rows.windows(2).all(|pair| pair[0].0 < pair[1].0),
+            "rows in the board's order"
+        );
+        let (y0, y1) = (rows[0].0, rows[1].0);
+        assert!(
+            (crate::menus::ROW_HEIGHT..crate::menus::ROW_HEIGHT + 4.0).contains(&(y1 - y0)),
+            "24 px rows: {y0} → {y1}"
+        );
+        let discard = rows.last().ok_or("no rows")?;
+        let red = discard.2.job.sections[0].format.color;
+        assert_eq!(
+            red,
+            ctx.style_of(ctx.theme()).visuals.error_fg_color,
+            "Discard file… is red"
+        );
+        assert!(
+            !output.shapes.iter().any(|shape| matches!(
+                &shape.shape,
+                egui::epaint::Shape::Text(text) if text.galley.job.text == "Stage"
+            )),
+            "no Stage button in the reader header"
+        );
+        Ok(())
+    }
+    #[test]
     fn workspace_uses_one_reader_header_with_on_demand_details()
     -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempfile::tempdir()?;
@@ -2748,7 +2813,7 @@ mod tests {
         assert!(!text.contains(&"View diff"));
         assert!(!text.iter().any(|line| line.starts_with("Unstaged:")));
         assert!(
-            !text.contains(&"Show file details"),
+            !text.contains(&"File details"),
             "low-frequency identity stays behind the action surface"
         );
         assert!(
@@ -2759,8 +2824,7 @@ mod tests {
         let menu = text_pos(&output, crate::phosphor::DOTS_THREE).ok_or("missing File actions")?;
         click(&ctx, &mut view, 1120.0, menu + egui::vec2(5.0, 0.0));
         let output = run(&ctx, &mut view, 1120.0, vec![]);
-        let details =
-            text_pos(&output, "Show file details").ok_or("missing file details action")?;
+        let details = text_pos(&output, "File details").ok_or("missing file details action")?;
         click(&ctx, &mut view, 1120.0, details + egui::vec2(5.0, 0.0));
         let output = run(&ctx, &mut view, 1120.0, vec![]);
         let text = output
@@ -3044,8 +3108,34 @@ mod tests {
         pump(ctx, view, width, |view| {
             view.reader.ready() && view.complete && !view.replacing && !view.stage.mutating()
         });
-        let button = wait_text(ctx, view, width, label)?;
-        click(ctx, view, width, button + egui::vec2(5.0, 0.0));
+        // Whole-file staging is the selected row's + / − button.
+        let (glyph, list) = if label == "Unstage" {
+            ("−", 1)
+        } else {
+            ("+", 0)
+        };
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let button = loop {
+            let output = run(ctx, view, width, vec![]);
+            let rect = view.lists[list].rect;
+            if let Some(pos) = output.shapes.iter().find_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text)
+                    if text.galley.job.text == glyph
+                        && rect.contains(text.pos)
+                        && text.pos.x > rect.right() - ROW_BUTTON - 4.0 =>
+                {
+                    Some(text.pos)
+                }
+                _ => None,
+            }) {
+                break pos;
+            }
+            if std::time::Instant::now() > until {
+                return Err(format!("missing row {glyph} button").into());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        };
+        click(ctx, view, width, button + egui::vec2(2.0, 4.0));
         Ok(())
     }
     fn click_file_action(
@@ -3344,7 +3434,7 @@ mod tests {
     }
 
     #[test]
-    fn double_click_stages_and_unstages_with_the_stage_button_and_advances()
+    fn double_click_stages_and_unstages_with_the_row_button_and_advances()
     -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempfile::tempdir()?;
         let p = dir.path();
@@ -3362,7 +3452,10 @@ mod tests {
         settle(&ctx, &mut view, 1120.0);
 
         let output = run(&ctx, &mut view, 1120.0, vec![]);
-        assert!(text_pos(&output, "Stage").is_some(), "own Stage button");
+        assert!(
+            text_pos(&output, "Stage").is_none(),
+            "the reader header has no Stage button; the row's + stages"
+        );
         let a = row_pos(&output, &view, 0, "a").ok_or("missing a row")?;
         double_click(&ctx, &mut view, 1120.0, a);
         pump(&ctx, &mut view, 1120.0, |view| {
@@ -3405,7 +3498,10 @@ mod tests {
         );
 
         let output = run(&ctx, &mut view, 1120.0, vec![]);
-        assert!(text_pos(&output, "Unstage").is_some(), "own Unstage button");
+        assert!(
+            text_pos(&output, "Unstage").is_none(),
+            "no header Unstage button"
+        );
         let c = row_pos(&output, &view, 1, "c").ok_or("missing staged c row")?;
         double_click(&ctx, &mut view, 1120.0, c);
         pump(&ctx, &mut view, 1120.0, |view| {
@@ -3425,9 +3521,7 @@ mod tests {
         );
 
         ready(&ctx, &mut view, 1120.0);
-        let output = run(&ctx, &mut view, 1120.0, vec![]);
-        let stage = text_pos(&output, "Stage").ok_or("missing Stage button")?;
-        click(&ctx, &mut view, 1120.0, stage + egui::vec2(5.0, 0.0));
+        click_whole_file(&ctx, &mut view, 1120.0, "Stage")?;
         pump(&ctx, &mut view, 1120.0, |view| {
             !view.stage.mutating()
                 && view.complete
@@ -3437,9 +3531,7 @@ mod tests {
         assert_eq!(file(p, &["show", ":c"])?, b"c working\n");
 
         ready(&ctx, &mut view, 1120.0);
-        let output = run(&ctx, &mut view, 1120.0, vec![]);
-        let unstage = text_pos(&output, "Unstage").ok_or("missing Unstage button")?;
-        click(&ctx, &mut view, 1120.0, unstage + egui::vec2(5.0, 0.0));
+        click_whole_file(&ctx, &mut view, 1120.0, "Unstage")?;
         pump(&ctx, &mut view, 1120.0, |view| {
             !view.stage.mutating()
                 && view.complete
@@ -3509,7 +3601,7 @@ mod tests {
         assert!(text.contains(&"Copy path"));
         assert!(text.contains(&"Open in editor"));
         assert!(!text.contains(&"Stage file"));
-        assert!(!text.contains(&"Discard unstaged changes…"));
+        assert!(!text.contains(&"Discard file…"));
         assert!(!view.busy(), "selection and navigation stay available");
         assert!(view.mutations_blocked());
         Ok(())
@@ -4307,7 +4399,7 @@ mod tests {
             assert_eq!(std::fs::read(dir.path().join(".git/index"))?, index);
 
             // The whole-file action names its scope: unstaged changes only.
-            click_file_action(&ctx, &mut view, width, "Discard unstaged changes…")?;
+            click_file_action(&ctx, &mut view, width, "Discard file…")?;
             wait_text(
                 &ctx,
                 &mut view,

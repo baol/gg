@@ -231,8 +231,13 @@ impl Review {
     }
 
     /// Take an LFS-details request raised by the reader.
-    /// Take the path chosen with ⋯ › Open in editor.
-    pub fn take_editor_request(&mut self) -> Option<String> {
+    /// The footer receipt of a finished ⋯ › Export.
+    pub fn take_export_receipt(&mut self) -> Option<String> {
+        self.diff.take_export_receipt()
+    }
+
+    /// Take the path chosen with ⋯ › Open in editor or Reveal in folder.
+    pub fn take_editor_request(&mut self) -> Option<crate::editor::Request> {
         self.diff.take_editor_request()
     }
 
@@ -651,7 +656,7 @@ impl Review {
             return;
         }
         if let Some(message) = message {
-            bounded_text::field(ui, message, egui::FontId::proportional(12.0), 22.0);
+            bounded_text::field_named(ui, message, egui::FontId::proportional(12.0), 22.0, "Error");
             return;
         }
         // A finished comparison with no files: say why, and offer the other

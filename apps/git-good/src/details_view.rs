@@ -34,11 +34,12 @@ pub fn show(
                     egui::Layout::left_to_right(egui::Align::Center),
                     |ui| {
                         ui.set_min_width(subject_width);
-                        crate::bounded_text::field(
+                        crate::bounded_text::field_named(
                             ui,
                             commit.subject(),
                             egui::FontId::proportional(16.0),
                             22.0,
+                            "Commit subject",
                         );
                     },
                 );
@@ -107,7 +108,13 @@ pub fn show(
                     } else {
                         commit.parents.join("\n")
                     };
-                    crate::bounded_text::field(ui, &parents, egui::FontId::monospace(11.0), 20.0);
+                    crate::bounded_text::field_named(
+                        ui,
+                        &parents,
+                        egui::FontId::monospace(11.0),
+                        20.0,
+                        "Parents",
+                    );
                     ui.end_row();
                 });
             ui.add_space(10.0);
@@ -122,7 +129,13 @@ pub fn show(
                     .split_once('\n')
                     .map_or("", |(_, body)| body.trim())
             };
-            crate::bounded_text::field(ui, body, egui::FontId::proportional(13.0), 20.0);
+            crate::bounded_text::field_named(
+                ui,
+                body,
+                egui::FontId::proportional(13.0),
+                20.0,
+                "Commit message",
+            );
         });
     command
 }

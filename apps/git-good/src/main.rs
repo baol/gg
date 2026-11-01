@@ -2,6 +2,7 @@ mod avatars;
 mod backups_view;
 mod binary_preview;
 mod blame_cli;
+mod blame_view;
 mod blame_worker;
 mod bounded_text;
 mod branch_cli;
@@ -1315,8 +1316,9 @@ enum CommitCommand {
     /// An item of the Commit menu, mirrored in the Commit actions popup.
     Menu(FrameCommand),
     CopySubject,
-    OpenRecovery,
     OpenSignature,
+    /// Reset current branch to here ▸ Soft / Mixed / Hard.
+    Reset(gg_engine::reset::Mode),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1400,24 +1402,132 @@ fn push_failure_follow_up(error: &str) -> Option<RecoveryAction> {
     }
 }
 
-/// The Commit actions popup: the Commit menu's own entries (one command
-/// table), then the popup-only extras.
+/// The Commit actions popup, matching the History inspector's menu: the
+/// Commit menu's own entries (one command table) as 24 px rows with the
+/// check column, **Copy subject** and **Signature details…** under Copy ID,
+/// and **Reset current branch to here ▸** as Soft / Mixed / Hard. Disabled
+/// mutations keep their rows, greyed, under one band giving the reason.
 fn commit_action_menu(
     ui: &mut egui::Ui,
     menu: &[menus::Entry<FrameCommand>],
 ) -> Option<CommitCommand> {
-    let mut chosen = None;
-    menus::entries(ui, menu, &mut chosen);
-    let mut command = chosen.map(CommitCommand::Menu);
-    ui.separator();
-    if ui.add(menus::row(false, "Copy subject")).clicked() {
-        command = Some(CommitCommand::CopySubject);
-    }
-    if ui.add(menus::row(false, "Signature details…")).clicked() {
-        command = Some(CommitCommand::OpenSignature);
-    }
-    if ui.add(menus::row(false, "Recovery…")).clicked() {
-        command = Some(CommitCommand::OpenRecovery);
+    use menus::Entry;
+    ui.set_min_width(260.0);
+    let mutation = |command: &FrameCommand| {
+        !matches!(
+            command,
+            FrameCommand::ReviewSelected | FrameCommand::CompareHead | FrameCommand::CopyId
+        )
+    };
+    // One band for the reason every disabled mutation shares.
+    let reasons = menus::flatten(&[menus::Menu {
+        title: "Commit",
+        entries: menu.to_vec(),
+    }])
+    .into_iter()
+    .filter(|(_, item)| mutation(&item.command))
+    .map(|(_, item)| item.disabled)
+    .collect::<Vec<_>>();
+    let band = reasons
+        .first()
+        .cloned()
+        .flatten()
+        .filter(|first| reasons.iter().all(|reason| reason.as_ref() == Some(first)));
+    let mut command = None;
+    let mut banded = false;
+    for entry in menu {
+        let Entry::Item(item) = entry else {
+            if let Entry::Separator = entry {
+                ui.separator();
+            }
+            continue;
+        };
+        if mutation(&item.command)
+            && !banded
+            && let Some(reason) = &band
+        {
+            banded = true;
+            egui::Frame::new()
+                .fill(egui::Color32::from_rgba_unmultiplied(220, 195, 125, 24))
+                .inner_margin(egui::Margin::symmetric(8, 4))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(reason)
+                                .small()
+                                .color(egui::Color32::from_rgb(220, 195, 125)),
+                        )
+                        .wrap(),
+                    );
+                });
+        }
+        if item.command == FrameCommand::ResetHere {
+            use egui::containers::menu::SubMenuButton;
+            let text = if item.disabled.is_none() {
+                egui::RichText::new("Reset current branch to here")
+                    .color(ui.visuals().error_fg_color)
+            } else {
+                egui::RichText::new("Reset current branch to here")
+            };
+            ui.add_enabled_ui(item.disabled.is_none(), |ui| {
+                let button = menus::row(false, text).right_text(SubMenuButton::arrow_atom(None));
+                SubMenuButton::from_button(button).ui(ui, |ui| {
+                    ui.set_min_width(240.0);
+                    for (mode, label, danger) in [
+                        (
+                            gg_engine::reset::Mode::Soft,
+                            "Soft · keep index and files",
+                            false,
+                        ),
+                        (gg_engine::reset::Mode::Mixed, "Mixed · keep files", false),
+                        (
+                            gg_engine::reset::Mode::Hard,
+                            "Hard · discard changes…",
+                            true,
+                        ),
+                    ] {
+                        let text = if danger {
+                            egui::RichText::new(label).color(ui.visuals().error_fg_color)
+                        } else {
+                            egui::RichText::new(label)
+                        };
+                        let default = mode == gg_engine::reset::Mode::Mixed;
+                        let row = menus::row(default, text).shortcut_text(if default {
+                            "default"
+                        } else {
+                            ""
+                        });
+                        if ui.add(row).clicked() {
+                            command = Some(CommitCommand::Reset(mode));
+                            ui.close();
+                        }
+                    }
+                });
+            });
+            continue;
+        }
+        if menus::item_row(ui, item, band.is_none() || !mutation(&item.command)) {
+            command = Some(CommitCommand::Menu(item.command.clone()));
+            ui.close();
+        }
+        if item.command == FrameCommand::CopyId {
+            let enabled = item.disabled.is_none();
+            if ui
+                .add_enabled(enabled, menus::row(false, "Copy subject"))
+                .clicked()
+            {
+                command = Some(CommitCommand::CopySubject);
+                ui.close();
+            }
+            if ui
+                .add_enabled(enabled, menus::row(false, "Signature details…"))
+                .clicked()
+            {
+                command = Some(CommitCommand::OpenSignature);
+                ui.close();
+            }
+        }
     }
     command
 }
@@ -3657,6 +3767,7 @@ impl Browser {
     /// their Ctrl twins (Ctrl+Shift+F over the filter's Ctrl+F). Each runs
     /// only when its menu item is enabled.
     fn menu_shortcuts(&mut self, ctx: &egui::Context) {
+        bounded_text::disclosure_keys(ctx);
         // The non-modal help and details windows take Esc before any view.
         if (self.help_shortcuts || self.about_open || self.outcome_details_open)
             && ctx.memory(|m| m.top_modal_layer()).is_none()
@@ -4056,15 +4167,17 @@ impl Browser {
 
     /// Open a repository-relative path's working file in the editor from
     /// Preferences; a failure goes to the status line.
-    fn open_in_editor(&mut self, path: &str) {
+    fn open_in_editor(&mut self, request: &editor::Request) {
         let Some(workdir) = self.stash_path() else {
             return;
         };
-        let file = workdir.join(path);
-        let result = if file.exists() {
-            editor::open(&self.prefs.editor, &file)
+        let file = workdir.join(&request.path);
+        let result = if !file.exists() {
+            Err(format!("{} is not in the working tree.", request.path))
+        } else if request.folder {
+            editor::reveal(&file)
         } else {
-            Err(format!("{path} is not in the working tree."))
+            editor::open(&self.prefs.editor, &file)
         };
         if let Err(error) = result {
             self.set_outcome(OutcomeSeverity::Error, error, None, None);
@@ -6517,12 +6630,10 @@ impl Browser {
                 }
             }
             CommitCommand::CopySubject => ctx.copy_text(subject.to_string()),
-            CommitCommand::OpenRecovery => {
-                if let Some(history) = &self.state.history {
-                    self.recovery = Some(RecoveryView::new(history.path.clone()));
-                }
-            }
             CommitCommand::OpenSignature => self.open_signature(ctx, id.to_string()),
+            CommitCommand::Reset(mode) => {
+                self.run_commit_action(ctx, id.to_string(), CommitAction::Reset(mode));
+            }
         }
     }
 
@@ -11747,6 +11858,13 @@ impl Browser {
             {
                 self.open_in_editor(&path);
             }
+            if let Some(receipt) = self
+                .working
+                .as_mut()
+                .and_then(|working| working.take_export_receipt())
+            {
+                self.set_outcome(OutcomeSeverity::Info, receipt, None, None);
+            }
             if let Some(stage) = self
                 .working
                 .as_mut()
@@ -11798,6 +11916,13 @@ impl Browser {
                 .and_then(|review| review.take_editor_request())
             {
                 self.open_in_editor(&path);
+            }
+            if let Some(receipt) = self
+                .review
+                .as_mut()
+                .and_then(|review| review.take_export_receipt())
+            {
+                self.set_outcome(OutcomeSeverity::Info, receipt, None, None);
             }
             if close {
                 let location = self
@@ -15237,7 +15362,8 @@ mod tests {
                     _ => None,
                 })
                 .collect::<Vec<_>>();
-            // The popup mirrors the Commit menu, then its own extras.
+            // The popup mirrors the Commit menu with Copy subject and
+            // Signature details… under Copy ID.
             for label in [
                 "Review changes",
                 "Compare with HEAD",
@@ -15249,13 +15375,16 @@ mod tests {
                 "Reopen for editing…",
                 "Fixup into…",
                 "Drop…",
-                "Reset current branch to here…",
+                "Reset current branch to here",
                 "Copy subject",
                 "Signature details…",
-                "Recovery…",
             ] {
                 assert!(text.contains(&label), "missing {label} at {width}");
             }
+            assert!(
+                !text.contains(&"Recovery…") || !text.contains(&"Copy subject"),
+                "Recovery… moved to the app menu"
+            );
             assert_eq!(
                 text.iter().filter(|line| **line == "Actions").count(),
                 usize::from(width >= 1040.0),
@@ -15284,6 +15413,77 @@ mod tests {
             &shape.shape,
             egui::epaint::Shape::Text(text) if text.galley.job.text == "Cherry-pick onto HEAD"
         )));
+    }
+
+    #[test]
+    fn commit_action_menu_matches_the_inspector_with_one_reason_band() {
+        let ctx = egui::Context::default();
+        let reason = "Rebase in progress. Continue or abort it to change commits.";
+        let menu = vec![
+            menus::item("Review changes", "Enter", FrameCommand::ReviewSelected).entry(),
+            menus::item("Copy ID", "Ctrl+C", FrameCommand::CopyId).entry(),
+            menus::Entry::Separator,
+            menus::item("Cherry-pick onto HEAD", "", FrameCommand::CherryPick)
+                .unless(Some(reason))
+                .entry(),
+            menus::item(
+                "Drop…",
+                "D",
+                FrameCommand::RebasePreset(gg_engine::rewrite::Action::Drop),
+            )
+            .unless(Some(reason))
+            .danger()
+            .entry(),
+            menus::Entry::Separator,
+            menus::item("Reset current branch to here…", "", FrameCommand::ResetHere)
+                .unless(Some(reason))
+                .danger()
+                .entry(),
+        ];
+        let output = crate::tests::run_ui(&ctx, frame_input(360.0, 600.0, vec![]), |ui| {
+            commit_action_menu(ui, &menu);
+        });
+        let rows = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) => Some((text.pos.y, text.galley.job.text.clone())),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let labels = rows
+            .iter()
+            .map(|(_, text)| text.as_str())
+            .collect::<Vec<_>>();
+        let at = |label: &str| labels.iter().position(|text| *text == label);
+        assert_eq!(
+            [at("Copy ID"), at("Copy subject"), at("Signature details…")]
+                .map(|index| index.is_some()),
+            [true; 3]
+        );
+        assert!(
+            at("Copy ID") < at("Copy subject") && at("Copy subject") < at("Signature details…")
+        );
+        assert!(at("Recovery…").is_none(), "Recovery… lives in the app menu");
+        assert_eq!(
+            labels.iter().filter(|text| **text == reason).count(),
+            1,
+            "one band names the reason: {labels:?}"
+        );
+        assert!(
+            at(reason) < at("Cherry-pick onto HEAD"),
+            "the band sits above the mutations"
+        );
+        assert!(
+            at("Reset current branch to here").is_some(),
+            "Reset opens Soft / Mixed / Hard"
+        );
+        assert!(
+            labels
+                .iter()
+                .all(|text| !text.contains("8f0e") && !text.starts_with("COMMIT")),
+            "no group headings or hashes in labels"
+        );
     }
 
     #[test]
