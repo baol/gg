@@ -104,6 +104,27 @@ impl Details {
     }
 }
 
+/// One LFS pointer committed in HEAD, for Repository › LFS….
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HeadPointer {
+    pub path: String,
+    pub path_bytes: Vec<u8>,
+    pub oid: String,
+    pub size: u64,
+    /// Whether the object is in the local LFS store.
+    pub available: bool,
+    /// The pointer blob in HEAD.
+    pub blob: String,
+}
+
+/// Every pointer in HEAD with the store and remote that a fetch would use.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct HeadPointers {
+    pub pointers: Vec<HeadPointer>,
+    pub lfs_installed: bool,
+    pub remote: Option<String>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FetchReceipt {
     pub path: String,

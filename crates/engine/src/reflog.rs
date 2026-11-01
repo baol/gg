@@ -13,6 +13,9 @@ pub struct Entry {
     pub action: String,
     /// Detail after the first colon.
     pub message: String,
+    /// Subject of the recorded commit.
+    #[serde(default)]
+    pub subject: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

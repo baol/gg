@@ -50,6 +50,7 @@ fn reads_head_and_branch_reflogs_in_order() -> Result {
     );
     assert_eq!(head.entries[0].action, "commit");
     assert_eq!(head.entries[0].message, "next");
+    assert_eq!(head.entries[0].subject, "next", "the commit's own subject");
     assert!(head.entries[0].time > 0);
 
     let branch = gg_git::reflog::read(p, "main")?;

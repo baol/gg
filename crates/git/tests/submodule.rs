@@ -161,3 +161,32 @@ fn uninitialized_submodule_keeps_the_parent_index_identity() -> Result {
     assert!(details.can_update().is_ok());
     Ok(())
 }
+
+#[test]
+fn list_reads_every_gitlink_with_subjects_and_how_far_behind_it_is() -> Result {
+    let (parent, _nested, first, second) = fixture()?;
+    let listed = gg_git::submodule::list(parent.path())?;
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].path, "sub");
+    assert_eq!(listed[0].status_label(), "Clean");
+    assert_eq!(
+        listed[0].subjects.get(&second).map(String::as_str),
+        Some("nested two")
+    );
+    assert_eq!(listed[0].behind, None);
+
+    git(&parent.path().join("sub"), &["checkout", "-q", &first])?;
+    let listed = gg_git::submodule::list(parent.path())?;
+    assert_eq!(listed[0].status_label(), "Different commit");
+    assert_eq!(
+        listed[0].tone(),
+        gg_engine::submodule::Tone::Differs,
+        "amber pill"
+    );
+    assert_eq!(listed[0].behind, Some(1));
+    assert_eq!(
+        listed[0].subjects.get(&first).map(String::as_str),
+        Some("nested one")
+    );
+    Ok(())
+}

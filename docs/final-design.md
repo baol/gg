@@ -35,7 +35,7 @@ Every command has exactly one menu home. The toolbar, shortcuts, context menus, 
 | Menu | Commands |
 | --- | --- |
 | gg (macOS only) | Settings… (`Cmd+,`) · Quit (`Cmd+Q`) |
-| Repository | Open… (`Ctrl+O`) · Clone… · New repository… · Open recent ▸ · Fetch (`Ctrl+Shift+F`) · Pull (rebase) (`Ctrl+Shift+L`) · Push (`Ctrl+Shift+P`) · Push with force-with-lease… · Worktrees… · Recovery… · Preferences… (`Ctrl+,`) · Quit (`Ctrl+Q`) |
+| Repository | Open… (`Ctrl+O`) · Clone… · New repository… · Open recent ▸ · Fetch (`Ctrl+Shift+F`) · Pull (rebase) (`Ctrl+Shift+L`) · Push (`Ctrl+Shift+P`) · Push with force-with-lease… · Worktrees… · Submodules… · LFS… · Recovery… · Preferences… (`Ctrl+,`) · Quit (`Ctrl+Q`) |
 | Branch | New branch… (`Ctrl+B`) · New tag… · Switch to… (`Ctrl+Shift+B`) · Merge into current… · Rebase current onto… · Interactive rebase of current branch… · Set upstream… · Track remote branch… · Rename… (`F2`) · Delete… (`Del`) |
 | Commit | Review changes (`Enter`) · Compare with HEAD · Copy ID (`Ctrl+C`) · Cherry-pick onto HEAD · Revert · Interactive rebase from here… (`R`) · Reword… (`Ctrl+R`) · Reopen for editing… (`E`) · Fixup into… (`F`) · Drop… (`D`) · Reset current branch to here… — acts on the selected commit |
 | Changes | Stage all (`Ctrl+Shift+S`) · Unstage all (`Ctrl+Shift+U`) · Discard all tracked changes… · Commit (`Ctrl+Enter`) · Amend HEAD (`Ctrl+Shift+Enter`) · Stash changes… (`Ctrl+Shift+Z`) · Stashes… · Resolve conflicts… |
@@ -84,6 +84,17 @@ Both stops use the operation band under the toolbar, the template merge, cherry-
 
 - **Reopened commit (E):** Local Changes opens with the commit's changes staged and its message in the commit box. Unstaging files or lines and committing splits the commit; each part is listed under **Commits made at this stop**. Continue becomes the primary once nothing remains.
 - **Conflict:** the conflict workspace is the Changes view (no Close; `Esc` returns to the plain list): CONFLICTED with what is left per file, RESOLVED, STAGED with − to unstage, ALSO CHANGED BY THIS REBASE, and the legend in a 300 px pane; the file header with **Block by block** | **Whole file**, **Open in editor**, and **Refresh external edits**; a bordered block per conflict with **Base**, **Ours · rewritten branch (onto <base>)**, and **Theirs · <short id> (replayed commit)** in equal columns that wrap long lines inside themselves (stage numbers in the label tooltips). Choices per block: Ours, Theirs, Ours + theirs, Theirs + ours (keys 1–4). The blocks scroll in up to 60% of the height; the line-numbered, editable **Result** takes the rest, tinted by origin (Ours blue, Theirs amber, unresolved markers in the warning tint, hand edits neutral). **Stage resolution** (`Ctrl+S`) stages the Result once it has no markers left. Continue stays disabled with the reason as the band's status until every file is staged.
+
+## Inspect and recovery windows
+
+Submodules, LFS, Signature details, and Recovery follow the inspect proposal: non-modal windows with a title header (status pill and ×), label grids of 22 px rows with 8-character IDs and copy buttons, and a footer with the result or the disabled reason at the left and the filled primary rightmost; their confirmations sit in the modal frame with Cancel `Esc` and the primary `Enter` side by side.
+
+- **Repository › Submodules…** lists every gitlink with a status pill (amber differs, red broken, green clean, grey otherwise); `Enter` opens Submodule details.
+- **Repository › LFS…** lists the pointers in HEAD, missing objects first and checked, with one **Fetch <n> objects** that names the count and size.
+- **Signature details** shows the result as a coloured banner titled by the object; the signing configuration is in Preferences › Commit.
+- **Repository › Recovery…** switches Backups | Reflog in its header, offers one **Restore <branch>…** (a hard reset of a clean tree that first saves the current tip), keeps Reset ▸ Soft/Mixed/Hard and the copy actions under ⋯, adds **Delete backup…**, and reports in its 22 px status strip. It has no Refresh: it re-reads on open, on focus, and after operations.
+
+See [architecture](architecture.md#reflog) for the contracts.
 
 ## Preferences
 

@@ -171,8 +171,8 @@ Covered by (interaction): `menus_follow_the_final_design_mockup`, `menu_bar_is_o
 Fixture: `fx-branchy`
 Layer: interaction
 - When each menu is opened
-- Then the items equal the Command placement table: Repository: Open… `Ctrl+O` · Clone… · Open recent ▸ · Fetch `Ctrl+Shift+F` · Pull (rebase) `Ctrl+Shift+L` · Push `Ctrl+Shift+P` · Push with force-with-lease… · Worktrees… · Recovery… · Preferences… `Ctrl+,` · Quit `Ctrl+Q`; Branch: New branch… `Ctrl+B` · New tag… · Switch to… `Ctrl+Shift+B` · Merge into current… · Rebase current onto… · Interactive rebase of current branch… · Set upstream… · Track remote branch… · Rename… `F2` · Delete… `Del`; Changes: Stage all `Ctrl+Shift+S` · Unstage all `Ctrl+Shift+U` · Discard all tracked changes… · Commit `Ctrl+Enter` · Amend HEAD `Ctrl+Shift+Enter` · Stash changes… `Ctrl+Shift+Z` · Stashes… · Resolve conflicts…; Commit, View, Help as tabled
-- And no command appears in two menus; there is no **Submodules…**, **LFS…**, **Backups…** or **Reflog…** item (Backups and Reflog are sources inside **Recovery…**)
+- Then the items equal the Command placement table: Repository: Open… `Ctrl+O` · Clone… · Open recent ▸ · Fetch `Ctrl+Shift+F` · Pull (rebase) `Ctrl+Shift+L` · Push `Ctrl+Shift+P` · Push with force-with-lease… · Worktrees… · Submodules… · LFS… · Recovery… · Preferences… `Ctrl+,` · Quit `Ctrl+Q`; Branch: New branch… `Ctrl+B` · New tag… · Switch to… `Ctrl+Shift+B` · Merge into current… · Rebase current onto… · Interactive rebase of current branch… · Set upstream… · Track remote branch… · Rename… `F2` · Delete… `Del`; Changes: Stage all `Ctrl+Shift+S` · Unstage all `Ctrl+Shift+U` · Discard all tracked changes… · Commit `Ctrl+Enter` · Amend HEAD `Ctrl+Shift+Enter` · Stash changes… `Ctrl+Shift+Z` · Stashes… · Resolve conflicts…; Commit, View, Help as tabled
+- And no command appears in two menus; there is no **Backups…** or **Reflog…** item (Backups and Reflog are sources inside **Recovery…**)
 Covered by (interaction, partial): `menus_follow_the_final_design_mockup`, `commands_off_the_toolbar_keep_their_menu_home_and_search_entry` (apps/git-good/src/main.rs) (labels, order and single menu home; shortcuts not checked)
 
 ### FRM-18 macOS gg menu moves Settings and Quit
@@ -188,12 +188,12 @@ Layer: visual
 - Then Help opens without a second click; rows are 24 px with a 14 px check column, label, shortcut; the active item (current view, current density) shows a checkmark and no selected fill; no native OS menu bar entries appear
 Covered by (interaction): `checked_rows_show_a_checkmark_and_no_selected_fill` (apps/git-good/src/menus.rs)
 
-### FRM-20 No Submodules… or LFS… placeholders
+### FRM-20 Submodules… and LFS… are real windows
 Fixture: `fx-linear`, `fx-submodule`
 Layer: interaction
-- When every menu is opened and search is given `submodule`, then `lfs`
-- Then no **Submodules…** or **LFS…** item exists in any menu or among search **Actions**; submodule and LFS details stay reachable from **File actions** in Review and Local Changes (SUB-01, LFS-01)
-Covered by (interaction, partial): `commands_off_the_toolbar_keep_their_menu_home_and_search_entry` (apps/git-good/src/main.rs) (menus only; search Actions not checked)
+- When the Repository menu is opened and search is given `submodule`, then `lfs`
+- Then **Submodules…** and **LFS…** sit in Repository after **Worktrees…**, each with one search Action and the same readiness (*Open a repository first* without one); they open the Submodules list (SUB-07) and the LFS objects list (LFS-08); submodule and LFS details stay reachable from **File actions** in Review and Local Changes (SUB-01, LFS-01)
+Covered by (interaction, partial): `commands_off_the_toolbar_keep_their_menu_home_and_search_entry`, `menus_follow_the_final_design_mockup` (apps/git-good/src/main.rs) (menu home and search entry; the opened windows are covered by SUB-07 and LFS-08)
 
 ### FRM-21 View menu switches views and toggles panes
 Fixture: `fx-linear`, 1440 px
@@ -3282,25 +3282,27 @@ Layer: product
 - Then no dialog opens; the rewrite starts at once (**Rewriting commits…**) and drops the commit; a `refs/gg/backup/rewrite/…` ref is written
 Covered by (Not automated)
 
-### RWR-68 Recovery window: one source selector, fits 720×480
+### RWR-68 Recovery window: Backups | Reflog switch, fits 720×480
 Fixture: `fx-backups`, size 720×480
 Layer: interaction
 - When the user opens **Repository › Recovery…** (or its search Action)
-- Then a non-modal Recovery window with one **Backups** / **Reflog** source selector opens fully inside the viewport with no clipped controls, on Backups the first time and on the last chosen source after that; History stays usable beside it; there are no separate **Backups…** or **Reflog…** commands
-Covered by (interaction, partial): `recovery_window_offers_one_source_selector`, `recovery_window_stays_inside_the_narrow_viewport`, `repository_recovery_opens_one_window_on_the_last_source`, `commands_off_the_toolbar_keep_their_menu_home_and_search_entry` (apps/git-good/src/main.rs)
+- Then a non-modal window titled *Recovery* with a **Backups <n> | Reflog** switch in its header opens fully inside the viewport with no clipped controls, on Backups the first time and on the last chosen source after that; History stays usable beside it; there are no separate **Backups…** or **Reflog…** commands and no Refresh button
+Covered by (interaction, partial): `recovery_window_switches_backups_and_reflog_in_its_header`, `recovery_window_stays_inside_the_narrow_viewport`, `repository_recovery_opens_one_window_on_the_last_source`, `commands_off_the_toolbar_keep_their_menu_home_and_search_entry` (apps/git-good/src/main.rs)
 
 ### RWR-69 Backups list and actions
 Fixture: `fx-backups`
 Layer: product
-- Then three backups are listed newest first with label, short commit, subject, full private ref, commit time; selecting one offers **Open commit**, **Reset branch here** (Soft, Mixed, Hard), **Create branch here…**, **Copy hash**, **Copy ref**; two backups at one commit stay separately selectable
-Covered by (interaction): `lists_and_renders_rewrite_backups`, `keeps_distinct_backups_at_one_commit_selectable` (apps/git-good/src/backups_view.rs)
+- Then the backups are listed newest first in 22 px rows under *Saved by gg before each rebase, amend or rewrite. Hidden from the refs sidebar.*: SAVED (relative time), BRANCH (pill), BEFORE (rebase, amend, rewrite), TIP, SUBJECT; the selected one is a label grid of TIP (copy button), SAVED (*<date>, <time> · before rebase of <branch>*), BRANCH NOW (tip and *<n> commits differ from the backup*) and REF (copy button); the footer holds **Delete backup…**, **⋯** (Copy commit ID `Ctrl+C`, Copy ref `Ctrl+Shift+C`, Reset branch here ▸ Soft *keep index and files* / Mixed *keep files* / Hard… *discard changes*, Delete backup… `Del`), **Open commit**, **Create branch here…** and the filled **Restore <branch>…** `Enter`; two backups at one commit stay separately selectable
+Covered by (backend, interaction, partial): `backups_show_time_branch_and_a_label_grid_without_refresh` (apps/git-good/src/recovery_view.rs), `backups_record_the_rewritten_branch_and_their_save_time` (crates/git/tests/backup.rs) (the ⋯ menu not opened)
 
 ### RWR-70 Restore from a backup after a rewrite
 Fixture: `fx-rebase` after a rewrite that dropped a commit
 Layer: product
-- When the user opens **Repository › Recovery…** (the outcome offers **Push** here, since the branch is still ahead of its upstream, RWR-42) and on the newest backup chooses **Reset branch here › Hard**, confirming **Hard reset**
-- Then `main` is back at the pre-rewrite tip with the dropped commit; the backup ref still exists; refs/history/status and the Backups list refresh
-Covered by (interaction, partial): `outcome_recovery_button_opens_backups`, `repository_recovery_opens_one_window_on_the_last_source` (apps/git-good/src/main.rs) (opening only)
+- When the user opens **Repository › Recovery…** and on the newest backup presses **Restore main…** (or `Enter`)
+- Then the confirmation asks *Move main from <tip> back to <id> <subject>?* with *✓ Files are checked out to match the backup.* and *✓ The current tip <tip> is saved as a new backup, so this can be undone.*, Cancel `Esc` and **Restore branch** `Enter`
+- When confirmed
+- Then a `restore` backup of the rewritten tip is created first, then `main` is hard reset to the pre-rewrite tip with the dropped commit; the old backup still exists; the status strip reads *Restored main to <id> · the previous tip <tip> is saved as a backup*; refs, history, status and the Backups list refresh
+Covered by (backend, interaction): `restore_is_one_confirmed_hard_reset_that_saves_the_tip_first` (apps/git-good/src/recovery_view.rs), `restore_saves_the_current_tip_then_hard_resets_a_clean_branch` (crates/git/tests/backup.rs)
 
 ### RWR-71 Create branch here from a backup does not switch
 Fixture: `fx-backups`
@@ -3316,25 +3318,25 @@ Layer: interaction
 - Then the commit review opens; Back returns to Recovery › Backups with that entry selected (same for Reflog with a non-HEAD reference filter)
 Covered by (interaction): `recovery_return_location_reopens_the_same_source`, `recovery_return_location_restores_the_reflog_reference_and_entry` (apps/git-good/src/main.rs)
 
-### RWR-73 Reflog source lists entries and offers restore actions
+### RWR-73 Reflog source lists entries in plain language
 Fixture: `fx-backups`
 Layer: product
 - When the user switches to **Reflog**
-- Then `HEAD` is the default with a selector for `HEAD` and local branches; entries show `HEAD@{n}`, relative time, action and detail (reset, amend, rebase, checkout); selecting one shows its full ID with **Open commit**, **Reset branch here** (Soft/Mixed/Hard), **Create branch here…**, **Copy hash**
-Covered by (backend, interaction): `loads_entries_and_renders_recovery_actions`, `selects_entries_by_their_own_selector` (apps/git-good/src/reflog_view.rs); `reads_head_and_branch_reflogs_in_order` (crates/git/tests/reflog.rs)
+- Then the header adds **Reference** `HEAD` (24 px menu rows: ✓ HEAD, then local branches with `current` at the right); rows show WHEN, ENTRY `@{n}`, WHAT HAPPENED in plain language (*Reset to …*, *Amended “…”*, *Finished rebase of …*, *Switched from main to …*) and COMMIT; the selected entry shows COMMIT (8-character ID, subject, copy), WHEN (date and relative), ENTRY `HEAD@{n}` (copy) and GIT MESSAGE (the raw `rebase (pick): …`); the footer holds **⋯**, **Open commit**, **Create branch here…** and **Restore <branch> here…** `Enter`, with no **Delete backup…**; the status strip reads *<n> entries · HEAD*
+Covered by (backend, interaction): `reflog_reads_in_plain_language_with_the_raw_message_below`, `reflog_events_read_in_plain_language` (apps/git-good/src/recovery_view.rs); `reads_head_and_branch_reflogs_in_order` (crates/git/tests/reflog.rs)
 
 ### RWR-74 Reflog restore of a pre-amend commit
 Fixture: `fx-backups`
 Layer: product
-- When the user selects the entry before `commit (amend): …` and chooses **Reset branch here › Mixed**, confirms **Reset**
-- Then the branch points at the pre-amend commit; working files unchanged; the Reflog list refreshes with a new `reset` entry
+- When the user selects the entry before `commit (amend): …` and chooses **⋯ › Reset branch here › Mixed**, confirms **Reset**
+- Then the branch points at the pre-amend commit; working files unchanged; the Reflog list refreshes with a new *Reset to …* entry
 Covered by (Not automated)
 
 ### RWR-75 Missing reflog reference shows an error, not stale entries
 Fixture: `fx-backups`, branch `old` deleted while Recovery shows its reflog
 Layer: product
-- Then the Reflog source shows an actionable error and no stale entries; `git good reflog nosuch` fails likewise
-Covered by (backend, interaction): `missing_reference_shows_an_error_instead_of_stale_entries` (apps/git-good/src/reflog_view.rs); `rejects_missing_and_option_shaped_reflogs` (crates/git/tests/reflog.rs)
+- Then the Reflog source shows no stale entries and the status strip names Git's error; an existing reference with no entries reads *No reflog entries for <ref>.*; `git good reflog nosuch` fails likewise
+Covered by (backend, interaction): `reflog_reads_in_plain_language_with_the_raw_message_below` (apps/git-good/src/recovery_view.rs); `rejects_missing_and_option_shaped_reflogs` (crates/git/tests/reflog.rs)
 
 ### RWR-76 Keep private backups prunes old backups on open
 Fixture: `fx-backups`, **Keep private backups** = 30 days
@@ -3343,12 +3345,24 @@ Layer: product
 - Then in the background the 40- and 120-day backups are deleted, the 2-day one stays; no other ref is touched; with 90 days only the 120-day one goes; with **Forever** (default) none go
 Covered by (backend, partial): `prune_deletes_only_gg_backups_older_than_the_age` (crates/git/tests/backup.rs); GUI path not automated
 
-### RWR-77 Recovery actions never delete backups or user files
+### RWR-77 Only Delete backup… deletes a backup; Restore needs a clean tree
 Fixture: `fx-backups`
 Layer: product
-- When the user runs every Recovery action except Hard reset
+- When the user runs every Recovery action except Hard reset and Delete backup…
 - Then all `refs/gg/backup/*` refs remain and no untracked file is removed
-Covered by (Not automated)
+- Given a tracked file is edited, when **Restore <branch>…** is chosen
+- Then the confirmation's footer reads *1 file has uncommitted changes. Commit or stash it first.* with **Restore branch** disabled, and `Enter` does nothing; `Esc` cancels
+- When **Delete backup…** (or `Del`) is confirmed
+- Then only that backup ref is removed, HEAD is unchanged, and an empty list reads *No rewrite backups yet. gg saves one before every rebase, amend or rewrite.*
+Covered by (backend, interaction, partial): `a_dirty_tree_keeps_restore_disabled_and_says_why`, `delete_backup_confirms_then_removes_only_that_ref` (apps/git-good/src/recovery_view.rs), `delete_removes_one_backup_and_refuses_other_references` (crates/git/tests/backup.rs) (the full action sweep not automated)
+
+### RWR-79 Recovery refreshes itself
+Fixture: `fx-backups`
+Layer: interaction
+- Given Recovery is open
+- When a terminal creates a backup or commits, then gg gets focus back; or an amend, rebase, restore or reset finishes in gg
+- Then the open source re-reads in the background without a Refresh button, keeping its row heights and the selected entry; a return location selects its entry once the list arrives
+Covered by (interaction, partial): `recovery_return_location_restores_the_reflog_reference_and_entry` (apps/git-good/src/main.rs), `restore_is_one_confirmed_hard_reset_that_saves_the_tip_first` (apps/git-good/src/recovery_view.rs) (after a restore; focus not simulated)
 
 ### RWR-78 Reset confirmation revalidates on confirm
 Fixture: `fx-dirty`, `c27` selected
@@ -3701,11 +3715,11 @@ Layer: product
 Covered by (backend, partial): `unlock_and_prune_keep_branches` (crates/git/tests/worktree.rs); GUI path not automated
 
 ### SUB-01 Submodule details from the reader
-Fixture: `fx-submodule`, commit adding `vendor/lib` open in Review
+Fixture: `fx-submodule`, commit bumping `vendor/lib` open in Review
 Layer: product
 - When **File actions › Submodule details…** on `vendor/lib`
-- Then the window names the path, Before/After recorded commits, parent index commit, nested HEAD, initialized and dirty state, `.gitmodules` URL and branch, URL differences, and recorded-object availability; nothing is fetched or checked out
-Covered by (backend, interaction): `submodule_details_window_renders_recorded_state_and_update` (apps/git-good/src/main.rs), `details_name_recorded_checked_out_and_index_state` (crates/git/tests/submodule.rs)
+- Then the header reads *Submodule vendor/lib* with the status pill (amber *Different commit*) and one sentence for the status; a label grid lists BEFORE, AFTER, INDEX and CHECKED OUT as 8-character IDs with subjects, copy buttons and hints (*same as After*, *same as Before · 1 commit behind After*), then URL and BRANCH, and *Local config uses a different URL: …* when it differs; no 40-character hash is shown; nothing is fetched or checked out
+Covered by (backend, interaction): `details_show_a_label_grid_with_short_ids_and_same_as_hints` (apps/git-good/src/submodules_view.rs), `submodule_details_window_renders_recorded_state_and_update` (apps/git-good/src/main.rs), `details_name_recorded_checked_out_and_index_state`, `list_reads_every_gitlink_with_subjects_and_how_far_behind_it_is` (crates/git/tests/submodule.rs)
 
 ### SUB-02 Uninitialized submodule
 Fixture: `fx-submodule`
@@ -3717,17 +3731,17 @@ Covered by (backend, partial): `uninitialized_submodule_keeps_the_parent_index_i
 ### SUB-03 Update (init) confirmation and run
 Fixture: `fx-submodule`
 Layer: product
-- When **Update…** on `vendor/uninit`
-- Then the confirmation names path, target commit and URL, says Git may fetch and the parent index is not staged
+- When **Initialize and update…** on `vendor/uninit`
+- Then the confirmation *Update submodule* asks *Initialize and check out <id> in vendor/uninit?*, says *Git may fetch from <url>. The parent index is not changed.*, and has Cancel `Esc` and the filled **Update** `Enter` side by side
 - When confirmed
-- Then progress shows, `git submodule update --init -- vendor/uninit` runs, status rescans to initialized; the parent index is unchanged
-Covered by (backend, partial): `dirty_and_index_mismatch_block_update_and_update_restores_the_index_commit` (crates/git/tests/submodule.rs); GUI path not automated
+- Then `git submodule update --init -- vendor/uninit` runs on the worker, status rescans to initialized, the footer's left reads *Updated vendor/uninit to <id>.*; the parent index is unchanged
+Covered by (backend, interaction, partial): `a_disabled_update_says_why_at_the_footer_left_and_the_confirm_sits_side_by_side` (apps/git-good/src/submodules_view.rs) (confirmation and Enter); `dirty_and_index_mismatch_block_update_and_update_restores_the_index_commit` (crates/git/tests/submodule.rs); the GUI run not automated
 
 ### SUB-04 Update blocked: dirty nested tree / recorded commit differs from index / object missing
 Fixture: `fx-submodule` with an edit inside `vendor/lib`
 Layer: product
-- Then Update is disabled with the dirty reason; viewing a historical commit whose recorded ID differs from the index disables it with that reason; a missing recorded object disables it too
-Covered by (backend, partial): `dirty_and_index_mismatch_block_update_and_update_restores_the_index_commit` (crates/git/tests/submodule.rs); GUI path not automated
+- Then the primary reads **Update…**, disabled, and the reason replaces the result at the footer's left: *vendor/lib has local changes. Open it to inspect or clean them.*; a historical commit whose recorded ID differs from the index reads *Stage the parent gitlink before updating: the index records <id>.*; a missing recorded object disables it with its reason
+Covered by (backend, interaction, partial): `a_disabled_update_says_why_at_the_footer_left_and_the_confirm_sits_side_by_side` (apps/git-good/src/submodules_view.rs) (dirty); `dirty_and_index_mismatch_block_update_and_update_restores_the_index_commit` (crates/git/tests/submodule.rs)
 
 ### SUB-05 Open nested repository
 Fixture: `fx-submodule` (vendor/lib initialized)
@@ -3736,29 +3750,40 @@ Layer: product
 - Then gg shows `vendor/lib` as its own repository; returning to the parent restores its selection and draft
 Covered by (Not automated)
 
-### SUB-06 No Submodules… / LFS… menu placeholders — see FRM-20
+### SUB-06 Submodules… and LFS… menu items — see FRM-20
+
+### SUB-07 Repository › Submodules… lists every gitlink
+Fixture: `fx-submodule`
+Layer: interaction
+- When **Repository › Submodules…**
+- Then a non-modal *Submodules* window with a count pill lists PATH, STATUS, RECORDED and CHECKED OUT in 22 px rows: `vendor/lib` with an amber *Different commit* pill and two 8-character IDs, `vendor/uninit` with a grey *Uninitialized* pill and `—`; pills are amber for differs, red for broken, green for Clean; the footer reads *Recorded = commit staged in the parent index.* with **Open nested repository** and **Details** `Enter`
+- When Down then `Enter`
+- Then Submodule details opens for `vendor/uninit`; the list has no Refresh and re-reads on open, on focus, and after an update; a repository without gitlinks reads *No submodules in this repository.*
+Covered by (backend, interaction): `the_list_has_status_pills_short_ids_and_enter_opens_details` (apps/git-good/src/submodules_view.rs), `list_reads_every_gitlink_with_subjects_and_how_far_behind_it_is` (crates/git/tests/submodule.rs)
 
 ### LFS-01 LFS details for an available pointer
 Fixture: `fx-lfs`, commit adding `art.psd` in Review
 Layer: product
 - When **File actions › LFS details…**
-- Then the window names the path, After pointer OID (`sha256:` 64 hex) and declared size, object present locally, `git-lfs` available, the selected remote; pointer text is never shown as content
-Covered by (backend, interaction): `lfs_window_renders_pointer_identity_and_missing_object_state` (apps/git-good/src/main.rs), `pointer_details_separate_oid_size_and_local_availability` (crates/git/tests/lfs.rs)
+- Then the header reads *LFS art.psd* with a green *Object available* pill; AFTER shows the 8-character OID, the declared size, *available*, and a copy button that copies the full sha256; pointer text is never shown as content
+Covered by (backend, interaction): `details_shorten_oids_and_name_the_file_and_size_in_the_fetch_question` (apps/git-good/src/lfs_view.rs), `lfs_window_renders_pointer_identity_and_missing_object_state` (apps/git-good/src/main.rs), `pointer_details_separate_oid_size_and_local_availability` (crates/git/tests/lfs.rs)
 
 ### LFS-02 Missing object state and Fetch object…
 Fixture: `fx-lfs`
 Layer: product
 - When LFS details for `old.psd`
-- Then it reads object missing and **Fetch object…** is enabled; the confirmation names OID, size and remote and says it may download and does not change working files
+- Then a red *Object missing* pill, AFTER *missing*, GIT LFS *available · remote origin*, *The new version’s content is not in the local LFS store, so the diff shows only the pointer.*, and *Fetching does not change working files.* beside the filled **Fetch object…**
+- When **Fetch object…**
+- Then the confirmation asks *Download the new version of old.psd?* with *<size> from origin. Working files are not changed.* (no OID) and Cancel `Esc` / **Fetch** `Enter` side by side
 - When confirmed
-- Then progress shows, `git lfs fetch … --include=old.psd` runs, availability rescans to present; `old.psd` in the worktree is still pointer text
-Covered by (interaction, partial): `lfs_window_renders_pointer_identity_and_missing_object_state` (apps/git-good/src/main.rs); fetch not automated
+- Then `git lfs fetch … --include=old.psd` runs, availability rescans to present, the footer's left reads *Fetched <id> (<size>).*; `old.psd` in the worktree is still pointer text
+Covered by (interaction, partial): `details_shorten_oids_and_name_the_file_and_size_in_the_fetch_question` (apps/git-good/src/lfs_view.rs); fetch not automated
 
 ### LFS-03 Fetch disabled without git-lfs or when present
 Fixture: `fx-lfs` with `git-lfs` removed from `PATH`
 Layer: product
-- Then details report `git-lfs` unavailable and **Fetch object…** is disabled; for `art.psd` (present) it is disabled too
-Covered by (Not automated)
+- Then the pill reads amber *LFS unavailable*, GIT LFS *not installed*, and *git-lfs is not installed.* replaces the footer note while **Fetch object…** is disabled; for `art.psd` (present) the footer offers **Export original…** instead
+Covered by (interaction, partial): `lfs_window_renders_pointer_identity_and_missing_object_state` (apps/git-good/src/main.rs) (not installed)
 
 ### LFS-04 Non-pointer and malformed pointers
 Fixture: `fx-lfs` plus `notes.txt` plain text and `bad.psd` with `oid sha256:` of 10 hex digits
@@ -3775,8 +3800,10 @@ Covered by (backend, interaction): `working_staged_unstaged_and_untracked_pointe
 ### LFS-06 Bounded content preview of a present object
 Fixture: `fx-lfs` with a small PNG tracked as `logo.psd`
 Layer: product
-- Then details show an image preview; an object >2 MiB shows an explicit over-budget state; a non-image shows the hex preview
-Covered by (backend, partial): `bounded_object_preview_reads_only_an_available_small_object` (crates/git/tests/lfs.rs); GUI path not automated
+- Then details show the image in a 150 px bordered frame labelled *CONTENT PREVIEW · AFTER* with *<w> × <h> PNG* at the right; an object >2 MiB shows an explicit over-budget state; a non-image shows the hex preview in the frame
+- When **Export original…** and a new file is chosen
+- Then the file holds the complete original bytes and the footer's left reads *Exported <size> to <path>.*
+Covered by (backend, partial): `bounded_object_preview_reads_only_an_available_small_object` (crates/git/tests/lfs.rs), `single_content_preview_draws_images_and_hex_within_a_bounded_height` (apps/git-good/src/binary_preview.rs); export not automated
 
 ### LFS-07 No smudge/materialize control
 Fixture: `fx-lfs`
@@ -3784,40 +3811,49 @@ Layer: product
 - Then no control to materialize fetched content into the working file exists (deferred, no placeholder)
 Covered by (Not automated)
 
+### LFS-08 Repository › LFS… fetches the missing objects together
+Fixture: `fx-lfs`
+Layer: product
+- When **Repository › LFS…**
+- Then *LFS objects* opens on **Missing 1 | All 2** with `old.psd` checked (PATH, 8-character OBJECT, SIZE in 22 px rows) and the footer *1 selected · <size> from origin* with **LFS details** and the filled **Fetch 1 object** `Ctrl+Enter`; **All** adds `art.psd` with its checkbox disabled
+- When **Fetch 1 object**
+- Then one `git lfs fetch origin --include=old.psd` runs without a further question, the footer reads *Fetched 1 object (<size>).*, and Missing reads *No missing objects.*; unchecking a row lowers the count and size on the button; the list has no Refresh and re-reads on open and on focus
+Covered by (backend, interaction, partial): `the_list_shows_missing_objects_checked_and_states_the_batch` (apps/git-good/src/lfs_view.rs), `head_pointers_list_only_lfs_pointers_with_availability` (crates/git/tests/lfs.rs); the fetch itself not automated
+
 ## Signing
 
 ### SIG-01 Good signature
 Fixture: `fx-signed`
 Layer: product
 - When the good signed commit is selected and **Signature details…** opened from Commit details
-- Then state **good**, signer identity, key fingerprint, trust label, format `ssh`, and raw detail are shown; configuration, validity and trust are three separate facts
-Covered by (interaction): `signature_window_separates_validity_trust_and_configuration` (apps/git-good/src/main.rs)
+- Then the title reads *Signature · commit <8-char id>*; a green banner with an icon reads *Good signature* · *Signed by an allowed signer.*; the label grid lists only reported rows (SIGNER, KEY with a copy button, TRUST, FORMAT `ssh`); no signing configuration is shown; the footer reads *Read-only check; nothing is changed.* with **Signing settings…**, which opens Preferences › Commit
+Covered by (interaction): `the_window_lists_only_reported_rows_and_links_the_settings`, `titles_name_the_object_kind`, `banners_take_the_state_colour` (apps/git-good/src/signature_view.rs), `signature_window_shows_a_banner_and_links_the_signing_settings` (apps/git-good/src/main.rs)
 
 ### SIG-02 Unknown key is not bad
 Fixture: `fx-signed`
 Layer: product
 - When details for the commit signed by a key not in allowed signers
-- Then state is unknown key (not bad), with the key ID
-Covered by (Not automated)
+- Then an amber banner reads *Unknown key* · *Valid signature, but the key is not in allowed signers.* (not bad), with the KEY row
+Covered by (interaction, partial): `banners_take_the_state_colour` (apps/git-good/src/signature_view.rs) (banner only)
 
 ### SIG-03 Unsigned is explicit
 Fixture: `fx-signed`
 Layer: product
 - When details for the unsigned commit
-- Then state reads unsigned, not an empty success
-Covered by (backend, partial): `unsigned_commit_and_tag_report_kind_without_claiming_validity` (crates/git/tests/signature.rs); GUI path not automated
+- Then a grey banner reads *Unsigned* · *This commit has no signature.*, not an empty success
+Covered by (backend, interaction, partial): `unsigned_commit_and_tag_report_kind_without_claiming_validity` (crates/git/tests/signature.rs), `banners_take_the_state_colour` (apps/git-good/src/signature_view.rs)
 
 ### SIG-04 Bad signature
 Fixture: `fx-signed` with a copy of the good commit whose message bytes were altered (rewritten object keeping the gpgsig header)
 Layer: product
-- Then state is bad
-Covered by (Not automated)
+- Then a red banner reads *Bad signature* · *The signature does not match this commit’s content.*
+Covered by (interaction, partial): `banners_take_the_state_colour` (apps/git-good/src/signature_view.rs) (banner only)
 
 ### SIG-05 Verification unavailable
 Fixture: `fx-signed` with `gpg.program`/`ssh-keygen` absent from `PATH`
 Layer: product
-- Then state is verification unavailable, and configuration shows the tool not available
-Covered by (backend, partial): `config_separates_signing_key_format_and_tool_readiness` (crates/git/tests/signature.rs); UI not automated
+- Then a grey banner reads *Verification unavailable* with Git's reason and a **Signing settings…** link; Preferences › Commit shows the configuration and its note
+Covered by (backend, partial): `config_separates_signing_key_format_and_tool_readiness` (crates/git/tests/signature.rs), `banners_take_the_state_colour` (apps/git-good/src/signature_view.rs)
 
 ### SIG-06 Tag signature from the ref menu
 Fixture: `fx-signed`
@@ -3844,6 +3880,13 @@ Layer: product
 Covered by (backend, interaction): `signing_readiness_blocks_the_commit_without_unsigned_fallback` (apps/git-good/src/status_view.rs), `signed_commit_without_a_working_signer_never_falls_back_to_unsigned` (crates/git/tests/commit.rs)
 
 ### SIG-10 New tag dialog signing — see HIS-71
+
+### SIG-11 Signing configuration in Preferences › Commit
+Fixture: `fx-signed`
+Layer: interaction
+- When **Repository › Preferences… › Commit** (or **Signing settings…** in Signature details)
+- Then under the signing choices read-only rows show Format `ssh · gpg.format`, Signing key `<path> · user.signingkey`, Allowed signers `<path> · gpg.ssh.allowedSignersFile`, then *Read from Git config.* with **Edit in repository config…**, which opens the repository's config in the configured editor; the rows are read in the background and keep their place while Git runs
+Covered by (interaction, partial): `preferences_commit_lists_the_signing_configuration_read_only` (apps/git-good/src/main.rs) (rows and stable height; the editor launch not checked)
 
 ## Repository dialogs
 
@@ -4334,9 +4377,9 @@ Covered by (Not automated)
 ### XCT-16 Keyboard-only recovery
 Fixture: `fx-rebase` after a rewrite that dropped a commit, no pointer input
 Layer: interaction
-- When the user opens **Recovery…** via `Ctrl+K`, selects the newest backup with Up/Down, opens **Reset branch here › Hard**, and confirms with `Enter`
-- Then the branch is back at the pre-rewrite tip
-Covered by (Not automated)
+- When the user opens **Recovery…** via `Ctrl+K`, selects the newest backup with Up/Down, presses `Enter` for **Restore main…**, and confirms with `Enter`
+- Then the branch is back at the pre-rewrite tip, and the tip it left is a new backup
+Covered by (interaction, partial): `restore_is_one_confirmed_hard_reset_that_saves_the_tip_first` (apps/git-good/src/recovery_view.rs) (`Enter` twice; opening via search not automated)
 
 ### XCT-17 Focus is always visible
 Fixture: `fx-dirty`, `fx-rebase`

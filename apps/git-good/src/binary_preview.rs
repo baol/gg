@@ -187,12 +187,12 @@ fn opacity_alpha(opacity: f32) -> u8 {
     (opacity.clamp(0.0, 1.0) * 255.0).round() as u8
 }
 
-fn fit_size(natural: egui::Vec2, bounds: egui::Vec2) -> egui::Vec2 {
+pub(crate) fn fit_size(natural: egui::Vec2, bounds: egui::Vec2) -> egui::Vec2 {
     let scale = (bounds.x / natural.x).min(bounds.y / natural.y).min(1.0);
     natural * scale
 }
 
-fn checkerboard(painter: &egui::Painter, rect: egui::Rect, visuals: &egui::Visuals) {
+pub(crate) fn checkerboard(painter: &egui::Painter, rect: egui::Rect, visuals: &egui::Visuals) {
     const CELL: f32 = 16.0;
     let clip = rect.intersect(painter.clip_rect());
     if !clip.is_positive() {
@@ -228,12 +228,26 @@ fn checkerboard(painter: &egui::Painter, rect: egui::Rect, visuals: &egui::Visua
     }
 }
 
-/// Draw one bounded LFS content preview with the same fit and checkerboard rules as image differences.
+/// Draw one LFS content preview in a bordered frame of fixed height, with
+/// the same fit and checkerboard rules as image differences. The caller
+/// labels the frame with the dimensions; hexadecimal content keeps its note.
 pub fn show_single(
     ui: &mut egui::Ui,
     preview: &Preview,
     texture: &mut Option<egui::TextureHandle>,
 ) {
+    const HEIGHT: f32 = 150.0;
+    let width = ui.available_width().max(40.0);
+    let (frame, _) = ui.allocate_exact_size(egui::vec2(width, HEIGHT), egui::Sense::hover());
+    ui.painter()
+        .rect_filled(frame, 4.0, egui::Color32::from_rgb(30, 30, 30));
+    ui.painter().rect_stroke(
+        frame,
+        4.0,
+        egui::Stroke::new(1.0, egui::Color32::from_rgb(46, 46, 46)),
+        egui::StrokeKind::Inside,
+    );
+    let inner = frame.shrink(6.0);
     if let Some(image) = &preview.image {
         if texture.is_none() {
             *texture = Some(ui.ctx().load_texture(
@@ -243,10 +257,8 @@ pub fn show_single(
             ));
         }
         if let Some(texture) = texture {
-            let natural = texture.size_vec2();
-            let bounds = egui::vec2(ui.available_width().max(40.0), 240.0);
-            let size = fit_size(natural, bounds);
-            let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+            let size = fit_size(texture.size_vec2(), inner.size());
+            let rect = egui::Rect::from_center_size(inner.center(), size);
             checkerboard(ui.painter(), rect, ui.visuals());
             ui.painter().image(
                 texture.id(),
@@ -256,17 +268,25 @@ pub fn show_single(
             );
         }
     } else if !preview.hex.is_empty() {
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner));
         egui::ScrollArea::both()
             .id_salt("lfs-content-hex")
-            .max_height(180.0)
-            .show(ui, |ui| {
+            .max_height(inner.height())
+            .show(&mut child, |ui| {
                 ui.add(
                     egui::Label::new(egui::RichText::new(&preview.hex).monospace())
                         .wrap_mode(egui::TextWrapMode::Extend),
                 );
             });
+        ui.weak(&preview.note);
     }
-    ui.weak(&preview.note);
+}
+
+/// `1600 × 900 PNG` for a decoded image.
+pub fn dimensions_label(preview: &Preview) -> Option<String> {
+    let (width, height) = preview.dimensions?;
+    let format = preview.note.split(' ').next().unwrap_or_default();
+    Some(format!("{width} × {height} {format}"))
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -831,7 +851,12 @@ mod tests {
                     _ => None,
                 })
                 .collect::<Vec<_>>();
-            assert!(text.iter().any(|line| line.contains(expected)), "{text:?}");
+            if expected == "PNG" {
+                assert!(texture.is_some(), "the image is drawn in the frame");
+                assert_eq!(dimensions_label(&preview).as_deref(), Some("12 × 8 PNG"));
+            } else {
+                assert!(text.iter().any(|line| line.contains(expected)), "{text:?}");
+            }
         }
         Ok(())
     }

@@ -1,6 +1,6 @@
 //! Read LFS pointer identity from review or working-tree sides, fetch objects explicitly, and read bounded previews.
 use gg_engine::{
-    lfs::{Details, FetchReceipt, Parse, SidePointer, parse},
+    lfs::{Details, FetchReceipt, HeadPointer, HeadPointers, Parse, SidePointer, parse},
     review::{FileChange, FileSide},
     status::{Area, WorkingRequest},
 };
@@ -366,6 +366,108 @@ pub fn fetch_working(
         read_working(repo, request)?,
         |repo| read_working(repo, request),
     )
+}
+
+/// Every LFS pointer committed in HEAD, by path, with object availability.
+/// Only blobs small enough to be a pointer are read.
+pub fn head_pointers(repo: &Path) -> Result<HeadPointers, String> {
+    let output = command(repo)
+        .args(["ls-tree", "-r", "-z", "-l", "--full-tree", "HEAD"])
+        .output()
+        .map_err(|error| format!("Could not run Git: {error}. Install Git and retry."))?;
+    if !output.status.success() {
+        let detail = detail(&output);
+        // An unborn branch has no pointers yet.
+        if detail.contains("Not a valid object name") || detail.contains("not a tree object") {
+            return Ok(HeadPointers {
+                pointers: Vec::new(),
+                lfs_installed: installed(repo),
+                remote: remote(repo),
+            });
+        }
+        return Err(format!(
+            "Reading HEAD failed ({}).\n{detail}",
+            output.status
+        ));
+    }
+    let store = gix::discover(repo).map_err(|error| error.to_string())?;
+    let common = common_dir(repo);
+    let mut pointers = Vec::new();
+    for record in output.stdout.split(|byte| *byte == 0) {
+        let Some(tab) = record.iter().position(|byte| *byte == b'\t') else {
+            continue;
+        };
+        let (meta, path_bytes) = (&record[..tab], &record[tab + 1..]);
+        let Ok(meta) = std::str::from_utf8(meta) else {
+            continue;
+        };
+        let mut fields = meta.split_whitespace();
+        let (_, kind, id, size) = (fields.next(), fields.next(), fields.next(), fields.next());
+        let (Some("blob"), Some(id), Some(size)) = (kind, id, size) else {
+            continue;
+        };
+        if size.parse::<u64>().map_or(true, |size| size > 1024) {
+            continue;
+        }
+        let blob_id = id.to_string();
+        let Ok(id) = gix::ObjectId::from_hex(id.as_bytes()) else {
+            continue;
+        };
+        let Ok(blob) = store.find_blob(id) else {
+            continue;
+        };
+        let Parse::Pointer(pointer) = parse(&blob.data) else {
+            continue;
+        };
+        let available = common
+            .as_deref()
+            .and_then(|common| object_path_in(common, &pointer.oid))
+            .is_some_and(|object| object.is_file());
+        pointers.push(HeadPointer {
+            path: gg_engine::review::display_path(path_bytes),
+            path_bytes: path_bytes.to_vec(),
+            oid: pointer.oid,
+            size: pointer.size,
+            available,
+            blob: blob_id,
+        });
+    }
+    Ok(HeadPointers {
+        pointers,
+        lfs_installed: installed(repo),
+        remote: remote(repo),
+    })
+}
+
+/// Fetch the objects of several HEAD pointers in one `git lfs fetch`, then
+/// re-read HEAD's pointers. Working files are not changed.
+pub fn fetch_paths(repo: &Path, paths: &[String]) -> Result<HeadPointers, String> {
+    if paths.is_empty() {
+        return Err("Select the objects to fetch.".into());
+    }
+    if !installed(repo) {
+        return Err("git-lfs is not installed.".into());
+    }
+    let mut command = command(repo);
+    command.arg("lfs").arg("fetch");
+    if let Some(remote) = remote(repo) {
+        command.arg(remote);
+    }
+    command.arg(format!("--include={}", paths.join(",")));
+    let output = command
+        .output()
+        .map_err(|error| format!("Could not run git-lfs: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "LFS fetch failed ({}).{}",
+            output.status,
+            match detail(&output) {
+                detail if detail.is_empty() => String::new(),
+                detail => format!("\n{detail}"),
+            }
+        ));
+    }
+    head_pointers(repo)
 }
 
 /// Read a bounded LFS object for preview; `None` means the object is not present.

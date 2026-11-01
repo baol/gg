@@ -1,5 +1,4 @@
 mod avatars;
-mod backups_view;
 mod binary_preview;
 mod blame_cli;
 mod blame_view;
@@ -30,9 +29,11 @@ mod footer;
 mod graph;
 mod history_view;
 mod init_cli;
+mod inspect_ui;
 #[cfg(test)]
 mod interaction_tests;
 mod lfs_cli;
+mod lfs_view;
 mod lfs_worker;
 mod line_map_worker;
 mod menus;
@@ -50,8 +51,8 @@ mod rebase_dialog;
 mod rebase_plan;
 mod rebase_stop;
 mod records;
+mod recovery_view;
 mod reflog_cli;
-mod reflog_view;
 mod refs_cli;
 mod refs_view;
 mod reset_cli;
@@ -64,6 +65,7 @@ mod search;
 mod settings;
 mod shortcuts;
 mod signature_cli;
+mod signature_view;
 mod signature_worker;
 mod split_rows;
 mod stage_view;
@@ -75,6 +77,7 @@ mod status_worker;
 mod stream;
 mod submodule_cli;
 mod submodule_worker;
+mod submodules_view;
 mod sync_cli;
 mod tag_cli;
 mod thumbnails;
@@ -379,7 +382,7 @@ impl PrefSection {
                 "diff open files full file layout inline side by side images compare context lines whitespace ignore line end display wrap long lines invisible characters tabs trailing spaces"
             }
             Self::Commit => {
-                "commit identity name email signing sign tags subject length guide hooks verify"
+                "commit identity name email signing sign tags subject length guide hooks verify signing key format allowed signers gpg"
             }
             Self::Rebase => {
                 "rebase recovery stash autostash backup pull strategy merge fast-forward push force lease keep backups days retention confirm drop reset"
@@ -424,6 +427,10 @@ struct FoldersDialog {
     search: String,
     /// `user.name <user.email>` from Git config, read when the window opens.
     identity: Option<String>,
+    /// Signing configuration and the repository config file, read in the
+    /// background when the window opens (Commit › Signing rows).
+    signing: Option<SigningConfig>,
+    signing_read: Option<std::sync::mpsc::Receiver<SigningConfig>>,
     new_root: String,
     error: Option<String>,
     /// Repository count per clone folder; `None` for a missing folder.
@@ -436,10 +443,36 @@ impl FoldersDialog {
             section,
             search: String::new(),
             identity: None,
+            signing: None,
+            signing_read: None,
             new_root: String::new(),
             error: None,
             counts: Vec::new(),
         }
+    }
+}
+
+/// What Preferences › Commit shows under Signing, read from Git config.
+#[derive(Clone, Debug)]
+struct SigningConfig {
+    config: gg_engine::signature::Config,
+    /// The repository's own config file, for **Edit in repository config…**.
+    file: Option<PathBuf>,
+}
+
+fn read_signing(repo: &Path) -> SigningConfig {
+    let file = std::process::Command::new("git")
+        .current_dir(repo)
+        .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| PathBuf::from(String::from_utf8_lossy(&output.stdout).trim()).join("config"));
+    SigningConfig {
+        config: gg_git::signature::config(repo),
+        file,
     }
 }
 
@@ -585,99 +618,7 @@ struct StashPicker {
     restore_index: bool,
 }
 
-struct RecoveryView {
-    source: return_location::RecoverySource,
-    reflog: reflog_view::ReflogView,
-    backups: backups_view::BackupsView,
-    open: bool,
-}
-
-enum RecoveryToolAction {
-    Reflog(reflog_view::Action),
-    Backups(backups_view::Action),
-}
-
-fn recovery_source_label(source: return_location::RecoverySource) -> &'static str {
-    match source {
-        return_location::RecoverySource::Backups => "Backups",
-        return_location::RecoverySource::Reflog => "Reflog",
-    }
-}
-
-impl RecoveryView {
-    fn new(path: PathBuf) -> Self {
-        Self {
-            source: return_location::RecoverySource::Backups,
-            reflog: reflog_view::ReflogView::new(path.clone(), "HEAD".into()),
-            backups: backups_view::BackupsView::new(path),
-            open: true,
-        }
-    }
-
-    fn select(&mut self, source: return_location::RecoverySource, entry: &str) {
-        self.source = source;
-        match source {
-            return_location::RecoverySource::Backups => self.backups.select_entry(entry),
-            return_location::RecoverySource::Reflog => self.reflog.select_entry(entry),
-        }
-    }
-
-    fn draw(&mut self, ctx: &egui::Context, references: &[String]) -> Option<RecoveryToolAction> {
-        let mut action = None;
-        let mut open = self.open;
-        let max_width = (ctx.content_rect().width() - 24.0).max(320.0);
-        egui::Window::new("Recovery")
-            .id(egui::Id::unique("recovery"))
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(true)
-            .default_width(max_width.min(760.0))
-            .max_width(max_width)
-            .default_height(500.0)
-            .default_pos(ctx.content_rect().center())
-            .pivot(egui::Align2::CENTER_CENTER)
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label("Source");
-                    let mut source = self.source;
-                    egui::ComboBox::from_id_salt("recovery-source")
-                        .selected_text(recovery_source_label(source))
-                        .width(160.0)
-                        .show_ui(ui, |ui| {
-                            for candidate in [
-                                return_location::RecoverySource::Backups,
-                                return_location::RecoverySource::Reflog,
-                            ] {
-                                crate::menus::choose(
-                                    ui,
-                                    &mut source,
-                                    candidate,
-                                    recovery_source_label(candidate),
-                                );
-                            }
-                        });
-                    if source != self.source {
-                        self.source = source;
-                    }
-                });
-                ui.separator();
-                match self.source {
-                    return_location::RecoverySource::Backups => {
-                        if let Some(next) = self.backups.content(ui) {
-                            action = Some(RecoveryToolAction::Backups(next));
-                        }
-                    }
-                    return_location::RecoverySource::Reflog => {
-                        if let Some(next) = self.reflog.content(ui, references) {
-                            action = Some(RecoveryToolAction::Reflog(next));
-                        }
-                    }
-                }
-            });
-        self.open = open;
-        action
-    }
-}
+use recovery_view::RecoveryView;
 
 /// Command readiness shared by the menu bar and the icon toolbar.
 #[derive(Clone, Copy, Debug)]
@@ -720,6 +661,10 @@ enum FrameCommand {
     /// Repository › Recovery…: Backups and Reflog in one window.
     Recovery,
     Worktrees,
+    /// Repository › Submodules…: every gitlink with its status.
+    Submodules,
+    /// Repository › LFS…: the LFS pointers in HEAD, missing first.
+    Lfs,
     Open,
     Clone,
     /// New repository…, on this folder when given.
@@ -936,6 +881,87 @@ fn is_repository(path: &Path) -> bool {
         .stderr(std::process::Stdio::null())
         .status()
         .is_ok_and(|status| status.success())
+}
+
+/// Preferences › Commit › Signing: the signing configuration as read-only
+/// rows, each naming its Git key, then a link to the repository config.
+/// The rows keep their place while the configuration is read. Returns the
+/// config file to open when the link is clicked.
+fn signing_rows(ui: &mut egui::Ui, signing: Option<&SigningConfig>) -> Option<PathBuf> {
+    let mut edit = None;
+    if signing.is_none() {
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(50));
+    }
+    let config = signing.map(|signing| &signing.config);
+    egui::Grid::new("signing-config")
+        .num_columns(2)
+        .min_col_width(150.0)
+        .min_row_height(22.0)
+        .spacing([16.0, 2.0])
+        .show(ui, |ui| {
+            ui.label("Format");
+            ui.horizontal(|ui| {
+                if let Some(config) = config {
+                    ui.label(&config.format);
+                    ui.weak("· gpg.format");
+                }
+            });
+            ui.end_row();
+            ui.label("Signing key");
+            ui.horizontal(|ui| {
+                if let Some(config) = config {
+                    match &config.signing_key {
+                        Some(key) => {
+                            ui.add(
+                                egui::Label::new(egui::RichText::new(key).monospace()).truncate(),
+                            );
+                        }
+                        None => {
+                            ui.weak("Not configured");
+                        }
+                    }
+                    ui.weak("· user.signingkey");
+                }
+            });
+            ui.end_row();
+            ui.label("Allowed signers");
+            ui.horizontal(|ui| {
+                if let Some(config) = config {
+                    match &config.allowed_signers {
+                        Some(file) => {
+                            ui.add(
+                                egui::Label::new(egui::RichText::new(file).monospace()).truncate(),
+                            );
+                        }
+                        None => {
+                            ui.weak("Not set");
+                        }
+                    }
+                    ui.weak("· gpg.ssh.allowedSignersFile");
+                }
+            });
+            ui.end_row();
+            ui.label("");
+            ui.horizontal(|ui| {
+                ui.weak("Read from Git config.");
+                let file = signing.and_then(|signing| signing.file.clone());
+                if ui
+                    .add_enabled(
+                        file.is_some(),
+                        egui::Link::new("Edit in repository config…"),
+                    )
+                    .clicked()
+                {
+                    edit = file;
+                }
+            });
+            ui.end_row();
+        });
+    if let Some(note) = config.and_then(|config| config.note.as_deref()) {
+        ui.weak(note);
+    }
+    edit
 }
 
 /// `Name <email>` from the repository's Git config, for Preferences ›
@@ -1536,16 +1562,6 @@ fn short_id(reference: &str) -> String {
     reference.chars().take(12).collect()
 }
 
-fn lfs_bytes(value: u64) -> String {
-    if value < 1024 {
-        format!("{value} B")
-    } else if value < 1024 * 1024 {
-        format!("{:.1} KiB", value as f64 / 1024.0)
-    } else {
-        format!("{:.1} MiB", value as f64 / (1024.0 * 1024.0))
-    }
-}
-
 fn worktree_path(bytes: &[u8]) -> PathBuf {
     #[cfg(unix)]
     {
@@ -1608,35 +1624,11 @@ fn worktree_default_destination(repo: &Path, branch: &str) -> String {
         .to_string()
 }
 
-struct SubmoduleWindow {
-    request: crate::diff_view::SubmoduleRequest,
-    details: Option<gg_engine::submodule::Details>,
-    error: Option<String>,
-    notice: Option<String>,
-    busy: Option<String>,
-    confirm_update: bool,
-    refresh_parent: bool,
-}
+use submodules_view::SubmoduleWindow;
 
-struct LfsWindow {
-    request: crate::diff_view::LfsRequest,
-    details: Option<gg_engine::lfs::Details>,
-    content: Option<crate::binary_preview::Preview>,
-    preview_note: Option<String>,
-    texture: Option<egui::TextureHandle>,
-    error: Option<String>,
-    notice: Option<String>,
-    busy: Option<String>,
-    confirm_fetch: bool,
-}
+use lfs_view::LfsWindow;
 
-struct SignatureWindow {
-    reference: String,
-    verification: Option<gg_engine::signature::Verification>,
-    config: Option<gg_engine::signature::Config>,
-    error: Option<String>,
-    busy: Option<String>,
-}
+use signature_view::SignatureWindow;
 
 struct Browser {
     /// The 36 px logo on the welcome view.
@@ -1742,9 +1734,13 @@ struct Browser {
     worktree_generation: u64,
     worktree_states: std::collections::HashMap<PathBuf, WorktreeState>,
     submodule_window: Option<SubmoduleWindow>,
+    /// Repository › Submodules….
+    submodule_list: Option<submodules_view::ListWindow>,
     submodule_worker: Option<submodule_worker::Worker>,
     submodule_generation: u64,
     lfs_window: Option<LfsWindow>,
+    /// Repository › LFS….
+    lfs_list: Option<lfs_view::ListWindow>,
     lfs_worker: Option<lfs_worker::Worker>,
     lfs_generation: u64,
     signature_window: Option<SignatureWindow>,
@@ -1931,9 +1927,11 @@ impl Browser {
             worktree_generation: 0,
             worktree_states: std::collections::HashMap::new(),
             submodule_window: None,
+            submodule_list: None,
             submodule_worker: None,
             submodule_generation: 0,
             lfs_window: None,
+            lfs_list: None,
             lfs_worker: None,
             lfs_generation: 0,
             signature_window: None,
@@ -2511,6 +2509,12 @@ impl Browser {
             None => {
                 let mut dialog = FoldersDialog::new(section);
                 dialog.identity = git_identity(Path::new(&self.path));
+                let (send, receive) = std::sync::mpsc::channel();
+                let repo = PathBuf::from(&self.path);
+                std::thread::spawn(move || {
+                    let _ = send.send(read_signing(&repo));
+                });
+                dialog.signing_read = Some(receive);
                 self.folders_dialog = Some(dialog);
             }
         }
@@ -2573,6 +2577,7 @@ impl Browser {
         let mut add_current = false;
         let mut prefs = self.prefs.clone();
         let mut show_shortcuts = false;
+        let mut edit_config: Option<PathBuf> = None;
         let default_folder = self.folders.default_folder();
         let offline_override = std::env::var_os("GG_OFFLINE").is_some();
         // Modal, as in the mockup: a fixed size keeps it in place while
@@ -3020,6 +3025,13 @@ impl Browser {
                             ui.weak(
                                 "Sets the Sign checkbox when Local Changes opens; it can still be changed per commit.",
                             );
+                            if let Some(read) = dialog.signing_read.as_ref().and_then(|read| read.try_recv().ok()) {
+                                dialog.signing = Some(read);
+                                dialog.signing_read = None;
+                            }
+                            if let Some(file) = signing_rows(ui, dialog.signing.as_ref()) {
+                                edit_config = Some(file);
+                            }
                         }
                         PrefSection::Rebase => {
                             ui.strong("Rebase");
@@ -3119,6 +3131,12 @@ impl Browser {
             });
         if modal.should_close() {
             open = false;
+        }
+        if let Some(file) = edit_config
+            && let Err(error) = editor::open(&self.prefs.editor, &file)
+            && let Some(dialog) = &mut self.folders_dialog
+        {
+            dialog.error = Some(error);
         }
         if show_shortcuts {
             // The shortcuts window would sit under the modal: close it first.
@@ -3542,13 +3560,13 @@ impl Browser {
 
     fn refresh_reflog(&mut self) {
         if let Some(view) = &mut self.recovery {
-            view.reflog.load();
+            view.reread();
         }
     }
 
     fn refresh_backups(&mut self) {
         if let Some(view) = &mut self.recovery {
-            view.backups.load();
+            view.reread();
         }
     }
 
@@ -3613,15 +3631,10 @@ impl Browser {
                 }
             }
             // Reopens on the source last shown; Backups the first time.
-            FrameCommand::Recovery => {
-                if let Some(path) = self.stash_path() {
-                    self.recovery
-                        .get_or_insert_with(|| RecoveryView::new(path))
-                        .open = true;
-                    ctx.request_repaint();
-                }
-            }
+            FrameCommand::Recovery => self.open_recovery_window(ctx),
             FrameCommand::Worktrees => self.open_worktrees(ctx),
+            FrameCommand::Submodules => self.open_submodule_list(ctx),
+            FrameCommand::Lfs => self.open_lfs_list(ctx),
             FrameCommand::Open => self.edit_path = true,
             FrameCommand::NewRepository(folder) => {
                 self.new_repository = Some(new_repository::Dialog::new(folder));
@@ -4518,6 +4531,14 @@ impl Browser {
             Entry::Separator,
             item("Worktrees…", "", FrameCommand::Worktrees)
                 .unless(idle(ready.has_repo))
+                .entry(),
+            item("Submodules…", "", FrameCommand::Submodules)
+                .unless(idle(ready.has_repo))
+                .hint("Every submodule with its recorded and checked-out commit")
+                .entry(),
+            item("LFS…", "", FrameCommand::Lfs)
+                .unless(idle(ready.has_repo))
+                .hint("LFS pointers in HEAD; fetch the missing objects together")
                 .entry(),
             item("Recovery…", "", FrameCommand::Recovery)
                 .unless(idle(ready.has_repo))
@@ -6525,9 +6546,7 @@ impl Browser {
     fn run_recovery_action(&mut self, ctx: &egui::Context, action: RecoveryAction) {
         match action {
             RecoveryAction::Backups => {
-                if let Some(history) = &self.state.history {
-                    self.recovery = Some(RecoveryView::new(history.path.clone()));
-                }
+                self.open_recovery(ctx, return_location::RecoverySource::Backups)
             }
             RecoveryAction::ResolveConflicts => self.open_conflict_view(ctx),
             RecoveryAction::RetryFetch => self.start_fetch(ctx, None, self.prefs.fetch_prune),
@@ -8012,12 +8031,26 @@ impl Browser {
         self.review = Some(review);
     }
 
+    /// Open Recovery on the source last shown (Backups the first time),
+    /// re-reading it when it is already open.
+    fn open_recovery_window(&mut self, ctx: &egui::Context) {
+        let Some(path) = self.stash_path() else {
+            return;
+        };
+        match &mut self.recovery {
+            Some(view) => {
+                view.open = true;
+                view.reread();
+            }
+            None => self.recovery = Some(RecoveryView::new(path, ctx)),
+        }
+        ctx.request_repaint();
+    }
+
     fn open_recovery(&mut self, ctx: &egui::Context, source: return_location::RecoverySource) {
-        if let Some(path) = self.stash_path() {
-            let view = self.recovery.get_or_insert_with(|| RecoveryView::new(path));
+        self.open_recovery_window(ctx);
+        if let Some(view) = &mut self.recovery {
             view.source = source;
-            view.open = true;
-            ctx.request_repaint();
         }
     }
 
@@ -8031,7 +8064,7 @@ impl Browser {
         self.open_recovery(ctx, source);
         if let Some(view) = &mut self.recovery {
             if let Some(reference) = reference {
-                view.reflog.set_reference(reference);
+                view.set_reference(reference);
             }
             view.select(source, commit);
         }
@@ -8614,15 +8647,7 @@ impl Browser {
             before: request.before.clone(),
             after: request.after.clone(),
         };
-        self.submodule_window = Some(SubmoduleWindow {
-            request,
-            details: None,
-            error: None,
-            notice: None,
-            busy: None,
-            confirm_update: false,
-            refresh_parent: false,
-        });
+        self.submodule_window = Some(SubmoduleWindow::new(request));
         self.request_submodule(ctx, action);
     }
 
@@ -8701,6 +8726,7 @@ impl Browser {
 
     fn draw_submodule(&mut self, ctx: &egui::Context) {
         self.poll_submodule();
+        self.draw_submodule_list(ctx);
         let Some(request) = self
             .submodule_window
             .as_ref()
@@ -8711,154 +8737,31 @@ impl Browser {
         let nested = self
             .stash_path()
             .map(|repo| repo.join(worktree_path(&request.path_bytes)));
-        let mut open = true;
-        let mut open_nested = false;
-        let mut ask_update = false;
-        let mut submit_update = false;
-        let mut cancel_update = false;
-        {
-            let Some(window) = &mut self.submodule_window else {
-                return;
-            };
-            let max_width = (ctx.content_rect().width() - 24.0).max(360.0);
-            egui::Window::new("Submodule details")
-                .id(egui::Id::unique("submodule-details"))
-                .open(&mut open)
-                .collapsible(false)
-                .resizable(true)
-                .default_width(max_width.min(680.0))
-                .max_width(max_width)
-                .default_pos(ctx.content_rect().center())
-                .pivot(egui::Align2::CENTER_CENTER)
-                .show(ctx, |ui| {
-                    ui.label(egui::RichText::new(&request.path).monospace().strong());
-                    if let Some(details) = &window.details {
-                        ui.weak(details.status_label());
-                        if let Some(before) = request.before.as_deref() {
-                            ui.label(format!("Before {before}"));
-                        }
-                        if let Some(after) = request.after.as_deref() {
-                            ui.label(format!("After {after}"));
-                        }
-                        ui.label(format!(
-                            "Index {}",
-                            details.index.as_deref().unwrap_or("absent")
-                        ));
-                        ui.label(format!(
-                            "Checked out {}",
-                            details.checked_out.as_deref().unwrap_or("not initialized")
-                        ));
-                        ui.horizontal_wrapped(|ui| {
-                            if let Some(url) = &details.url {
-                                ui.weak(url);
-                            }
-                            if let Some(branch) = &details.branch {
-                                ui.weak(format!("branch {branch}"));
-                            }
-                        });
-                        if let Some(configured) = &details.configured_url
-                            && Some(configured) != details.url.as_ref()
-                        {
-                            ui.colored_label(
-                                ui.visuals().warn_fg_color,
-                                format!("Configured URL differs: {configured}"),
-                            );
-                        }
-                        if let Some(note) = &details.note {
-                            ui.weak(note);
-                        }
-                        let update = details.can_update();
-                        ui.horizontal_wrapped(|ui| {
-                            let can_open = details.initialized
-                                && nested.as_ref().is_some_and(|path| path.exists());
-                            if ui
-                                .add_enabled(can_open, egui::Button::new("Open nested repository"))
-                                .on_disabled_hover_text(
-                                    "Initialize the submodule before opening it",
-                                )
-                                .clicked()
-                            {
-                                open_nested = true;
-                            }
-                            if ui
-                                .add_enabled(
-                                    update.is_ok() && window.busy.is_none(),
-                                    egui::Button::new("Update…"),
-                                )
-                                .on_disabled_hover_text(
-                                    update
-                                        .err()
-                                        .unwrap_or_else(|| "Update the nested checkout".into()),
-                                )
-                                .clicked()
-                            {
-                                ask_update = true;
-                            }
-                        });
-                    }
-                    if let Some(error) = &window.error {
-                        ui.colored_label(ui.visuals().error_fg_color, error);
-                    }
-                    if let Some(notice) = &window.notice {
-                        ui.colored_label(ui.visuals().hyperlink_color, notice);
-                    }
-                });
-            if window.confirm_update
-                && let Some(details) = &window.details
-            {
-                let mut confirm = true;
-                egui::Window::new("Update submodule")
-                    .id(egui::Id::unique("update-submodule"))
-                    .modal(ctx, egui::Id::unique("update-submodule"))
-                    .open(&mut confirm)
-                    .collapsible(false)
-                    .resizable(false)
-                    .default_pos(ctx.content_rect().center())
-                    .pivot(egui::Align2::CENTER_CENTER)
-                    .show(ctx, |ui| {
-                        ui.label(format!(
-                            "Update {} to {}?",
-                            request.path,
-                            details
-                                .target()
-                                .map(|target| target.chars().take(8).collect::<String>())
-                                .unwrap_or_else(|| "the index commit".into())
-                        ));
-                        if let Some(url) = &details.url {
-                            ui.weak(format!("Git may fetch from {url}."));
-                        }
-                        ui.weak("The parent index is not staged by this action.");
-                        if ui
-                            .add_enabled(window.busy.is_none(), egui::Button::new("Update"))
-                            .clicked()
-                        {
-                            submit_update = true;
-                        }
-                        if ui.button("Cancel").clicked() {
-                            cancel_update = true;
-                        }
-                    });
-                if !confirm {
-                    cancel_update = true;
+        let Some(window) = &mut self.submodule_window else {
+            return;
+        };
+        let can_open = window
+            .details
+            .as_ref()
+            .is_some_and(|details| details.initialized)
+            && nested.as_ref().is_some_and(|path| path.exists());
+        match submodules_view::draw_details(ctx, window, can_open) {
+            Some(submodules_view::DetailsAction::Close) => self.submodule_window = None,
+            Some(submodules_view::DetailsAction::AskUpdate) => window.confirm_update = true,
+            Some(submodules_view::DetailsAction::CancelUpdate) => window.confirm_update = false,
+            Some(submodules_view::DetailsAction::Update) => {
+                window.confirm_update = false;
+                self.request_submodule(ctx, submodule_worker::Action::Update);
+            }
+            Some(submodules_view::DetailsAction::OpenNested) => {
+                if let Some(path) = nested {
+                    self.submodule_window = None;
+                    self.submodule_list = None;
+                    self.switch_worktree(ctx, path);
+                    return;
                 }
             }
-        }
-        if ask_update && let Some(window) = &mut self.submodule_window {
-            window.confirm_update = true;
-        }
-        if cancel_update && let Some(window) = &mut self.submodule_window {
-            window.confirm_update = false;
-        }
-        if submit_update {
-            if let Some(window) = &mut self.submodule_window {
-                window.confirm_update = false;
-            }
-            self.request_submodule(ctx, submodule_worker::Action::Update);
-        }
-        if open_nested && let Some(path) = nested {
-            self.submodule_window = None;
-            self.switch_worktree(ctx, path);
-            return;
+            None => {}
         }
         let refresh = self
             .submodule_window
@@ -8866,20 +8769,44 @@ impl Browser {
             .is_some_and(|window| std::mem::take(&mut window.refresh_parent));
         if refresh {
             self.refresh_working(ctx);
+            if let Some(list) = &mut self.submodule_list {
+                list.reread();
+            }
         }
-        if !open {
-            self.submodule_window = None;
+    }
+
+    /// Repository › Submodules…: opens the list, re-reading it when open.
+    fn open_submodule_list(&mut self, ctx: &egui::Context) {
+        let Some(path) = self.stash_path() else {
+            return;
+        };
+        match &mut self.submodule_list {
+            Some(list) => list.reread(),
+            None => self.submodule_list = Some(submodules_view::ListWindow::new(path, ctx)),
+        }
+    }
+
+    fn draw_submodule_list(&mut self, ctx: &egui::Context) {
+        let Some(list) = &mut self.submodule_list else {
+            return;
+        };
+        match list.draw(ctx) {
+            Some(submodules_view::ListAction::Close) => self.submodule_list = None,
+            Some(submodules_view::ListAction::Details(request)) => {
+                self.open_submodule(ctx, request);
+            }
+            Some(submodules_view::ListAction::OpenNested(path_bytes)) => {
+                if let Some(repo) = self.stash_path() {
+                    self.submodule_list = None;
+                    self.switch_worktree(ctx, repo.join(worktree_path(&path_bytes)));
+                }
+            }
+            None => {}
         }
     }
 
     fn open_signature(&mut self, ctx: &egui::Context, reference: String) {
-        self.signature_window = Some(SignatureWindow {
-            reference: reference.clone(),
-            verification: None,
-            config: None,
-            error: None,
-            busy: None,
-        });
+        self.signature_window = Some(SignatureWindow::new(reference.clone()));
         self.request_signature(ctx, signature_worker::Action::Load { reference });
     }
 
@@ -8926,8 +8853,7 @@ impl Browser {
         };
         window.busy = None;
         match update.result {
-            Ok((config, verification)) => {
-                window.config = Some(config);
+            Ok((_, verification)) => {
                 window.verification = Some(verification);
                 window.error = None;
             }
@@ -8937,142 +8863,18 @@ impl Browser {
 
     fn draw_signature(&mut self, ctx: &egui::Context) {
         self.poll_signature();
-        let Some(reference) = self.signature_window.as_ref().map(|w| w.reference.clone()) else {
+        let Some(window) = &self.signature_window else {
             return;
         };
-        let mut open = true;
-        {
-            let Some(window) = &mut self.signature_window else {
-                return;
-            };
-            let max_width = (ctx.content_rect().width() - 24.0).max(360.0);
-            egui::Window::new("Signature details")
-                .id(egui::Id::unique("signature-details"))
-                .open(&mut open)
-                .collapsible(false)
-                .resizable(true)
-                .default_width(max_width.min(680.0))
-                .max_width(max_width)
-                .default_pos(ctx.content_rect().center())
-                .pivot(egui::Align2::CENTER_CENTER)
-                .show(ctx, |ui| {
-                    ui.label(egui::RichText::new(short_id(&reference)).monospace().strong());
-                    if window.busy.is_some() {
-                        ui.horizontal(|ui| {
-                            ui.spinner();
-                            ui.weak("Verifying signature…");
-                        });
-                    }
-                    if let Some(verification) = &window.verification {
-                        ui.add_space(4.0);
-                        ui.label(egui::RichText::new(verification.state.label()).strong());
-                        egui::Grid::new("signature-verification")
-                            .num_columns(2)
-                            .spacing([12.0, 4.0])
-                            .show(ui, |ui| {
-                                if let Some(kind) = &verification.kind {
-                                    ui.weak("Object");
-                                    ui.label(kind);
-                                    ui.end_row();
-                                }
-                                if let Some(signer) = &verification.signer {
-                                    ui.weak("Signer");
-                                    ui.label(signer);
-                                    ui.end_row();
-                                }
-                                if let Some(key) = &verification.key {
-                                    ui.weak("Key");
-                                    ui.label(egui::RichText::new(key).monospace());
-                                    ui.end_row();
-                                }
-                                if let Some(trust) = &verification.trust {
-                                    ui.weak("Trust");
-                                    ui.label(trust);
-                                    ui.end_row();
-                                }
-                                if let Some(format) = &verification.format {
-                                    ui.weak("Signature format");
-                                    ui.label(format);
-                                    ui.end_row();
-                                }
-                            });
-                        if let Some(detail) = &verification.detail {
-                            ui.add_space(4.0);
-                            ui.weak(detail);
-                        }
-                    }
-                    if let Some(config) = &window.config {
-                        ui.add_space(8.0);
-                        ui.separator();
-                        ui.label(egui::RichText::new("Signing configuration").strong());
-                        egui::Grid::new("signature-config")
-                            .num_columns(2)
-                            .spacing([12.0, 4.0])
-                            .show(ui, |ui| {
-                                ui.weak("Format");
-                                ui.label(&config.format);
-                                ui.end_row();
-                                ui.weak("Signing key");
-                                ui.label(
-                                    config
-                                        .signing_key
-                                        .as_deref()
-                                        .unwrap_or("Not configured"),
-                                );
-                                ui.end_row();
-                                ui.weak("Sign commits");
-                                ui.label(if config.commit_signing {
-                                    "Enabled"
-                                } else {
-                                    "Disabled"
-                                });
-                                ui.end_row();
-                                ui.weak("Sign tags");
-                                ui.label(if config.tag_signing {
-                                    "Enabled"
-                                } else {
-                                    "Disabled"
-                                });
-                                ui.end_row();
-                                if let Some(program) = &config.gpg_program {
-                                    ui.weak("Program");
-                                    ui.label(program);
-                                    ui.end_row();
-                                }
-                                if let Some(allowed) = &config.allowed_signers {
-                                    ui.weak("Allowed signers");
-                                    ui.label(allowed);
-                                    ui.end_row();
-                                }
-                            });
-                        if let Some(note) = &config.note {
-                            ui.weak(note);
-                        }
-                    }
-                    if let Some(error) = &window.error {
-                        ui.colored_label(ui.visuals().error_fg_color, error);
-                    }
-                    ui.add_space(4.0);
-                    ui.weak("Verification is read-only: trust stores and configuration are not changed.");
-                });
-        }
-        if !open {
-            self.signature_window = None;
+        match signature_view::draw(ctx, window) {
+            Some(signature_view::Action::Close) => self.signature_window = None,
+            Some(signature_view::Action::Settings) => self.open_preferences(PrefSection::Commit),
+            None => {}
         }
     }
 
     fn open_lfs(&mut self, ctx: &egui::Context, request: crate::diff_view::LfsRequest) {
-        self.lfs_window = Some(LfsWindow {
-            request: request.clone(),
-            details: None,
-            content: None,
-            preview_note: None,
-            texture: None,
-            error: None,
-            notice: None,
-            busy: None,
-            confirm_fetch: false,
-        });
+        self.lfs_window = Some(LfsWindow::new(request.clone()));
         self.request_lfs(ctx, lfs_worker::Action::Read(request));
     }
 
@@ -9129,10 +8931,20 @@ impl Browser {
                 window.error = None;
                 if let Some(receipt) = loaded.receipt {
                     window.notice = Some(if receipt.available {
-                        format!("Fetched {} ({}).", receipt.oid, lfs_bytes(receipt.size))
+                        format!(
+                            "Fetched {} ({}).",
+                            inspect_ui::short(&receipt.oid),
+                            inspect_ui::bytes(receipt.size)
+                        )
                     } else {
-                        format!("Fetch completed but {} is still unavailable.", receipt.oid)
+                        format!(
+                            "Fetch completed but {} is still unavailable.",
+                            inspect_ui::short(&receipt.oid)
+                        )
                     });
+                    if let Some(list) = &mut self.lfs_list {
+                        list.reread();
+                    }
                 }
             }
             Err(error) => window.error = Some(error),
@@ -9141,155 +8953,45 @@ impl Browser {
 
     fn draw_lfs(&mut self, ctx: &egui::Context) {
         self.poll_lfs();
-        let Some(request) = self
-            .lfs_window
-            .as_ref()
-            .map(|window| window.request.clone())
-        else {
+        self.draw_lfs_list(ctx);
+        let repo = self.stash_path();
+        let Some(window) = &mut self.lfs_window else {
             return;
         };
-        let mut open = true;
-        let mut ask_fetch = false;
-        let mut submit_fetch = false;
-        let mut cancel_fetch = false;
-        {
-            let Some(window) = &mut self.lfs_window else {
-                return;
-            };
-            let max_width = (ctx.content_rect().width() - 24.0).max(360.0);
-            egui::Window::new("LFS pointer")
-                .id(egui::Id::unique("lfs-details"))
-                .open(&mut open)
-                .collapsible(false)
-                .resizable(true)
-                .default_width(max_width.min(680.0))
-                .max_width(max_width)
-                .default_pos(ctx.content_rect().center())
-                .pivot(egui::Align2::CENTER_CENTER)
-                .show(ctx, |ui| {
-                    ui.label(egui::RichText::new(request.path()).monospace().strong());
-                    if let Some(details) = &window.details {
-                        ui.weak(details.status_label());
-                        for (label, pointer) in [
-                            ("Before", details.before.as_ref()),
-                            ("After", details.after.as_ref()),
-                        ] {
-                            if let Some(pointer) = pointer {
-                                ui.label(format!(
-                                    "{label} {} · {} · {}",
-                                    pointer.oid,
-                                    lfs_bytes(pointer.size),
-                                    if pointer.available {
-                                        "available"
-                                    } else {
-                                        "missing"
-                                    }
-                                ));
-                            }
-                        }
-                        ui.weak(if details.lfs_installed {
-                            "git-lfs available"
-                        } else {
-                            "git-lfs is not installed"
-                        });
-                        if let Some(remote) = &details.remote {
-                            ui.weak(format!("Remote {remote}"));
-                        }
-                        if let Some(note) = &details.note {
-                            ui.weak(note);
-                        }
-                        if window.content.is_some() || window.preview_note.is_some() {
-                            ui.add_space(6.0);
-                            ui.separator();
-                            ui.label(egui::RichText::new("Content preview").strong());
-                            if let Some(content) = &window.content {
-                                crate::binary_preview::show_single(
-                                    ui,
-                                    content,
-                                    &mut window.texture,
-                                );
-                            }
-                            if let Some(note) = &window.preview_note {
-                                ui.weak(note);
-                            }
-                            ui.weak("Bounded preview; export keeps the complete original bytes.");
-                        }
-                        let fetch = details.can_fetch();
-                        if ui
-                            .add_enabled(
-                                fetch.is_ok() && window.busy.is_none(),
-                                egui::Button::new("Fetch object…"),
-                            )
-                            .on_disabled_hover_text(
-                                fetch
-                                    .err()
-                                    .unwrap_or_else(|| "Fetch the missing object".into()),
-                            )
-                            .clicked()
-                        {
-                            ask_fetch = true;
-                        }
-                        ui.weak("Fetching does not change or smudge working files.");
-                    }
-                    if let Some(error) = &window.error {
-                        ui.colored_label(ui.visuals().error_fg_color, error);
-                    }
-                    if let Some(notice) = &window.notice {
-                        ui.colored_label(ui.visuals().hyperlink_color, notice);
-                    }
-                });
-            if window.confirm_fetch
-                && let Some(details) = &window.details
-                && let Some(target) = details.target()
-            {
-                let mut confirm = true;
-                egui::Window::new("Fetch LFS object")
-                    .id(egui::Id::unique("fetch-lfs"))
-                    .modal(ctx, egui::Id::unique("fetch-lfs"))
-                    .open(&mut confirm)
-                    .collapsible(false)
-                    .resizable(false)
-                    .default_pos(ctx.content_rect().center())
-                    .pivot(egui::Align2::CENTER_CENTER)
-                    .show(ctx, |ui| {
-                        ui.label(format!(
-                            "Fetch {} ({})?",
-                            target.oid,
-                            lfs_bytes(target.size)
-                        ));
-                        if let Some(remote) = &details.remote {
-                            ui.weak(format!("Remote {remote}."));
-                        }
-                        ui.weak("This may download data. Working files are not changed.");
-                        if ui
-                            .add_enabled(window.busy.is_none(), egui::Button::new("Fetch"))
-                            .clicked()
-                        {
-                            submit_fetch = true;
-                        }
-                        if ui.button("Cancel").clicked() {
-                            cancel_fetch = true;
-                        }
-                    });
-                if !confirm {
-                    cancel_fetch = true;
-                }
-            }
-        }
-        if ask_fetch && let Some(window) = &mut self.lfs_window {
-            window.confirm_fetch = true;
-        }
-        if cancel_fetch && let Some(window) = &mut self.lfs_window {
-            window.confirm_fetch = false;
-        }
-        if submit_fetch {
-            if let Some(window) = &mut self.lfs_window {
+        let request = window.request.clone();
+        match lfs_view::draw_details(ctx, window, repo.as_deref()) {
+            Some(lfs_view::DetailsAction::Close) => self.lfs_window = None,
+            Some(lfs_view::DetailsAction::AskFetch) => window.confirm_fetch = true,
+            Some(lfs_view::DetailsAction::CancelFetch) => window.confirm_fetch = false,
+            Some(lfs_view::DetailsAction::Fetch) => {
                 window.confirm_fetch = false;
+                self.request_lfs(ctx, lfs_worker::Action::Fetch(request));
             }
-            self.request_lfs(ctx, lfs_worker::Action::Fetch(request));
+            None => {}
         }
-        if !open {
-            self.lfs_window = None;
+    }
+
+    /// Repository › LFS…: opens the list, re-reading it when open.
+    fn open_lfs_list(&mut self, ctx: &egui::Context) {
+        let Some(path) = self.stash_path() else {
+            return;
+        };
+        match &mut self.lfs_list {
+            Some(list) => list.reread(),
+            None => self.lfs_list = Some(lfs_view::ListWindow::new(path, ctx)),
+        }
+    }
+
+    fn draw_lfs_list(&mut self, ctx: &egui::Context) {
+        let Some(list) = &mut self.lfs_list else {
+            return;
+        };
+        match list.draw(ctx) {
+            Some(lfs_view::ListAction::Close) => self.lfs_list = None,
+            Some(lfs_view::ListAction::Details(pointer)) => {
+                self.open_lfs(ctx, lfs_view::request(&pointer));
+            }
+            None => {}
         }
     }
 
@@ -9443,6 +9145,16 @@ impl Browser {
                 .is_some_and(|window| window.busy.is_none())
             {
                 self.request_worktrees(ctx, worktree_worker::Action::List);
+            }
+            // Recovery, Submodules and LFS re-read the same way.
+            if let Some(view) = &mut self.recovery {
+                view.reread();
+            }
+            if let Some(list) = &mut self.submodule_list {
+                list.reread();
+            }
+            if let Some(list) = &mut self.lfs_list {
+                list.reread();
             }
         }
         self.window_focused = focused;
@@ -10834,66 +10546,37 @@ impl Browser {
         self.draw_worktrees(ctx);
         if let Some(action) = recovery_action {
             match action {
-                RecoveryToolAction::Reflog(action) => match action {
-                    reflog_view::Action::Open {
+                recovery_view::Action::Open {
+                    source,
+                    reference,
+                    commit,
+                    subject,
+                    entry,
+                } => {
+                    self.open_recovery_review(ctx, source, reference, commit, subject, entry);
+                }
+                recovery_view::Action::Reset { commit, mode } => {
+                    self.reset_confirm = Some((commit, mode));
+                }
+                recovery_view::Action::CreateBranch {
+                    source,
+                    commit,
+                    selector,
+                } => {
+                    self.create_branch = Some(CreateBranchDialog {
+                        name: String::new(),
                         commit,
-                        subject,
                         selector,
-                    } => {
-                        self.open_recovery_review(
-                            ctx,
-                            return_location::RecoverySource::Reflog,
-                            self.recovery
-                                .as_ref()
-                                .map(|view| view.reflog.reference().to_owned()),
-                            commit,
-                            subject,
-                            selector,
-                        );
-                    }
-                    reflog_view::Action::Reset { commit, mode } => {
-                        self.reset_confirm = Some((commit, mode));
-                    }
-                    reflog_view::Action::CreateBranch { commit, selector } => {
-                        self.create_branch = Some(CreateBranchDialog {
-                            name: String::new(),
-                            commit,
-                            selector,
-                            switch: false,
-                            recovery_source: Some(return_location::RecoverySource::Reflog),
-                            error: None,
-                        });
-                    }
-                },
-                RecoveryToolAction::Backups(action) => match action {
-                    backups_view::Action::Open {
-                        commit,
-                        subject,
-                        reference,
-                    } => {
-                        self.open_recovery_review(
-                            ctx,
-                            return_location::RecoverySource::Backups,
-                            None,
-                            commit,
-                            subject,
-                            reference,
-                        );
-                    }
-                    backups_view::Action::Reset { commit, mode } => {
-                        self.reset_confirm = Some((commit, mode));
-                    }
-                    backups_view::Action::CreateBranch { commit, selector } => {
-                        self.create_branch = Some(CreateBranchDialog {
-                            name: String::new(),
-                            commit,
-                            selector,
-                            switch: false,
-                            recovery_source: Some(return_location::RecoverySource::Backups),
-                            error: None,
-                        });
-                    }
-                },
+                        switch: false,
+                        recovery_source: Some(source),
+                        error: None,
+                    });
+                }
+                recovery_view::Action::Changed => {
+                    self.refresh_mutation();
+                    self.load(ctx);
+                    self.refresh_working(ctx);
+                }
             }
         }
 
@@ -10967,16 +10650,10 @@ impl Browser {
                         );
                         self.create_branch = None;
                         self.load(ctx);
-                        if let Some(view) = &mut self.recovery {
-                            match source {
-                                Some(return_location::RecoverySource::Reflog) => {
-                                    view.reflog.notice(notice)
-                                }
-                                Some(return_location::RecoverySource::Backups) => {
-                                    view.backups.notice(notice)
-                                }
-                                None => {}
-                            }
+                        if let Some(view) = &mut self.recovery
+                            && source.is_some()
+                        {
+                            view.notice(notice);
                         }
                         if switch {
                             self.branch_after_create = Some(receipt.branch.clone());
@@ -13175,6 +12852,57 @@ mod tests {
             );
         }
         Ok(())
+    }
+
+    #[test]
+    fn preferences_commit_lists_the_signing_configuration_read_only() {
+        let signing = SigningConfig {
+            config: gg_engine::signature::Config {
+                format: "ssh".into(),
+                signing_key: Some("~/.ssh/id_ed25519.pub".into()),
+                gpg_program: None,
+                commit_signing: true,
+                tag_signing: false,
+                allowed_signers: Some("~/.config/git/allowed_signers".into()),
+                tool_available: true,
+                note: None,
+            },
+            file: Some(std::env::temp_dir().join("config")),
+        };
+        let ctx = egui::Context::default();
+        let rows = |signing: Option<&SigningConfig>| {
+            let mut height = 0.0;
+            let output = crate::tests::run_ui(&ctx, frame_input(720.0, 480.0, vec![]), |ui| {
+                let top = ui.cursor().top();
+                let _ = signing_rows(ui, signing);
+                height = ui.cursor().top() - top;
+            });
+            (shown_text(&output), height)
+        };
+        let (waiting, reserved) = rows(None);
+        let (text, height) = rows(Some(&signing));
+        for expected in [
+            "Format",
+            "ssh",
+            "· gpg.format",
+            "Signing key",
+            "~/.ssh/id_ed25519.pub",
+            "· user.signingkey",
+            "Allowed signers",
+            "~/.config/git/allowed_signers",
+            "Read from Git config.",
+            "Edit in repository config…",
+        ] {
+            assert!(
+                text.iter().any(|line| line == expected),
+                "missing {expected:?} in {text:?}"
+            );
+        }
+        assert!(!waiting.iter().any(|line| line == "ssh"));
+        assert_eq!(
+            reserved, height,
+            "the rows keep their place while Git is read"
+        );
     }
 
     #[test]
@@ -16375,26 +16103,33 @@ mod tests {
             return_location::ReturnLocation::Recovery {
                 source: return_location::RecoverySource::Reflog,
                 reference: Some("main".into()),
-                entry: "main@{0}".into(),
+                entry: "main@{1}".into(),
             },
         );
         assert!(app.recovery.is_some(), "recovery stays open");
-        if let Some(view) = app.recovery.as_ref() {
-            assert_eq!(view.reflog.reference(), "main");
-            assert_eq!(view.reflog.selected_selector(), Some("main@{0}"));
+        if let Some(view) = app.recovery.as_mut() {
+            assert_eq!(view.reference(), "main");
+            assert_eq!(view.selected_selector(), Some("main@{1}"));
             assert_eq!(view.source, return_location::RecoverySource::Reflog);
+            // The entry stays selected when the list arrives.
+            view.wait();
+            assert_eq!(view.selected_selector(), Some("main@{1}"));
         }
         Ok(())
     }
 
     #[test]
-    fn recovery_window_offers_one_source_selector() {
+    fn recovery_window_switches_backups_and_reflog_in_its_header() {
         for width in [720.0, 1120.0] {
             let ctx = egui::Context::default();
             let mut app = layout_fixture();
             app.recovery = Some(RecoveryView::new(
-                "/projects/a-very-long-repository-name".into(),
+                std::env::temp_dir().join("a-very-long-repository-name"),
+                &ctx,
             ));
+            if let Some(view) = app.recovery.as_mut() {
+                view.wait();
+            }
             let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
                 app.draw_ui(ctx)
             });
@@ -16410,9 +16145,10 @@ mod tests {
                 })
                 .collect::<Vec<_>>();
             assert!(text.iter().any(|line| line.contains("Recovery")));
-            assert!(text.iter().any(|line| line.contains("Source")));
-            assert!(text.iter().any(|line| line.contains("Backups")));
-            assert!(!text.iter().any(|line| line.contains("Reflog…")));
+            assert!(text.iter().any(|line| line.contains("Backups 0")));
+            assert!(text.contains(&"Reflog"));
+            assert!(!text.iter().any(|line| line.contains("Source")));
+            assert!(!text.iter().any(|line| line.contains("Refresh")));
         }
     }
 
@@ -16463,7 +16199,10 @@ mod tests {
 
         let ctx = egui::Context::default();
         let mut app = layout_fixture();
-        app.recovery = Some(RecoveryView::new(path.to_path_buf()));
+        app.recovery = Some(RecoveryView::new(path.to_path_buf(), &ctx));
+        if let Some(view) = app.recovery.as_mut() {
+            view.wait();
+        }
         let _ = crate::tests::run_ui(&ctx, frame_input(720.0, 480.0, vec![]), |ctx| {
             app.draw_ui(ctx)
         });
@@ -16478,7 +16217,7 @@ mod tests {
                 _ => None,
             })
             .collect::<Vec<_>>();
-        for expected in ["Recovery", "Open commit", "Copy ref"] {
+        for expected in ["Recovery", "Open commit", "Restore main…", "Delete backup…"] {
             assert!(
                 text.iter().any(|line| line.contains(expected)),
                 "missing {expected} at 720x480: {text:?}"
@@ -16544,7 +16283,7 @@ mod tests {
     }
 
     #[test]
-    fn signature_window_separates_validity_trust_and_configuration() {
+    fn signature_window_shows_a_banner_and_links_the_signing_settings() {
         let verification = gg_engine::signature::Verification {
             reference: "a".repeat(40),
             kind: Some("commit".into()),
@@ -16555,26 +16294,12 @@ mod tests {
             trust: Some("ultimate".into()),
             detail: None,
         };
-        let config = gg_engine::signature::Config {
-            format: "openpgp".into(),
-            signing_key: Some("F4545BDB96888825AA7CC8C7DFC666CDAB5C0CC8".into()),
-            gpg_program: None,
-            commit_signing: true,
-            tag_signing: false,
-            allowed_signers: None,
-            tool_available: true,
-            note: None,
-        };
         for width in [720.0, 1120.0] {
             let ctx = egui::Context::default();
             let mut app = layout_fixture();
-            app.signature_window = Some(SignatureWindow {
-                reference: verification.reference.clone(),
-                verification: Some(verification.clone()),
-                config: Some(config.clone()),
-                error: None,
-                busy: None,
-            });
+            let mut window = SignatureWindow::new(verification.reference.clone());
+            window.verification = Some(verification.clone());
+            app.signature_window = Some(window);
             let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
                 app.draw_ui(ctx)
             });
@@ -16590,17 +16315,15 @@ mod tests {
                 })
                 .collect::<Vec<_>>();
             for expected in [
-                "Signature details",
+                "Signature · commit aaaaaaaa",
                 "Good signature",
+                "Signed by a key with ultimate trust.",
                 "Test User <test@example.org>",
                 "F4545BDB96888825AA7CC8C7DFC666CDAB5C0CC8",
+                "TRUST",
                 "ultimate",
-                "Signing configuration",
-                "Sign commits",
-                "Enabled",
-                "Sign tags",
-                "Disabled",
-                "Verification is read-only",
+                "Read-only check; nothing is changed.",
+                "Signing settings…",
             ] {
                 assert!(
                     text.iter().any(|line| line.contains(expected)),
@@ -16640,23 +16363,18 @@ mod tests {
         for width in [720.0, 1120.0] {
             let ctx = egui::Context::default();
             let mut app = layout_fixture();
-            app.lfs_window = Some(LfsWindow {
-                request: crate::diff_view::LfsRequest::Change(gg_engine::review::FileChange {
+            let mut window = LfsWindow::new(crate::diff_view::LfsRequest::Change(
+                gg_engine::review::FileChange {
                     path: "asset.bin".into(),
                     path_bytes: b"asset.bin".to_vec(),
                     kind: gg_engine::review::ChangeKind::Modified,
                     old: None,
                     new: None,
-                }),
-                details: Some(details.clone()),
-                content: Some(crate::binary_preview::decode(b"fetched content")),
-                preview_note: None,
-                texture: None,
-                error: None,
-                notice: None,
-                busy: None,
-                confirm_fetch: false,
-            });
+                },
+            ));
+            window.details = Some(details.clone());
+            window.content = Some(crate::binary_preview::decode(b"fetched content"));
+            app.lfs_window = Some(window);
             let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
                 app.draw_ui(ctx)
             });
@@ -16672,14 +16390,15 @@ mod tests {
                 })
                 .collect::<Vec<_>>();
             for expected in [
-                "LFS pointer",
+                "LFS",
                 "asset.bin",
-                oid,
-                "12.1 KiB",
-                "git-lfs is not installed",
-                "Content preview",
+                "LFS unavailable",
+                "01234567",
+                "12 KiB",
+                "not installed",
+                "git-lfs is not installed.",
+                "CONTENT PREVIEW · AFTER",
                 "Hexadecimal preview",
-                "Bounded preview",
                 "Fetch object…",
             ] {
                 assert!(
@@ -16717,24 +16436,20 @@ mod tests {
             recorded_available: Some(true),
             status: Some("+".into()),
             note: None,
+            subjects: Default::default(),
+            behind: None,
         };
         for width in [720.0, 1120.0] {
             let ctx = egui::Context::default();
             let mut app = layout_fixture();
-            app.submodule_window = Some(SubmoduleWindow {
-                request: crate::diff_view::SubmoduleRequest {
-                    path: "vendor/lib".into(),
-                    path_bytes: b"vendor/lib".to_vec(),
-                    before: Some("b".repeat(40)),
-                    after: Some("a".repeat(40)),
-                },
-                details: Some(details.clone()),
-                error: None,
-                notice: None,
-                busy: None,
-                confirm_update: false,
-                refresh_parent: false,
+            let mut window = SubmoduleWindow::new(crate::diff_view::SubmoduleRequest {
+                path: "vendor/lib".into(),
+                path_bytes: b"vendor/lib".to_vec(),
+                before: Some("b".repeat(40)),
+                after: Some("a".repeat(40)),
             });
+            window.details = Some(details.clone());
+            app.submodule_window = Some(window);
             let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
                 app.draw_ui(ctx)
             });
@@ -16750,13 +16465,14 @@ mod tests {
                 })
                 .collect::<Vec<_>>();
             for expected in [
-                "Submodule details",
+                "Submodule",
                 "vendor/lib",
                 "Different commit",
-                "Index",
-                "Checked out",
+                "INDEX",
+                "same as After",
+                "CHECKED OUT",
                 "Open nested repository",
-                "Update…",
+                "Update to aaaaaaaa…",
             ] {
                 assert!(
                     text.iter().any(|line| line.contains(expected)),
@@ -18042,6 +17758,8 @@ mod tests {
                     "Push with force-with-lease…",
                     "-",
                     "Worktrees…",
+                    "Submodules…",
+                    "LFS…",
                     "Recovery…",
                     "-",
                     "Preferences…",
@@ -19199,6 +18917,8 @@ mod tests {
             (FrameCommand::Stash, "Changes"),
             (FrameCommand::Stashes, "Changes"),
             (FrameCommand::Recovery, "Repository"),
+            (FrameCommand::Submodules, "Repository"),
+            (FrameCommand::Lfs, "Repository"),
         ] {
             let found = menu
                 .iter()
@@ -19214,7 +18934,7 @@ mod tests {
             assert_eq!(entry.disabled, found[0].1.disabled, "{command:?}");
         }
         // One Recovery entry point holds both sources.
-        for label in ["Backups…", "Reflog…", "Submodules…", "LFS…"] {
+        for label in ["Backups…", "Reflog…"] {
             assert!(
                 !menu.iter().any(|(_, item)| item.label == label),
                 "{label} is gone"

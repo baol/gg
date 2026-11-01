@@ -26,6 +26,21 @@ pub struct Details {
     /// Git's one-character submodule status prefix, when reported.
     pub status: Option<String>,
     pub note: Option<String>,
+    /// Subjects of the commits above that the nested repository has.
+    #[serde(default)]
+    pub subjects: std::collections::BTreeMap<String, String>,
+    /// Commits the checkout lacks from the target (`checked_out..target`).
+    #[serde(default)]
+    pub behind: Option<u64>,
+}
+
+/// A status pill's tone: amber differs, red broken, green clean, grey other.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Tone {
+    Neutral,
+    Differs,
+    Broken,
+    Clean,
 }
 
 impl Details {
@@ -51,18 +66,44 @@ impl Details {
         }
     }
 
+    pub fn tone(&self) -> Tone {
+        match self.status_label() {
+            "Modified" | "Different commit" => Tone::Differs,
+            "Recorded commit missing" | "Conflict" => Tone::Broken,
+            "Clean" => Tone::Clean,
+            _ => Tone::Neutral,
+        }
+    }
+
+    /// One plain sentence for the status, under the details header.
+    pub fn status_sentence(&self) -> &'static str {
+        match self.status_label() {
+            "Uninitialized" => "Not initialized yet.",
+            "Modified" => "The nested repository has local changes.",
+            "Recorded commit missing" => "The recorded commit is not in the nested repository.",
+            "Different commit" => "The checked-out commit is not the one the parent records.",
+            "Conflict" => "The parent has a merge conflict on this gitlink.",
+            "Clean" => "The checked-out commit is the one the parent records.",
+            _ => "Git did not report this submodule's state.",
+        }
+    }
+
     pub fn can_update(&self) -> Result<(), String> {
         let Some(target) = self.target() else {
             return Err("No parent-recorded commit is selected.".into());
         };
         if self.index.as_deref().is_some_and(|index| index != target) {
+            let index = self.index.as_deref().unwrap_or_default();
             return Err(format!(
-                "Parent index records {}; stage the parent gitlink before updating.",
-                self.index.as_deref().unwrap_or_default()
+                "Stage the parent gitlink before updating: the index records {}.",
+                index.get(..8).unwrap_or(index)
             ));
         }
         if self.dirty == Some(true) {
-            return Err("Submodule has local changes; open it to inspect or clean it.".into());
+            return Err(format!(
+                "{} has local changes. Open it to inspect or clean them.",
+                self.path
+            ));
         }
         if self.initialized && self.recorded_available == Some(false) {
             return Err(
@@ -120,6 +161,8 @@ mod tests {
             recorded_available: Some(true),
             status: Some(" ".into()),
             note: None,
+            subjects: Default::default(),
+            behind: None,
         }
     }
 

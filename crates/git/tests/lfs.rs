@@ -260,3 +260,41 @@ fn bounded_object_preview_reads_only_an_available_small_object() -> Result {
     assert!(gg_git::lfs::object_path(dir.path(), "not-an-oid").is_none());
     Ok(())
 }
+
+#[test]
+fn head_pointers_list_only_lfs_pointers_with_availability() -> Result {
+    let dir = repo()?;
+    let other = "f".repeat(64);
+    std::fs::create_dir_all(dir.path().join("assets"))?;
+    std::fs::write(
+        dir.path().join("assets/splash.png"),
+        pointer(OID, 1_468_006),
+    )?;
+    std::fs::write(dir.path().join("icon.png"), pointer(&other, 86_016))?;
+    std::fs::write(dir.path().join("notes.txt"), b"plain text\n")?;
+    git(dir.path(), &["add", "."])?;
+    git(dir.path(), &["commit", "-qm", "pointers"])?;
+    let object = dir
+        .path()
+        .join(".git/lfs/objects")
+        .join(&OID[..2])
+        .join(&OID[2..4])
+        .join(OID);
+    std::fs::create_dir_all(object.parent().ok_or("missing parent")?)?;
+    std::fs::write(&object, b"content")?;
+    let listed = gg_git::lfs::head_pointers(dir.path())?;
+    let paths = listed
+        .pointers
+        .iter()
+        .map(|pointer| (pointer.path.as_str(), pointer.size, pointer.available))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        paths,
+        vec![
+            ("assets/splash.png", 1_468_006, true),
+            ("icon.png", 86_016, false)
+        ]
+    );
+    assert!(gg_git::lfs::fetch_paths(dir.path(), &[]).is_err());
+    Ok(())
+}

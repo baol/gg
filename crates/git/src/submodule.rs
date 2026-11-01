@@ -87,6 +87,37 @@ pub fn read(
     } else {
         None
     };
+    let mut subjects = std::collections::BTreeMap::new();
+    let mut behind = None;
+    if initialized {
+        for id in [before, recorded, index.as_deref(), checked_out.as_deref()]
+            .into_iter()
+            .flatten()
+        {
+            if subjects.contains_key(id) || id.starts_with('-') {
+                continue;
+            }
+            if let Some(subject) = run(&nested, &["log", "-1", "--format=%s", id, "--"])
+                .ok()
+                .filter(|output| output.status.success())
+                .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+            {
+                subjects.insert(id.to_string(), subject);
+            }
+        }
+        if let (Some(checked_out), Some(target)) = (checked_out.as_deref(), target)
+            && checked_out != target
+            && !target.starts_with('-')
+        {
+            behind = run(
+                &nested,
+                &["rev-list", "--count", &format!("{checked_out}..{target}")],
+            )
+            .ok()
+            .filter(|output| output.status.success())
+            .and_then(|output| String::from_utf8_lossy(&output.stdout).trim().parse().ok());
+        }
+    }
     Ok(Details {
         path: display,
         path_bytes: path_bytes.to_vec(),
@@ -102,7 +133,38 @@ pub fn read(
         recorded_available,
         status,
         note,
+        subjects,
+        behind,
     })
+}
+
+/// Every gitlink in the parent index, by path, with its nested state.
+pub fn list(path: &Path) -> Result<Vec<Details>, String> {
+    let output = run(path, &["ls-files", "--stage", "-z"])?;
+    if !output.status.success() {
+        return Err(format!(
+            "Reading the parent index failed ({}).{}",
+            output.status,
+            match detail(&output) {
+                detail if detail.is_empty() => String::new(),
+                detail => format!("\n{detail}"),
+            }
+        ));
+    }
+    let mut paths = Vec::new();
+    for record in output.stdout.split(|byte| *byte == 0) {
+        let Some(tab) = record.iter().position(|byte| *byte == b'\t') else {
+            continue;
+        };
+        let (meta, path_bytes) = (&record[..tab], &record[tab + 1..]);
+        if meta.starts_with(b"160000 ") && !paths.iter().any(|known| known == path_bytes) {
+            paths.push(path_bytes.to_vec());
+        }
+    }
+    paths
+        .iter()
+        .map(|path_bytes| read(path, path_bytes, None, None))
+        .collect()
 }
 
 fn module_values(path: &Path, display: &str) -> (Option<String>, Option<String>, Option<String>) {
