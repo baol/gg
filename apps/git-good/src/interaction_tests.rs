@@ -769,3 +769,44 @@ fn status_back_preserves_history_selection_and_anchor() {
     assert_eq!(h.app.state.selected, selected);
     assert!((h.app.scroll_offset - offset).abs() < 1.0);
 }
+
+#[test]
+fn a_branch_switch_shows_its_history_at_once_even_under_the_pointer() {
+    // A background refresh whose old top row has not been found yet, with
+    // the pointer over History: it waits, so rows never shift underneath.
+    let request = stream::Request {
+        anchor_id: Some("f".repeat(40)),
+        ..Default::default()
+    };
+    let mut waiting = update(request, 3);
+    waiting.anchor_row = None;
+    waiting.complete = false;
+    assert!(!accept_history_now(
+        false,
+        true,
+        false,
+        false,
+        Some(&waiting)
+    ));
+    assert!(!accept_history_now(
+        true,
+        true,
+        false,
+        false,
+        Some(&waiting)
+    ));
+    // A switch asked for the new history: shown on its first page.
+    assert!(accept_history_now(false, true, true, false, Some(&waiting)));
+    // Nothing staged yet: nothing to show.
+    assert!(!accept_history_now(true, true, true, false, None));
+    // Once found or complete, a refresh shows when the pointer leaves.
+    waiting.complete = true;
+    assert!(!accept_history_now(
+        false,
+        true,
+        false,
+        false,
+        Some(&waiting)
+    ));
+    assert!(accept_history_now(true, true, false, false, Some(&waiting)));
+}
