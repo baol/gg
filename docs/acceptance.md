@@ -167,9 +167,9 @@ Covered by (interaction): `menus_follow_the_final_design_mockup`, `menu_bar_is_o
 Fixture: `fx-branchy`
 Layer: interaction
 - When each menu is opened
-- Then the items equal the Command placement table: Repository: Open… `Ctrl+O` · Clone… · Open recent ▸ · Fetch `Ctrl+Shift+F` · Pull (rebase) `Ctrl+Shift+L` · Push `Ctrl+Shift+P` · Push with force-with-lease… · Worktrees… · Recovery… · Preferences… `Ctrl+,` · Quit `Ctrl+Q`; Branch: New branch… `Ctrl+B` · New tag… · Switch to… `Ctrl+Shift+B` · Merge into current… · Rebase current onto… · Interactive rebase of this branch… · Set upstream… · Track remote branch… · Rename… `F2` · Delete… `Del`; Changes includes Stash changes… `Ctrl+Shift+Z` and Stashes…; Commit, View, Help as tabled
+- Then the items equal the Command placement table: Repository: Open… `Ctrl+O` · Clone… · Open recent ▸ · Fetch `Ctrl+Shift+F` · Pull (rebase) `Ctrl+Shift+L` · Push `Ctrl+Shift+P` · Push with force-with-lease… · Worktrees… · Recovery… · Preferences… `Ctrl+,` · Quit `Ctrl+Q`; Branch: New branch… `Ctrl+B` · New tag… · Switch to… `Ctrl+Shift+B` · Merge into current… · Rebase current onto… · Interactive rebase of current branch… · Set upstream… · Track remote branch… · Rename… `F2` · Delete… `Del`; Changes: Stage all `Ctrl+Shift+S` · Unstage all `Ctrl+Shift+U` · Discard all tracked changes… · Commit `Ctrl+Enter` · Amend HEAD `Ctrl+Shift+Enter` · Stash changes… `Ctrl+Shift+Z` · Stashes… · Resolve conflicts…; Commit, View, Help as tabled
 - And no command appears in two menus; there is no **Submodules…**, **LFS…**, **Backups…** or **Reflog…** item (Backups and Reflog are sources inside **Recovery…**)
-Covered by (interaction, partial): `menus_follow_the_final_design_mockup` (apps/git-good/src/main.rs); Recovery…, the moved toolbar commands and the removed items are pending change
+Covered by (interaction, partial): `menus_follow_the_final_design_mockup`, `commands_off_the_toolbar_keep_their_menu_home_and_search_entry` (apps/git-good/src/main.rs) (labels, order and single menu home; shortcuts not checked)
 
 ### FRM-18 macOS gg menu moves Settings and Quit
 Fixture: `fx-linear` on macOS
@@ -189,7 +189,7 @@ Fixture: `fx-linear`, `fx-submodule`
 Layer: interaction
 - When every menu is opened and search is given `submodule`, then `lfs`
 - Then no **Submodules…** or **LFS…** item exists in any menu or among search **Actions**; submodule and LFS details stay reachable from **File actions** in Review and Local Changes (SUB-01, LFS-01)
-Covered by (Not automated): pending change
+Covered by (interaction, partial): `commands_off_the_toolbar_keep_their_menu_home_and_search_entry` (apps/git-good/src/main.rs) (menus only; search Actions not checked)
 
 ### FRM-21 View menu switches views and toggles panes
 Fixture: `fx-linear`, 1440 px
@@ -212,13 +212,13 @@ Fixture: `fx-branchy`
 Layer: interaction
 - When shown in History, Local Changes and Review, wide and narrow
 - Then left to right: refs sidebar toggle, **Changes** tab, **History** tab, **Fetch**, **Pull**, **Push**, then right-aligned branch button and search; there are no New branch, New tag, Merge, Stash changes, Stashes, Interactive rebase or Recovery buttons (FRM-72); icons never overlap, move between views, or extend past the window edge
-Covered by (interaction, partial): `window_toolbar_keeps_its_icons_in_place_across_views_and_widths`, `local_changes_and_history_share_one_navigation_strip_at_every_width` (apps/git-good/src/main.rs); the reduced set is pending change
+Covered by (interaction, partial): `window_toolbar_holds_navigation_and_sync_in_place_across_views_and_widths`, `local_changes_and_history_share_one_navigation_strip_at_every_width`, `commands_off_the_toolbar_keep_their_menu_home_and_search_entry` (apps/git-good/src/main.rs) (History and Local Changes at 720 and 1120 px; Review not checked)
 
 ### FRM-24 Toolbar tooltips name the command and its menu shortcut
 Fixture: `fx-remote`
 Layer: visual
 - When hovering each icon button
-- Then the tooltip names the command and shortcut, e.g. `Fetch  Ctrl+Shift+F`, `Pull origin/main (rebase)  Ctrl+Shift+L`, `Push  Ctrl+Shift+P`
+- Then the tooltip names the command and shortcut, e.g. `Fetch  Ctrl+Shift+F`, `Pull from origin/main (rebase)  Ctrl+Shift+L` (`Pull 3 from origin/main (rebase)  Ctrl+Shift+L` when behind), `Push  Ctrl+Shift+P`
 Covered by (Not automated)
 
 ### FRM-25 Toolbar buttons share menu enablement and reason
@@ -226,7 +226,7 @@ Fixture: `fx-linear` (no remote, no upstream)
 Layer: interaction
 - When hovering disabled Pull on the toolbar and **Repository › Pull (rebase)**
 - Then both are disabled with the same reason *The current branch has no upstream to pull from*; search's **Actions** entry shows the same reason
-Covered by (interaction): `search_offers_frame_actions_with_their_readiness_and_refs`, `pull_is_ready_only_when_the_current_branch_is_behind` (apps/git-good/src/main.rs)
+Covered by (interaction): `search_offers_frame_actions_with_their_readiness_and_refs`, `pull_is_ready_whenever_the_current_branch_has_an_upstream` (apps/git-good/src/main.rs)
 
 ### FRM-26 Pull enablement and badge — see NET-16
 
@@ -235,8 +235,8 @@ Fixture: `fx-remote-even`
 Layer: product
 - Given **Pull** is enabled (valid upstream, no badge)
 - When **Pull** is clicked
-- Then gg fetches `origin` first; with nothing new the footer reads `Already up to date with origin/main.` and HEAD, index and worktree are unchanged; when the fetch brings commits, Pull integrates them by the **Pull strategy** (NET-17, NET-18)
-Covered by (Not automated): pending change
+- Then gg fetches `origin` first; with nothing to integrate (even, or only ahead) the footer reads `Already up to date with origin/main.` and HEAD, index and worktree are unchanged; when the fetch brings commits, Pull integrates them by the **Pull strategy** (NET-17, NET-18)
+Covered by (interaction, partial): `pull_reports_already_up_to_date_after_fetching`, `pull_is_ready_whenever_the_current_branch_has_an_upstream` (apps/git-good/src/main.rs) (fetch outcome simulated; no Git run)
 
 ### FRM-28 Changes tab badge counts changed paths
 Fixture: `fx-dirty`, then `fx-linear`
@@ -248,9 +248,9 @@ Covered by (Not automated)
 
 ### FRM-30 Stashes count and disabled state — see STA-07
 
-### FRM-31 Interactive rebase of this branch covers the branch, not the selection — see RWR-12
+### FRM-31 Interactive rebase of current branch covers the branch, not the selection — see RWR-12
 
-### FRM-32 Interactive rebase of this branch disabled with no own commits — see RWR-13
+### FRM-32 Interactive rebase of current branch disabled with no own commits — see RWR-13
 
 ### FRM-33 Refs sidebar toggle shows pressed state
 Fixture: `fx-branchy`, 1440 px
@@ -504,28 +504,28 @@ Fixture: `fx-linear` then `fx-branchy` (slow read simulated; `fx-large` opt-in)
 Layer: interaction
 - When the repository opens, and while switching to another repository or file
 - Then no pane shows "Loading…"/"Reading…" text; the footer reads `Reading <path>` while the read runs; panes stay empty on first open, or keep the previous content together with its previous identity (title, header, path) until the new content arrives, never an old list under a new label (FRM-73)
-Covered by (interaction, partial): `empty_history_explains_itself_only_after_the_scan` (apps/git-good/src/main.rs); identity hold pending change
+Covered by (interaction, partial): `empty_history_explains_itself_only_after_the_scan` (apps/git-good/src/main.rs); the identity hold while switching is Not automated
 
 ### FRM-71 Frame rows hold still (no layout shift)
 Fixture: `fx-remote`
 Layer: visual
 - When Fetch runs and finishes, the Changes badge appears/disappears, and an error arrives in the footer
 - Then menu bar (26 px), toolbar (34 px) and status line keep fixed heights; panes do not move; toolbar icons keep x positions
-Covered by (interaction, partial): `window_toolbar_keeps_its_icons_in_place_across_views_and_widths` (apps/git-good/src/main.rs) — positions only; Not automated for heights
+Covered by (interaction, partial): `window_toolbar_holds_navigation_and_sync_in_place_across_views_and_widths` (apps/git-good/src/main.rs) — positions only; Not automated for heights
 
 ### FRM-72 Every command is reachable at narrow width through menus and search
 Fixture: `fx-branchy`, `fx-stash`; narrow
 Layer: interaction
-- When each command removed from the toolbar — **New branch…**, **New tag…**, **Merge into current…**, **Stash changes…**, **Stashes…**, **Interactive rebase of this branch…**, **Recovery…** — is looked up by its menu home and by typing its name in search
+- When each command removed from the toolbar — **New branch…**, **New tag…**, **Merge into current…**, **Stash changes…**, **Stashes…**, **Interactive rebase of current branch…**, **Recovery…** — is looked up by its menu home and by typing its name in search
 - Then each is found in exactly one menu (every menu fits the window, no clipped item) and under search **Actions** with its menu home; both routes open the same dialog or window; a disabled command shows the same reason in both
-Covered by (Not automated): pending change
+Covered by (interaction, partial): `commands_off_the_toolbar_keep_their_menu_home_and_search_entry`, `changes_stashes_opens_the_picker_inside_the_narrow_window`, `repository_recovery_opens_one_window_on_the_last_source` (apps/git-good/src/main.rs) (menu home, search entry and shared reason; menu fit at narrow width and the search route not driven)
 
 ### FRM-73 Pane identity and content always match
 Fixture: `fx-file-history`, `fx-linear`, `fx-branchy` (slow reads simulated)
 Layer: interaction
 - When the user selects file B while file A's diff is shown, switches repository while History shows `fx-linear`, and moves the History selection quickly
 - Then in every frame each pane's label (file path and endpoints, window title and identity, commit header) names the content shown: the old label with the old content until the new content arrives, then both change in the same frame; never a new label over old rows
-Covered by (interaction, partial): `selection_keeps_displayed_diff_until_replacement_arrives`, `pending_endpoint_labels_wait_for_matching_content` (apps/git-good/src/diff_view.rs), `failed_switch_keeps_displayed_identity_and_retry_adopts_new_repository` (apps/git-good/src/interaction_tests.rs); repository switch hold pending change
+Covered by (interaction, partial): `selection_keeps_displayed_diff_until_replacement_arrives`, `pending_endpoint_labels_wait_for_matching_content` (apps/git-good/src/diff_view.rs), `failed_switch_keeps_displayed_identity_and_retry_adopts_new_repository` (apps/git-good/src/interaction_tests.rs); the hold during a successful repository switch is Not automated
 
 ## History and refs
 
@@ -1062,7 +1062,7 @@ Layer: product
 - Given **Delete branch** for `old` is open listing no commits
 - When a terminal moves `old` to a new commit not in `main` (`git update-ref refs/heads/old <commit>`) and the user confirms
 - Then nothing is deleted; the list refreshes to `NOT IN THE CURRENT BRANCH` with that commit, the primary becomes `Delete old and 1 unmerged commit`, and the notice reads `The repository changed; review the updated list and confirm again.`; a second confirm deletes it
-Covered by (Not automated): pending change
+Covered by (interaction, partial): `guard_confirms_only_what_the_dialog_showed` (apps/git-good/src/consequence.rs) (the shared re-read guard; the Delete branch dialog is not driven)
 
 ### HIS-78 Status hint at narrow width — see FRM-55
 
@@ -1724,7 +1724,7 @@ Layer: interaction
 - When the user clicks one added row
 - Then the bar offers **Stage 1 line**, a discard button naming the change block it reverts (e.g. **Discard 1 change block (1 line)**, CHG-35), and **Clear**; rows do not move; **Clear** empties the picks
 - When the user clicks a hunk header, every changed line of that hunk is picked; clicking it again clears them
-Covered by (interaction, partial): `selection_bar_counts_picked_lines_and_clears_them` (status_view.rs); discard label pending change
+Covered by (interaction): `selection_bar_counts_picked_lines_and_clears_them` (apps/git-good/src/status_view.rs)
 
 ### CHG-22 **Stage N lines** stages only the picked lines
 Fixture: as CHG-21
@@ -1826,15 +1826,15 @@ Layer: product
 - When the user picks only one of the added lines
 - Then the bar offers **Discard 1 change block (3 lines)**, not a one-line discard
 - When it is clicked
-- Then the confirmation lists the affected range (`a.txt` working lines 5–6, index line 5) and *Working-tree changes will be lost. The index is unchanged.*; confirming reverts the whole block (no half-discard); the line-40 edit and the index remain
-Covered by (backend, interaction, partial): `selected_line_drop_reverts_the_whole_change_block` (status_view.rs); `drop_selected_working_lines_restores_index_sides_and_keeps_other_hunks` (crates/git/tests/status.rs); label and range list pending change
+- Then the confirmation names the block and its working-file range, `Discard 1 change block (3 lines) at lines 5–6 from a.txt? The index is unchanged.` (a deletion-only block reads `deleted lines 9–10`; at most five places are named, then `…`), with *Working-tree changes will be lost. The index is unchanged.* below; confirming reverts the whole block (no half-discard); the line-40 edit and the index remain
+Covered by (backend, interaction): `selected_line_drop_reverts_the_whole_change_block`, `line_discards_name_their_blocks_and_line_ranges` (apps/git-good/src/status_view.rs); `drop_selected_working_lines_restores_index_sides_and_keeps_other_hunks` (crates/git/tests/status.rs)
 
 ### CHG-36 **Discard unstaged changes** for one file keeps the index
 Fixture: `fx-dirty`
 Layer: product
-- When the user chooses **File actions › Discard unstaged changes** on `c.txt`, `d.txt`, `run.sh`, `new.txt` and partially staged `a.txt`, confirming each (*Discard unstaged changes to <path>? Staged changes and the index are unchanged.*)
+- When the user chooses **File actions › Discard unstaged changes…** on `c.txt`, `d.txt`, `run.sh`, `new.txt` and partially staged `a.txt`, confirming each (*Discard unstaged changes from <path>? The index is unchanged.*)
 - Then `c.txt`/`d.txt`/`run.sh` are restored from the index (mode 644 again), `new.txt` is removed, `a.txt` keeps its staged hunk and loses only the unstaged one; index bytes unchanged; the lists reload in place
-Covered by (backend, partial): `drop_whole_working_changes_restores_index_and_removes_untracked` (crates/git/tests/status.rs); label and partially staged case pending change
+Covered by (backend, interaction, partial): `drop_requires_confirmation_and_leaves_the_index_alone` (apps/git-good/src/status_view.rs); `drop_whole_working_changes_restores_index_and_removes_untracked` (crates/git/tests/status.rs) (the partially staged `a.txt` case not checked)
 
 ### CHG-37 Discard refused for conflicts, staged rows, partial mode changes
 Fixture: `fx-merge-conflict`; `fx-dirty`
@@ -1846,9 +1846,9 @@ Covered by (backend, interaction, partial): `conflicts_and_staged_discards_are_r
 Fixture: `fx-dirty`
 Layer: product
 - When the user chooses **Changes › Discard all tracked changes…**
-- Then a modal **Discard all tracked changes** reads *Restore every tracked file to HEAD? Staged and unstaged changes are both lost.*, lists `WILL BE RESTORED TO HEAD` (empty slot until read), states *Untracked files are kept. This cannot be undone.*, and offers **Cancel** (`Esc`) and a filled red **Discard 9 files**, enabled only once the list arrives
+- Then a modal **Discard all tracked changes** reads *Restore every tracked file to HEAD? Staged and unstaged changes are both lost.*, lists `WILL BE RESTORED TO HEAD` (empty slot until read), states *This cannot be undone. Untracked files are kept; files only added to the index become untracked.*, and offers **Cancel** (`Esc`) and a filled red **Discard 9 files, staged and unstaged** (`Discard tracked changes`, disabled, until the list arrives)
 - When confirmed: every tracked file and the index equal HEAD (the staged `b.txt` change is lost too); `new.txt`, `notes/*` remain untouched; `e2.txt` becomes untracked
-Covered by (backend, partial): `discard_all_restores_tracked_files_and_keeps_untracked` (crates/git/tests/worktree_changes.rs); dialog and labels pending change
+Covered by (backend, interaction): `discard_all_names_staged_changes_and_keeps_untracked_files`, `discard_all_rereads_and_asks_again_after_an_outside_change` (apps/git-good/src/main.rs); `discard_all_restores_tracked_files_and_keeps_untracked` (crates/git/tests/worktree_changes.rs)
 
 ### CHG-39 Discard all refused during an operation
 Fixture: `fx-rebase-conflict` (also `fx-merge-conflict`)
@@ -2072,10 +2072,11 @@ Covered by (backend, end-to-end): `unborn_clean_bare_and_linked_worktree` (crate
 ### CHG-72 Discard confirmations revalidate on confirm
 Fixture: `fx-dirty`
 Layer: product
-- Given **Discard all tracked changes…** is open listing 9 files (separately: the **Discard unstaged changes** confirmation for `c.txt`)
-- When another process edits tracked `f.txt` and runs `git add c.txt`, and the user confirms
-- Then nothing is discarded; the list refreshes (`f.txt` added; for the per-file confirmation, `c.txt` has no unstaged changes left and the action says so), and the notice reads `The repository changed; review the updated list and confirm again.`; a second confirm discards exactly the refreshed list
-Covered by (Not automated): pending change
+- Given **Discard all tracked changes…** is open listing 9 files
+- When another process edits tracked `f.txt` and the user confirms
+- Then nothing is discarded; the list refreshes (`f.txt` added, primary `Discard 10 files, staged and unstaged`), and the notice reads `The repository changed; review the updated list and confirm again.`; a second confirm discards exactly the refreshed list
+- Gap: the per-file **Discard unstaged changes…** confirmation does not revalidate yet (see [open questions](#open-spec-questions))
+Covered by (interaction, partial): `discard_all_rereads_and_asks_again_after_an_outside_change` (apps/git-good/src/main.rs), `guard_confirms_only_what_the_dialog_showed` (apps/git-good/src/consequence.rs) (Discard all only)
 
 Sources: architecture.md §Remote tracking and network mutations · M4, §History mutations and recovery · M5, operation area / outcome paragraphs (~79–81), Stashes picker (~91), refs context menu (~180), Pull (~184), Preferences (~358–364); final-design.md §Stashes and command table; cli.md §Sync and stash, §Merge, rebase, rewrite, and conflicts; user-flows.md F06–F09. Rebase/interactive rebase and the Recovery/backups/reflog windows are out of scope here.
 
@@ -2200,15 +2201,15 @@ Covered by (backend, partial): `fetch_reports_missing_and_ambiguous_default_remo
 ### NET-16 Pull is enabled whenever a valid upstream exists
 Fixture: `fx-remote` (main 2 ahead / 3 behind); `fx-remote-even`; branches `local-only` and `gone`
 Layer: interaction
-- Then on `main` toolbar **Pull** is enabled with badge `3`, tooltip `Pull origin/main (rebase)  Ctrl+Shift+L`, menu **Pull 3 (rebase)**; on `fx-remote-even` it is enabled with no badge (FRM-27); on `local-only` it is disabled with `The current branch has no upstream to pull from`; on `gone` (upstream ref deleted) disabled with a reason naming the missing upstream
-Covered by (interaction, partial): `pull_is_ready_only_when_the_current_branch_is_behind` (src/main.rs); enablement at zero behind pending change
+- Then on `main` toolbar **Pull** is enabled with badge `3` (the cached behind count), tooltip `Pull 3 from origin/main (rebase)  Ctrl+Shift+L`, menu **Pull 3 (rebase)**; on `fx-remote-even` it is enabled with no badge, tooltip `Pull from origin/main (rebase)  Ctrl+Shift+L`, menu **Pull (rebase)** (FRM-27); on `local-only` and with HEAD detached it is disabled with `The current branch has no upstream to pull from`; on `gone` (upstream configured, ref deleted) it is enabled, fetches, and then reports `origin/gone was not found on origin. Check the branch's upstream.`
+Covered by (interaction, partial): `pull_is_ready_whenever_the_current_branch_has_an_upstream` (apps/git-good/src/main.rs) (readiness and badge count; tooltips and `gone` not checked)
 
 ### NET-17 Pull (rebase) default strategy fetches then rebases
 Fixture: `fx-remote`
 Layer: product
 - When **Repository → Pull (rebase)** runs
-- Then Git fetches `origin`, then `main` is rebased onto `origin/main` on the operation worker: 2 local commits now sit above the 3 remote ones; History refreshes once
-Covered by (Not automated)
+- Then Git fetches `origin`, then gg reads `main` against `origin/main` from local refs and, because it is behind, rebases `main` onto `origin/main` on the operation worker: 2 local commits now sit above the 3 remote ones; History refreshes once
+Covered by (backend, partial): `upstream_relation_reads_local_refs_only` (crates/git/tests/sync.rs), `upstream_relation_follows_ahead_and_behind_counts` (crates/engine/src/sync.rs) (relation only; the GUI fetch-then-rebase is Not automated)
 
 ### NET-18 Pull strategy Merge and Fast-forward only
 Fixture: `fx-remote`
@@ -2230,9 +2231,9 @@ Covered by (backend, end-to-end, partial): `clone_fetch_push_upstream_and_non_fa
 Fixture: `fx-remote` (main diverged from origin/main); `fx-remote-auth`; `fx-remote-slow` with a short timeout
 Layer: product
 - When **Push** runs on diverged `main`
-- Then Git rejects it, `origin.git` is unchanged, and the footer shows the rejection with **Details…** and **Fetch**: no **Retry push**, no force option, no automatic fetch, merge or rebase; **Fetch** only fetches and leaves integration to the user
-- And when Push fails authentication (`fx-remote-auth`) or times out (`fx-remote-slow`), the follow-up is **Retry push**
-Covered by (backend, partial): `clone_fetch_push_upstream_and_non_fast_forward` (crates/git/tests/sync.rs); follow-up buttons pending change
+- Then Git rejects it, `origin.git` is unchanged, and the footer reads `Push rejected: origin/main has commits you don't have. Fetch to see them.` with **Details…** (Git's output) and **Fetch**: no **Retry push**, no force option, no automatic fetch, merge or rebase; **Fetch** only fetches and leaves integration to the user
+- And when Push fails authentication (`fx-remote-auth`) or times out (`fx-remote-slow`), or the host cannot be reached, the follow-up is **Retry push**; any other failure (e.g. a declined pre-receive hook) offers no follow-up
+Covered by (backend, interaction): `push_failures_offer_the_follow_up_that_can_help` (apps/git-good/src/main.rs); `clone_fetch_push_upstream_and_non_fast_forward`, `rejected_push_names_the_upstream_and_suggests_fetch` (crates/git/tests/sync.rs), `classifies_push_failures_by_the_follow_up_that_helps` (crates/git/src/sync.rs)
 
 ### NET-21 Push with force-with-lease… is disabled without a remote-tracking upstream
 Fixture: `fx-remote`, HEAD on `local-only`
@@ -2312,8 +2313,8 @@ Covered by (backend, interaction): `parses_bounded_progress_phases_and_percentag
 Fixture: `fx-remote-slow`
 Layer: product
 - When **Cancel** is clicked (a) while the Fetch is queued, before Git starts; (b) during transfer; (c) after Git has updated refs, as the job finishes
-- Then the label changes to `Cancelling…` and the Git child is killed and reaped; for (a) the footer reads `Fetch cancelled before it started.` and **Retry fetch** is offered at once; for (b) and (c) gg first re-reads refs, history and status (refs that moved are shown as moved; no rollback is attempted or implied), then reports `Fetch cancelled. gg re-read the repository; check what changed before retrying.`, and **Retry fetch** appears only after the re-read
-Covered by (backend, partial): `cancellation_reports_cancel_without_a_receipt` (crates/git/tests/sync.rs); messages and re-read pending change
+- Then the label changes to `Cancelling…` and the Git child is killed and reaped; in every case (gg does not tell them apart) gg re-reads refs, history and status (refs that moved are shown as moved; no rollback is attempted or implied) and the footer reads `Fetch from origin cancelled. gg re-read the repository; check what changed before retrying.`; **Retry fetch** is offered once the re-read finishes
+Covered by (backend, interaction, partial): `cancelled_fetch_rereads_the_repository_before_offering_retry` (apps/git-good/src/main.rs); `cancellation_reports_cancel_without_a_receipt` (crates/git/tests/sync.rs) (the three cancel timings are not driven)
 
 ### NET-33 Network operations are serialized
 Fixture: proposed `fx-remote-slow`
@@ -2351,7 +2352,8 @@ Layer: product
 - Given **Delete remote branch** for `origin/release` is open naming the last fetched commit
 - When `git fetch` in a terminal moves `origin/release` to a newer commit, and the user confirms
 - Then gg does not push; the dialog re-reads and names the new fetched commit, with the notice `The repository changed; review the updated list and confirm again.`; a second confirm deletes with the new lease (NET-28 covers a remote that moved without a local fetch: Git refuses)
-Covered by (Not automated): pending change
+- Gap: **Delete remote branch** does not revalidate yet; confirming pushes with the lease the dialog showed, which Git refuses as in NET-28 (see [open questions](#open-spec-questions))
+Covered by (Not automated)
 
 ## Stash
 
@@ -2403,7 +2405,7 @@ Covered by (end-to-end): `stash_cli_lists_pushes_applies_pops_and_drops` (tests/
 Fixture: `fx-stash`; `fx-linear`
 Layer: interaction
 - Then on `fx-stash` **Changes → Stashes…** is enabled and the refs sidebar shows `STASHES 3`; there is no toolbar Stashes button; on `fx-linear` **Changes → Stashes…** and its search Action are disabled with `No stashes`
-Covered by (interaction, partial): `stash_commands_follow_local_changes_and_entries` (src/main.rs); menu-only entry pending change
+Covered by (interaction): `stash_commands_follow_local_changes_and_entries`, `commands_off_the_toolbar_keep_their_menu_home_and_search_entry`, `window_toolbar_holds_navigation_and_sync_in_place_across_views_and_widths` (apps/git-good/src/main.rs)
 
 ### STA-08 Picker rows list ref, message, branch, age and file count
 Fixture: `fx-stash`
@@ -2500,8 +2502,8 @@ Covered by (interaction): `stash_entries_open_the_picker_and_follow_the_filter` 
 Fixture: `fx-stash`
 Layer: interaction
 - When **Changes → Stashes…** is chosen, a `stash@{2}` row in the sidebar **STASHES** group is clicked, and a stash outcome's **Stashes…** recovery button is clicked
-- Then the same picker opens each time (on `stash@{2}` from the sidebar); no separate Stashes window or Restore dialog exists
-Covered by (Not automated): pending change
+- Then the same picker opens each time (on `stash@{2}` from the sidebar), centered horizontally just below the toolbar and inside the window at 720×480; no separate Stashes window or Restore dialog exists
+Covered by (interaction, partial): `changes_stashes_opens_the_picker_inside_the_narrow_window` (apps/git-good/src/main.rs), `stash_entries_open_the_picker_and_follow_the_filter` (apps/git-good/src/refs_view.rs) (menu and sidebar routes; the footer route not checked)
 
 ### STA-22 CLI rejects option-shaped or non-numeric references
 Fixture: `fx-stash`
@@ -2530,7 +2532,8 @@ Layer: product
 - Given the drop confirmation for `stash@{1}` is shown
 - When `git stash drop stash@{0}` runs in a terminal (the entry is now `stash@{0}`) and the user confirms
 - Then nothing is dropped; the picker re-reads, keeps the same entry selected (matched by commit) under its new name `stash@{0}`, and shows `The repository changed; review the updated list and confirm again.`; a second confirm drops that entry, never whichever entry now holds the old index
-Covered by (Not automated): pending change
+- Gap: the drop confirmation does not revalidate yet (see [open questions](#open-spec-questions))
+Covered by (Not automated)
 
 ## Merge, cherry-pick, revert and conflicts
 
@@ -2661,8 +2664,9 @@ Covered by (interaction): `conflict_selection_prefers_the_next_path` (src/main.r
 ### INT-19 Ours and Theirs labels name their source (merge, cherry-pick, revert)
 Fixture: `fx-merge-conflict`; `fx-cherry-pick-conflict`; `fx-revert-conflict`
 Layer: product
-- Then column headers, block chips, Whole file sources and the hint carry identities: merge `Ours (main)` / `Theirs (feature/login)`; cherry-pick `Ours (main)` / `Theirs (<id7> <subject>)` of the picked commit; revert `Ours (main)` / `Theirs (<id7> <subject>)` of the reverted commit, with the hint naming it a revert; Ours is blue and Theirs amber, but the text alone identifies each side
-Covered by (Not automated): pending change
+- Then block columns, the Whole file sources, side panes and narrow tabs name each side: merge `Ours (main)` / `Theirs (feature/login)` (the ref at `MERGE_HEAD`, else its short ID and subject); cherry-pick `Ours (main)` / `Theirs (<8-char id> <subject>)` of the picked commit; revert `Ours (main)` / `Theirs (<8-char id> <subject>)` of the reverted commit, with the hint `Ours is the current branch. Theirs is the reverted change.`; a detached HEAD reads `Ours (HEAD <8-char id>)`
+- And a name longer than 24 characters is shortened with `…` (`Theirs (1a2b3c4d Add the login…)`), the full label on hover; the block choice buttons keep their short labels and name both sides only in their tooltips (`Theirs (feature/login), then Ours (main)`); Ours is blue and Theirs amber, but the text alone identifies each side
+Covered by (backend, interaction, partial): `conflict_labels_name_both_sides_for_each_operation`, `conflict_workspace_shows_side_names` (apps/git-good/src/main.rs), `choice_tooltips_name_both_sides` (apps/git-good/src/conflict_blocks.rs); `side_names_follow_the_operation` (crates/git/tests/conflict.rs) (merge, rebase and cherry-pick names; revert and the detached case not checked)
 
 ### INT-20 Text file opens Block by block with Base/Ours/Theirs per block
 Fixture: `fx-merge-conflict`, `src/app.rs` selected
@@ -2703,8 +2707,9 @@ Covered by (backend, interaction): `blocks_split_the_conflict_and_compose_a_stag
 Fixture: `fx-merge-conflict` with `git config merge.conflictStyle zdiff3`; variant: working `src/app.rs` also edited by hand outside the conflict markers
 Layer: product
 - Then the blocks and Base column are the same with or without the config (computed from stages)
-- And in the variant Block by block shows `This file was edited outside the conflict blocks.` with **Use working file** (stages the working bytes as they are) and **Replace with blocks…** (its confirmation states the edits outside the blocks will be lost); staging from blocks is disabled until one is chosen; nothing is written without that choice
-Covered by (Not automated): pending change
+- And in the variant Block by block shows `This file was edited outside the conflict blocks.` with **Use working file** (stages the working file as it is); the blocks' **Stage resolution** becomes **Replace with blocks…** (`Ctrl+S` too), which opens the modal **Replace edited file** (`Staging the blocks overwrites src/app.rs. The edits made outside the conflict blocks are lost.`, **Cancel** `Esc`, red **Replace and stage** `Enter`); nothing is written without one of those choices
+- And conflict markers labelled differently, CRLF endings, or the merge, diff3 or zdiff3 style do not count as edits
+Covered by (backend, interaction): `an_edited_working_file_offers_use_working_file_and_confirms_replace`, `use_working_file_stages_a_hand_edited_file_as_is` (apps/git-good/src/main.rs); `a_hand_edited_working_file_is_told_apart_from_what_git_wrote` (crates/git/tests/conflict.rs), `working_files_count_as_edited_only_when_a_side_changed` (crates/engine/src/conflict.rs)
 
 ### INT-26 Whole file sources only change the preview
 Fixture: `fx-merge-conflict`, `src/app.rs`
@@ -2730,11 +2735,11 @@ Covered by (backend, partial): `blocks_name_why_a_file_needs_a_whole_side` (crat
 ### INT-29 Delete/modify conflict offers Keep deletion
 Fixture: `fx-merge-conflict`, `docs.md` (deleted on one side, modified on the other)
 Layer: product
-- Then Block by block is disabled with a deleted-side reason; the choices are **Keep deletion** and the modified side
+- Then Block by block is disabled with `One side deleted this file. Choose Keep deletion or a whole side.`; the deleted side's pane reads `(deleted on this side)`; the **Whole file** sources add **Keep deletion** (tooltip *Delete the file and stage its removal*)
 - When **Keep deletion** is chosen
-- Then a consequence preview states that `docs.md` is removed from the working tree and the index and that the other side's edits are lost; confirming removes the file, stages the removal, and moves the path to `RESOLVED, STAGED`
-- And choosing the modified side and staging keeps the file
-Covered by (backend, partial): `non_regular_working_paths_keep_the_side_preview_explicit` (crates/git/tests/conflict.rs); Keep deletion pending change
+- Then the preview reads `docs.md will be deleted; the other side's changes to it are discarded.`; **Stage resolution** removes the file, stages the removal, and moves the path to `RESOLVED, STAGED`
+- And choosing the deleted side as the source disables staging with `This side deleted the file. Choose Keep deletion to stage the removal.`; choosing the modified side and staging keeps the file; a modify/modify conflict has no **Keep deletion**
+Covered by (backend, interaction, partial): `delete_modify_conflict_offers_keep_deletion` (apps/git-good/src/main.rs); `keeping_a_deletion_stages_the_removal`, `keeping_a_deletion_is_refused_without_a_deleted_side_or_after_an_edit`, `use_side_points_the_deleted_side_to_keep_deletion`, `non_regular_working_paths_keep_the_side_preview_explicit` (crates/git/tests/conflict.rs), `a_deleted_side_is_one_absent_side` (crates/engine/src/conflict.rs) (staging from the GUI not driven)
 
 ### INT-30 Add/add conflict has no Base
 Fixture: `fx-merge-conflict` plus a file `new.rs` added differently on both sides
@@ -2789,8 +2794,8 @@ Covered by (interaction): `conflicts_and_staged_discards_are_refused_before_spaw
 Fixture: `fx-rebase-conflict` (step 4 of 6, replaying `<id> <subject>` onto `origin/main`)
 Layer: product
 - When **Resolve conflicts…** opens the conflicted file
-- Then column headers, block chips, Whole file sources and the hint read `Ours (onto origin/main)` and `Theirs (<id7> <subject>)`; the hint explains that during a rebase Ours is the branch rebuilt so far; keys `1`/`2` choose the sides as labeled
-Covered by (Not automated): pending change
+- Then block columns, Whole file sources and side panes read `Ours (onto origin/main)` and `Theirs (<8-char id> <subject>)`, shortened to 24 characters with `…` (full label on hover); the hint reads `Ours is the branch being rebased onto, with the commits replayed so far. Theirs is the commit being replayed.`; keys `1`/`2` choose the sides as labeled
+Covered by (backend, interaction, partial): `conflict_labels_name_both_sides_for_each_operation` (apps/git-good/src/main.rs); `side_names_follow_the_operation` (crates/git/tests/conflict.rs) (labels only; the rebase workspace and keys not driven)
 
 ## Rewrite and recovery
 
@@ -2841,21 +2846,21 @@ Layer: visual
 - Then a large modal opens 12 px below the toolbar, centered, over dimmed History; menu bar and toolbar stay visible; header reads **Interactive rebase**, the branch `main`, the range `<from>…HEAD onto <base>` with 7-char IDs, **Cancel** `Esc`, and **Start rebase** `Ctrl+Enter`
 Covered by (interaction, partial): `rewrite_dialog_renders_at_supported_widths` (apps/git-good/src/main.rs)
 
-### RWR-12 Interactive rebase of this branch covers the branch's own commits
+### RWR-12 Interactive rebase of current branch covers the branch's own commits
 Fixture: `fx-rebase`, `c20` selected in History
 Layer: product
-- When the user runs **Interactive rebase of this branch…** from its menu or search
-- Then its tooltip/hint names `6 commits not on the upstream or default branch`; the plan lists exactly the 6 commits not on `origin/main`, regardless of the History selection, which stays on `c20`
-Covered by (backend, interaction, partial): `toolbar_rewrite_covers_the_branch_and_keeps_the_selection` (apps/git-good/src/main.rs); `branch_start_prefers_unpushed_commits_then_the_default_branch` (crates/git/tests/rewrite.rs); menu entry pending change
+- When the user runs **Branch › Interactive rebase of current branch…** or its search Action
+- Then its hint reads *Rewrite the commits the upstream, or else the default branch, lacks*; the plan opens centered 12 px below the toolbar (RWR-11) and lists exactly the 6 commits not on `origin/main`, regardless of the History selection, which stays on `c20`
+Covered by (backend, interaction, partial): `branch_menu_rewrite_covers_the_branch_and_keeps_the_selection`, `commands_off_the_toolbar_keep_their_menu_home_and_search_entry` (apps/git-good/src/main.rs); `branch_start_prefers_unpushed_commits_then_the_default_branch` (crates/git/tests/rewrite.rs) (menu route; the hint and the search route not driven)
 
-### RWR-13 Interactive rebase of this branch is disabled when the branch has no own commits
+### RWR-13 Interactive rebase of current branch is disabled when the branch has no own commits
 Fixture: `fx-remote-even`
 Layer: interaction
-- Then the **Interactive rebase of this branch…** menu item and its search Action are disabled with *The current branch has no commits beyond its upstream or the default branch; use Commit › Interactive rebase from here… on a selected commit*
-Covered by (interaction, partial): `stash_commands_follow_local_changes_and_entries` (apps/git-good/src/main.rs) (reason present); menu entry pending change
+- Then the **Branch › Interactive rebase of current branch…** menu item and its search Action are disabled with *The current branch has no commits beyond its upstream or the default branch; use Commit › Interactive rebase from here… on a selected commit*
+Covered by (interaction): `stash_commands_follow_local_changes_and_entries` (reason present), `commands_off_the_toolbar_keep_their_menu_home_and_search_entry` (menu and search share it) (apps/git-good/src/main.rs)
 
 ### RWR-14 Plan lists newest first and starts unchanged
-Fixture: `fx-rebase`, dialog from **Interactive rebase of this branch…**
+Fixture: `fx-rebase`, dialog from **Interactive rebase of current branch…**
 Layer: visual
 - Then the plan header reads `PLAN · NEWEST FIRST, LIKE HISTORY` with `j k select · Alt+↑↓ move · P R E S F D`; rows are in History order; every chip reads **Pick**; the last row names the base (`<id> base · unchanged`); under the list: `Keys on the selected row: P pick · R reword · E reopen · S squash · F fixup · D drop`; **Start rebase** is disabled with `The plan matches the current history.`
 Covered by (interaction): `lists_newest_first_and_starts_unchanged` (apps/git-good/src/rebase_plan.rs)
@@ -3055,9 +3060,9 @@ Layer: product
 - Then the footer follow-up is plain **Push**
 - When a pushed commit is reworded in `fx-remote-even` with **Offer force-with-lease after a rewrite** on
 - Then the follow-up is **Push with force-with-lease…**, opening the confirmation naming the lease commit (NET-22); with the preference off it is **Recovery…**
-- When a rewrite succeeds in `fx-rebase-local`
-- Then the follow-up is **Recovery…**, opening the Backups source
-Covered by (interaction, partial): `outcome_recovery_button_opens_backups` (apps/git-good/src/main.rs) (Recovery… path only); Push and lease offers pending change
+- When a rewrite succeeds in `fx-rebase-local`, or leaves the branch even with its upstream
+- Then the follow-up is **Recovery…**, opening the Backups source; a rewrite that stops on conflicts offers **Resolve conflicts…** instead. gg reads the relation from local refs only (no fetch)
+Covered by (backend, interaction, partial): `rewrite_follow_up_offers_the_push_the_result_needs`, `outcome_recovery_button_opens_backups` (apps/git-good/src/main.rs); `upstream_relation_reads_local_refs_only` (crates/git/tests/sync.rs), `upstream_relation_follows_ahead_and_behind_counts` (crates/engine/src/sync.rs) (the choice of follow-up; the lease confirmation it opens not driven)
 
 ### RWR-43 Rewrite failure keeps recovery reachable
 Fixture: `fx-rebase` with a `commit-msg` hook rejecting the reworded message
@@ -3192,16 +3197,16 @@ Layer: product
 - When the user selects **Hard** in **Reset here** targeting `c27` in `fx-dirty`
 - Then `CHANGES LOST` lists the tracked staged/unstaged paths (`a.txt`, `b.txt`, `c.txt`, …; not untracked `new.txt`); the primary becomes red **Hard reset**, enabled once the lists arrive
 - When **Hard** targets `c05` in `fx-reset-collision`
-- Then `UNTRACKED FILES OVERWRITTEN` lists `later.txt`; **Hard reset** is disabled with a reason naming the untracked file to move or delete first; Soft and Mixed stay available
-Covered by (interaction, partial): `reset_confirmation_renders_at_supported_widths` (apps/git-good/src/main.rs) (renders only); collision pending change
+- Then `UNTRACKED FILES OVERWRITTEN` lists `later.txt` (ignored files it would overwrite too); **Hard reset** is disabled and the notice line and its tooltip read `Move or delete the untracked files listed above, then reset.`; nothing is reset; Soft and Mixed stay available
+Covered by (interaction, partial): `reset_confirmation_renders_at_supported_widths`, `hard_reset_lists_untracked_files_it_would_overwrite_and_refuses` (apps/git-good/src/main.rs) (`CHANGES LOST` contents for `fx-dirty` not checked)
 
 ### RWR-65 Reset modes act like Git; Hard never overwrites untracked files
 Fixture: `fx-dirty`; `fx-reset-collision`
 Layer: product
 - When the user resets to `c27` Soft / Mixed / Hard (separate runs)
 - Then Soft keeps index and working files; Mixed clears the index, keeps working files; Hard discards staged and working tracked changes; untracked files stay in all
-- And `git good reset --hard c05` in `fx-reset-collision` refuses nonzero naming `later.txt` on stderr; HEAD, index and `later.txt` are unchanged
-Covered by (backend, end-to-end, partial): `soft_reset_keeps_index_and_worktree`, `mixed_reset_clears_the_index_but_keeps_worktree`, `hard_reset_discards_index_and_worktree` (crates/git/tests/reset.rs); `reset_cli_applies_soft_mixed_and_hard` (apps/git-good/tests/cli.rs); collision refusal pending change
+- And `git good reset --hard c05` in `fx-reset-collision` refuses nonzero with empty stdout, stderr saying it would overwrite untracked files and naming `later.txt`; HEAD, index and `later.txt` are unchanged
+Covered by (backend, end-to-end): `soft_reset_keeps_index_and_worktree`, `mixed_reset_clears_the_index_but_keeps_worktree`, `hard_reset_discards_index_and_worktree`, `hard_reset_refuses_to_overwrite_untracked_and_ignored_files` (crates/git/tests/reset.rs); `reset_cli_applies_soft_mixed_and_hard`, `reset_cli_hard_refuses_to_overwrite_untracked_files` (apps/git-good/tests/cli.rs)
 
 ### RWR-66 Confirm before Drop and Reset off: Soft and Mixed run at once, Hard always confirms
 Fixture: `fx-dirty`, **Preferences › Rebase & recovery › Confirm before Drop and Reset** off
@@ -3210,7 +3215,7 @@ Layer: product
 - Then no dialog appears; the branch is reset with that mode; working files are intact; a backup is still saved
 - When the user chooses Recovery's **Reset branch here › Hard**
 - Then the **Reset here** confirmation with `CHANGES LOST` appears as with the preference on; nothing runs until **Hard reset** is confirmed
-Covered by (interaction, partial): `reset_asks_first_unless_confirmation_is_off` (apps/git-good/src/main.rs) (dialog skipped); Hard confirmation pending change
+Covered by (interaction, partial): `reset_runs_as_chosen_and_hard_always_asks` (apps/git-good/src/main.rs) (Commit menu route; Recovery's route and the backup not checked)
 
 ### RWR-67 Confirm before Drop and Reset off: Drop runs without the plan
 Fixture: `fx-rebase`, preference off, a middle commit selected
@@ -3223,8 +3228,8 @@ Covered by (Not automated)
 Fixture: `fx-backups`, size 720×480
 Layer: interaction
 - When the user opens **Repository › Recovery…** (or its search Action)
-- Then a non-modal Recovery window with one **Backups** / **Reflog** source selector opens fully inside the viewport with no clipped controls; History stays usable beside it
-Covered by (interaction, partial): `recovery_window_offers_one_source_selector`, `recovery_window_stays_inside_the_narrow_viewport` (apps/git-good/src/main.rs)
+- Then a non-modal Recovery window with one **Backups** / **Reflog** source selector opens fully inside the viewport with no clipped controls, on Backups the first time and on the last chosen source after that; History stays usable beside it; there are no separate **Backups…** or **Reflog…** commands
+Covered by (interaction, partial): `recovery_window_offers_one_source_selector`, `recovery_window_stays_inside_the_narrow_viewport`, `repository_recovery_opens_one_window_on_the_last_source`, `commands_off_the_toolbar_keep_their_menu_home_and_search_entry` (apps/git-good/src/main.rs)
 
 ### RWR-69 Backups list and actions
 Fixture: `fx-backups`
@@ -3235,9 +3240,9 @@ Covered by (interaction): `lists_and_renders_rewrite_backups`, `keeps_distinct_b
 ### RWR-70 Restore from a backup after a rewrite
 Fixture: `fx-rebase` after a rewrite that dropped a commit
 Layer: product
-- When the user clicks the outcome's **Recovery…** (pref off) and on the newest backup chooses **Reset branch here › Hard**, confirming **Hard reset**
+- When the user opens **Repository › Recovery…** (the outcome offers **Push** here, since the branch is still ahead of its upstream, RWR-42) and on the newest backup chooses **Reset branch here › Hard**, confirming **Hard reset**
 - Then `main` is back at the pre-rewrite tip with the dropped commit; the backup ref still exists; refs/history/status and the Backups list refresh
-Covered by (interaction, partial): `outcome_recovery_button_opens_backups` (apps/git-good/src/main.rs) (opening only)
+Covered by (interaction, partial): `outcome_recovery_button_opens_backups`, `repository_recovery_opens_one_window_on_the_last_source` (apps/git-good/src/main.rs) (opening only)
 
 ### RWR-71 Create branch here from a backup does not switch
 Fixture: `fx-backups`
@@ -3293,7 +3298,7 @@ Layer: product
 - Given **Reset here** is open on Hard listing `CHANGES LOST`
 - When a terminal commits the staged changes (HEAD moves) and the user confirms **Hard reset**
 - Then nothing is reset; both lists refresh (`LEAVE THE BRANCH` gains the new commit, `CHANGES LOST` loses the committed paths) and the notice reads `The repository changed; review the updated list and confirm again.`; a second confirm resets
-Covered by (Not automated): pending change
+Covered by (interaction, partial): `reset_confirmation_rereads_and_asks_again_after_an_outside_change` (apps/git-good/src/main.rs), `guard_confirms_only_what_the_dialog_showed` (apps/git-good/src/consequence.rs) (checked on Mixed with `LEAVE THE BRANCH`; Hard's `CHANGES LOST` refresh not checked)
 
 Sources: docs/architecture.md (Preferences, Worktrees, Submodules, Git LFS, Signing, Deferred large-repository features, Repository and decision dialogs, Launch, the CLI subsections, Clone in Network operations, empty states), docs/cli.md, docs/final-design.md (Preferences, Command placement). Window 1440×900 unless stated. "Settings file" = `$XDG_CONFIG_HOME/gg/settings.json`.
 
@@ -3440,7 +3445,7 @@ Layer: product
 - Then the section shows **Stash working changes first**, **Pull strategy** (Rebase · Merge · Fast-forward only), **Confirm before Drop and Reset** (on), **Keep private backups** (Forever default; 30 days, 90 days), **Offer force-with-lease after a rewrite**, and a note on private backup refs and Recovery
 - When each is changed and gg restarted
 - Then each value is restored (`rebase_autostash`, `pull_strategy`, `confirm_destructive`, `backup_days`, `offer_force_lease`)
-Covered by (interaction, partial): `reset_asks_first_unless_confirmation_is_off` (apps/git-good/src/main.rs) (behavior owned by the rewrite section)
+Covered by (interaction, partial): `reset_runs_as_chosen_and_hard_always_asks` (apps/git-good/src/main.rs) (behavior owned by the rewrite section)
 
 ### PRF-22 Keep private backups deletes only older backups on open — see RWR-76
 
@@ -3997,7 +4002,8 @@ Fixture: `fx-merge-conflict`
 Layer: product
 - When `git good conflict --file src/app.rs`, then `--use theirs`, then `git good conflict --file docs.md --stage`
 - Then the first prints `base`, `ours`, `theirs`; the second writes theirs, stages it (`operation: "conflict-resolve"`) and the path is no longer unmerged; the third stages the current working content; an unknown path fails with `No unmerged stages` and empty stdout; `--use base` fails nonzero
-Covered by (backend, end-to-end, partial): `conflict_cli_lists_reads_and_resolves` (apps/git-good/tests/cli.rs); `rejects_unknown_paths_and_base_selection` (crates/git/tests/conflict.rs) (--stage not checked)
+- And on a fresh `fx-merge-conflict`, `git good conflict --file docs.md --use <the side that deleted it>` fails nonzero naming `--use deletion`; `--use deletion` removes `docs.md` from the working tree and the index (receipt `operation: "conflict-resolve"`, `side: "deletion"`); `--use deletion` on a path both sides kept fails with `Keep deletion applies only when one side deleted <path>.`
+Covered by (backend, end-to-end, partial): `conflict_cli_lists_reads_and_resolves`, `conflict_cli_keeps_a_deletion` (apps/git-good/tests/cli.rs); `rejects_unknown_paths_and_base_selection`, `keeping_a_deletion_is_refused_without_a_deleted_side_or_after_an_edit`, `use_side_points_the_deleted_side_to_keep_deletion` (crates/git/tests/conflict.rs) (--stage not checked)
 
 ### CLI-17 worktree list
 Fixture: `fx-worktrees`
@@ -4069,7 +4075,7 @@ Rules every area relies on, cases that span areas, and the CLI contract. Area ca
 2. **RULE-02 Failed actions preserve work and inputs.** A refused or failed action keeps the commit draft, dialog fields, line picks, rebase plan and conflict choices, and leaves the repository as it was, or names exactly what did change (CHG-47, HIS-60, INT-32, RWR-43).
 3. **RULE-03 Stale asynchronous results never replace current content.** Results carry the identity and generation they were requested for; a result for a superseded selection, filter, comparison or repository is dropped (HIS-15, HIS-33, REV-20).
 4. **RULE-04 Navigation restores the caller's place.** Back from Review, a reader, file history, Recovery or the rebase plan returns once to the same selection, filter, entry and pixel offset (REV-02, REV-62, RWR-35, RWR-72).
-5. **RULE-05 Destructive actions list consequences and revalidate.** Before a red primary the dialog lists what is lost; on confirm gg re-reads the repository, and if anything changed since the dialog opened nothing runs, the list refreshes and the dialog shows `The repository changed; review the updated list and confirm again.` (CHG-38, CHG-72, RWR-64, RWR-78, HIS-79, STA-25, NET-38).
+5. **RULE-05 Destructive actions list consequences and revalidate.** Before a red primary the dialog lists what is lost; on confirm gg re-reads what the dialog lists, and if any of it changed since it was shown nothing runs, the list refreshes in place and the dialog shows `The repository changed; review the updated list and confirm again.`; the next confirm checks again (CHG-38, CHG-72, RWR-64, RWR-78, HIS-79). Built for **Discard all tracked changes…**, **Reset here** and **Delete branch**; the per-file discard, stash drop and **Delete remote branch** do not revalidate yet (STA-25, NET-38).
 6. **RULE-06 Panes never show loading text or mismatched identity.** Pending reads show in the footer (`Reading …`); a pane keeps its old label with its old content until the new content arrives, then both change together (FRM-70, FRM-73, REV-08).
 7. **RULE-07 An explicitly chosen operation runs as chosen.** No silent fallback or downgrade: a signed commit never falls back to unsigned, a lease push never retries without the lease, Hard reset is never downgraded and always confirms, Pull uses the chosen strategy (SIG-09, NET-24, RWR-66, NET-18).
 8. **RULE-08 Network only on request.** Launch, automatic refresh, focus and ref navigation never fetch or push (NET-34).
@@ -4133,9 +4139,10 @@ Covered by (Not automated)
 ### XCT-07 Revalidation behaves the same in every destructive dialog
 Fixture: `fx-dirty`, `fx-branchy`, `fx-stash`, `fx-remote`
 Layer: product
-- When an external change occurs before confirm in **Discard unstaged changes**, **Discard all tracked changes…**, **Reset here** (Hard), **Delete branch**, the stash drop confirmation and **Delete remote branch**
-- Then each shows the same notice text in its reserved line without resizing; the primary needs a fresh click or `Enter`; the second confirm acts on the refreshed list only (CHG-72, RWR-78, HIS-79, STA-25, NET-38)
-Covered by (Not automated)
+- When an external change to what the dialog lists occurs before confirm in **Discard all tracked changes…**, **Reset here** (Hard) and **Delete branch**
+- Then each shows the same notice text in its reserved line without resizing; the primary needs a fresh click or `Enter`; the second confirm acts on the refreshed list only (CHG-72, RWR-78, HIS-79); a change to something the dialog does not list does not block
+- Gap: **Discard unstaged changes…**, the stash drop confirmation and **Delete remote branch** do not revalidate yet (STA-25, NET-38)
+Covered by (interaction, partial): `discard_all_rereads_and_asks_again_after_an_outside_change`, `reset_confirmation_rereads_and_asks_again_after_an_outside_change` (apps/git-good/src/main.rs), `guard_confirms_only_what_the_dialog_showed` (apps/git-good/src/consequence.rs) (Discard all and Reset here; Delete branch and the reserved line not checked)
 
 ### Autostash failure paths
 
@@ -4165,8 +4172,8 @@ Covered by (Not automated)
 ### XCT-11 Resolve a rebase conflict by its labeled sides
 Fixture: `fx-rebase`, a plan reordering two commits so step 4 conflicts
 Layer: product
-- When the plan starts, stops on the conflict, and the user opens **Resolve conflicts…**, chooses the side labeled `Theirs (<id7> <subject>)` for every block, stages and continues
-- Then the labels read `Ours (onto <base>)` / `Theirs (<id7> <subject>)` (INT-38); `git good conflict --file <path>` returns as `theirs` the bytes shown under that label; after **Continue** the rewritten commit carries the chosen content
+- When the plan starts, stops on the conflict, and the user opens **Resolve conflicts…**, chooses the side labeled `Theirs (<8-char id> <subject>)` for every block, stages and continues
+- Then the labels read `Ours (onto <base>)` / `Theirs (<8-char id> <subject>)` (INT-38); `git good conflict --file <path>` returns as `theirs` the bytes shown under that label; after **Continue** the rewritten commit carries the chosen content
 Covered by (Not automated)
 
 ### XCT-12 Labels follow the step
@@ -4392,7 +4399,7 @@ Contradictions and gaps found while writing these cases. Each needs a decision; 
 2. **Search Files group.** final-design.md calls it later work; the code and architecture.md ship it.
 3. **Network Cancel location.** architecture.md says the status line (footer); a test name says operation area.
 4. **Branch work called "later".** architecture.md §Branch switching says delete, rename, tracking and tag creation remain later work; they ship.
-5. **Destructive confirmations.** Line discard now names its block and lists ranges (CHG-35) and every destructive dialog revalidates (RULE-05), but hunk discard still asks inline with a plain **Discard**, and **Delete tag** and **Delete on origin…** list nothing before their primary.
+5. **Destructive confirmations.** Line discard names its blocks and ranges (CHG-35), and **Discard all tracked changes…**, **Reset here** and **Delete branch** revalidate on confirm (RULE-05); but hunk discard still asks inline with a plain **Discard**, **Delete tag** and **Delete on origin…** list nothing before their primary, and the per-file discard, the stash drop and **Delete on origin…** do not revalidate (CHG-72, STA-25, NET-38). Are those to be built?
 6. **Rebase result and stop band.** Count format `6 commits → 4 · 1 dropped` versus with ` · 1 stop`; stop band chips on line 2 (final design) versus line 3 (architecture, code). Which reopened-stop button label wins when both unstaged files and stop commits exist is unspecified.
 7. **Full file layout slot.** M7 keeps Inline | Side by side disabled in Full file; Local Changes puts Before | After there. Action names differ: **Blame**/**Show attribution**, **Compare with current HEAD**/**Compare with HEAD**, ⋯ menu "File history"/button **History**. `ArrowLeft` back to files and `D`/`F` reader keys are undocumented.
 8. **Preferences.** final-design.md calls it a non-blocking window, architecture.md a modal; **Load avatars from the network** is listed under both General and Appearance; theme order differs; the `settings.json` key list misses `zoom`, `code_font`, `editor`, `sign_tags`, `recent_repositories`, `reopen_last`, `backup_days`, `pull_strategy` and more. The Avatars section still reads as Gravatar-on-by-default.
@@ -4401,14 +4408,11 @@ Contradictions and gaps found while writing these cases. Each needs a decision; 
 11. **Recent repositories and signing defaults.** Open… shows 8, welcome 10; **Sign tags** preference versus `tag.gpgsign`; Sign commits has three modes but the Signing text says it follows `commit.gpgsign`.
 12. **Stale user flows.** user-flows F07 still describes a Stashes window and Restore…; line 32 lists old toolbar menus; the toolbar now holds only Fetch, Pull and Push (FRM-23).
 13. **Unspecified states.** Bare repository UI; the missing-parent incomplete comparison label; operation band first line for merge/cherry-pick/revert; pending labels during Continue/Abort; disabled reasons for Fetch, Push, Merge and Recovery; empty refs-sidebar groups while filtering (spec keeps headers, test expects `No matching refs`).
-14. **Menu home of Interactive rebase of this branch.** It leaves the toolbar; FRM-17 assumes **Branch › Interactive rebase of this branch…**. The Stashes picker, opened from **Changes › Stashes…** and the sidebar, no longer has a toolbar anchor: where does the 440 px picker appear?
-15. **Recovery window Refresh.** The Backups and Reflog sources each have a **Refresh** button in code, against "There is no Refresh command".
-16. **Revalidation scope.** RULE-05 says any repository change since the dialog opened blocks the confirm. Does an unrelated change (a new untracked file elsewhere, another branch moving) also block, or only a change to what the dialog lists? XCT-07 follows "any change".
-17. **Cancel before Git starts.** NET-32 proposes `Fetch cancelled before it started.` with an immediate Retry; the owner's wording covers only cancels after Git started. How does gg tell (b) from (c) — compare refs before and after, or report both the same way?
-18. **Restart and stop drafts.** After quitting at a reopened stop (XCT-01), is the reopened commit's message offered again, and does Local Changes open again on reopen? Are unstaged conflict-block choices (XCT-03) meant to be lost?
-19. **CLI exit codes and `status`.** Every failure exits 1 today and conflicts exit 0. CLI-C03 proposes 0 completed/stopped, 1 failure, 2 usage, 3 refusal, 4 conflict, 5 partial, 130 SIGINT, plus a `status` key in every receipt. Keep conflicts at 0 instead?
-20. **Receipts on unsuccessful exits.** "Failures print nothing on stdout" (CLI section) conflicts with printing a receipt for conflict and partial outcomes (CLI-C06, CLI-C08, CLI-C10). Which wins, and is the receipt schema the same as on success?
-21. **Output write failures.** `println!` panics with exit 101 when stdout is closed, after a mutation already happened; `history` leaves truncated JSON when traversal fails mid-stream (CLI-C09). Should `history` buffer, or end with an error document?
-22. **Argument parsing.** No `--` separator exists and option-shaped positionals are rejected (CLI-C12); an unknown first word launches the GUI on it as a path (CLI-C01). Adopt `--` and a usage error for unknown words?
-23. **JSON stability.** No versioning or "additive only" promise exists for receipt keys (CLI-C02); is `path` (escaped) plus `path_bytes` the rule for every path field, not only `show`?
-24. **Accessibility targets.** Is 125 % zoom required at 720×480 (576×384 logical, below the minimum window) or only at 1440×900 (XCT-22)? Which AccessKit names and descriptions are required for disabled reasons (XCT-19)?
+14. **Recovery window Refresh.** The Backups and Reflog sources each have a **Refresh** button in code, against "There is no Refresh command".
+15. **Restart and stop drafts.** After quitting at a reopened stop (XCT-01), is the reopened commit's message offered again, and does Local Changes open again on reopen? Are unstaged conflict-block choices (XCT-03) meant to be lost?
+16. **CLI exit codes and `status`.** Every failure exits 1 today and conflicts exit 0. CLI-C03 proposes 0 completed/stopped, 1 failure, 2 usage, 3 refusal, 4 conflict, 5 partial, 130 SIGINT, plus a `status` key in every receipt. Keep conflicts at 0 instead?
+17. **Receipts on unsuccessful exits.** "Failures print nothing on stdout" (CLI section) conflicts with printing a receipt for conflict and partial outcomes (CLI-C06, CLI-C08, CLI-C10). Which wins, and is the receipt schema the same as on success?
+18. **Output write failures.** `println!` panics with exit 101 when stdout is closed, after a mutation already happened; `history` leaves truncated JSON when traversal fails mid-stream (CLI-C09). Should `history` buffer, or end with an error document?
+19. **Argument parsing.** No `--` separator exists and option-shaped positionals are rejected (CLI-C12); an unknown first word launches the GUI on it as a path (CLI-C01). Adopt `--` and a usage error for unknown words?
+20. **JSON stability.** No versioning or "additive only" promise exists for receipt keys (CLI-C02); is `path` (escaped) plus `path_bytes` the rule for every path field, not only `show`?
+21. **Accessibility targets.** Is 125 % zoom required at 720×480 (576×384 logical, below the minimum window) or only at 1440×900 (XCT-22)? Which AccessKit names and descriptions are required for disabled reasons (XCT-19)?
