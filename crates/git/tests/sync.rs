@@ -395,3 +395,112 @@ fn delete_remote_branch_uses_a_lease() -> Result {
     assert!(head(remote.path(), "refs/heads/feature").is_err());
     Ok(())
 }
+
+#[test]
+fn upstream_relation_reads_local_refs_only() -> Result {
+    use gg_engine::sync::UpstreamRelation;
+    let remote = bare()?;
+    let local = repo()?;
+    let url = remote.path().to_string_lossy().into_owned();
+    git(local.path(), &["remote", "add", "origin", &url])?;
+    // No upstream yet.
+    assert_eq!(gg_git::sync::upstream_relation(local.path(), None)?, None);
+    git(local.path(), &["push", "--quiet", "-u", "origin", "main"])?;
+    assert_eq!(
+        gg_git::sync::upstream_relation(local.path(), None)?,
+        Some(UpstreamRelation::UpToDate)
+    );
+    // Unpublished commits: the upstream is an ancestor of the tip.
+    std::fs::write(local.path().join("b"), b"one\n")?;
+    git(local.path(), &["add", "b"])?;
+    git(local.path(), &["commit", "-qm", "one"])?;
+    git(
+        local.path(),
+        &["commit", "-q", "--amend", "-m", "one, reworded"],
+    )?;
+    assert_eq!(
+        gg_git::sync::upstream_relation(local.path(), None)?,
+        Some(UpstreamRelation::Ahead)
+    );
+    // Rewriting a published commit diverges from the upstream.
+    git(local.path(), &["push", "--quiet"])?;
+    git(
+        local.path(),
+        &["commit", "-q", "--amend", "-m", "one, rewritten"],
+    )?;
+    assert_eq!(
+        gg_git::sync::upstream_relation(local.path(), Some("refs/heads/main"))?,
+        Some(UpstreamRelation::Diverged)
+    );
+    git(local.path(), &["reset", "-q", "--hard", "HEAD~1"])?;
+    assert_eq!(
+        gg_git::sync::upstream_relation(local.path(), None)?,
+        Some(UpstreamRelation::Behind)
+    );
+    Ok(())
+}
+
+#[test]
+fn rejected_push_names_the_upstream_and_suggests_fetch() -> Result {
+    use gg_engine::sync::PushFailure;
+    let remote = bare()?;
+    let url = remote.path().to_string_lossy().into_owned();
+    let other = repo()?;
+    push_all(other.path(), remote.path())?;
+    let local = tempfile::tempdir()?;
+    git(local.path(), &["clone", "--quiet", &url, "."])?;
+    std::fs::write(other.path().join("a"), b"theirs\n")?;
+    git(other.path(), &["commit", "-qam", "theirs"])?;
+    push_all(other.path(), remote.path())?;
+    let remote_head = head(remote.path(), "refs/heads/main")?;
+    std::fs::write(local.path().join("b"), b"ours\n")?;
+    git(local.path(), &["add", "b"])?;
+    git(local.path(), &["commit", "-qm", "ours"])?;
+    let error = match gg_git::sync::push(
+        local.path(),
+        None,
+        None,
+        gg_git::sync::PushOptions::default(),
+        false,
+        &no_cancel(),
+        &mut |_| {},
+    ) {
+        Ok(_) => return Err("diverged push unexpectedly succeeded".into()),
+        Err(error) => error,
+    };
+    let summary = error.lines().next().unwrap_or_default();
+    assert_eq!(
+        summary,
+        "Push rejected: origin/main has commits you don't have. Fetch to see them."
+    );
+    assert!(
+        error.lines().count() > 1,
+        "Git's output stays as details: {error}"
+    );
+    assert_eq!(gg_git::sync::push_failure(&error), PushFailure::Rejected);
+    assert_eq!(head(remote.path(), "refs/heads/main")?, remote_head);
+
+    // An unreachable remote is worth retrying.
+    git(
+        local.path(),
+        &["remote", "set-url", "origin", "/nonexistent/gg-remote.git"],
+    )?;
+    let error = match gg_git::sync::push(
+        local.path(),
+        None,
+        None,
+        gg_git::sync::PushOptions::default(),
+        false,
+        &no_cancel(),
+        &mut |_| {},
+    ) {
+        Ok(_) => return Err("push to a missing remote unexpectedly succeeded".into()),
+        Err(error) => error,
+    };
+    assert_eq!(
+        gg_git::sync::push_failure(&error),
+        PushFailure::Transient,
+        "{error}"
+    );
+    Ok(())
+}

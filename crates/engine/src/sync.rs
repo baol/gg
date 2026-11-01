@@ -51,6 +51,48 @@ pub struct CloneReceipt {
     pub branch: Option<String>,
 }
 
+/// How a local branch stands against its upstream, from local refs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UpstreamRelation {
+    /// Same commit.
+    UpToDate,
+    /// The upstream is an ancestor of the branch: a plain push publishes it.
+    Ahead,
+    /// The branch is an ancestor of the upstream: a pull fast-forwards it.
+    Behind,
+    /// Both sides have commits the other lacks.
+    Diverged,
+}
+
+impl UpstreamRelation {
+    pub fn from_counts(ahead: u64, behind: u64) -> Self {
+        match (ahead > 0, behind > 0) {
+            (false, false) => Self::UpToDate,
+            (true, false) => Self::Ahead,
+            (false, true) => Self::Behind,
+            (true, true) => Self::Diverged,
+        }
+    }
+
+    /// The upstream has commits the branch lacks, so a pull has work to do.
+    pub fn has_incoming(self) -> bool {
+        matches!(self, Self::Behind | Self::Diverged)
+    }
+}
+
+/// Why a push failed, deciding which follow-up can help.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PushFailure {
+    /// The remote branch has commits the local branch lacks; fetch, then integrate.
+    Rejected,
+    /// Network, connection, credential or timeout trouble; a retry can help.
+    Transient,
+    /// Anything else, such as a remote hook declining the push.
+    Other,
+}
+
 /// Return a trimmed repository URL when the text can be cloned.
 pub fn repository_url(text: &str) -> Option<String> {
     let text = text.trim();
@@ -149,6 +191,27 @@ pub fn repository_folder_name(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn upstream_relation_follows_ahead_and_behind_counts() {
+        assert_eq!(
+            UpstreamRelation::from_counts(0, 0),
+            UpstreamRelation::UpToDate
+        );
+        assert_eq!(UpstreamRelation::from_counts(2, 0), UpstreamRelation::Ahead);
+        assert_eq!(
+            UpstreamRelation::from_counts(0, 3),
+            UpstreamRelation::Behind
+        );
+        assert_eq!(
+            UpstreamRelation::from_counts(2, 3),
+            UpstreamRelation::Diverged
+        );
+        assert!(!UpstreamRelation::Ahead.has_incoming());
+        assert!(!UpstreamRelation::UpToDate.has_incoming());
+        assert!(UpstreamRelation::Behind.has_incoming());
+        assert!(UpstreamRelation::Diverged.has_incoming());
+    }
 
     #[test]
     fn detects_clone_urls_without_treating_paths_as_urls() {

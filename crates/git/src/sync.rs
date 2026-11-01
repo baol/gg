@@ -1,5 +1,7 @@
 //! Explicit clone, fetch, and push operations delegated to Git for transport and credentials.
-use gg_engine::sync::{CloneReceipt, FetchReceipt, Operation, Progress, PushReceipt};
+use gg_engine::sync::{
+    CloneReceipt, FetchReceipt, Operation, Progress, PushFailure, PushReceipt, UpstreamRelation,
+};
 use gix::remote::Direction;
 use std::{
     io::{BufReader, Read},
@@ -155,6 +157,16 @@ pub fn push(
     args.push(remote.clone());
     args.push(format!("refs/heads/{branch}:refs/heads/{remote_branch}"));
     let output = run_git(&root, &args, Operation::Push, interactive, cancel, progress)?;
+    if lease.is_none()
+        && !output.cancelled
+        && !output.status.success()
+        && non_fast_forward(&output.detail)
+    {
+        return Err(format!(
+            "{REJECTED}{remote}/{remote_branch} has commits you don't have. Fetch to see them.\n{}",
+            output.detail
+        ));
+    }
     finish(output, format!("Push {branch} to {remote}/{remote_branch}"))?;
     let snapshot = crate::refs::read(path)?;
     let full = format!("refs/heads/{branch}");
@@ -171,6 +183,70 @@ pub fn push(
         force_with_lease: lease.is_some(),
         lease,
     })
+}
+
+const REJECTED: &str = "Push rejected: ";
+
+/// True when Git refused a push because the remote branch moved past the local one.
+fn non_fast_forward(detail: &str) -> bool {
+    let detail = detail.to_lowercase();
+    detail.contains("[rejected]")
+        && (detail.contains("non-fast-forward") || detail.contains("fetch first"))
+}
+
+/// Classify a [`push`] error so the caller offers the follow-up that can help.
+pub fn push_failure(error: &str) -> PushFailure {
+    if error.starts_with(REJECTED) {
+        return PushFailure::Rejected;
+    }
+    let error = error.to_lowercase();
+    let transient = needs_credentials(&error)
+        || [
+            "could not read from remote repository",
+            "could not resolve host",
+            "unable to access",
+            "connection refused",
+            "connection reset",
+            "connection timed out",
+            "timed out",
+            "timeout",
+            "network is unreachable",
+            "the remote end hung up",
+            "early eof",
+            "rpc failed",
+            "ssl",
+            "tls",
+        ]
+        .iter()
+        .any(|text| error.contains(text));
+    if transient {
+        PushFailure::Transient
+    } else {
+        PushFailure::Other
+    }
+}
+
+/// How `branch` (a full ref name, or the current branch) stands against its
+/// upstream's remote-tracking ref; `None` without an upstream ref. Reads local
+/// refs only.
+pub fn upstream_relation(
+    path: &Path,
+    branch: Option<&str>,
+) -> Result<Option<UpstreamRelation>, String> {
+    let snapshot = crate::refs::read(path)?;
+    let tracking = match branch {
+        Some(branch) => snapshot
+            .tracking
+            .iter()
+            .find(|tracking| tracking.full_name == branch),
+        None => snapshot.current_tracking(),
+    };
+    Ok(tracking.and_then(|tracking| {
+        Some(UpstreamRelation::from_counts(
+            tracking.ahead?,
+            tracking.behind?,
+        ))
+    }))
 }
 
 /// Delete `branch` on `remote` with a lease: Git refuses when the remote
@@ -588,6 +664,39 @@ mod tests {
             "git@example.org: Permission denied (publickey)."
         ));
         assert!(!needs_credentials("fatal: repository not found"));
+    }
+
+    #[test]
+    fn classifies_push_failures_by_the_follow_up_that_helps() {
+        assert!(non_fast_forward(
+            " ! [rejected]        main -> main (non-fast-forward)\nerror: failed to push some refs"
+        ));
+        assert!(non_fast_forward(
+            " ! [rejected]        main -> main (fetch first)"
+        ));
+        assert!(!non_fast_forward(
+            " ! [remote rejected] main -> main (pre-receive hook declined)"
+        ));
+        assert_eq!(
+            push_failure("Push rejected: origin/main has commits you don't have."),
+            PushFailure::Rejected
+        );
+        for transient in [
+            "fatal: unable to access 'https://example.org/gg.git/': Could not resolve host: example.org",
+            "ssh: connect to host example.org port 22: Connection timed out",
+            "fatal: Authentication failed for 'https://example.org/gg.git/'",
+            "fatal: the remote end hung up unexpectedly",
+        ] {
+            assert_eq!(
+                push_failure(transient),
+                PushFailure::Transient,
+                "{transient}"
+            );
+        }
+        assert_eq!(
+            push_failure(" ! [remote rejected] main -> main (pre-receive hook declined)"),
+            PushFailure::Other
+        );
     }
 
     #[test]
