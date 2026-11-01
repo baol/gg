@@ -175,25 +175,32 @@ pub fn entries<C: Clone>(ui: &mut egui::Ui, list: &[Entry<C>], chosen: &mut Opti
                 SubMenuButton::from_button(button).ui(ui, |ui| entries(ui, list, chosen));
             }
             Entry::Item(item) => {
-                let text = if item.danger {
-                    egui::RichText::new(&item.label).color(ui.visuals().error_fg_color)
-                } else {
-                    egui::RichText::new(&item.label)
-                };
-                let button = row(item.checked == Some(true), text).shortcut_text(item.key);
-                let response = ui.add_enabled(item.disabled.is_none(), button);
-                let response = match &item.disabled {
-                    Some(reason) => response.on_disabled_hover_text(reason),
-                    None if !item.hint.is_empty() => response.on_hover_text(item.hint),
-                    None => response,
-                };
-                if response.clicked() {
+                if item_row(ui, item, true) {
                     *chosen = Some(item.command.clone());
                     ui.close();
                 }
             }
         }
     }
+}
+
+/// One item as a menu row; true when it was clicked. A disabled item names
+/// its reason on hover unless `reason` is false (a band above says it).
+pub fn item_row<C>(ui: &mut egui::Ui, item: &Item<C>, reason: bool) -> bool {
+    let text = if item.danger && item.disabled.is_none() {
+        egui::RichText::new(&item.label).color(ui.visuals().error_fg_color)
+    } else {
+        egui::RichText::new(&item.label)
+    };
+    let button = row(item.checked == Some(true), text).shortcut_text(item.key);
+    let response = ui.add_enabled(item.disabled.is_none(), button);
+    let response = match &item.disabled {
+        Some(why) if reason => response.on_disabled_hover_text(why),
+        Some(_) => response,
+        None if !item.hint.is_empty() => response.on_hover_text(item.hint),
+        None => response,
+    };
+    response.clicked()
 }
 
 #[cfg(test)]

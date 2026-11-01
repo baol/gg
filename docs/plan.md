@@ -149,6 +149,33 @@ Decisions for the review (see the canvas page **Review · as built**):
 - History: the filter row is gone; `Commit · N` and the active filter sit in the column header (done).
 - Decided: follow the mockups. Refresh is automatic (file watcher and before commands), `Ctrl+R` is Reword, `Del` deletes, Preferences is modal, Open in editor uses an editor-command setting. F10 menu focus is not available in egui.
 
+## Accepted design proposals · 2026-11-01
+
+Goal: build every board on the canvas **Proposals** page, all accepted by the owner on 2026-11-01, including each board's *Proposed* choices. The boards are the specification; each step diffs its board against the app first, builds what differs, updates the owning [architecture](architecture.md) and [final design](final-design.md) sections, and updates the matching [acceptance cases](acceptance.md). Already built from these boards: repository and decision dialogs, branch dialogs and menus, stash and worktrees, footer and empty states, and the reader's narrow folds and Before | After slot.
+
+Decisions that change a board: the toolbar holds only navigation and sync, so board references to toolbar Recovery, Stash or rebase buttons mean their menu homes; private backups keep the **Keep private backups** retention preference (a board proposed that backups never expire), and **Delete backup…** is added.
+
+### Increments
+
+1. **Welcome · complete.** Welcome board: the toolbar shows only search; Open…, Clone… and **New repository…** cards; RECENT rows with branch and last opened, keys, remove, `missing`, and Remove/Locate for failed opens; the not-a-repository line with **Initialize here…**; first run; filter beyond 6; drop a folder; one recent limit of 10; menus complete with repository commands disabled (*Open a repository first*). New `git init` backend, dialog, Repository menu item and `git good init`.
+2. **Operation band and conflict workspace · complete.** Merge, cherry-pick and revert use the rebase band (amber with conflicts, purple when ready with Continue primary and `Ctrl+Enter`, **Skip commit**, **Abort and restore**, busy states in place); rewrite runs show the purple band with steps and the backup ref; short jobs report only in the footer with the board's wording, failures stay until dismissed, receipts fade after 8 s; the conflict workspace is the Changes view in the rebase conflict layout with CONFLICTED / RESOLVED, STAGED lists, − to unstage, named sides and stage numbers in tooltips.
+3. **Submodules and LFS windows · complete.** Repository › **Submodules…** list (22 px rows, status pills, short IDs; Enter opens details) and Repository › **LFS…** list (pointers in HEAD, missing first, checkboxes, one batch fetch naming count and size). Details windows: label grids with 8-character IDs and copy buttons, status pill in the header, results and disabled reasons at the footer's left, Cancel and the filled primary side by side, confirmations naming the file and size, a bounded preview with dimensions, export naming what it saves.
+4. **Signatures · complete.** Signature details as a coloured banner by state (good green, bad or error red, untrusted amber, unsigned grey) with the object in the title; the signing configuration moves to read-only rows in Preferences › Commit, linked from the footer.
+5. **Recovery window · complete.** Backups | Reflog switch in the header; rows with time and the rewritten branch; details as a label grid; one primary **Restore \<branch\>…** (hard reset of a clean tree that saves the current tip first) with Reset ▸ Soft/Mixed/Hard under ⋯; **Delete backup…**; plain-language reflog events with the raw message under GIT MESSAGE and Copy ref; 24 px menu rows; empty states that say what fills the list; results in the window footer. The Backups and Reflog **Refresh** buttons go (refresh is automatic).
+6. **Help, About and details · complete.** Keyboard shortcuts as one filterable key | action table generated from the command table, grouped by menu and list scope, non-modal, with **Edit keys…**; About in the dialog frame with commit, build date, target and **Copy version info**; operation Details windows titled by the operation, a plain summary line, then Git's output in mono, with the footer's recovery action.
+7. **Reader modes and tools · complete.** Blame runs collapse to one label per commit with a relative age and an age bar, and a 26 px metadata bar; file and line history as a version list in the file-list pane (paging as it scrolls, × closes) with merge candidates nested as rows and a failed page as one row with Retry; image readers on the one-row header with Hex as a fourth layout, Fit | 1:1, sliders under the canvas and a checkerboard; ⋯ with 24 px rows (Open in editor, Reveal in folder, Export, File details, LFS/Submodule details, **Discard file…** last in red) and no header Stage button; Export dialog in the Preferences dialog shape; full-text windows titled by their field with Copy as the primary; one commit actions menu matching the History inspector with Reword, Reopen, Fixup and Drop and one band for disabled reasons.
+8. **Narrow 720 px · complete.** 720 px is the minimum supported width and 1040 px starts the wide layouts. Branch button as an icon, search as an icon; Author then Date columns drop first; Space replaces the list with the inspector (‹ History, Esc); the refs sidebar as a 248 px drawer; Review folds the file list behind ‹ Files with endpoints in the identity row and Blame / File history in ⋯; Inline by default below 1040 px; Local Changes groups collapsible and capped at 6 rows, counts in the footer, Sign in Preferences › Commit, a resizable message box.
+
+### Acceptance
+
+| Scenario | Expected result | Method |
+| --- | --- | --- |
+| Board parity | Each built state matches its board at 1440×900 and 720×480 | Native screenshots against the boards |
+| Stable layout | No pane shows loading text; bands, footers and rows keep their geometry while content arrives | egui geometry |
+| One menu home | Every moved or new command has a menu home, a search entry, and the same readiness and reason everywhere | egui interaction |
+| Operations | Continue, Skip commit and Abort and restore match Git for merge, cherry-pick, revert and rebase; footer receipts match the outcome | Git oracle, egui interaction |
+| Restore and init | Restore saves the current tip before resetting; New repository creates, optionally commits, and refuses inside a repository | Git oracle, CLI |
+
 ## Repository setup and branch integration · in review
 
 Goal: make clone destinations quick to compose and branch integration discoverable without weakening Git safety.

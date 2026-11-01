@@ -50,6 +50,50 @@ impl<'a> Tree<'a> {
     }
 }
 
+thread_local! {
+    static CURSOR: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Outline this ref's row (full name) in the next [`show`]: the keyboard
+/// cursor of the refs drawer.
+pub fn set_cursor(full_name: Option<String>) {
+    CURSOR.with(|cursor| *cursor.borrow_mut() = full_name);
+}
+
+/// The rows Up/Down move over in the refs drawer, in list order: local
+/// branches, then with a filter also matching remotes and tags (their
+/// sections open while filtering).
+pub fn cursor_rows(refs: &Snapshot, filter: &str) -> Vec<RefItem> {
+    let query = filter.trim().to_lowercase();
+    let kinds: &[RefKind] = if query.is_empty() {
+        &[RefKind::Branch]
+    } else {
+        &[RefKind::Branch, RefKind::Remote, RefKind::Tag]
+    };
+    kinds
+        .iter()
+        .flat_map(|kind| {
+            let mut rows = refs
+                .items
+                .iter()
+                .filter(|item| item.kind == *kind)
+                .filter(|item| query.is_empty() || item.name.to_lowercase().contains(&query))
+                .cloned()
+                .collect::<Vec<_>>();
+            // The unfiltered branch tree lists names segment by segment.
+            if query.is_empty() {
+                rows.sort_by(|a, b| a.name.split('/').cmp(b.name.split('/')));
+            }
+            rows
+        })
+        .collect()
+}
+
+/// The Filter refs field, focused when the refs drawer opens.
+pub fn filter_id() -> egui::Id {
+    egui::Id::unique("refs-filter")
+}
+
 pub fn show(
     ui: &mut egui::Ui,
     refs: &Snapshot,
@@ -63,6 +107,7 @@ pub fn show(
     ui.add_space(4.0);
     ui.add(
         egui::TextEdit::singleline(filter)
+            .id(filter_id())
             .hint_text("Filter refs")
             .desired_width(f32::INFINITY),
     );
@@ -482,6 +527,15 @@ fn render_leaf(
     };
     let count = counts.get(&item.full_name).map(String::as_str);
     let response = row(ui, label, item.kind, current, lane, count).on_hover_text(hover);
+    if CURSOR.with(|cursor| cursor.borrow().as_deref() == Some(item.full_name.as_str())) {
+        ui.painter().rect_stroke(
+            response.rect.shrink(0.5),
+            5.0,
+            ui.visuals().selection.stroke,
+            egui::StrokeKind::Inside,
+        );
+        response.scroll_to_me(None);
+    }
     if response.double_clicked() {
         if item.kind == RefKind::Branch && !current && !busy {
             *action = Some(Action::Switch(item.name.clone()));

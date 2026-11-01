@@ -46,11 +46,14 @@ git good reset --soft|--mixed|--hard COMMIT [--repo PATH]
 git good fetch [REMOTE] [--prune] [--repo PATH]
 git good push [REMOTE] [BRANCH] [--set-upstream] [--force-with-lease] [--repo PATH]
 git good clone URL [PATH]
+git good init [--branch NAME] [--commit] [PATH]
 git good stash list [--repo PATH]
 git good stash push -m MESSAGE [--include-untracked] [--keep-index] [--repo PATH]
 git good stash apply|pop [STASH] [--index] [--repo PATH]
 git good stash drop [STASH] [--repo PATH]
 ```
+
+`git good init` creates PATH (default: the current folder) when missing and runs `git init -b NAME` (default `main`); with `--commit` it adds every file not ignored and commits it as `Initial commit`. It refuses, exiting nonzero with nothing changed, when PATH is inside a repository. The receipt is `{"operation":"init","path","branch","head","files","complete":true}`; `head` is `null` and `files` 0 without a commit.
 
 `git good stash list` entries carry `index`, `reference`, `commit`, `message`, `branch` (`null` for a detached HEAD), and `age` (relative, such as `3 days ago`); `files` is `null` there because counting files reads each entry.
 

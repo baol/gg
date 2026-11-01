@@ -15,14 +15,27 @@ use std::{
 /// shows `N+ files` and the lines counted so far.
 const MAX_FILES: usize = 2000;
 const BUDGET: Duration = Duration::from_secs(2);
+/// The narrow commit details list at most this many files; Review lists all.
+pub const MAX_ROWS: usize = 200;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// One changed file of the narrow commit details' FILES list.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FileStat {
+    pub path: String,
+    pub kind: gg_engine::review::ChangeKind,
+    /// Added and deleted lines; `None` for binary or skipped content.
+    pub lines: Option<(u32, u32)>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Stats {
     pub files: usize,
     pub added: u64,
     pub deleted: u64,
     /// Every changed file was listed and counted.
     pub complete: bool,
+    /// The first [`MAX_ROWS`] files in Review order.
+    pub rows: Vec<FileStat>,
 }
 
 impl Stats {
@@ -103,9 +116,20 @@ fn count(path: PathBuf, commit: String, stop: &AtomicBool) -> Option<Stats> {
             ReviewStep::Pending => {}
             ReviewStep::Change(change) => {
                 stats.files += 1;
-                if let Ok(LineStat::Lines { added, deleted }) = lines.count(&change) {
-                    stats.added += u64::from(added);
-                    stats.deleted += u64::from(deleted);
+                let counted = match lines.count(&change) {
+                    Ok(LineStat::Lines { added, deleted }) => {
+                        stats.added += u64::from(added);
+                        stats.deleted += u64::from(deleted);
+                        Some((added, deleted))
+                    }
+                    _ => None,
+                };
+                if stats.rows.len() < MAX_ROWS {
+                    stats.rows.push(FileStat {
+                        path: change.path,
+                        kind: change.kind,
+                        lines: counted,
+                    });
                 }
             }
         }
@@ -123,6 +147,7 @@ mod tests {
             added: 86,
             deleted: 41,
             complete: true,
+            rows: vec![],
         };
         assert_eq!(stats.label(), "5 files +86 −41");
         let one = Stats {
@@ -172,6 +197,18 @@ mod tests {
                 added: 3,
                 deleted: 1,
                 complete: true,
+                rows: vec![
+                    FileStat {
+                        path: "a".into(),
+                        kind: gg_engine::review::ChangeKind::Modified,
+                        lines: Some((2, 1)),
+                    },
+                    FileStat {
+                        path: "b".into(),
+                        kind: gg_engine::review::ChangeKind::Added,
+                        lines: Some((1, 0)),
+                    },
+                ],
             })
         );
         Ok(())

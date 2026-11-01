@@ -8,6 +8,8 @@
 pub enum Group {
     Filter,
     Actions,
+    /// Recent repositories, as under Repository › Open recent.
+    Repositories,
     Branches,
     Remotes,
     Tags,
@@ -19,6 +21,7 @@ impl Group {
         match self {
             Self::Filter => "FILTER",
             Self::Actions => "ACTIONS",
+            Self::Repositories => "REPOSITORIES",
             Self::Branches => "BRANCHES",
             Self::Remotes => "REMOTES",
             Self::Tags => "TAGS",

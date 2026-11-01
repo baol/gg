@@ -17,7 +17,12 @@ pub fn read(path: &Path, reference: &str) -> Result<Snapshot, String> {
     }
     let output = Command::new("git")
         .current_dir(path)
-        .args(["reflog", "show", "--date=unix", "--format=%H%x00%gD%x00%gs"])
+        .args([
+            "reflog",
+            "show",
+            "--date=unix",
+            "--format=%H%x00%gD%x00%gs%x00%s",
+        ])
         .arg(reference)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -49,6 +54,7 @@ pub fn read(path: &Path, reference: &str) -> Result<Snapshot, String> {
             continue;
         };
         let subject = fields.next().unwrap_or_default();
+        let commit_subject = fields.next().unwrap_or_default();
         if id.is_empty() {
             continue;
         }
@@ -67,6 +73,7 @@ pub fn read(path: &Path, reference: &str) -> Result<Snapshot, String> {
             time,
             action,
             message,
+            subject: commit_subject.to_string(),
         });
     }
     Ok(Snapshot {

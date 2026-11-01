@@ -560,16 +560,16 @@ fn narrow_details_navigation_preserves_hidden_history_and_back_anchor() -> Resul
     let query = h.app.state.query.clone();
     frame(&mut h, vec![key(egui::Key::Space)]);
     assert!(h.app.narrow_details);
+    // Up/Down and paging choose files in the details, not commits.
     for event in [
         key(egui::Key::ArrowDown),
-        key(egui::Key::J),
+        key(egui::Key::ArrowUp),
         key(egui::Key::PageDown),
-        modified_key(egui::Key::N, egui::Modifiers::CTRL),
     ] {
         frame(&mut h, vec![event]);
         assert_eq!(
             h.app.state.selected, selected,
-            "details navigation changed hidden history"
+            "file navigation changed hidden history"
         );
     }
     frame(&mut h, vec![key(egui::Key::Escape)]);
@@ -577,6 +577,50 @@ fn narrow_details_navigation_preserves_hidden_history_and_back_anchor() -> Resul
     assert_eq!(h.app.state.selected, selected);
     assert_eq!(h.app.state.query, query);
     assert_eq!(h.app.scroll_offset, offset);
+    Ok(())
+}
+
+#[test]
+fn narrow_details_step_commits_with_j_and_k() -> Result {
+    let mut h = Harness::new(64);
+    h.publish(64)?;
+    h.frame(vec![]);
+    h.app.state.select_row(10);
+    h.frame(vec![]);
+    let frame = |h: &mut Harness, events| {
+        h.time += 0.1;
+        let mut input = super::tests::frame_input(720.0, 480.0, events);
+        input.time = Some(h.time);
+        h.app.prepare_input(&mut input);
+        crate::tests::run_ui(&h.ctx, input, |ctx| h.app.draw_ui(ctx))
+    };
+    frame(&mut h, vec![key(egui::Key::Space)]);
+    assert!(h.app.narrow_details);
+    frame(&mut h, vec![key(egui::Key::J)]);
+    assert_eq!(
+        h.app.state.selected_row,
+        Some(11),
+        "j shows the older commit"
+    );
+    assert!(h.app.narrow_details, "the details stay open");
+    frame(&mut h, vec![key(egui::Key::K)]);
+    assert_eq!(
+        h.app.state.selected_row,
+        Some(10),
+        "k shows the newer commit"
+    );
+    let output = frame(&mut h, vec![]);
+    let texts = output
+        .shapes
+        .iter()
+        .filter_map(|shape| match &shape.shape {
+            egui::epaint::Shape::Text(text) => Some(text.galley.job.text.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    for label in ["‹ History", "Review", "Actions", "Commit", "Signature"] {
+        assert!(texts.iter().any(|text| text == label), "missing {label}");
+    }
     Ok(())
 }
 

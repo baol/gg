@@ -16,6 +16,31 @@ pub fn fast_forward(path: &Path, reference: &str) -> Result<Receipt, String> {
     merge_with(path, reference, "--ff-only")
 }
 
+/// How many commits `reference` has that HEAD lacks: what a merge of it
+/// brings in.
+pub fn incoming(path: &Path, reference: &str) -> Result<usize, String> {
+    let reference = reference.trim();
+    if reference.is_empty() || reference.starts_with('-') {
+        return Err("Merge reference must not start with '-'.".into());
+    }
+    let output = run(
+        path,
+        &[
+            "rev-list".into(),
+            "--count".into(),
+            format!("HEAD..{reference}"),
+            "--".into(),
+        ],
+    )?;
+    if !output.status.success() {
+        return Err(failure("Count incoming commits", &output));
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse()
+        .map_err(|error| format!("Count incoming commits: {error}"))
+}
+
 fn merge_with(path: &Path, reference: &str, mode: &str) -> Result<Receipt, String> {
     let no_ff = mode == "--no-ff";
     let reference = reference.trim();

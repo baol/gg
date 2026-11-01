@@ -72,6 +72,18 @@ pub fn rewrite(
     steps: &[Step],
     autostash: bool,
 ) -> Result<Receipt, String> {
+    rewrite_observed(path, from, steps, autostash, &mut |_| {})
+}
+
+/// [`rewrite`], telling `backed_up` the backup reference as soon as it
+/// exists, before Git starts rewriting.
+pub fn rewrite_observed(
+    path: &Path,
+    from: &str,
+    steps: &[Step],
+    autostash: bool,
+    backed_up: &mut dyn FnMut(&str),
+) -> Result<Receipt, String> {
     if let Some(state) = crate::mutation::state(path)? {
         return Err(format!(
             "{} is already in progress. Continue, skip, or abort it first.",
@@ -85,6 +97,7 @@ pub fn rewrite(
     let steps = resolve_steps(path, &range, steps)?;
     let previous = head(path)?;
     let backup = crate::backup::create(path, "rewrite", &previous)?;
+    backed_up(&backup);
     let mut args = vec!["rebase".to_string(), "-i".to_string()];
     args.push(if autostash {
         "--autostash".into()

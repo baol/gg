@@ -8,7 +8,12 @@ use eframe::egui;
 use gg_engine::status::{Area, Kind, StatusEntry};
 use std::{collections::BTreeMap, ops::Range, path::PathBuf};
 const GROUP_HEADER: f32 = 24.0;
-const WIDE_LAYOUT: f32 = 900.0;
+/// Views at least this wide put the groups beside the reader; narrower
+/// ones stack them above it (narrow proposal: 1040 px starts the wide
+/// layouts).
+const WIDE_LAYOUT: f32 = 1040.0;
+/// Height of the narrow commit form before its message box is resized.
+const NARROW_FORM: f32 = 90.0;
 type Comparison = (Vec<u8>, Area);
 /// A list row: `(list, row, entry)`.
 type Located = (usize, usize, StatusEntry);
@@ -164,6 +169,34 @@ pub(crate) struct Draft {
     pub selected: Option<Comparison>,
 }
 
+/// Rows the narrow layout shows of all groups together, so the reader keeps
+/// the rest of the height (narrow proposal).
+const NARROW_ROWS: usize = 6;
+
+/// Rows each narrow group shows: `None` for a folded group, otherwise its
+/// file count. Open groups show at least one row (an empty one says so) and
+/// share `cap` rows (at most [`NARROW_ROWS`]), the larger group taking what
+/// the smaller leaves.
+fn narrow_group_rows(groups: [Option<usize>; 2], cap: usize) -> [usize; 2] {
+    let need = groups.map(|group| group.map_or(0, |count| count.max(1)));
+    if need[0] + need[1] <= cap {
+        return need;
+    }
+    let half = cap / 2;
+    match need {
+        [first, 0] => [first.min(cap), 0],
+        [0, second] => [0, second.min(cap)],
+        [first, second] if first <= second => {
+            let first = first.min(half);
+            [first, second.min(cap - first)]
+        }
+        [first, second] => {
+            let second = second.min(half);
+            [first.min(cap - second), second]
+        }
+    }
+}
+
 struct List {
     rows: BTreeMap<usize, StatusEntry>,
     count: usize,
@@ -175,7 +208,9 @@ struct List {
     pending_row: Option<usize>,
     reveal: bool,
     restore: bool,
-    collapsed: bool,
+    /// Folded by the narrow group header's ▾/▸; `None` until toggled, when
+    /// an empty group starts folded (narrow proposal).
+    collapsed: Option<bool>,
 }
 impl List {
     fn new() -> Self {
@@ -190,8 +225,14 @@ impl List {
             pending_row: None,
             reveal: false,
             restore: false,
-            collapsed: false,
+            collapsed: None,
         }
+    }
+
+    /// Whether the narrow layout folds this group: as toggled, or while
+    /// untouched when a finished scan found it empty.
+    fn folded(&self, complete: bool) -> bool {
+        self.collapsed.unwrap_or(complete && self.count == 0)
     }
 }
 
@@ -249,6 +290,8 @@ pub struct StatusView {
     amend_base_commit: Option<String>,
     amend_subject: Option<String>,
     message_expanded: bool,
+    /// The commit form is drawn in the narrow resizable panel.
+    narrow_form: bool,
     pending_selection: Option<Comparison>,
     last_amended: bool,
     /// Staged files the last commit or amend recorded.
@@ -304,6 +347,7 @@ impl StatusView {
             amend_base_commit: None,
             amend_subject: None,
             message_expanded: false,
+            narrow_form: false,
             pending_selection: None,
             last_amended: false,
             last_files: 0,
@@ -925,8 +969,13 @@ impl StatusView {
     }
 
     /// Take an LFS-details request raised by the reader.
-    /// Take the path chosen with ⋯ › Open in editor.
-    pub fn take_editor_request(&mut self) -> Option<String> {
+    /// The footer receipt of a finished ⋯ › Export.
+    pub fn take_export_receipt(&mut self) -> Option<String> {
+        self.reader.take_export_receipt()
+    }
+
+    /// Take the path chosen with ⋯ › Open in editor or Reveal in folder.
+    pub fn take_editor_request(&mut self) -> Option<crate::editor::Request> {
         self.reader.take_editor_request()
     }
 
@@ -1215,19 +1264,28 @@ impl StatusView {
         let active = self.focus == index;
         let list = &mut self.lists[index];
         let count = list.count;
+        let folded = collapsible && list.folded(complete);
         ui.horizontal(|ui| {
             if collapsible {
-                let arrow = if list.collapsed { "+" } else { "-" };
+                // ▾ open, ▸ folded (narrow proposal).
+                let arrow = if folded {
+                    crate::phosphor::CARET_RIGHT
+                } else {
+                    crate::phosphor::CARET_DOWN
+                };
                 if ui
-                    .small_button(arrow)
-                    .on_hover_text(if list.collapsed {
+                    .add(
+                        egui::Button::new(crate::phosphor::icon(arrow).size(11.0))
+                            .frame_when_inactive(false),
+                    )
+                    .on_hover_text(if folded {
                         "Show this group"
                     } else {
                         "Collapse this group"
                     })
                     .clicked()
                 {
-                    list.collapsed = !list.collapsed;
+                    list.collapsed = Some(!folded);
                 }
             }
             ui.strong(format!("{} {count}", group_name(index).to_uppercase()));
@@ -1251,7 +1309,7 @@ impl StatusView {
                 }
             });
         });
-        if collapsible && list.collapsed {
+        if folded {
             list.rect = egui::Rect::NOTHING;
             return (None, None);
         }
@@ -1499,16 +1557,21 @@ impl StatusView {
         );
     }
 
-    fn draw_lists_narrow(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, budget: f32) {
-        let visible = self
-            .lists
-            .iter()
-            .filter(|list| !list.collapsed)
-            .count()
-            .max(1);
-        let each = ((budget / visible as f32) - GROUP_HEADER - 2.0).max(16.0);
-        let (first_click, first_toggle) = self.draw_group(ui, 0, each, true);
-        let (second_click, second_toggle) = self.draw_group(ui, 1, each, true);
+    fn draw_lists_narrow(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, height: f32) {
+        // At most six rows together, fewer in a short window, so the
+        // groups take no more than 40% of the height above the reader.
+        let row = crate::density::row();
+        let cap = (((height * 0.4 - 2.0 * GROUP_HEADER) / row).floor().max(2.0) as usize)
+            .min(NARROW_ROWS);
+        let [first, second] = narrow_group_rows(
+            [
+                (!self.lists[0].folded(self.complete)).then_some(self.lists[0].count),
+                (!self.lists[1].folded(self.complete)).then_some(self.lists[1].count),
+            ],
+            cap,
+        );
+        let (first_click, first_toggle) = self.draw_group(ui, 0, first as f32 * row, true);
+        let (second_click, second_toggle) = self.draw_group(ui, 1, second as f32 * row, true);
         if let Some(row) = first_click {
             self.select_row(0, row, ctx);
         } else if let Some(row) = second_click {
@@ -1530,7 +1593,7 @@ impl StatusView {
             });
         }
         if let Some(error) = self.stage.error().map(str::to_owned) {
-            bounded_text::field(ui, &error, egui::FontId::proportional(12.0), 22.0);
+            bounded_text::field_named(ui, &error, egui::FontId::proportional(12.0), 22.0, "Error");
         }
         if let Some(selected) = self.active.clone()
             && self.active_entry.is_none()
@@ -1780,17 +1843,30 @@ impl StatusView {
             .and_then(|config| config.note.clone())
             .unwrap_or_else(|| "Signing key or tool is unavailable.".into());
         let can_commit = reason.is_none();
-        let message_height = if self.message_expanded { 118.0 } else { 54.0 };
+        // The narrow message box fills its resizable panel.
+        let message_height = if self.narrow_form {
+            (ui.available_height() - 6.0).max(54.0)
+        } else if self.message_expanded {
+            118.0
+        } else {
+            54.0
+        };
+        let narrow_form = self.narrow_form;
         let mut commit_now = false;
         ui.horizontal(|ui| {
-            let button_width = if self.reopened && !self.amend {
+            let button_width: f32 = if self.reopened && !self.amend {
                 170.0
             } else if self.amend {
                 112.0
             } else {
                 88.0
             };
-            let width = (ui.available_width() - button_width - 150.0).max(160.0);
+            let column = if narrow_form {
+                button_width.max(118.0) + 12.0
+            } else {
+                button_width + 150.0
+            };
+            let width = (ui.available_width() - column).max(160.0);
             let field = ui.add_sized(
                 [width, message_height],
                 egui::TextEdit::multiline(&mut self.message)
@@ -1823,6 +1899,11 @@ impl StatusView {
                             self.message = self.normal_draft.clone();
                             self.restart(ctx);
                         }
+                    }
+                    // Narrow forms leave signing to Preferences › Commit
+                    // and resize the message box instead of Expand.
+                    if narrow_form {
+                        return;
                     }
                     let mut sign = self.sign_commit;
                     let sign_response = ui.add_enabled(
@@ -2154,9 +2235,20 @@ impl StatusView {
         let wide = ui.available_width() >= WIDE_LAYOUT;
         let clean = self.clean();
         if !wide && !clean {
+            // The narrow commit form: a message box resized by dragging the
+            // panel's top edge (narrow proposal; no Expand button).
+            let amend = if self.amend { GROUP_HEADER } else { 0.0 };
+            let full = ui.available_height();
             egui::Panel::bottom("working-commit")
-                .exact_size(self.commit_form_height() + 8.0)
-                .show(ui, |ui| self.draw_commit_panel(ui, ctx));
+                .resizable(true)
+                .default_size(NARROW_FORM + amend)
+                .min_size(NARROW_FORM + amend)
+                .max_size((full * 0.6).max(NARROW_FORM + amend))
+                .show(ui, |ui| {
+                    self.narrow_form = true;
+                    self.draw_commit_panel(ui, ctx);
+                    self.narrow_form = false;
+                });
         }
         egui::CentralPanel::default().show(ui, |ui| {
             if clean {
@@ -2165,6 +2257,7 @@ impl StatusView {
             }
             let height = ui.available_height();
             if wide {
+                self.reader.set_narrow_header(None, false);
                 ui.horizontal_top(|ui| {
                     self.draw_lists_wide(ui, ctx, height);
                     ui.separator();
@@ -2175,8 +2268,10 @@ impl StatusView {
                     );
                 });
             } else {
-                let budget = (height * 0.32).clamp(96.0, 180.0);
-                self.draw_lists_narrow(ui, ctx, budget);
+                self.draw_lists_narrow(ui, ctx, height);
+                // One header row: the change position moves to the ‹ ›
+                // tooltips (narrow proposal).
+                self.reader.set_narrow_header(None, true);
                 ui.separator();
                 ui.allocate_ui_with_layout(
                     egui::vec2(ui.available_width(), ui.available_height()),
@@ -2220,6 +2315,18 @@ impl StatusView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn narrow_groups_share_six_rows_and_folded_groups_take_none() {
+        assert_eq!(narrow_group_rows([Some(2), Some(0)], NARROW_ROWS), [2, 1]);
+        assert_eq!(narrow_group_rows([Some(2), None], NARROW_ROWS), [2, 0]);
+        assert_eq!(narrow_group_rows([Some(40), None], NARROW_ROWS), [6, 0]);
+        assert_eq!(narrow_group_rows([Some(40), Some(2)], NARROW_ROWS), [4, 2]);
+        assert_eq!(narrow_group_rows([Some(1), Some(40)], NARROW_ROWS), [1, 5]);
+        assert_eq!(narrow_group_rows([Some(40), Some(40)], NARROW_ROWS), [3, 3]);
+        assert_eq!(narrow_group_rows([None, None], NARROW_ROWS), [0, 0]);
+        assert_eq!(narrow_group_rows([Some(40), Some(2)], 3), [2, 1]);
+    }
 
     #[test]
     fn change_markers_are_single_distinct_characters() {
@@ -2292,6 +2399,7 @@ mod tests {
             amend_base_commit: None,
             amend_subject: None,
             message_expanded: false,
+            narrow_form: false,
             pending_selection: None,
             last_amended: false,
             last_files: 0,
@@ -2725,6 +2833,66 @@ mod tests {
         Ok(())
     }
     #[test]
+    fn file_actions_are_menu_rows_with_discard_last_in_red()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        generated(dir.path())?;
+        let ctx = egui::Context::default();
+        let mut view = StatusView::new(dir.path().into(), &ctx);
+        settle(&ctx, &mut view, 1120.0);
+        select_area(&mut view, &ctx, Area::Unstaged);
+        ready(&ctx, &mut view, 1120.0);
+        let output = run(&ctx, &mut view, 1120.0, vec![]);
+        let menu = text_pos(&output, crate::phosphor::DOTS_THREE).ok_or("missing File actions")?;
+        click(&ctx, &mut view, 1120.0, menu + egui::vec2(5.0, 0.0));
+        let output = run(&ctx, &mut view, 1120.0, vec![]);
+        let labels = [
+            "Open in editor",
+            "Reveal in folder",
+            "Copy path",
+            "Export before…",
+            "Export after…",
+            "File details",
+            "Discard file…",
+        ];
+        let rows = labels
+            .iter()
+            .map(|label| {
+                output.shapes.iter().find_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) if text.galley.job.text == *label => {
+                        Some((text.pos.y, text.fallback_color, text.galley.clone()))
+                    }
+                    _ => None,
+                })
+            })
+            .collect::<Option<Vec<_>>>()
+            .ok_or("missing a File actions row")?;
+        assert!(
+            rows.windows(2).all(|pair| pair[0].0 < pair[1].0),
+            "rows in the board's order"
+        );
+        let (y0, y1) = (rows[0].0, rows[1].0);
+        assert!(
+            (crate::menus::ROW_HEIGHT..crate::menus::ROW_HEIGHT + 4.0).contains(&(y1 - y0)),
+            "24 px rows: {y0} → {y1}"
+        );
+        let discard = rows.last().ok_or("no rows")?;
+        let red = discard.2.job.sections[0].format.color;
+        assert_eq!(
+            red,
+            ctx.style_of(ctx.theme()).visuals.error_fg_color,
+            "Discard file… is red"
+        );
+        assert!(
+            !output.shapes.iter().any(|shape| matches!(
+                &shape.shape,
+                egui::epaint::Shape::Text(text) if text.galley.job.text == "Stage"
+            )),
+            "no Stage button in the reader header"
+        );
+        Ok(())
+    }
+    #[test]
     fn workspace_uses_one_reader_header_with_on_demand_details()
     -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempfile::tempdir()?;
@@ -2748,7 +2916,7 @@ mod tests {
         assert!(!text.contains(&"View diff"));
         assert!(!text.iter().any(|line| line.starts_with("Unstaged:")));
         assert!(
-            !text.contains(&"Show file details"),
+            !text.contains(&"File details"),
             "low-frequency identity stays behind the action surface"
         );
         assert!(
@@ -2759,8 +2927,7 @@ mod tests {
         let menu = text_pos(&output, crate::phosphor::DOTS_THREE).ok_or("missing File actions")?;
         click(&ctx, &mut view, 1120.0, menu + egui::vec2(5.0, 0.0));
         let output = run(&ctx, &mut view, 1120.0, vec![]);
-        let details =
-            text_pos(&output, "Show file details").ok_or("missing file details action")?;
+        let details = text_pos(&output, "File details").ok_or("missing file details action")?;
         click(&ctx, &mut view, 1120.0, details + egui::vec2(5.0, 0.0));
         let output = run(&ctx, &mut view, 1120.0, vec![]);
         let text = output
@@ -3044,8 +3211,34 @@ mod tests {
         pump(ctx, view, width, |view| {
             view.reader.ready() && view.complete && !view.replacing && !view.stage.mutating()
         });
-        let button = wait_text(ctx, view, width, label)?;
-        click(ctx, view, width, button + egui::vec2(5.0, 0.0));
+        // Whole-file staging is the selected row's + / − button.
+        let (glyph, list) = if label == "Unstage" {
+            ("−", 1)
+        } else {
+            ("+", 0)
+        };
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let button = loop {
+            let output = run(ctx, view, width, vec![]);
+            let rect = view.lists[list].rect;
+            if let Some(pos) = output.shapes.iter().find_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text)
+                    if text.galley.job.text == glyph
+                        && rect.contains(text.pos)
+                        && text.pos.x > rect.right() - ROW_BUTTON - 4.0 =>
+                {
+                    Some(text.pos)
+                }
+                _ => None,
+            }) {
+                break pos;
+            }
+            if std::time::Instant::now() > until {
+                return Err(format!("missing row {glyph} button").into());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        };
+        click(ctx, view, width, button + egui::vec2(2.0, 4.0));
         Ok(())
     }
     fn click_file_action(
@@ -3344,7 +3537,7 @@ mod tests {
     }
 
     #[test]
-    fn double_click_stages_and_unstages_with_the_stage_button_and_advances()
+    fn double_click_stages_and_unstages_with_the_row_button_and_advances()
     -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempfile::tempdir()?;
         let p = dir.path();
@@ -3362,7 +3555,10 @@ mod tests {
         settle(&ctx, &mut view, 1120.0);
 
         let output = run(&ctx, &mut view, 1120.0, vec![]);
-        assert!(text_pos(&output, "Stage").is_some(), "own Stage button");
+        assert!(
+            text_pos(&output, "Stage").is_none(),
+            "the reader header has no Stage button; the row's + stages"
+        );
         let a = row_pos(&output, &view, 0, "a").ok_or("missing a row")?;
         double_click(&ctx, &mut view, 1120.0, a);
         pump(&ctx, &mut view, 1120.0, |view| {
@@ -3405,7 +3601,10 @@ mod tests {
         );
 
         let output = run(&ctx, &mut view, 1120.0, vec![]);
-        assert!(text_pos(&output, "Unstage").is_some(), "own Unstage button");
+        assert!(
+            text_pos(&output, "Unstage").is_none(),
+            "no header Unstage button"
+        );
         let c = row_pos(&output, &view, 1, "c").ok_or("missing staged c row")?;
         double_click(&ctx, &mut view, 1120.0, c);
         pump(&ctx, &mut view, 1120.0, |view| {
@@ -3425,9 +3624,7 @@ mod tests {
         );
 
         ready(&ctx, &mut view, 1120.0);
-        let output = run(&ctx, &mut view, 1120.0, vec![]);
-        let stage = text_pos(&output, "Stage").ok_or("missing Stage button")?;
-        click(&ctx, &mut view, 1120.0, stage + egui::vec2(5.0, 0.0));
+        click_whole_file(&ctx, &mut view, 1120.0, "Stage")?;
         pump(&ctx, &mut view, 1120.0, |view| {
             !view.stage.mutating()
                 && view.complete
@@ -3437,9 +3634,7 @@ mod tests {
         assert_eq!(file(p, &["show", ":c"])?, b"c working\n");
 
         ready(&ctx, &mut view, 1120.0);
-        let output = run(&ctx, &mut view, 1120.0, vec![]);
-        let unstage = text_pos(&output, "Unstage").ok_or("missing Unstage button")?;
-        click(&ctx, &mut view, 1120.0, unstage + egui::vec2(5.0, 0.0));
+        click_whole_file(&ctx, &mut view, 1120.0, "Unstage")?;
         pump(&ctx, &mut view, 1120.0, |view| {
             !view.stage.mutating()
                 && view.complete
@@ -3509,7 +3704,7 @@ mod tests {
         assert!(text.contains(&"Copy path"));
         assert!(text.contains(&"Open in editor"));
         assert!(!text.contains(&"Stage file"));
-        assert!(!text.contains(&"Discard unstaged changes…"));
+        assert!(!text.contains(&"Discard file…"));
         assert!(!view.busy(), "selection and navigation stay available");
         assert!(view.mutations_blocked());
         Ok(())
@@ -3534,6 +3729,84 @@ mod tests {
         );
         assert_eq!(commit_reason(false, false, "subject", true, 0, None), None);
         assert_eq!(commit_reason(false, false, "subject", false, 1, None), None);
+    }
+
+    #[test]
+    fn narrow_commit_form_leaves_sign_to_preferences_and_resizes_its_box() {
+        let ctx = egui::Context::default();
+        let mut view = fixture(2, 1);
+        view.sign_commit = true;
+        let _ = run(&ctx, &mut view, 720.0, vec![]);
+        let output = run(&ctx, &mut view, 720.0, vec![]);
+        assert!(text_pos(&output, "Amend HEAD").is_some());
+        assert!(text_pos(&output, "Sign").is_none(), "no Sign checkbox");
+        assert!(text_pos(&output, "Expand").is_none(), "no Expand button");
+        assert!(view.sign_checked(), "the Preferences choice still applies");
+        let before = view.form_rect;
+        // Dragging the form's top edge up makes the message box taller.
+        let edge = egui::pos2(300.0, before.top() - 2.0);
+        for (events, time) in [
+            (vec![egui::Event::PointerMoved(edge)], 1.0),
+            (
+                vec![egui::Event::PointerButton {
+                    pos: edge,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+                1.1,
+            ),
+            (
+                vec![egui::Event::PointerMoved(edge - egui::vec2(0.0, 60.0))],
+                1.2,
+            ),
+            (
+                vec![egui::Event::PointerButton {
+                    pos: edge - egui::vec2(0.0, 60.0),
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+                1.3,
+            ),
+            (vec![], 1.4),
+        ] {
+            let mut input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(720.0, 480.0),
+                )),
+                events,
+                ..Default::default()
+            };
+            input.time = Some(time);
+            let _ = crate::tests::run_ui(&ctx, input, |ctx| {
+                view.draw_ui(ctx);
+            });
+        }
+        assert!(
+            view.form_rect.height() > before.height() + 30.0,
+            "{before:?} → {:?}",
+            view.form_rect
+        );
+    }
+
+    #[test]
+    fn narrow_groups_fold_with_carets_and_empty_ones_start_folded() {
+        let ctx = egui::Context::default();
+        let mut view = fixture(2, 0);
+        let output = run(&ctx, &mut view, 720.0, vec![]);
+        assert!(
+            text_pos(&output, crate::phosphor::CARET_DOWN).is_some(),
+            "▾ open"
+        );
+        assert!(
+            text_pos(&output, crate::phosphor::CARET_RIGHT).is_some(),
+            "▸ folded"
+        );
+        assert!(text_pos(&output, "No staged changes.").is_none());
+        assert!(view.lists[1].folded(view.complete));
+        assert!(!view.lists[0].folded(view.complete));
     }
 
     #[test]
@@ -4307,7 +4580,7 @@ mod tests {
             assert_eq!(std::fs::read(dir.path().join(".git/index"))?, index);
 
             // The whole-file action names its scope: unstaged changes only.
-            click_file_action(&ctx, &mut view, width, "Discard unstaged changes…")?;
+            click_file_action(&ctx, &mut view, width, "Discard file…")?;
             wait_text(
                 &ctx,
                 &mut view,
@@ -4678,20 +4951,24 @@ mod tests {
             let mut one = fixture(0, 1);
             let output = run(&ctx, &mut one, width, vec![]);
             let text = texts(&output);
-            assert!(
-                text.contains(&"No unstaged changes.".to_string()),
-                "{text:?}"
-            );
-            // Wide layouts stack the lists; narrow ones keep collapsible
-            // groups of their own.
+            // Wide layouts stack the lists; narrow ones fold an empty group
+            // (narrow proposal), so the next header moves up either way.
             let staged = header_y(&output, "STAGED ");
+            assert!(
+                staged < staged_header,
+                "the Staged group follows the shorter Unstaged group"
+            );
             if width >= 1120.0 {
                 assert!(
-                    staged < staged_header,
-                    "stacked: the Staged group follows the shorter Unstaged list"
+                    text.contains(&"No unstaged changes.".to_string()),
+                    "{text:?}"
                 );
             } else {
-                assert_eq!(staged, staged_header);
+                assert!(
+                    !text.contains(&"No unstaged changes.".to_string())
+                        && text.contains(&"UNSTAGED 0".to_string()),
+                    "an empty narrow group starts folded: {text:?}"
+                );
             }
         }
     }

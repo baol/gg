@@ -143,25 +143,79 @@ pub fn write<T: Serialize>(path: &Path, key: &str, value: &T) -> Result<(), Stri
         .map_err(|error| format!("Write settings to {}: {error}", path.display()))
 }
 
-/// Most repositories listed under Repository › Open recent.
+/// Most recent repositories kept: the welcome list, Repository › Open
+/// recent, and the Open… dialog all show up to this many.
 pub const RECENT_LIMIT: usize = 10;
 
-/// Repositories opened before, newest first.
-pub fn recent() -> Vec<PathBuf> {
-    path()
-        .and_then(|path| read::<Vec<PathBuf>>(&path, "recent_repositories"))
-        .unwrap_or_default()
+/// A repository opened before and when it was last opened.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct Recent {
+    pub path: PathBuf,
+    /// Seconds since the Unix epoch; `None` for entries saved before gg
+    /// recorded the time.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub opened: Option<u64>,
 }
 
-/// Put `repository` first in `list`, without duplicates, bounded.
-pub fn push_recent(list: &mut Vec<PathBuf>, repository: PathBuf) {
-    list.retain(|entry| entry != &repository);
-    list.insert(0, repository);
+impl Recent {
+    pub fn new(path: PathBuf) -> Self {
+        Self { path, opened: None }
+    }
+}
+
+/// `recent_repositories` entries: `{"path", "opened"}` objects, or the
+/// plain path strings older versions wrote.
+impl<'de> Deserialize<'de> for Recent {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Stored {
+            Path(PathBuf),
+            Entry {
+                path: PathBuf,
+                #[serde(default)]
+                opened: Option<u64>,
+            },
+        }
+        Ok(match Stored::deserialize(deserializer)? {
+            Stored::Path(path) => Recent::new(path),
+            Stored::Entry { path, opened } => Recent { path, opened },
+        })
+    }
+}
+
+/// Seconds since the Unix epoch, now.
+pub fn now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs())
+}
+
+/// Repositories opened before, newest first.
+pub fn recent() -> Vec<Recent> {
+    path().map(|path| recent_from(&path)).unwrap_or_default()
+}
+
+pub fn recent_from(path: &Path) -> Vec<Recent> {
+    read::<Vec<Recent>>(path, "recent_repositories").unwrap_or_default()
+}
+
+/// Put `repository` first in `list`, opened at `opened`, without
+/// duplicates, bounded.
+pub fn push_recent(list: &mut Vec<Recent>, repository: PathBuf, opened: u64) {
+    list.retain(|entry| entry.path != repository);
+    list.insert(
+        0,
+        Recent {
+            path: repository,
+            opened: Some(opened),
+        },
+    );
     list.truncate(RECENT_LIMIT);
 }
 
 /// Save the recent list; tests never write the user's file.
-pub fn save_recent(list: &[PathBuf]) -> Result<(), String> {
+pub fn save_recent(list: &[Recent]) -> Result<(), String> {
     if cfg!(test) {
         return Ok(());
     }
@@ -208,16 +262,19 @@ pub enum ImageLayout {
     SideBySide,
     Swipe,
     Onion,
+    /// Hexadecimal rows of both sides.
+    Hex,
 }
 
 impl ImageLayout {
-    pub const ALL: [Self; 3] = [Self::SideBySide, Self::Swipe, Self::Onion];
+    pub const ALL: [Self; 4] = [Self::SideBySide, Self::Swipe, Self::Onion, Self::Hex];
 
     pub fn label(self) -> &'static str {
         match self {
             Self::SideBySide => "Side by side",
             Self::Swipe => "Swipe",
             Self::Onion => "Onion skin",
+            Self::Hex => "Hex",
         }
     }
 }
@@ -322,6 +379,41 @@ pub fn set_diff_layout(ctx: &eframe::egui::Context, layout: DiffLayout) {
 
 fn diff_layout_id() -> eframe::egui::Id {
     eframe::egui::Id::unique("gg-diff-layout")
+}
+
+/// Windows narrower than this use the narrow layouts (narrow proposal).
+pub const NARROW_WINDOW: f32 = 1040.0;
+
+/// The layout readers show: the preference in wide windows; below
+/// [`NARROW_WINDOW`] Inline unless Side by side was chosen there this
+/// session (narrow proposal).
+pub fn reader_layout(ctx: &eframe::egui::Context) -> DiffLayout {
+    if ctx.content_rect().width() < NARROW_WINDOW {
+        ctx.data(|data| data.get_temp(narrow_layout_id()))
+            .unwrap_or(DiffLayout::Inline)
+    } else {
+        diff_layout(ctx)
+    }
+}
+
+/// A layout chosen in a reader: the preference in wide windows, the
+/// session's narrow layout below [`NARROW_WINDOW`].
+pub fn choose_reader_layout(ctx: &eframe::egui::Context, layout: DiffLayout) {
+    if ctx.content_rect().width() < NARROW_WINDOW {
+        ctx.data_mut(|data| data.insert_temp(narrow_layout_id(), layout));
+    } else {
+        set_diff_layout(ctx, layout);
+    }
+}
+
+/// The session's narrow layout, as if chosen in a narrow reader.
+#[cfg(test)]
+pub fn set_narrow_layout(ctx: &eframe::egui::Context, layout: DiffLayout) {
+    ctx.data_mut(|data| data.insert_temp(narrow_layout_id(), layout));
+}
+
+fn narrow_layout_id() -> eframe::egui::Id {
+    eframe::egui::Id::unique("gg-narrow-diff-layout")
 }
 
 /// Context lines and whitespace handling every Diff in the window uses.
@@ -635,14 +727,59 @@ mod tests {
     #[test]
     fn recent_repositories_move_to_the_front_without_duplicates() {
         let mut list = Vec::new();
-        for name in ["a", "b", "a"] {
-            push_recent(&mut list, PathBuf::from(name));
+        for (time, name) in ["a", "b", "a"].into_iter().enumerate() {
+            push_recent(&mut list, PathBuf::from(name), time as u64);
         }
-        assert_eq!(list, [PathBuf::from("a"), PathBuf::from("b")]);
+        assert_eq!(
+            list,
+            [
+                Recent {
+                    path: PathBuf::from("a"),
+                    opened: Some(2)
+                },
+                Recent {
+                    path: PathBuf::from("b"),
+                    opened: Some(1)
+                }
+            ]
+        );
         for index in 0..20 {
-            push_recent(&mut list, PathBuf::from(format!("r{index}")));
+            push_recent(&mut list, PathBuf::from(format!("r{index}")), 9);
         }
         assert_eq!(list.len(), RECENT_LIMIT);
+    }
+
+    #[test]
+    fn recent_times_round_trip_and_old_path_lists_still_load()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("settings.json");
+        std::fs::write(
+            &path,
+            br#"{"recent_repositories": ["/old/one", {"path": "/new/two", "opened": 1700000000}]}"#,
+        )?;
+        assert_eq!(
+            recent_from(&path),
+            [
+                Recent::new("/old/one".into()),
+                Recent {
+                    path: "/new/two".into(),
+                    opened: Some(1_700_000_000)
+                }
+            ]
+        );
+        let mut list = recent_from(&path);
+        push_recent(&mut list, "/old/one".into(), 1_800_000_000);
+        write(&path, "recent_repositories", &list)?;
+        assert_eq!(recent_from(&path), list);
+        assert_eq!(
+            read::<serde_json::Value>(&path, "recent_repositories"),
+            Some(serde_json::json!([
+                {"path": "/old/one", "opened": 1_800_000_000u64},
+                {"path": "/new/two", "opened": 1_700_000_000u64}
+            ]))
+        );
+        Ok(())
     }
 
     #[test]

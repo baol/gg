@@ -27,6 +27,9 @@ fn repo() -> Result<tempfile::TempDir> {
     git(dir.path(), &["init", "-b", "main"])?;
     git(dir.path(), &["config", "user.name", "Test"])?;
     git(dir.path(), &["config", "user.email", "test@example.org"])?;
+    // The library's own Git calls read the system config, where Git for
+    // Windows turns on autocrlf; keep checkouts byte for byte.
+    git(dir.path(), &["config", "core.autocrlf", "false"])?;
     std::fs::write(dir.path().join("a"), b"base\n")?;
     git(dir.path(), &["add", "a"])?;
     git(dir.path(), &["commit", "-qm", "base"])?;
@@ -115,5 +118,95 @@ fn prune_deletes_only_gg_backups_older_than_the_age() -> Result {
     assert!(!refs.contains(&old), "{refs}");
     assert!(refs.contains(&recent), "{refs}");
     assert!(refs.contains("refs/heads/keep-me"), "{refs}");
+    Ok(())
+}
+
+fn rev(p: &Path, revision: &str) -> Result<String> {
+    Ok(String::from_utf8(git(p, &["rev-parse", revision])?)?
+        .trim()
+        .to_string())
+}
+
+#[test]
+fn backups_record_the_rewritten_branch_and_their_save_time() -> Result {
+    let dir = repo()?;
+    let p = dir.path();
+    git(p, &["switch", "-qc", "feature/rebase-ui"])?;
+    let head = rev(p, "HEAD")?;
+    let name = gg_git::backup::create(p, "rebase", &head)?;
+    assert!(name.ends_with("/feature/rebase-ui"), "{name}");
+    git(p, &["switch", "-q", "--detach"])?;
+    let detached = gg_git::backup::create(p, "amend", &head)?;
+    let backups = gg_git::backup::list(p)?;
+    assert_eq!(backups.len(), 2);
+    assert_eq!(backups[0].reference, detached, "newest first");
+    assert_eq!(backups[0].branch, None);
+    assert_eq!(backups[1].branch.as_deref(), Some("feature/rebase-ui"));
+    assert_eq!(backups[1].label, "rebase");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs() as i64;
+    assert!((now - backups[1].saved).abs() < 60, "{}", backups[1].saved);
+    Ok(())
+}
+
+#[test]
+fn restore_saves_the_current_tip_then_hard_resets_a_clean_branch() -> Result {
+    let dir = repo()?;
+    let p = dir.path();
+    let base = rev(p, "HEAD")?;
+    std::fs::write(p.join("a"), b"second\n")?;
+    git(p, &["commit", "-qam", "second"])?;
+    let tip = rev(p, "HEAD")?;
+    assert_eq!(
+        gg_git::backup::branch_now(p, "main", &base),
+        Some((tip.clone(), 1))
+    );
+
+    // A dirty tree is refused and nothing moves.
+    std::fs::write(p.join("a"), b"edit\n")?;
+    assert_eq!(gg_git::backup::uncommitted(p)?, 1);
+    let error = match gg_git::backup::restore(p, &base, "main") {
+        Ok(_) => return Err("restore of a dirty tree unexpectedly succeeded".into()),
+        Err(error) => error,
+    };
+    assert_eq!(
+        error,
+        "1 file has uncommitted changes. Commit or stash it first."
+    );
+    assert!(gg_git::backup::list(p)?.is_empty());
+    git(p, &["checkout", "--", "a"])?;
+
+    // Another branch is refused.
+    assert!(gg_git::backup::restore(p, &base, "other").is_err());
+
+    let receipt = gg_git::backup::restore(p, &base, "main")?;
+    assert_eq!(receipt.previous, tip);
+    assert_eq!(receipt.commit, base);
+    assert_eq!(rev(p, "HEAD")?, base);
+    assert_eq!(std::fs::read(p.join("a"))?, b"base\n");
+    let backups = gg_git::backup::list(p)?;
+    assert_eq!(backups.len(), 1);
+    assert_eq!(backups[0].reference, receipt.saved);
+    assert_eq!(backups[0].label, "restore");
+    assert_eq!(backups[0].commit, tip, "the left tip can be restored again");
+    assert_eq!(backups[0].branch.as_deref(), Some("main"));
+    Ok(())
+}
+
+#[test]
+fn delete_removes_one_backup_and_refuses_other_references() -> Result {
+    let dir = repo()?;
+    let p = dir.path();
+    let head = rev(p, "HEAD")?;
+    let first = gg_git::backup::create(p, "amend", &head)?;
+    let second = gg_git::backup::create(p, "rebase", &head)?;
+    gg_git::backup::delete(p, &first)?;
+    let backups = gg_git::backup::list(p)?;
+    assert_eq!(backups.len(), 1);
+    assert_eq!(backups[0].reference, second);
+    assert!(gg_git::backup::delete(p, "refs/heads/main").is_err());
+    assert!(gg_git::backup::delete(p, "refs/gg/backup/../../heads/main").is_err());
+    assert_eq!(rev(p, "refs/heads/main")?, head);
     Ok(())
 }

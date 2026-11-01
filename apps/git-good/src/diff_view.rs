@@ -183,10 +183,20 @@ pub struct DiffView {
     submodule_request: Option<SubmoduleRequest>,
     lfs_request: Option<LfsRequest>,
     /// Repository-relative path chosen with ⋯ › Open in editor.
-    editor_request: Option<String>,
+    editor_request: Option<crate::editor::Request>,
     /// Draw History on the mode row: `Some(enabled)`; the owner opens it.
     history_button: Option<bool>,
+    /// History stays pressed while the version list is open.
+    history_open: bool,
     history_request: bool,
+    /// Narrow review: `‹ Files 1/3` starts the header row and the endpoints
+    /// move to the identity row's `vs` picker; the label is the
+    /// file position.
+    files_button: Option<String>,
+    files_request: bool,
+    /// Narrow windows: the change position lives in the ‹ › tooltips and the
+    /// path may shrink to 120 px, so the header stays one row.
+    compact_header: bool,
     offset: f32,
     reset: bool,
     mode: Mode,
@@ -278,7 +288,11 @@ impl Default for DiffView {
             lfs_request: None,
             editor_request: None,
             history_button: None,
+            history_open: false,
             history_request: false,
+            files_button: None,
+            files_request: false,
+            compact_header: false,
             offset: 0.0,
             reset: false,
             mode: Mode::Diff,
@@ -439,8 +453,23 @@ impl DiffView {
 
     /// Take an LFS-details request raised by File actions.
     /// Show History on the mode row (`Some(enabled)`) or not (`None`).
-    pub fn set_history_button(&mut self, button: Option<bool>) {
+    /// `Some(enabled)` shows History; `open` draws it pressed (a click
+    /// then closes the version list).
+    pub fn set_history_button(&mut self, button: Option<bool>, open: bool) {
         self.history_button = button;
+        self.history_open = open;
+    }
+
+    /// Narrow review: start the header row with `‹ Files <position>`
+    /// (`Some`), and keep the header to one row (`compact`).
+    pub fn set_narrow_header(&mut self, files: Option<String>, compact: bool) {
+        self.files_button = files;
+        self.compact_header = compact;
+    }
+
+    /// Take a click on `‹ Files`.
+    pub fn take_files_request(&mut self) -> bool {
+        std::mem::take(&mut self.files_request)
     }
 
     /// Take a click on the mode row's History button.
@@ -449,7 +478,12 @@ impl DiffView {
     }
 
     /// Take the path chosen with ⋯ › Open in editor.
-    pub fn take_editor_request(&mut self) -> Option<String> {
+    /// The footer receipt of a finished ⋯ › Export.
+    pub fn take_export_receipt(&mut self) -> Option<String> {
+        self.export.take_receipt()
+    }
+
+    pub fn take_editor_request(&mut self) -> Option<crate::editor::Request> {
         self.editor_request.take()
     }
 
@@ -899,6 +933,7 @@ impl DiffView {
             )
     }
 
+    #[cfg(test)]
     fn can_whole_edit(&self) -> bool {
         self.content_settled()
             && self.stage.is_some_and(|stage| !stage.pending)
@@ -909,26 +944,6 @@ impl DiffView {
                     Area::Staged | Area::Unstaged | Area::Untracked
                 )
             })
-    }
-
-    fn whole_edit_reason(&self) -> &'static str {
-        if self.stage.is_some_and(|stage| stage.pending) {
-            "Wait for the current operation"
-        } else if !self.content_settled() || self.info.is_none() {
-            "Wait for the file comparison"
-        } else if self
-            .working
-            .as_ref()
-            .is_some_and(|working| working.entry.area == Area::Conflict)
-        {
-            "Resolve the conflict before staging"
-        } else if self.working.as_ref().is_some_and(|working| {
-            matches!(working.entry.kind, Kind::IntentToAdd | Kind::Conflicted)
-        }) {
-            "This entry cannot be staged as a whole file"
-        } else {
-            "This file cannot be staged as a whole file"
-        }
     }
 
     fn can_drop_whole(&self) -> bool {
@@ -1866,7 +1881,10 @@ impl DiffView {
             .displayed_working
             .clone()
             .or_else(|| self.working.clone());
-        let endpoints = if let Some(working) = &displayed_working {
+        // The narrow review moves the endpoints into its `vs` picker.
+        let endpoints = if self.files_button.is_some() {
+            None
+        } else if let Some(working) = &displayed_working {
             Some(self.working_route(working))
         } else if self.displayed.is_none() || self.displayed_generation == self.generation {
             match (&self.before_endpoint, &self.after_endpoint) {
@@ -1891,13 +1909,25 @@ impl DiffView {
                 .min(rect.width() * 0.6);
             let path_rect =
                 egui::Rect::from_min_size(rect.min, egui::vec2(path_width + 1.0, rect.height()));
-            bounded_text::paint(
-                ui,
-                path_rect,
-                &change.path,
-                path_font,
-                ui.visuals().text_color(),
-            );
+            if self.compact_header {
+                // A long path loses its start, keeping the file name.
+                bounded_text::paint_path(
+                    ui,
+                    path_rect,
+                    &change.path,
+                    path_font,
+                    ui.visuals().text_color(),
+                );
+            } else {
+                bounded_text::paint_named(
+                    ui,
+                    path_rect,
+                    &change.path,
+                    path_font,
+                    ui.visuals().text_color(),
+                    "Path",
+                );
+            }
             if let Some(endpoints) = &endpoints {
                 let endpoint_rect = egui::Rect::from_min_max(
                     egui::pos2(path_rect.right() + 12.0, rect.top()),
@@ -1913,27 +1943,11 @@ impl DiffView {
                     );
                 }
             }
+            // Whole-file staging stays on the file row's + / − button.
             if let Some(sides) = self.sides
                 && let Some(staged) = side_toggle(ui, sides)
             {
                 self.side_request = Some(staged);
-            }
-            if let Some(stage) = self.stage {
-                let label = if stage.verb == "Unstage" {
-                    "Unstage"
-                } else {
-                    "Stage"
-                };
-                let enabled = self.can_whole_edit();
-                let response = ui.add_enabled(enabled, egui::Button::new(label));
-                let response = if enabled {
-                    response.on_hover_text(format!("{} the whole file", stage.verb))
-                } else {
-                    response.on_disabled_hover_text(self.whole_edit_reason())
-                };
-                if response.clicked() {
-                    self.stage_edit = Some(self.file_edit(false));
-                }
             }
         }
     }
@@ -1995,17 +2009,26 @@ impl DiffView {
                 self.info.as_ref().map_or(0, |info| info.new_size)
             )
         };
-        bounded_text::field(ui, &text, egui::FontId::monospace(10.0), 18.0);
+        bounded_text::field_named(
+            ui,
+            &text,
+            egui::FontId::monospace(10.0),
+            18.0,
+            "File details",
+        );
     }
 
-    /// The ⋯ File actions menu, at the end of the reader's mode row (mockup).
+    /// The ⋯ File actions menu, the last button of the reader's one row:
+    /// 24 px menu rows with a check column (accepted reader proposal).
     fn file_actions_menu(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, change: &FileChange) {
+        use crate::menus::row;
         ui.menu_button(crate::phosphor::icon(crate::phosphor::DOTS_THREE), |ui| {
+            ui.set_min_width(240.0);
             let capabilities = self.capabilities();
             if self.fold_tools {
                 let blame = self.attribution_available();
                 if ui
-                    .add_enabled(blame, crate::menus::row(self.attribution, "Blame").shortcut_text("B"))
+                    .add_enabled(blame, row(self.attribution, "Blame").shortcut_text("B"))
                     .clicked()
                 {
                     self.blame_request = true;
@@ -2013,7 +2036,7 @@ impl DiffView {
                 }
                 if let Some(available) = self.history_button
                     && ui
-                        .add_enabled(available, crate::menus::row(false, "File history").shortcut_text("H"))
+                        .add_enabled(available, row(false, "File history").shortcut_text("H"))
                         .clicked()
                 {
                     self.history_request = true;
@@ -2021,6 +2044,47 @@ impl DiffView {
                 }
                 ui.separator();
             }
+            let native = std::str::from_utf8(&change.path_bytes).ok();
+            for (label, folder, hint) in [
+                (
+                    "Open in editor",
+                    false,
+                    "Open the working file with the editor from Preferences, or the system's default app",
+                ),
+                (
+                    "Reveal in folder",
+                    true,
+                    "Open the folder that holds the working file",
+                ),
+            ] {
+                if ui
+                    .add_enabled(native.is_some(), row(false, label))
+                    .on_hover_text(hint)
+                    .on_disabled_hover_text("The path is not valid UTF-8.")
+                    .clicked()
+                {
+                    self.editor_request = native.map(|path| crate::editor::Request {
+                        path: path.to_owned(),
+                        folder,
+                    });
+                    ui.close();
+                }
+            }
+            if ui
+                .add(row(
+                    false,
+                    if native.is_some() {
+                        "Copy path"
+                    } else {
+                        "Copy escaped path"
+                    },
+                ))
+                .clicked()
+            {
+                ctx.copy_text(native.unwrap_or(&change.path).to_owned());
+                ui.close();
+            }
+            ui.separator();
             for (label, side, enabled) in [
                 (
                     "Export before…",
@@ -2033,51 +2097,53 @@ impl DiffView {
                     capabilities.export_after,
                 ),
             ] {
+                let before = label == "Export before…";
                 if ui
-                    .add_enabled(enabled && !self.export.busy(), egui::Button::new(label))
+                    .add_enabled(enabled && !self.export.busy(), row(false, label))
+                    .on_disabled_hover_text(if before {
+                        "There is no earlier version to export"
+                    } else {
+                        "There is no later version to export"
+                    })
                     .clicked()
                     && let Some(side) = side
                 {
                     self.export.choose(
                         self.displayed_path.clone(),
                         side.clone(),
-                        format!("{} · {}", label.trim_end_matches('…'), change.path),
+                        crate::export::Choice {
+                            path: change.path.clone(),
+                            side: if before {
+                                self.old_label
+                            } else {
+                                self.new_label
+                            },
+                            version: if before {
+                                self.before_endpoint.clone()
+                            } else {
+                                self.after_endpoint.clone()
+                            },
+                            size: self
+                                .info
+                                .as_ref()
+                                .map(|info| if before { info.old_size } else { info.new_size }),
+                        },
                     );
                     ui.close();
                 }
             }
-            if self.can_drop_whole()
-                && ui
-                    .button("Discard unstaged changes…")
-                    .on_hover_text(
-                        "Restore the working file from the index (an untracked file is removed); the index is unchanged",
-                    )
-                    .clicked()
-            {
-                self.stage_edit = Some(self.file_edit(true));
-                ui.close();
-            }
-            let native = std::str::from_utf8(&change.path_bytes).ok();
-            if ui
-                .add_enabled(native.is_some(), egui::Button::new("Open in editor"))
-                .on_hover_text(
-                    "Open the working file with the editor from Preferences, or the system's default app",
+            ui.separator();
+            let details = ui.add(row(self.details_open, "File details"));
+            details.widget_info(|| {
+                egui::WidgetInfo::selected(
+                    egui::accesskit::Role::MenuItemCheckBox,
+                    true,
+                    self.details_open,
+                    "File details",
                 )
-                .on_disabled_hover_text("The path is not valid UTF-8.")
-                .clicked()
-            {
-                self.editor_request = native.map(str::to_owned);
-                ui.close();
-            }
-            if ui
-                .button(if native.is_some() {
-                    "Copy path"
-                } else {
-                    "Copy escaped path"
-                })
-                .clicked()
-            {
-                ctx.copy_text(native.unwrap_or(&change.path).to_owned());
+            });
+            if details.clicked() {
+                self.details_open = !self.details_open;
                 ui.close();
             }
             if self.is_lfs() {
@@ -2086,30 +2152,32 @@ impl DiffView {
                     .clone()
                     .map(LfsRequest::Working)
                     .or_else(|| Some(LfsRequest::Change(change.clone())));
-                ui.separator();
-                if ui.button("LFS details…").clicked() {
+                if ui.add(row(false, "LFS details…")).clicked() {
                     self.lfs_request = request;
                     ui.close();
                 }
             }
-            if let Some(request) = self.request_submodule(change) {
+            if let Some(request) = self.request_submodule(change)
+                && ui.add(row(false, "Submodule details…")).clicked()
+            {
+                self.submodule_request = Some(request);
+                ui.close();
+            }
+            if self.can_drop_whole() {
                 ui.separator();
-                if ui.button("Submodule details…").clicked() {
-                    self.submodule_request = Some(request);
+                if ui
+                    .add(row(
+                        false,
+                        egui::RichText::new("Discard file…").color(ui.visuals().error_fg_color),
+                    ))
+                    .on_hover_text(
+                        "Restore the working file from the index (an untracked file is removed); the index is unchanged",
+                    )
+                    .clicked()
+                {
+                    self.stage_edit = Some(self.file_edit(true));
                     ui.close();
                 }
-            }
-            ui.separator();
-            if ui
-                .button(if self.details_open {
-                    "Hide file details"
-                } else {
-                    "Show file details"
-                })
-                .clicked()
-            {
-                self.details_open = !self.details_open;
-                ui.close();
             }
         })
         .response
@@ -2168,32 +2236,39 @@ impl DiffView {
         );
     }
 
+    /// The 26 px blame metadata bar at the reader bottom.
     fn draw_attribution(&mut self, ui: &mut egui::Ui) {
-        let Some(line) = self
+        let line = self
             .cursor
-            .and_then(|index| self.blame.as_ref().and_then(|blame| blame.line(index + 1)))
-            .cloned()
-        else {
-            return;
-        };
+            .and_then(|index| self.full.as_ref()?.lines.get(index))
+            .and_then(|line| self.blame.as_ref()?.line(line.number))
+            .cloned();
         let range = match (self.cursor, self.anchor) {
             (Some(cursor), Some(anchor)) => (cursor.min(anchor) + 1, cursor.max(anchor) + 1),
             (Some(cursor), None) => (cursor + 1, cursor + 1),
-            _ => (line.line, line.line),
+            _ => (0, 0),
         };
-        ui.horizontal_wrapped(|ui| {
-            ui.strong(line.author.clone());
-            ui.weak(line.email.clone());
-            ui.weak(relative_time(line.time));
-            ui.weak(line.short_commit());
-            ui.label(line.summary.clone());
-            if ui.button("Open commit").clicked() {
-                self.open_commit = Some((line.commit.clone(), line.summary.clone()));
-            }
-            if ui.button("Line history").clicked() {
-                self.line_history = Some(range);
-            }
+        let shown = line.as_ref().map(|line| {
+            let range = if range.0 == 0 {
+                (line.line, line.line)
+            } else {
+                range
+            };
+            (line, range)
         });
+        match crate::blame_view::bar(ui, shown, crate::blame_view::now()) {
+            Some(crate::blame_view::Act::OpenCommit) => {
+                if let Some(line) = &line {
+                    self.open_commit = Some((line.commit.clone(), line.summary.clone()));
+                }
+            }
+            Some(crate::blame_view::Act::LineHistory) => {
+                if let Some((_, range)) = shown {
+                    self.line_history = Some(range);
+                }
+            }
+            None => {}
+        }
     }
 
     fn draw_inner(&mut self, ui: &mut egui::Ui, keyboard: bool) {
@@ -2206,7 +2281,7 @@ impl DiffView {
             }
             self.mode_seeded = true;
         }
-        self.follow_layout(crate::settings::diff_layout(&ctx));
+        self.follow_layout(crate::settings::reader_layout(&ctx));
         self.follow_options(&ctx);
         self.poll_blame();
         self.sync_blame(&ctx);
@@ -2261,82 +2336,100 @@ impl DiffView {
         // mode controls; narrow readers wrap the controls to a second line.
         self.fold_tools = ui.available_width() < FOLD_TOOLS_BELOW;
         // When the controls leave the path less than 220 px, the path takes
-        // the first line and the controls wrap below it.
+        // the first line and the controls wrap below it. The compact narrow
+        // header keeps one row down to a 120 px path (narrow proposal).
         let spare = ui.available_width() - self.header_controls - 8.0;
-        let fits = spare >= 220.0;
+        let fits = spare >= if self.compact_header { 120.0 } else { 220.0 };
         let path_width = if fits {
             spare.min(560.0)
         } else {
             (ui.available_width() - 8.0).max(140.0)
         };
+        // Image and other binary readers keep the one row: their layouts take
+        // the layout slot, and Diff | Full file, Blame and ‹ › are hidden.
+        let binary = self.preview.is_some();
         let header = ui.horizontal_wrapped(|ui| {
-            self.draw_header(ui, &change, path_width);
-            let diff = ui
-                .add_enabled(
-                    capabilities.diff,
-                    egui::Button::new("Diff").selected(self.mode == Mode::Diff),
-                )
-                .on_disabled_hover_text(if self.working.is_some() {
-                    "This path has no comparable sides"
-                } else {
-                    "Choose an earlier version to compare"
-                });
-            if diff.clicked() {
-                actions.push(Action::Mode(Mode::Diff));
-            }
-            if ui
-                .selectable_label(self.mode == Mode::Full, "Full file")
-                .clicked()
+            if let Some(position) = &self.files_button
+                && ui
+                    .button(("‹ Files", egui::RichText::new(position).small().weak()))
+                    .on_hover_text("Back to the file list · F")
+                    .clicked()
             {
-                actions.push(Action::Mode(Mode::Full));
+                self.files_request = true;
             }
-            // One slot: Inline | Side by side in Diff, Before | After in Full
-            // file (accepted reader proposal).
-            ui.separator();
-            if self.mode == Mode::Full {
-                for side in [ReadingSide::Before, ReadingSide::After] {
-                    let available = self.edge_known
-                        && match side {
-                            ReadingSide::Before => capabilities.full_before,
-                            ReadingSide::After => capabilities.full_after,
-                        };
-                    let response = ui
-                        .add_enabled(
-                            available,
-                            egui::Button::new(self.side_label(side)).selected(side == self.side),
-                        )
-                        .on_disabled_hover_text(if self.edge_known {
-                            "This side does not exist in this comparison"
-                        } else {
-                            "Earlier version not loaded"
-                        });
-                    if response.clicked() && side != self.side {
-                        actions.push(Action::Side(side));
-                    }
+            self.draw_header(ui, &change, path_width);
+            if binary {
+                ui.separator();
+                if let Some(preview) = &self.preview {
+                    self.binary_view.header(ui, preview);
                 }
             } else {
-                for (layout, label) in [
-                    (DiffLayout::Inline, "Inline"),
-                    (DiffLayout::SideBySide, "Side by side"),
-                ] {
-                    let response = ui.add(egui::Button::new(label).selected(self.layout == layout));
-                    if response.clicked() {
-                        actions.push(Action::Layout(layout));
+                let diff = ui
+                    .add_enabled(
+                        capabilities.diff,
+                        egui::Button::new("Diff").selected(self.mode == Mode::Diff),
+                    )
+                    .on_disabled_hover_text(if self.working.is_some() {
+                        "This path has no comparable sides"
+                    } else {
+                        "Choose an earlier version to compare"
+                    });
+                if diff.clicked() {
+                    actions.push(Action::Mode(Mode::Diff));
+                }
+                if ui
+                    .selectable_label(self.mode == Mode::Full, "Full file")
+                    .clicked()
+                {
+                    actions.push(Action::Mode(Mode::Full));
+                }
+                // One slot: Inline | Side by side in Diff, Before | After in Full
+                // file (accepted reader proposal).
+                ui.separator();
+                if self.mode == Mode::Full {
+                    for side in [ReadingSide::Before, ReadingSide::After] {
+                        let available = self.edge_known
+                            && match side {
+                                ReadingSide::Before => capabilities.full_before,
+                                ReadingSide::After => capabilities.full_after,
+                            };
+                        let response = ui
+                            .add_enabled(
+                                available,
+                                egui::Button::new(self.side_label(side))
+                                    .selected(side == self.side),
+                            )
+                            .on_disabled_hover_text(if self.edge_known {
+                                "This side does not exist in this comparison"
+                            } else {
+                                "Earlier version not loaded"
+                            });
+                        if response.clicked() && side != self.side {
+                            actions.push(Action::Side(side));
+                        }
+                    }
+                } else {
+                    for (layout, label) in [
+                        (DiffLayout::Inline, "Inline"),
+                        (DiffLayout::SideBySide, "Side by side"),
+                    ] {
+                        let response =
+                            ui.add(egui::Button::new(label).selected(self.layout == layout));
+                        if response.clicked() {
+                            actions.push(Action::Layout(layout));
+                        }
                     }
                 }
             }
             // Blame and History sit on this row in both presentations, as in
             // the mockup; Blame from Diff opens Full file with blame on. A
             // narrow reader folds them into ⋯ (accepted proposal).
-            if !self.fold_tools {
+            if !self.fold_tools && !binary {
                 let available = self.attribution_available();
-                let label = if self.attribution && self.mode == Mode::Full {
-                    "Hide blame"
-                } else {
-                    "Blame"
-                };
+                // Always "Blame", pressed while on (accepted reader proposal).
+                let pressed = self.attribution && self.mode == Mode::Full;
                 let response = ui
-                    .add_enabled(available, egui::Button::new(label))
+                    .add_enabled(available, egui::Button::new("Blame").selected(pressed))
                     .on_hover_text("Blame · B")
                     .on_disabled_hover_text(if self.working.is_some() {
                         "Attribution is available for committed content"
@@ -2356,63 +2449,72 @@ impl DiffView {
             }
             if let Some(available) = self.history_button.filter(|_| !self.fold_tools) {
                 let response = ui
-                    .add_enabled(available, egui::Button::new("History"))
-                    .on_hover_text("File history · H")
+                    .add_enabled(
+                        available,
+                        egui::Button::new("History").selected(self.history_open),
+                    )
+                    .on_hover_text(if self.history_open {
+                        "Close history · Esc"
+                    } else {
+                        "File history · H"
+                    })
                     .on_disabled_hover_text("Select a file to follow its history");
                 if response.clicked() {
                     self.history_request = true;
                 }
             }
-            ui.separator();
-            if !self.edge_known {
-                ui.weak("Earlier version not loaded");
-                ui.add_enabled(
-                    false,
-                    egui::Button::new(crate::phosphor::icon(crate::phosphor::CARET_LEFT)),
-                );
-                ui.add_enabled(
-                    false,
-                    egui::Button::new(crate::phosphor::icon(crate::phosphor::CARET_RIGHT)),
-                );
-            } else {
-                let (index, total) = self.change_position();
-                if total == 0 {
-                    if self
-                        .info
-                        .as_ref()
-                        .is_none_or(|info| info.note.trim().is_empty())
-                    {
-                        ui.weak("No changes");
-                    }
-                } else if total > 1 {
-                    let label = if self.change_number().is_some() {
-                        format!("Change {index} of {total}")
-                    } else {
-                        format!("Before change 1 of {total}")
-                    };
-                    ui.weak(label);
-                }
-                let previous = self.previous_change().is_some();
-                let next = self.next_change().is_some();
-                if ui
-                    .add_enabled(
-                        previous,
+            if !binary {
+                ui.separator();
+                if !self.edge_known {
+                    ui.weak("Earlier version not loaded");
+                    ui.add_enabled(
+                        false,
                         egui::Button::new(crate::phosphor::icon(crate::phosphor::CARET_LEFT)),
-                    )
-                    .on_hover_text("Previous change  [")
-                    .clicked()
-                {
-                    actions.push(Action::Change(-1));
-                }
-                if ui
-                    .add_enabled(
-                        next,
+                    );
+                    ui.add_enabled(
+                        false,
                         egui::Button::new(crate::phosphor::icon(crate::phosphor::CARET_RIGHT)),
-                    )
-                    .on_hover_text("Next change  ]")
-                    .clicked()
-                {
-                    actions.push(Action::Change(1));
+                    );
+                } else {
+                    let (index, total) = self.change_position();
+                    if total == 0 {
+                        if self
+                            .info
+                            .as_ref()
+                            .is_none_or(|info| info.note.trim().is_empty())
+                        {
+                            ui.weak("No changes");
+                        }
+                    } else if total > 1 && !self.compact_header {
+                        let label = if self.change_number().is_some() {
+                            format!("Change {index} of {total}")
+                        } else {
+                            format!("Before change 1 of {total}")
+                        };
+                        ui.weak(label);
+                    }
+                    let previous = self.previous_change().is_some();
+                    let next = self.next_change().is_some();
+                    if ui
+                        .add_enabled(
+                            previous,
+                            egui::Button::new(crate::phosphor::icon(crate::phosphor::CARET_LEFT)),
+                        )
+                        .on_hover_text("Previous change  [")
+                        .clicked()
+                    {
+                        actions.push(Action::Change(-1));
+                    }
+                    if ui
+                        .add_enabled(
+                            next,
+                            egui::Button::new(crate::phosphor::icon(crate::phosphor::CARET_RIGHT)),
+                        )
+                        .on_hover_text("Next change  ]")
+                        .clicked()
+                    {
+                        actions.push(Action::Change(1));
+                    }
                 }
             }
             self.file_actions_menu(ui, &ctx, &change);
@@ -2443,7 +2545,7 @@ impl DiffView {
             match action {
                 Action::Mode(mode) => self.set_mode(mode, &ctx),
                 Action::Layout(layout) => {
-                    crate::settings::set_diff_layout(&ctx, layout);
+                    crate::settings::choose_reader_layout(&ctx, layout);
                     self.follow_layout(layout);
                 }
                 Action::Side(side) => self.set_side(side, &ctx),
@@ -2452,11 +2554,8 @@ impl DiffView {
             }
         }
         self.draw_status(ui);
-        if self.attribution && self.mode == Mode::Full {
-            self.draw_attribution(ui);
-        }
         if let Some(error) = &self.error {
-            bounded_text::field(ui, error, egui::FontId::proportional(12.0), 22.0);
+            bounded_text::field_named(ui, error, egui::FontId::proportional(12.0), 22.0, "Error");
             if ui
                 .button(if self.mode == Mode::Full {
                     "Retry file"
@@ -2475,12 +2574,27 @@ impl DiffView {
         ui.separator();
         self.rect = ui.available_rect_before_wrap();
         self.refresh_wrap(ui);
-        if self.mode == Mode::Full {
-            self.draw_full(ui, &ctx, keyboard);
-            return;
-        }
         if let Some(preview) = &self.preview {
             self.binary_view.draw(ui, preview, keyboard);
+            return;
+        }
+        if self.mode == Mode::Full {
+            if self.attribution && self.blame.is_some() {
+                // The metadata bar keeps its 26 px at the reader bottom.
+                let size = ui.available_size();
+                let content = egui::vec2(size.x, (size.y - crate::blame_view::BAR).max(0.0));
+                ui.allocate_ui_with_layout(
+                    content,
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        ui.set_min_size(content);
+                        self.draw_full(ui, &ctx, keyboard);
+                    },
+                );
+                self.draw_attribution(ui);
+            } else {
+                self.draw_full(ui, &ctx, keyboard);
+            }
             return;
         }
         if self.working.is_some()
@@ -3132,7 +3246,13 @@ impl DiffView {
         }
         ui.spacing_mut().item_spacing.y = 0.0;
         let blame = self.attribution.then_some(self.blame.as_ref()).flatten();
-        let gutter = if blame.is_some() { 156.0 } else { 0.0 };
+        let gutter = if blame.is_some() {
+            crate::blame_view::GUTTER
+        } else {
+            0.0
+        };
+        let span = blame.and_then(crate::blame_view::span).unwrap_or((0, 0));
+        let now = crate::blame_view::now();
         let wrap = self.wrap_key.as_ref().map(|key| key.columns);
         let width = if wrap.is_some() {
             ui.available_width()
@@ -3188,21 +3308,19 @@ impl DiffView {
                     ui.painter().rect_filled(rect, 0.0, fill);
                 }
                 let first = segment == 0;
-                if let Some(entry) = blame
-                    .filter(|_| first)
-                    .and_then(|blame| blame.line(line.number))
+                if let Some(blame) = blame
+                    && let Some(entry) = blame.line(line.number)
                 {
-                    let clip = egui::Rect::from_min_max(
-                        rect.min + egui::vec2(4.0, 0.0),
-                        rect.min + egui::vec2(gutter - 6.0, HEIGHT),
-                    )
-                    .intersect(ui.clip_rect());
-                    ui.painter().with_clip_rect(clip).text(
-                        rect.min + egui::vec2(4.0, HEIGHT / 2.0),
-                        egui::Align2::LEFT_CENTER,
-                        format!("{} · {}", entry.author, entry.short_commit()),
-                        egui::FontId::proportional(10.0),
-                        ui.visuals().weak_text_color(),
+                    // One label per run of lines from the same commit.
+                    let start = first && crate::blame_view::run_start(blame, line.number);
+                    crate::blame_view::paint_gutter(
+                        ui,
+                        rect,
+                        entry,
+                        start,
+                        line.number <= blame.start_line,
+                        span,
+                        now,
                     );
                 }
                 let font = egui::FontId::monospace(crate::density::code_font());
@@ -3295,23 +3413,6 @@ fn pick_box(ui: &egui::Ui, row: egui::Rect, picked: bool) {
             ],
             egui::Stroke::new(1.5, visuals.strong_text_color()),
         );
-    }
-}
-
-fn relative_time(seconds: i64) -> String {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_secs() as i64)
-        .unwrap_or_default();
-    let delta = (now - seconds).max(0);
-    if delta < 60 {
-        "just now".into()
-    } else if delta < 3_600 {
-        format!("{}m ago", delta / 60)
-    } else if delta < 86_400 {
-        format!("{}h ago", delta / 3_600)
-    } else {
-        format!("{}d ago", delta / 86_400)
     }
 }
 
@@ -3786,6 +3887,72 @@ mod tests {
     }
 
     #[test]
+    fn image_readers_keep_the_one_row_header_without_text_controls() {
+        let ctx = egui::Context::default();
+        let mut view = DiffView {
+            displayed: Some(file("assets/logo.png", true, true)),
+            displayed_generation: 1,
+            generation: 1,
+            edge_known: true,
+            ..Default::default()
+        };
+        let image = || crate::binary_preview::Preview {
+            note: String::new(),
+            image: Some(egui::ColorImage::filled([4, 4], egui::Color32::RED)),
+            hex: String::new(),
+            id: Some("a".repeat(40)),
+            bytes: 64,
+            dimensions: Some((4, 4)),
+        };
+        view.preview = Some(std::sync::Arc::new(crate::binary_preview::Pair {
+            before: image(),
+            after: image(),
+        }));
+        let output = crate::tests::run_ui(
+            &ctx,
+            crate::tests::frame_input(1120.0, 600.0, vec![]),
+            |ui| view.draw(ui),
+        );
+        let shapes = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) => {
+                    Some((text.galley.job.text.as_str(), text.pos.y))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let text = shapes.iter().map(|(text, _)| *text).collect::<Vec<_>>();
+        for hidden in [
+            "Diff",
+            "Full file",
+            "Blame",
+            "Inline",
+            crate::phosphor::CARET_LEFT,
+        ] {
+            assert!(
+                !text.contains(&hidden),
+                "{hidden} is hidden for images: {text:?}"
+            );
+        }
+        let row = shapes
+            .iter()
+            .find(|(text, _)| *text == "assets/logo.png")
+            .map(|(_, y)| *y);
+        for shown in ["Side by side", "Swipe", "Onion skin", "Hex", "Fit", "1:1"] {
+            let y = shapes
+                .iter()
+                .find(|(text, _)| *text == shown)
+                .map(|(_, y)| *y);
+            assert!(
+                y.zip(row).is_some_and(|(y, row)| (y - row).abs() < 8.0),
+                "{shown} sits on the reader's one row: {shapes:?}"
+            );
+        }
+    }
+
+    #[test]
     fn attribution_column_and_selected_line_metadata_render() {
         let ctx = egui::Context::default();
         let mut view = DiffView::default();
@@ -3864,15 +4031,26 @@ mod tests {
                 _ => None,
             })
             .collect::<Vec<_>>();
+        // Each run's label: author, short ID and age in their own slots.
+        for expected in ["Ada", "aaaaaaaa", "Grace", "bbbbbbbb"] {
+            assert!(text.contains(&expected), "missing {expected}: {text:?}");
+        }
+        // The metadata bar sits at the reader bottom, under the rows.
+        let y = |needle: &str| {
+            output.shapes.iter().find_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) if text.galley.job.text == needle => {
+                    Some(text.pos.y)
+                }
+                _ => None,
+            })
+        };
+        assert!(y("LINE 1") > y("two"), "the bar is below the lines");
         assert!(
-            text.iter().any(|line| line.contains("Ada · aaaaaaaa")),
-            "{text:?}"
+            y("LINE 1").is_some_and(|y| y > 480.0 - 40.0),
+            "the bar is at the bottom"
         );
-        assert!(
-            text.iter().any(|line| line.contains("Grace · bbbbbbbb")),
-            "{text:?}"
-        );
-        for expected in ["Ada", "ada@example.org", "first"] {
+        assert!(text.contains(&"Blame") || !text.contains(&"Hide blame"));
+        for expected in ["Ada", "first", "Open commit", "Line history"] {
             assert!(
                 text.iter().any(|line| line.contains(expected)),
                 "missing {expected}: {text:?}"
@@ -5017,10 +5195,45 @@ mod tests {
     }
 
     #[test]
+    fn narrow_windows_start_inline_whatever_the_preference() {
+        for (width, expected) in [
+            (720.0, DiffLayout::Inline),
+            (1120.0, DiffLayout::SideBySide),
+        ] {
+            let ctx = egui::Context::default();
+            crate::settings::set_diff_layout(&ctx, DiffLayout::SideBySide);
+            let mut view = DiffView {
+                change: Some(file("a", true, true)),
+                generation: 1,
+                ..Default::default()
+            };
+            view.accept(diff_update(1, split_fixture()), None);
+            view.change = None;
+            let _ = crate::tests::run_ui(
+                &ctx,
+                crate::tests::frame_input(width, 480.0, vec![]),
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| view.draw_reading(ui));
+                },
+            );
+            assert_eq!(view.layout, expected, "at {width}");
+            // Choosing Side by side in the narrow window keeps the preference.
+            if width < 1040.0 {
+                crate::settings::choose_reader_layout(&ctx, DiffLayout::SideBySide);
+                assert_eq!(crate::settings::reader_layout(&ctx), DiffLayout::SideBySide);
+                crate::settings::choose_reader_layout(&ctx, DiffLayout::Inline);
+                assert_eq!(crate::settings::diff_layout(&ctx), DiffLayout::SideBySide);
+            }
+        }
+    }
+
+    #[test]
     fn side_by_side_shows_before_and_after_columns() -> Result<(), Box<dyn std::error::Error>> {
         for width in [720.0, 1120.0] {
             let ctx = egui::Context::default();
             crate::settings::set_diff_layout(&ctx, crate::settings::DiffLayout::SideBySide);
+            // Narrow windows start Inline; Side by side stays available.
+            crate::settings::set_narrow_layout(&ctx, crate::settings::DiffLayout::SideBySide);
             let mut view = DiffView {
                 change: Some(file("a", true, true)),
                 generation: 1,

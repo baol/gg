@@ -82,20 +82,24 @@ Layer: product
 Covered by (end-to-end, partial): `explicit_path_overrides_cwd_and_failure_uses_stderr` (apps/git-good/tests/cli.rs, CLI); GUI part Not automated
 
 ### FRM-03 Launch in a folder that is not a repository shows the welcome view
-Fixture: `fx-not-repo`, Preference **Reopen the last repository when launched outside one** off
+Fixture: `fx-not-repo`, Preference **Reopen the last repository when launched outside one** off, recent list `[fx-linear, fx-branchy, <missing folder>]`
 Layer: product
 - Given cwd is `fx-not-repo`
 - When `git good` is run
-- Then History is replaced by a centered welcome view: heading **Open a repository**, an amber line `<path> is not a Git repository.` (full error on hover), primary **Open…** (`Ctrl+O`), **Clone…**, and up to ten recent repositories (folder name first, path dimmed)
-- And the refs sidebar and commit inspector are hidden; the footer does not repeat the error and shows `Ctrl+O: open · Ctrl+K: search`
-Covered by (interaction, partial): `renders_empty_error_and_filtered_snapshots` (apps/git-good/src/main.rs); Not automated for the full layout
+- Then History is replaced by a centered 640 px welcome column: the 36 px logo, **Open a repository**, the weak line `gg <version> · Git <version>`, one amber line `<~path> is not a Git repository.` (warning glyph, truncating; full path and Git's message on hover) with **Initialize here…**, three equal cards **Open…** (filled, `A folder on this computer · Ctrl+O`), **Clone…** (`From a URL into <~preferred clone folder>`), **New repository…** (`git init in a folder`), and RECENT with count `3`: rows name / `~` path / branch / opened / ×, the missing folder dimmed with an amber `missing` chip
+- And the toolbar shows only the search field `Search repositories and actions`: no sidebar toggle, Changes/History tabs, Fetch/Pull/Push or branch button; no refs sidebar, History header or inspector; the footer does not repeat the error and lists the welcome keys
+- And every menu stays complete; repository commands are disabled with *Open a repository first*
+- And `Ctrl+K` lists the recent repositories under REPOSITORIES and **New repository…** under ACTIONS
+- When **Initialize here…**
+- Then the New repository dialog opens on `fx-not-repo` (DLG-17)
+Covered by (interaction): `the_welcome_frame_shows_only_search_and_the_actions`, `without_a_repository_menus_stay_complete_and_repository_commands_say_why`, `a_launch_folder_that_is_not_a_repository_offers_initialize_here`, `a_missing_recent_folder_is_marked_and_offers_remove_and_locate`, `welcome_search_lists_recent_repositories_and_new_repository` (apps/git-good/src/main.rs)
 
 ### FRM-04 Welcome view recent list caps at ten
 Fixture: `fx-not-repo` with a settings file listing 12 existing recent repositories
 Layer: interaction
 - When gg launches in `fx-not-repo`
-- Then the welcome view lists exactly ten recent entries, most recent first, no duplicates; clicking one opens it
-Covered by (interaction, partial): `recent_repositories_move_to_the_front_without_duplicates` (apps/git-good/src/settings.rs) — ordering only; cap Not automated
+- Then the welcome view lists exactly ten recent entries, most recent first, no duplicates, and **Repository › Open recent** and the Open… dialog list the same ten (one limit, `RECENT_LIMIT`); clicking one opens it
+Covered by (interaction): `one_recent_limit_for_the_welcome_list_open_recent_and_open` (apps/git-good/src/main.rs), `recent_repositories_move_to_the_front_without_duplicates` (apps/git-good/src/settings.rs)
 
 ### FRM-05 Reopen the last repository when launched outside one
 Fixture: `fx-not-repo`; recent list `[<missing folder>, <fx-linear>]` (most recent first); Preference **Reopen the last repository when launched outside one** on
@@ -160,15 +164,15 @@ Covered by (interaction): `failed_switch_keeps_displayed_identity_and_retry_adop
 Fixture: `fx-linear` (Linux/Windows)
 Layer: visual
 - When the window is shown
-- Then a single 26 px row shows the gg logo, then **Repository · Branch · Commit · Changes · View · Help**; on macOS a **gg** menu comes first
+- Then a single 26 px row shows **Repository · Branch · Commit · Changes · View · Help**; on macOS a **gg** menu comes first
 Covered by (interaction): `menus_follow_the_final_design_mockup`, `menu_bar_is_one_row_and_view_shortcuts_switch_views` (apps/git-good/src/main.rs)
 
 ### FRM-17 Every menu's items, order and shortcuts
 Fixture: `fx-branchy`
 Layer: interaction
 - When each menu is opened
-- Then the items equal the Command placement table: Repository: Open… `Ctrl+O` · Clone… · Open recent ▸ · Fetch `Ctrl+Shift+F` · Pull (rebase) `Ctrl+Shift+L` · Push `Ctrl+Shift+P` · Push with force-with-lease… · Worktrees… · Recovery… · Preferences… `Ctrl+,` · Quit `Ctrl+Q`; Branch: New branch… `Ctrl+B` · New tag… · Switch to… `Ctrl+Shift+B` · Merge into current… · Rebase current onto… · Interactive rebase of current branch… · Set upstream… · Track remote branch… · Rename… `F2` · Delete… `Del`; Changes: Stage all `Ctrl+Shift+S` · Unstage all `Ctrl+Shift+U` · Discard all tracked changes… · Commit `Ctrl+Enter` · Amend HEAD `Ctrl+Shift+Enter` · Stash changes… `Ctrl+Shift+Z` · Stashes… · Resolve conflicts…; Commit, View, Help as tabled
-- And no command appears in two menus; there is no **Submodules…**, **LFS…**, **Backups…** or **Reflog…** item (Backups and Reflog are sources inside **Recovery…**)
+- Then the items equal the Command placement table: Repository: Open… `Ctrl+O` · Clone… · Open recent ▸ · Fetch `Ctrl+Shift+F` · Pull (rebase) `Ctrl+Shift+L` · Push `Ctrl+Shift+P` · Push with force-with-lease… · Worktrees… · Submodules… · LFS… · Recovery… · Preferences… `Ctrl+,` · Quit `Ctrl+Q`; Branch: New branch… `Ctrl+B` · New tag… · Switch to… `Ctrl+Shift+B` · Merge into current… · Rebase current onto… · Interactive rebase of current branch… · Set upstream… · Track remote branch… · Rename… `F2` · Delete… `Del`; Changes: Stage all `Ctrl+Shift+S` · Unstage all `Ctrl+Shift+U` · Discard all tracked changes… · Commit `Ctrl+Enter` · Amend HEAD `Ctrl+Shift+Enter` · Stash changes… `Ctrl+Shift+Z` · Stashes… · Resolve conflicts…; Commit, View, Help as tabled
+- And no command appears in two menus; there is no **Backups…** or **Reflog…** item (Backups and Reflog are sources inside **Recovery…**)
 Covered by (interaction, partial): `menus_follow_the_final_design_mockup`, `commands_off_the_toolbar_keep_their_menu_home_and_search_entry` (apps/git-good/src/main.rs) (labels, order and single menu home; shortcuts not checked)
 
 ### FRM-18 macOS gg menu moves Settings and Quit
@@ -184,12 +188,12 @@ Layer: visual
 - Then Help opens without a second click; rows are 24 px with a 14 px check column, label, shortcut; the active item (current view, current density) shows a checkmark and no selected fill; no native OS menu bar entries appear
 Covered by (interaction): `checked_rows_show_a_checkmark_and_no_selected_fill` (apps/git-good/src/menus.rs)
 
-### FRM-20 No Submodules… or LFS… placeholders
+### FRM-20 Submodules… and LFS… are real windows
 Fixture: `fx-linear`, `fx-submodule`
 Layer: interaction
-- When every menu is opened and search is given `submodule`, then `lfs`
-- Then no **Submodules…** or **LFS…** item exists in any menu or among search **Actions**; submodule and LFS details stay reachable from **File actions** in Review and Local Changes (SUB-01, LFS-01)
-Covered by (interaction, partial): `commands_off_the_toolbar_keep_their_menu_home_and_search_entry` (apps/git-good/src/main.rs) (menus only; search Actions not checked)
+- When the Repository menu is opened and search is given `submodule`, then `lfs`
+- Then **Submodules…** and **LFS…** sit in Repository after **Worktrees…**, each with one search Action and the same readiness (*Open a repository first* without one); they open the Submodules list (SUB-07) and the LFS objects list (LFS-08); submodule and LFS details stay reachable from **File actions** in Review and Local Changes (SUB-01, LFS-01)
+Covered by (interaction, partial): `commands_off_the_toolbar_keep_their_menu_home_and_search_entry`, `menus_follow_the_final_design_mockup` (apps/git-good/src/main.rs) (menu home and search entry; the opened windows are covered by SUB-07 and LFS-08)
 
 ### FRM-21 View menu switches views and toggles panes
 Fixture: `fx-linear`, 1440 px
@@ -201,9 +205,9 @@ Covered by (interaction): `menu_bar_is_one_row_and_view_shortcuts_switch_views` 
 ### FRM-22 Help › Keyboard shortcuts
 Fixture: `fx-linear`
 Layer: interaction
-- When **Help › Keyboard shortcuts** (`?`, list focused)
-- Then a non-modal window lists the full key set (incl. `Ctrl+K` Search, `Ctrl+F` search from the History filter, `Ctrl+R` Reword…); About gg is DLG-11
-Covered by (interaction, partial): `help_shortcuts_window_renders` (apps/git-good/src/main.rs)
+- When **Help › Keyboard shortcuts** (`?`, list focused, or Preferences › Keyboard › **Show keyboard shortcuts…**), then `reword` is typed in **Filter shortcuts**, then **Edit keys…** is clicked; reopened, `Esc`
+- Then a non-modal window shows one key | action table generated from the command table, grouped by menu (Repository, Branch, Commit, Changes, View, Help) then by list scope (History list, Changes list, Review, Rebase list, Conflicts, Stashes), including `Ctrl+O`, `Ctrl+B`, `Ctrl+Shift+B/F/L/P/S/U/Z`, `Ctrl+1`, `Ctrl+2`, `Ctrl+\`, `F2`, `Ctrl+Enter` and `Ctrl+R` Reword… and no Refresh row; the filter keeps only rows whose key or action matches and hides empty groups; **Edit keys…** closes it and opens Preferences › Keyboard; `Esc` closes it. About gg is DLG-11
+Covered by (interaction): `help_shortcuts_window_renders`, `keyboard_shortcuts_come_from_the_command_table`, `keyboard_shortcuts_close_on_escape_and_edit_keys_opens_preferences` (apps/git-good/src/main.rs); `groups_follow_the_menus_then_the_list_scopes`, `the_filter_matches_keys_or_actions_and_hides_empty_groups`, `no_row_offers_refresh` (apps/git-good/src/shortcuts.rs)
 
 ### Toolbar
 
@@ -314,8 +318,8 @@ Covered by (interaction): `the_switcher_runs_the_row_under_the_keyboard_cursor` 
 ### FRM-42 Branch button at narrow width
 Fixture: `fx-branchy`, 720 px
 Layer: interaction
-- Then the branch button shrinks to an icon inside the window and still opens the same switcher
-Covered by (interaction): `the_branch_button_opens_the_switcher_at_both_widths` (apps/git-good/src/main.rs)
+- Then below 1040 px the branch button is an icon inside the window; its tooltip and the switcher's current row name the branch with its ↑↓ counts, and it opens the same switcher; every toolbar button (sidebar, Changes | History, Fetch Pull Push, New branch, Stash and Stashes, Interactive rebase from here, Recovery, branch, search) fits at 720 px
+Covered by (interaction): `the_branch_button_opens_the_switcher_at_both_widths`, `window_toolbar_holds_navigation_and_sync_in_place_across_views_and_widths` (apps/git-good/src/main.rs)
 
 ### Search
 
@@ -410,32 +414,54 @@ Layer: interaction
 - Then at 1440 px the footer reads `j k: select · Enter: review · Alt+A: actions · R: rebase from here · Ctrl+K: search · Ctrl/Cmd+F: filter · Ctrl/Cmd+C: copy ID`; below 1040 px `j/k: select · Enter: review · Space: details · Esc: history · Ctrl/Cmd+F: filter` (no `copy ID`)
 Covered by (interaction): `status_hints_shorten_at_narrow_widths` (apps/git-good/src/main.rs)
 
-### FRM-56 Plain success fades after 8 seconds
+### FRM-56 Receipts fade after 8 seconds
 Fixture: `fx-remote-even`
 Layer: interaction
-- When Fetch completes with no details and no action
-- Then the footer states it in plain words (no `Network ·` prefix) and it disappears after 8 s
-Covered by (interaction): `a_plain_success_fades_after_eight_seconds` (apps/git-good/src/main.rs)
+- When Fetch completes, or a rewrite leaves `Rewrote 4 commits · backup <ref>` with **Recovery…** and **Details…**
+- Then the footer shows a check and the receipt in plain words (no `Network ·` or `History ·` prefix, the part after the first ` · ` in grey) with ×, and fades back to the key hints after 8 s; a failure stays
+Covered by (interaction): `receipts_fade_after_eight_seconds`, `receipts_and_failures_read_without_prefixes` (apps/git-good/src/main.rs); `receipts_split_into_text_and_tail` (apps/git-good/src/footer.rs)
 
-### FRM-57 Errors persist with Details… and one recovery action
+### FRM-57 Failures stay red with one recovery action, Details… and ×
 Fixture: `fx-remote-auth`
 Layer: product
 - When Push runs and fails authentication
-- Then the footer shows an error that stays until dismissed or replaced, with **Details…** (selectable, copyable full text in a non-modal window) and one recovery action, **Retry push** (authentication is retryable; a non-fast-forward rejection offers **Fetch** instead, NET-20)
-Covered by (interaction): `operation_outcome_shows_details_and_recovery`, `operation_details_window_lists_full_text` (apps/git-good/src/main.rs)
+- Then the footer is tinted red with the failure, one recovery action, **Details…** (a non-modal, resizable window titled by the operation, such as `Push rejected · details`, with the summary line, then Git's output in selectable monospace, **Copy details**, **Close** `Esc`, and the footer's same recovery action as the filled primary), and ×; it outranks a running job and stays until dismissed or the next job starts; authentication offers **Retry push**, a non-fast-forward rejection offers **Fetch** (NET-20)
+Covered by (interaction): `operation_outcome_shows_details_and_recovery`, `operation_details_window_lists_full_text`, `receipts_and_failures_read_without_prefixes` (apps/git-good/src/main.rs); `the_title_names_the_operation` (apps/git-good/src/outcome_details.rs)
 
 ### FRM-58 Network progress offers Cancel without clipping
 Fixture: `fx-remote`
 Layer: interaction
 - When Fetch is running at 1440 px and 720 px
-- Then progress and **Cancel** are visible and unclipped; Cancel stops the job and reports it (NET-32); the status line height does not change
-Covered by (interaction): `network_cancel_button_stays_inside_the_operation_area` (apps/git-good/src/main.rs)
+- Then the footer reads `Fetching origin · Receiving objects 42% · 812/1930` with a thin progress bar and **Cancel**, visible and unclipped (`Starting fetch…` until Git reports); Cancel turns the message into `Cancelling fetch…` with `waits for Git to stop` at the right (NET-32); the footer height does not change
+Covered by (interaction): `the_footer_shows_network_progress_then_cancelling`, `network_cancel_button_stays_inside_the_operation_area` (apps/git-good/src/main.rs)
 
-### FRM-59 Status line yields to the operation area
-Fixture: `fx-rebase-conflict`
+### FRM-59 The footer leaves operation controls to the band
+Fixture: `fx-rebase-conflict`; `fx-rebase` (a running rewrite)
 Layer: visual
-- Then progress and **Resolve conflicts…/Continue/Skip/Abort** appear only in the two-line operation area under the toolbar; the footer does not duplicate them; panes below do not move as the stop changes
-Covered by (interaction): `panes_hold_still_while_a_rebase_stop_changes`, `rewrite_progress_lives_once_in_the_operation_area` (apps/git-good/src/main.rs)
+- Then **Resolve conflicts**, **Continue**, **Skip commit** and **Abort and restore** appear only in the two-line operation band under the toolbar; a running Continue is named in the band, not the footer; during a rewrite the footer reads `Backup: refs/gg/backup/…`; panes below do not move as the stop changes
+Covered by (interaction): `panes_hold_still_while_a_rebase_stop_changes`, `rewrite_progress_lives_once_in_the_operation_area`, `footer_labels_name_the_job_and_its_target` (apps/git-good/src/main.rs)
+
+### FRM-74 Footer job labels name the target
+Fixture: `fx-branchy`
+Layer: interaction
+- When a switch, a create, a stash-and-switch, a remote-branch checkout, a merge, or a rebase onto runs
+- Then the footer reads, with a spinner, `Switching to feature/login…`, `Creating feature/x…`, `Stashing 3 files and switching to feature/login…`, `Creating other from origin/other…`, `Merging origin/main into main…`, `Rebasing main onto origin/main…`; a merge or rebase that never stops shows no band and finishes with a receipt (`Merged origin/main into main · 3 commits`, `Rebased main onto origin/main`)
+Covered by (interaction): `footer_labels_name_the_job_and_its_target`, `the_switcher_runs_the_row_under_the_keyboard_cursor`, `rebase_worker_keeps_frames_rendering_while_a_hook_waits` (apps/git-good/src/main.rs)
+
+### FRM-75 A blocked switch is amber with Stash and switch
+Fixture: `fx-dirty`
+Layer: interaction
+- When a switch to `feature/rebase-ui` is blocked by 3 changed files
+- Then the footer is tinted amber: `Can’t switch to feature/rebase-ui: 3 changed files would be overwritten` with the primary **Stash and switch** (**Retry switch** when stashing is not the fix) and ×, which clears the retained intent
+Covered by (interaction): `a_blocked_switch_offers_stash_and_switch_in_amber`, `created_branch_is_reported_when_the_switch_is_blocked` (apps/git-good/src/main.rs)
+
+### FRM-76 Refs drawer below the docked sidebar width
+Fixture: `fx-branchy`, narrow
+Layer: interaction
+- Given History at 720 px
+- When the user clicks the toolbar's sidebar toggle (or presses `Ctrl+\`)
+- Then the refs sidebar's content opens as a 248 px drawer at the left over the dimmed list, with focus in **Filter refs**; Up/Down move an outline over the branches (any matching ref while filtering); `Enter` selects that ref's commit in History and closes the drawer; `Esc`, `Ctrl+\`, or a click outside closes it; right-click rows keep the branch actions
+Covered by (interaction): `narrow_refs_drawer_opens_over_the_list_jumps_and_closes` (apps/git-good/src/main.rs)
 
 ### Automatic refresh
 
@@ -481,6 +507,13 @@ Layer: interaction
 - When the Stashes picker, Recovery, Worktrees, Details… and Keyboard shortcuts windows are open in turn
 - Then History rows remain clickable and Up/Down still move selection beside them
 Covered by (Not automated)
+
+### FRM-77 Full-text windows are titled by their field
+Fixture: `fx-linear` (Given: a commit whose subject is 212 characters)
+Layer: interaction
+- When the user clicks the "…" button at the end of the truncated subject in the commit inspector (a real button named *Show full commit subject*), then presses `Ctrl+C`, then `Esc`
+- Then a non-modal window titled **Commit subject** shows the exact text, selectable, then `212 characters · text is selectable`, **Close** `Esc` and the primary **Copy** `Ctrl+C`; `Ctrl+C` copies the text and `Esc` closes it; a path, the parents, a commit message, File details and an error open the same window titled **Path**, **Parents**, **Commit message**, **File details**, **Error**, with paths and IDs in mono
+Covered by (interaction, partial): `the_full_text_window_is_titled_by_its_field_with_copy_primary`, `overflow_opens_exact_text_without_changing_the_slot` (bounded_text.rs)
 
 ### FRM-66 History keys respect text focus and open menus
 Fixture: `fx-linear`
@@ -804,8 +837,8 @@ Covered by (Not automated)
 Fixture: `fx-branchy`
 Layer: interaction
 - When the user opens **Actions**, right-clicks a row, and presses Alt+A
-- Then each lists the **Commit** menu entries (Review changes `Enter`, Compare with HEAD, Copy ID `Ctrl+C`, Cherry-pick onto HEAD, Revert, Interactive rebase from here… `R`, Reword… `Ctrl+R`, Reopen for editing… `E`, Fixup into… `F`, Drop… `D`, Reset current branch to here…) with the same disabled reasons, then **Copy subject**, **Signature details…**, **Recovery…**
-Covered by (interaction): `scoped_commit_actions_menu_lists_grouped_actions`, `actions_shortcut_opens_the_scoped_menu`, `commit_action_menu_returns_the_clicked_command` (main.rs)
+- Then each lists the **Commit** menu entries as 24 px rows with the empty check column and shortcuts at the right, no group headings or hashes in labels: Review changes `Enter`, Compare with HEAD, Copy ID `Ctrl+C` with **Copy subject** and **Signature details…** under it, Cherry-pick onto HEAD, Revert, Interactive rebase from here… `R`, Reword… `Ctrl+R`, Reopen for editing… `E`, Fixup into… `F`, Drop… `D` (red), **Reset current branch to here ▸** (red; Soft · keep index and files, Mixed · keep files ✓ `default`, Hard · discard changes… in red); no Recovery… (it is in the Repository menu); during a rebase the mutations stay, greyed, under one band reading `Rebase in progress. Continue or abort it to change commits.`
+Covered by (interaction): `scoped_commit_actions_menu_lists_grouped_actions`, `actions_shortcut_opens_the_scoped_menu`, `commit_action_menu_returns_the_clicked_command`, `commit_action_menu_matches_the_inspector_with_one_reason_band` (main.rs)
 
 ### HIS-40 Right-click selects the row first
 Fixture: `fx-linear`
@@ -823,13 +856,13 @@ Layer: interaction
 - Then rewrite entries (Reword…, Reopen for editing…, Fixup into…, Drop…) are disabled with a reason naming merge commits on hover
 Covered by (Not automated)
 
-### HIS-42 Narrow details overlay
+### HIS-42 Narrow commit details
 Fixture: `fx-linear`, narrow
 Layer: interaction
-- Given c20 selected
-- When Space (or Enter-less open of details)
-- Then details replace History (with **Commit actions**); Alt+A opens the details first then the popup; Escape/Left returns to History with c20 selected at the same pixel offset; Up/Down in details move through hidden history
-Covered by (interaction): `narrow_details_navigation_preserves_hidden_history_and_back_anchor`, `narrow_details_returns_to_the_same_selected_history_row`, `history_strip_leaves_the_narrow_details_overlay` (main.rs, interaction_tests.rs)
+- Given c20 selected; the inspector under the list shows **Details** `Space`, **Review** `Enter`, and **Actions** `Alt+A`
+- When Space (or **Details**)
+- Then the commit details replace the list (not a side pane): **‹ History** `Esc`, the subject, and newer/older buttons; Commit (copy button), Author with email, Date, Parent, Refs, Signature **Verify…**; the message; `FILES n` with `+x −y` and per-file counts; **Actions** `Alt+A` and the filled primary **Review** `Enter` at the bottom. `j`/`k` show the older/newer commit with the details still open; Up/Down choose a file without moving the history selection; `Enter`, **Review**, or a double click opens Review on the chosen file and Esc there returns to the details; Alt+A opens the details first then the popup; Escape/Left returns to History with c20 selected at the same pixel offset
+Covered by (interaction): `narrow_details_navigation_preserves_hidden_history_and_back_anchor`, `narrow_details_step_commits_with_j_and_k`, `narrow_details_returns_to_the_same_selected_history_row`, `history_strip_leaves_the_narrow_details_overlay` (interaction_tests.rs, main.rs); `narrow_details_review_opens_on_the_chosen_file`, `scoped_commit_actions_menu_lists_grouped_actions` (main.rs)
 
 ### HIS-43 Enter opens Review and Back restores place — see REV-02
 
@@ -1064,6 +1097,12 @@ Layer: product
 - Then nothing is deleted; the list refreshes to `NOT IN THE CURRENT BRANCH` with that commit, the primary becomes `Delete old and 1 unmerged commit`, and the notice reads `The repository changed; review the updated list and confirm again.`; a second confirm deletes it
 Covered by (interaction, partial): `guard_confirms_only_what_the_dialog_showed` (apps/git-good/src/consequence.rs) (the shared re-read guard; the Delete branch dialog is not driven)
 
+### HIS-80 Narrow columns and one pill for an in-sync branch
+Fixture: `fx-remote-even`, narrow then 1120 px
+Layer: visual
+- Then at 720 px the History header reads `Commit · n`, `Hash`, `Date` (no Author), and below a 600 px list Date drops too, so subjects never truncate before them; `main` at the tip shows one pill `main ⇄ origin`; at 1120 px Author is back and the pills read `main` and `origin/main`
+Covered by (interaction): `narrow_history_drops_author_and_merges_in_sync_pills` (main.rs); `author_drops_first_then_date_below_600`, `a_branch_in_sync_with_its_upstream_shows_one_pill` (history_view.rs)
+
 ### HIS-78 Status hint at narrow width — see FRM-55
 
 ## Review and reader
@@ -1231,8 +1270,8 @@ Covered by (interaction): `retry_same_comparison_keeps_selection_anchor_and_diff
 Fixture: `fx-linear`
 Layer: visual
 - Given Review wide
-- Then one reader header row holds the path and exact endpoints (e.g. `main (a1b2c3d)` / parent), then **Diff | Full file**, **Inline | Side by side**, **Blame**, **History**, ‹ ›, ⋯; the path and endpoints are not repeated above the reader; modes, blob IDs, and sizes are in the **File details** disclosure
-Covered by (interaction): `the_reader_header_names_both_exact_endpoints` (diff_view.rs), `header_controls_keep_their_place_across_states` (review_view.rs)
+- Then one reader header row holds the path and exact endpoints (e.g. `main (a1b2c3d)` / parent), then **Diff | Full file**, **Inline | Side by side**, **Blame**, **History**, ‹ ›, ⋯; no Stage button; the path and endpoints are not repeated above the reader; modes, blob IDs, and sizes are in the opt-in **File details** row (⋯ › File details ✓, off by default); ⋯ lists 24 px rows: Open in editor, Reveal in folder, Copy path, Export before…, Export after…, File details, LFS / Submodule details… when they apply, then **Discard file…** last in red (Local Changes, unstaged)
+Covered by (interaction): `the_reader_header_names_both_exact_endpoints` (diff_view.rs), `header_controls_keep_their_place_across_states` (review_view.rs), `file_actions_are_menu_rows_with_discard_last_in_red`, `workspace_uses_one_reader_header_with_on_demand_details` (status_view.rs)
 
 ### REV-24 Byte sizes per side
 Fixture: `fx-linear`
@@ -1348,32 +1387,32 @@ Covered by (interaction): `gitlink_change_exposes_recorded_before_and_after_ids`
 ### REV-41 Image compare metadata and layouts
 Fixture: `fx-file-history` (commit changing `img/logo.png`)
 Layer: visual
-- Then each side names its short blob ID, exact dimensions, encoded bytes; wide layouts offer **Side by side**, **Swipe**, **Onion skin**; a theme-aware checkerboard shows transparency; the starting layout follows Preferences › **Compare images** and then the last choice
-Covered by (interaction): `presentation_controls_metadata_and_swipe_are_rendered` (binary_preview.rs), `the_layout_starts_from_and_remembers_the_last_choice` (binary_preview.rs)
+- Then the reader keeps its one header row with **Side by side | Swipe | Onion skin | Hex** in the layout slot and a **Fit | 1:1** segment; Diff | Full file, Blame and ‹ › are hidden; each side names its short blob ID, exact dimensions, encoded bytes; a theme-aware checkerboard shows transparency; the starting layout follows Preferences › **Compare images** and then the last choice
+Covered by (interaction): `presentation_controls_metadata_and_swipe_are_rendered`, `the_layout_starts_from_and_remembers_the_last_choice` (binary_preview.rs); `image_readers_keep_the_one_row_header_without_text_controls` (diff_view.rs)
 
-### REV-42 Fit and Actual size
+### REV-42 Fit and 1:1
 Fixture: as REV-41
 Layer: visual
-- **Fit** preserves aspect and never upscales a small image; **Actual size** shows 100% with scrolling and a visible zoom label
+- **Fit** preserves aspect and never upscales a small image; **1:1** shows actual size with scrolling
 Covered by (interaction): `fit_preserves_aspect_and_never_upscales` (binary_preview.rs)
 
 ### REV-43 Swipe boundary
 Fixture: as REV-41
 Layer: interaction
-- In **Swipe**, After is clipped at a labeled boundary slider; arrow keys move it when focused; dragging on the canvas moves it; each image aligns by its own dimensions without stretching
+- In **Swipe**, After is clipped at the **Boundary** slider in the strip under the canvas; arrow keys move it when focused; dragging on the canvas moves it; each image aligns by its own dimensions without stretching
 Covered by (interaction): `presentation_controls_metadata_and_swipe_are_rendered` (binary_preview.rs)
 
 ### REV-44 Onion skin requires both images
 Fixture: `fx-file-history` (commit adding `img/logo.png` — Before absent)
 Layer: product
-- In **Onion skin** with both images, After overlays at 50% with a labeled, keyboard-adjustable opacity slider; with Before absent it states both images are required and keeps the per-side absence state
+- In **Onion skin** with both images, After overlays at 50% with the keyboard-adjustable **After opacity** slider in the strip under the canvas; with Before absent Swipe and Onion skin are disabled (*Needs both Before and After images*) and the sides stack with their absence state
 Covered by (interaction): `onion_skin_overlays_after_and_requires_both_images` (binary_preview.rs)
 
 ### REV-45 Narrow image previews stack
 Fixture: as REV-41, narrow
 Layer: interaction
-- Then named Before/After previews are stacked; no Swipe/Onion skin controls
-Covered by (Not automated)
+- Then the layout tabs stay; Side by side stacks named Before/After previews
+Covered by (interaction, partial): `presentation_controls_metadata_and_swipe_are_rendered` (binary_preview.rs) checks the tabs at 720 px
 
 ### REV-46 Corrupt or oversized image falls back to hex
 Fixture: `fx-file-history` (`blob.bin`; Given: a `.png` with corrupt bytes, and a PNG of 5000×100 px)
@@ -1384,16 +1423,16 @@ Covered by (interaction): `png_and_jpeg_decode_with_dimensions_and_hex_fallback_
 ### REV-47 Export a side exactly
 Fixture: `fx-file-history` (commit changing `big.log`)
 Layer: product
-- When the user exports After from **File actions** to a new path
-- Then the written file is byte-identical to the blob (also beyond the diff budget); a symlink exports its target bytes; an absent side is not offered
-Covered by (interaction, end-to-end): `export_is_exact_beyond_diff_budget_and_preserves_existing_destinations` (tests/cli.rs), `export_capabilities_follow_the_displayed_sides` (diff_view.rs)
+- When the user exports After from ⋯ › **Export after…** (dialog titled `Export after version`, File / Version / Save to with **Browse…**, Cancel `Esc`, primary **Export** `Enter`, **Exporting…** while busy) to a new path
+- Then the dialog closes, the footer reads `Exported <n> bytes to <path>`, and the written file is byte-identical to the blob (also beyond the diff budget); a symlink exports its target bytes; an absent side is not offered
+Covered by (interaction, end-to-end): `export_is_exact_beyond_diff_budget_and_preserves_existing_destinations` (tests/cli.rs), `export_capabilities_follow_the_displayed_sides` (diff_view.rs), `a_finished_export_closes_and_reports_in_the_footer`, `the_dialog_names_the_side_version_and_a_suggested_file` (export.rs)
 
 ### REV-48 Export never overwrites
 Fixture: as REV-47
 Layer: product
 - When the chosen destination already exists
-- Then export refuses; the existing file is untouched; no temporary file remains
-Covered by (end-to-end, partial): `export_is_exact_beyond_diff_budget_and_preserves_existing_destinations` (tests/cli.rs); GUI path not automated
+- Then export refuses with the inline error `That file already exists. Choose a new name.` and the dialog stays; the existing file is untouched; no temporary file remains
+Covered by (interaction, end-to-end): `export_is_exact_beyond_diff_budget_and_preserves_existing_destinations` (tests/cli.rs), `a_finished_export_closes_and_reports_in_the_footer` (export.rs)
 
 ### REV-49 Escape cancels export first
 Fixture: as REV-47
@@ -1414,10 +1453,10 @@ Covered by (interaction): `reading_mode_exposes_file_and_change_navigation_at_bo
 ### REV-51 Narrow layout: list then reader
 Fixture: `fx-linear`, narrow
 Layer: interaction
-- Given Review narrow showing only the file list
+- Given Review narrow showing the file list over MESSAGE (the commit body and `author · date`); the identity row reads **‹ History** `Esc`, the subject, the ID pill, and `vs parent <id>` (choosing HEAD there compares with HEAD)
 - When the user presses `Enter` on a file
-- Then a full-width reading view opens with `‹ Files`; `Esc` returns to the list with the same file selected and the list offset preserved
-Covered by (interaction): `enter_and_left_open_and_return_to_files_at_both_widths` (review_view.rs), `narrow_diff_back_preserves_file_selection_and_offset` (review_view.rs)
+- Then a full-width reading view opens whose one header row reads **‹ Files** `1/3`, the path (start elided), Diff | Full file, Inline | Side by side, ‹ ›, ⋯ (Blame and File history inside; `B` and `H` still work); there are no Prev/Next file buttons (`Alt+Up/Down` change files) and no endpoint text; `F`, **‹ Files**, or Left return to the list with the same file selected and the list offset preserved; `Esc` returns to History
+Covered by (interaction): `enter_and_left_open_and_return_to_files_at_both_widths`, `narrow_files_key_returns_to_the_list_and_escape_to_the_caller`, `reading_mode_exposes_file_and_change_navigation_at_both_widths` (review_view.rs)
 
 ### REV-52 Narrow reader folds tools
 Fixture: `fx-linear`, reader width < 760 px
@@ -1430,8 +1469,8 @@ Fixture: `fx-file-history`
 Layer: product
 - Given Diff on `src/lib.rs`
 - When the user presses `B` (or **Blame**)
-- Then Full file opens with an author/short-commit column; After uses the selected commit, Before the parent; selecting a line names full author, email, relative time, short commit, subject; `B` again hides it
-Covered by (backend, interaction): `attribution_column_and_selected_line_metadata_render` (diff_view.rs), `attributes_a_bounded_range_and_preserves_origin_lines` (crates/git/src/blame.rs)
+- Then Full file opens with **Blame** pressed and a gutter where each run of lines from one commit shows one label (author, short ID, compact age such as `5d`) and every line an age bar, brighter for newer commits; After uses the selected commit, Before the parent; selecting a line fills the 26 px bar at the reader bottom with `LINE n`, author · short ID · `5 days ago` · subject, **Open commit** and **Line history**; `B` again hides it
+Covered by (backend, interaction): `attribution_column_and_selected_line_metadata_render` (diff_view.rs), `runs_collapse_to_one_label_per_commit`, `newer_commits_draw_brighter_age_bars`, `ages_read_compactly_in_the_gutter_and_fully_in_the_bar`, `the_bar_keeps_its_height_with_and_without_a_line` (blame_view.rs), `attributes_a_bounded_range_and_preserves_origin_lines` (crates/git/src/blame.rs)
 
 ### REV-54 Blame refuses non-text
 Fixture: `fx-file-history`
@@ -1453,8 +1492,8 @@ Fixture: `fx-file-history`
 Layer: interaction
 - Given Review on the newest commit with `src/lib.rs` selected
 - When the user presses `H` (or **History**)
-- Then a version strip appears above the same reader with **Older version**, **Newer version**, a counter, kind, commit, subject, author, date (UTC), and old path; the file list stays; `H` again does not stack another source
-Covered by (interaction): `history_opens_from_the_wide_reader_and_never_stacks` (review_view.rs), `the_rendered_strip_names_the_version_and_old_path` (file_history_view.rs)
+- Then the file-list pane shows the version list: header `FILE HISTORY 12+` with ×, 22 px rows of kind · short ID · subject (a rename adds `← old path`) · date, the selected row being the comparison; **History** stays pressed; scrolling to the end loads the next page with its slot blank (no loading text); `H` again does not stack another source; × or `Esc` closes it
+Covered by (interaction): `history_opens_from_the_wide_reader_and_never_stacks` (review_view.rs), `the_version_list_names_each_version_and_its_old_path` (file_history_view.rs)
 
 ### REV-57 Versions skip unchanged commits
 Fixture: `fx-file-history`
@@ -1472,7 +1511,7 @@ Covered by (backend, partial): `renames_are_followed_and_name_the_old_path` (cra
 ### REV-59 Version boundaries never wrap
 Fixture: `fx-file-history`
 Layer: interaction
-- At the oldest version **Older version** is disabled with `Oldest version`; at newest **Newer version** says `Newest version`; a single-version file says `Only version`; while a page loads `Loading earlier versions…`; budget hit names the limit
+- At the oldest version `Alt+Left` does nothing and the list header's tooltip names `Oldest version`; at newest `Alt+Right` stops (`Newest version`); a single-version file says `Only version`; while a page loads the reason names the pending page; budget hit names the limit
 Covered by (interaction): `boundaries_name_the_reason_and_never_wrap` (file_history_view.rs), `a_loading_predecessor_disables_older_and_names_the_reason` (file_history_view.rs), `rapid_version_steps_stop_at_both_boundaries` (file_history_view.rs)
 
 ### REV-60 Deleted and re-added versions are explicit
@@ -1484,8 +1523,8 @@ Covered by (backend, interaction): `delete_and_readd_produce_an_explicit_absent_
 ### REV-61 Ambiguous predecessor asks
 Fixture: `fx-file-history-merge` (proposed; Given: two branches each independently commit the same content of `x.txt`, then merge)
 Layer: product
-- Then history stops with a chooser listing each candidate's kind, commit, subject, author, date, old path; it never takes the first parent; Full file shows the current content and Diff is disabled until chosen
-Covered by (interaction): `an_ambiguous_predecessor_requires_a_choice` (file_history_view.rs), `an_ambiguous_history_edge_keeps_full_content_and_disables_diff` (review_view.rs)
+- Then history stops and nests the candidates under the merge row (`CHOOSE EARLIER VERSION 2`, then 22 px rows of kind · short ID · subject and `← old path` · author and date); Up/Down and Enter pick one; it never takes the first parent; Full file shows the current content and Diff is disabled until chosen
+Covered by (interaction): `an_ambiguous_predecessor_requires_a_choice`, `the_strip_offers_every_predecessor_choice` (file_history_view.rs), `an_ambiguous_history_edge_keeps_full_content_and_disables_diff` (review_view.rs)
 
 ### REV-62 Closing history restores entry context once
 Fixture: `fx-file-history`
@@ -1514,22 +1553,22 @@ Covered by (Not automated)
 ### REV-65 Narrow history
 Fixture: `fx-file-history`, narrow
 Layer: interaction
-- Then the strip sits above the full-width reader; `Esc` closes history first, then the reader, then Review
+- Then the version list sits in a seven-row pane above the full-width reader; `Esc` closes history first, then leaves Review (`F` returns to the file list)
 Covered by (interaction): `narrow_history_uses_the_reading_layout_and_escape_closes_it_first` (review_view.rs)
 
 ### REV-66 Failed history page keeps loaded versions
 Fixture: `fx-file-history`
 Layer: product
 - Given a failure while paging older versions
-- Then loaded versions stay, the boundary stays pending, and retry resumes
-Covered by (backend, interaction): `a_failed_page_retry_keeps_the_loaded_timeline` (file_history_view.rs), `cancellation_and_a_failed_step_keep_the_loaded_versions` (crates/git/tests/file_history.rs)
+- Then loaded versions stay, the last list row is one red row `History page failed · <error>` with **Retry**, the boundary stays pending, and Retry resumes
+Covered by (backend, interaction): `a_failed_page_retry_keeps_the_loaded_timeline`, `a_failed_page_is_one_red_row_with_retry` (file_history_view.rs), `cancellation_and_a_failed_step_keep_the_loaded_versions` (crates/git/tests/file_history.rs)
 
 ### REV-67 Line-range history
 Fixture: `fx-file-history`
 Layer: product
 - Given Full file with lines 20–30 selected (Shift-click)
 - When the user chooses **Line history** from blame
-- Then the timeline is anchored to the range and lists the 4 versions that changed it; where the range was introduced the boundary reads **Line introduced in this version**; a deleted range reads **Line absent in this version**; ranges are reported whole, never shrunk
+- Then the version list is titled `LINE HISTORY 20–30`, anchored to the range, and lists the 4 versions that changed it; where the range was introduced the boundary reads **Line introduced in this version**; a deleted range reads **Line absent in this version**; ranges are reported whole, never shrunk
 Covered by (backend, interaction): `line_history_names_the_anchor_and_boundary` (file_history_view.rs), `line_mapping_keeps_ranges_whole_and_names_introduced_or_absent_content` (crates/engine/src/file_history.rs)
 
 ### REV-68 Line history from the Before side
@@ -1549,8 +1588,8 @@ Covered by (interaction): `reading_versions_preserves_the_repository` (file_hist
 ### REV-70 Open in editor
 Fixture: `fx-linear`
 Layer: product
-- When the user chooses ⋯ → **Open in editor** for a file deleted in the worktree
-- Then the status line reports the missing file; for a present file the configured editor opens
+- When the user chooses ⋯ → **Open in editor** (or **Reveal in folder**) for a file deleted in the worktree
+- Then the footer reports the missing file; for a present file the configured editor opens (Reveal in folder opens the folder that holds it)
 Covered by (Not automated)
 
 ### REV-71 CLI show streams summaries and validates parent
@@ -1571,9 +1610,16 @@ Layer: product
 - `git good show <c> --file big.log --export after --output out.log` → JSON receipt, exact bytes, existing destination refused; `git good blame src/lib.rs --lines 20,30` → bounded attributed JSON; bad range → error
 Covered by (end-to-end): `export_is_exact_beyond_diff_budget_and_preserves_existing_destinations`, `blame_cli_reports_attributed_ranges_and_errors` (tests/cli.rs)
 
+### REV-74 Inline by default below 1040 px
+Fixture: `fx-linear` with Preferences › Diff › Default layout **Side by side**
+Layer: interaction
+- When a reader opens at 720 px
+- Then it shows **Inline**; choosing **Side by side** there switches it for the session without changing the preference; at 1120 px the reader follows the preference
+Covered by (interaction): `narrow_windows_start_inline_whatever_the_preference`, `side_by_side_shows_before_and_after_columns` (diff_view.rs)
+
 ## Local Changes
 
-Sources: docs/architecture.md "Working status · M2" (Working diffs, File staging, Hunk/line/drop actions, Dropping working changes, Committing, Whole-file unstaging), "Amend", "Signing", rebase-stop commit labels, Preferences › Commit, Automatic refresh, empty states, destructive confirmations; docs/final-design.md Changes menu; docs/user-flows.md F03–F04; docs/cli.md "Stage and commit". The wide layout starts at 900 px of workspace width.
+Sources: docs/architecture.md "Working status · M2" (Working diffs, File staging, Hunk/line/drop actions, Dropping working changes, Committing, Whole-file unstaging), "Amend", "Signing", rebase-stop commit labels, Preferences › Commit, Automatic refresh, empty states, destructive confirmations; docs/final-design.md Changes menu; docs/user-flows.md F03–F04; docs/cli.md "Stage and commit". The wide layout starts at 1040 px of workspace width.
 
 Expected `fx-dirty` rows (renames appear as deletion + addition, untracked folders as one row per file):
 - **Unstaged**: `~ a.txt`, `~ c.txt`, `− d.txt`, `~ run.sh`, `~ logo.png`, `~ crlf.txt`, `~ ws.txt`, `? new.txt`, `? notes/<file1>`, `? notes/<file2>` → header `UNSTAGED 10`.
@@ -1659,12 +1705,12 @@ Layer: interaction
 - Then Unstaged keeps its offset and remembered row; after a refresh both offsets are preserved
 Covered by (interaction): `workspace_preserves_independent_list_selection_and_scroll` (status_view.rs)
 
-### CHG-13 Stage one file (header button, row **+**, double-click, `S`)
+### CHG-13 Stage one file (row **+**, double-click, `S`)
 Fixture: `fx-dirty`
 Layer: product
-- When the user stages `c.txt` with (a) the reader header **Stage** button, (b) the row's **+** button (tooltip *Stage this file*), (c) double-click, or (d) `S` with the Unstaged list focused
+- When the user stages `c.txt` with (a) the row's **+** button (tooltip *Stage this file*), (b) double-click, or (c) `S` with the Unstaged list focused; the reader header has no Stage button
 - Then `c.txt` moves to Staged, the index blob equals `git add c.txt`, the working file is unchanged, and selection advances to the next Unstaged row in display order
-Covered by (backend, interaction): `row_buttons_stage_and_unstage_one_file`, `double_click_stages_and_unstages_with_the_stage_button_and_advances` (status_view.rs); `stage_matches_git_add_and_preserves_working_files` (crates/git/tests/status.rs)
+Covered by (backend, interaction): `row_buttons_stage_and_unstage_one_file`, `double_click_stages_and_unstages_with_the_row_button_and_advances` (status_view.rs); `stage_matches_git_add_and_preserves_working_files` (crates/git/tests/status.rs)
 
 ### CHG-14 Staging the last Unstaged row follows it into Staged
 Fixture: `fx-linear` plus one unstaged edit to `a.txt`
@@ -1673,10 +1719,10 @@ Layer: interaction
 - Then *No unstaged changes.* shows in Unstaged and the selection follows `a.txt` into Staged
 Covered by (interaction): `staging_the_only_file_follows_it_into_staged` (status_view.rs)
 
-### CHG-15 Unstage one file (header button, row **−**, double-click, `U`)
+### CHG-15 Unstage one file (row **−**, double-click, `U`)
 Fixture: `fx-dirty`
 Layer: product
-- When the user unstages `b.txt` by any of the four gestures
+- When the user unstages `b.txt` by any of the three gestures
 - Then `b.txt` returns to Unstaged, the index entry equals HEAD, the working file is unchanged, other index entries are untouched
 Covered by (backend, interaction): `row_buttons_stage_and_unstage_one_file` (status_view.rs); `unstage_matches_head_and_preserves_working_edits_and_other_entries` (crates/git/tests/status.rs)
 
@@ -1832,7 +1878,7 @@ Covered by (backend, interaction): `selected_line_drop_reverts_the_whole_change_
 ### CHG-36 **Discard unstaged changes** for one file keeps the index
 Fixture: `fx-dirty`
 Layer: product
-- When the user chooses **File actions › Discard unstaged changes…** on `c.txt`, `d.txt`, `run.sh`, `new.txt` and partially staged `a.txt`, confirming each (*Discard unstaged changes from <path>? The index is unchanged.*)
+- When the user chooses ⋯ › **Discard file…** (last, in red) on `c.txt`, `d.txt`, `run.sh`, `new.txt` and partially staged `a.txt`, confirming each (*Discard unstaged changes from <path>? The index is unchanged.*)
 - Then `c.txt`/`d.txt`/`run.sh` are restored from the index (mode 644 again), `new.txt` is removed, `a.txt` keeps its staged hunk and loses only the unstaged one; index bytes unchanged; the lists reload in place
 Covered by (backend, interaction, partial): `drop_requires_confirmation_and_leaves_the_index_alone` (apps/git-good/src/status_view.rs); `drop_whole_working_changes_restores_index_and_removes_untracked` (crates/git/tests/status.rs) (the partially staged `a.txt` case not checked)
 
@@ -1969,9 +2015,10 @@ Covered by (interaction): `commit_draft_survives_history_navigation`, `commit_dr
 ### CHG-56 Commit editor expands and collapses
 Fixture: `fx-dirty`
 Layer: interaction
-- When the user clicks the expand control (*Expand the commit message editor*)
+- When the user clicks the expand control (*Expand the commit message editor*) at 1440 px
 - Then the editor grows; collapsing restores the file lists' slots
-Covered by (interaction): `commit_editor_expands_and_collapses` (status_view.rs)
+- At 720 px there is no Expand: dragging the commit form's top edge up makes the message box taller (up to 60% of the height)
+Covered by (interaction): `commit_editor_expands_and_collapses`, `narrow_commit_form_leaves_sign_to_preferences_and_resizes_its_box` (status_view.rs)
 
 ### CHG-57 Amend HEAD: banner, base, message, Staged shows HEAD parent → index
 Fixture: `fx-dirty`
@@ -2014,7 +2061,8 @@ Fixture: `fx-signed` with `commit.gpgsign=true`; `fx-dirty` (no key)
 Layer: product
 - Then **Sign** next to Amend starts checked in `fx-signed`; in `fx-dirty` it is disabled with *Signing key or tool is unavailable.*
 - When committing in `fx-signed` with Sign checked, status reads **Committed <id> (signed) · N files**
-Covered by (interaction): `the_sign_checkbox_starts_from_the_commit_preference` (status_view.rs)
+- At 720 px the commit form has no Sign checkbox; commits sign as Preferences › Commit › Sign commits says
+Covered by (interaction): `the_sign_checkbox_starts_from_the_commit_preference`, `narrow_commit_form_leaves_sign_to_preferences_and_resizes_its_box` (status_view.rs)
 
 ### CHG-63 Signing failure has no unsigned fallback — see SIG-09
 
@@ -2047,8 +2095,8 @@ Covered by (Not automated)
 ### CHG-68 Narrow layout
 Fixture: `fx-dirty` (720×480)
 Layer: interaction
-- Then bounded, collapsible `UNSTAGED`/`STAGED` groups (*Collapse this group* / *Show this group*) sit above the reader; the commit form below it fits in the window; status hints shorten; the reader folds Blame/File history into ⋯
-Covered by (interaction): `wide_and_narrow_geometry_place_both_groups_above_or_beside_the_reader`, `commit_panel_is_visible_at_both_widths` (status_view.rs); `status_hints_shorten_at_narrow_widths` (main.rs)
+- Then `UNSTAGED`/`STAGED` groups sit above the reader, each folding with ▾/▸ in its header (*Collapse this group* / *Show this group*); an empty group starts folded once the scan finishes; the open groups show at most six rows together (fewer in a short window), so the reader keeps the rest (about 430 px at 720×740); the reader header stays one row; the commit form stays at the bottom; the footer carries both counts; status hints shorten; the reader folds Blame/File history into ⋯
+Covered by (interaction): `wide_and_narrow_geometry_place_both_groups_above_or_beside_the_reader`, `commit_panel_is_visible_at_both_widths`, `narrow_groups_fold_with_carets_and_empty_ones_start_folded`, `narrow_groups_share_six_rows_and_folded_groups_take_none`, `empty_groups_say_so_after_the_scan_and_stack` (status_view.rs); `status_hints_shorten_at_narrow_widths` (main.rs)
 
 ### CHG-69 Reopened-stop commit button labels
 Fixture: `fx-rewrite-reopened`
@@ -2306,14 +2354,14 @@ Covered by (backend, partial): `redacts_passwords_but_keeps_url_identity` (crate
 Fixture: proposed `fx-remote-slow`
 Layer: visual
 - When **Fetch** (or Clone/Push) runs
-- Then the status line shows the operation, the Git phase and a percentage (`· <phase> <n>%`) with **Cancel**, at a fixed height; long phase text is truncated with `…`
-Covered by (backend, interaction): `parses_bounded_progress_phases_and_percentages` (crates/git/src/sync.rs); `network_cancel_button_stays_inside_the_operation_area` (src/main.rs)
+- Then the footer names the job and target (`Fetching origin`, `Pushing <branch> to origin`, `Cloning <name>`), the Git phase, percentage and counts (`· Receiving objects 42% · 812/1930`) with a progress bar and **Cancel**, at a fixed height; long text is truncated with `…`
+Covered by (backend, interaction): `parses_bounded_progress_phases_and_percentages` (crates/git/src/sync.rs); `network_progress_reads_phase_percent_and_counts` (apps/git-good/src/footer.rs); `the_footer_shows_network_progress_then_cancelling` (apps/git-good/src/main.rs)
 
 ### NET-32 Cancel reports what happened and re-reads the repository
 Fixture: `fx-remote-slow`
 Layer: product
 - When **Cancel** is clicked (a) while the Fetch is queued, before Git starts; (b) during transfer; (c) after Git has updated refs, as the job finishes
-- Then the label changes to `Cancelling…` and the Git child is killed and reaped; in every case (gg does not tell them apart) gg re-reads refs, history and status (refs that moved are shown as moved; no rollback is attempted or implied) and the footer reads `Fetch from origin cancelled. gg re-read the repository; check what changed before retrying.`; **Retry fetch** is offered once the re-read finishes
+- Then the label changes to `Cancelling fetch…` and the Git child is killed and reaped; in every case (gg does not tell them apart) gg re-reads refs, history and status (refs that moved are shown as moved; no rollback is attempted or implied) and the footer reads `Fetch from origin cancelled. gg re-read the repository; check what changed before retrying.`; **Retry fetch** is offered once the re-read finishes
 Covered by (backend, interaction, partial): `cancelled_fetch_rereads_the_repository_before_offering_retry` (apps/git-good/src/main.rs); `cancellation_reports_cancel_without_a_receipt` (crates/git/tests/sync.rs) (the three cancel timings are not driven)
 
 ### NET-33 Network operations are serialized
@@ -2474,7 +2522,7 @@ Covered by (interaction): `stash_picker_keys_select_ask_to_drop_and_apply` (src/
 Fixture: `fx-stash-dirty` with the unstaged `a.txt` edit committed first (so Git applies and conflicts rather than refusing)
 Layer: product
 - When **Apply** runs on `stash@{0}`
-- Then `a.txt` contains conflict markers and is listed as conflicted, the footer reads `Restored stash@{0} · 1 conflict(s)` with **Resolve conflicts…**, the entry is kept, and no operation area with Continue/Skip/Abort appears
+- Then `a.txt` contains conflict markers and is listed as conflicted, the footer reads `Restored stash@{0} · 1 conflict` with **Stashes…**, the entry is kept, and no operation band with Continue/Skip/Abort appears
 Covered by (backend, partial): `apply_conflicts_keep_the_stash_and_report_paths` (crates/git/tests/stash.rs); GUI path not automated
 
 ### STA-18 Conflicting pop does not drop the entry
@@ -2573,27 +2621,28 @@ Layer: product
 - Then the remote-tracking merge works; the invalid references fail before Git runs with nonzero status
 Covered by (backend, partial): `rejects_option_shaped_and_missing_references` (crates/git/tests/merge.rs); GUI path not automated
 
-### INT-06 Merge conflict shows the operation area
+### INT-06 Merge conflict shows the operation band
 Fixture: `fx-merge-conflict`
 Layer: product
 - When gg opens the repository
-- Then a fixed two-line operation area under the toolbar reads `merge in progress · <commit> · 3 conflicts` with **Resolve conflicts…**, **Continue** (disabled, `Resolve every unmerged path first.`), and **Abort**; there is no **Skip**; the status line does not repeat these controls
-Covered by (interaction): `merge_operation_area_has_no_skip_at_either_width` (src/main.rs); `conflict_window_leaves_continuation_to_the_operation_area` (src/main.rs)
+- Then a fixed two-line amber band under the toolbar reads `Merge conflict · merging <ref> <8-char id> into main` with the status `3 conflicts left in 3 files` right after the title, then **Resolve conflicts** (filled primary), **Continue** (`Ctrl+Enter`, disabled, tooltip `Resolve and stage every conflicted file first`), and red **Abort and restore** (`Abort the merge and restore main to its previous tip`); there is no **Skip commit**; line 2 reads `Ours is main, Theirs is <ref>. Resolve and stage each file, then continue.`; the footer does not repeat these controls
+Covered by (interaction): `conflict_bands_name_the_operation_and_what_is_left`, `continue_is_the_primary_only_once_nothing_is_conflicted` (apps/git-good/src/operation_band.rs); `merge_operation_area_has_no_skip_at_either_width`, `conflict_window_leaves_continuation_to_the_operation_area` (apps/git-good/src/main.rs)
 
 ### INT-07 Merge abort restores the pre-merge state
 Fixture: `fx-merge-conflict`
 Layer: product
 - When **Abort** is clicked
-- Then HEAD, index and worktree match `main` before the merge, the operation area disappears, and the footer reads `Aborted merge`
+- Then HEAD, index and worktree match `main` before the merge, the band disappears, and the footer reads `Aborted merge`
 Covered by (backend, end-to-end, partial): `conflict_can_abort_and_continue` (crates/git/tests/merge.rs); `merge_cli_fast_forwards_conflicts_and_recovers` (tests/cli.rs)
 
 ### INT-08 Merge continue after all paths are resolved
 Fixture: `fx-merge-conflict`
 Layer: product
 - Given all three paths are resolved and staged
-- When **Continue** is clicked
-- Then a merge commit is created, the operation area disappears, history/refs/status refresh once, and the footer reads `Continued merge`
-Covered by (backend, partial): `conflict_can_abort_and_continue` (crates/git/tests/merge.rs); GUI path not automated
+- Then the band is purple: `Merge ready · merging <ref> <id> into main`, `All files staged`, `Continue writes the merge commit of <ref> into main.`, **Continue** the filled primary with `Ctrl+Enter`
+- When **Continue** (or `Ctrl+Enter`) is pressed
+- Then a merge commit is created, the band disappears, history/refs/status refresh once, and the footer reads `Continued merge`
+Covered by (backend, interaction, partial): `conflict_can_abort_and_continue` (crates/git/tests/merge.rs); `continue_is_the_primary_only_once_nothing_is_conflicted` (apps/git-good/src/operation_band.rs); GUI continue not driven
 
 ### INT-09 Cherry-pick onto HEAD applies the selected commit
 Fixture: `fx-branchy`
@@ -2609,11 +2658,11 @@ Layer: product
 - Then it is refused with `Use the Merge action for merge operations.`; nothing changes
 Covered by (Not automated)
 
-### INT-11 Cherry-pick conflict: operation area, Skip, Abort, Continue
+### INT-11 Cherry-pick conflict: band, Skip commit, Abort, Continue
 Fixture: `fx-cherry-pick-conflict`
 Layer: product
-- Then the operation area reads `cherry-pick in progress · … · 1 conflict` with **Resolve conflicts…**, **Continue** (disabled), **Skip** and **Abort**; **Abort** restores `main`; after resolving, **Continue** creates the commit; **Skip** drops it and ends the operation
-Covered by (backend, end-to-end, partial): `cherry_pick_conflict_can_abort_and_continue` (crates/git/tests/mutation.rs); `cherry_pick_cli_applies_conflicts_and_recovers` (tests/cli.rs)
+- Then the amber band reads `Cherry-pick conflict · applying <8-char id> onto main` · `1 conflict left in 1 file` with **Resolve conflicts**, **Continue** (disabled), **Skip commit** and **Abort and restore**, and line 2 `Theirs is the picked commit. Skip commit leaves it out and ends the cherry-pick.`; **Abort and restore** restores `main`; after resolving, **Continue** creates the commit; **Skip commit** drops it and ends the operation
+Covered by (backend, end-to-end, interaction, partial): `cherry_pick_conflict_can_abort_and_continue` (crates/git/tests/mutation.rs); `cherry_pick_cli_applies_conflicts_and_recovers` (tests/cli.rs); `mutation_banner_renders_at_supported_widths` (apps/git-good/src/main.rs)
 
 ### INT-12 Revert creates the inverse commit
 Fixture: `fx-linear`
@@ -2625,8 +2674,8 @@ Covered by (backend, end-to-end, partial): `revert_inverts_a_commit_and_can_skip
 ### INT-13 Revert conflict recovery
 Fixture: `fx-revert-conflict`
 Layer: product
-- Then the operation area reads `revert in progress …` with **Skip**; **Skip** ends with no new commit; **Abort** restores HEAD; side labels follow INT-19
-Covered by (backend, partial): `revert_inverts_a_commit_and_can_skip_a_conflict` (crates/git/tests/mutation.rs); GUI path not automated
+- Then the amber band reads `Revert conflict · reverting <8-char id> on main` with **Skip commit**; once nothing is conflicted it reads `Revert ready · …` with `Continue commits “Revert …” with Git’s message.`; **Skip commit** ends with no new commit; **Abort and restore** restores HEAD; side labels follow INT-19
+Covered by (backend, interaction, partial): `revert_inverts_a_commit_and_can_skip_a_conflict` (crates/git/tests/mutation.rs); `conflict_bands_name_the_operation_and_what_is_left` (apps/git-good/src/operation_band.rs); GUI path not driven
 
 ### INT-14 Cherry-pick/revert need a selected commit and a clean worktree
 Fixture: `fx-dirty`
@@ -2639,15 +2688,17 @@ Covered by (Not automated)
 Fixture: `fx-cherry-pick-conflict` (state created by command-line Git)
 Layer: interaction
 - When gg opens it
-- Then the operation area is present immediately; after `git cherry-pick --abort` in a terminal it disappears within ~300 ms without user action
+- Then the same operation band is present immediately; after `git cherry-pick --abort` in a terminal it disappears within ~300 ms without user action
 Covered by (Not automated)
 
-### INT-16 Resolve conflicts… opens the workspace in place and Esc returns
+### INT-16 The conflict workspace is the Changes view; Esc returns to the plain list
 Fixture: `fx-merge-conflict`, Local Changes open
 Layer: interaction
-- When **Resolve conflicts…** (operation area or **Changes → Resolve conflicts…**) is clicked
-- Then the conflict workspace replaces Local Changes under the operation area, the refs sidebar hides (its toggle still works), and **Close** or Esc returns to Local Changes; sizes do not change when switching files
-Covered by (interaction): `conflicts_open_in_the_main_workspace_and_hold_still` (src/main.rs); `conflict_view_renders_at_supported_widths` (src/main.rs)
+- When the band's **Resolve conflicts** (or **Changes → Resolve conflicts…**, or the Changes tab while conflicts exist) is clicked
+- Then the conflict workspace replaces Local Changes under the band with the Changes tab selected, the band hides **Resolve conflicts**, there is no Close and no heading, and the refs sidebar hides (its toggle still works)
+- When Esc is pressed
+- Then the plain changes list shows; the band's **Resolve conflicts** brings the workspace back; sizes do not change when switching files
+Covered by (interaction): `conflicts_open_in_the_main_workspace_and_hold_still`, `conflict_window_leaves_continuation_to_the_operation_area`, `conflict_view_renders_at_supported_widths` (apps/git-good/src/main.rs); `resolve_conflicts_hides_while_the_workspace_is_open` (apps/git-good/src/operation_band.rs)
 
 ### INT-17 Resolve conflicts… is disabled without conflicts
 Fixture: `fx-linear`
@@ -2655,24 +2706,26 @@ Layer: interaction
 - Then **Changes → Resolve conflicts…** is disabled with `No conflicts to resolve`
 Covered by (Not automated)
 
-### INT-18 Files panel lists CONFLICTED and RESOLVED, STAGED groups
+### INT-18 Files panel lists CONFLICTED, RESOLVED, STAGED and ALSO CHANGED
 Fixture: `fx-merge-conflict`
 Layer: interaction
-- Then the 300 px file list shows `CONFLICTED 3` with `!` rows (`src/app.rs`, `docs.md`, `logo.png`; the selected one shows `<n> left`), then `RESOLVED, STAGED 0`; after staging one path it moves under `RESOLVED, STAGED 1` marked ✓ and the next unresolved path is selected
-Covered by (interaction): `conflict_selection_prefers_the_next_path` (src/main.rs)
+- Then the 300 px file list shows 22 px rows: `CONFLICTED` with its count at the right and `!` rows in amber (`src/app.rs`, `docs.md`, `logo.png`), each with what is left (`2 left`, `ready`); `RESOLVED, STAGED 0`; `ALSO CHANGED BY THIS MERGE` with `~` rows for staged paths that are not conflicted; at the bottom the legend `In a merge, Ours is main, the branch you are on, and Theirs is <ref>, the branch coming in.`
+- And after staging one path it moves under `RESOLVED, STAGED 1` marked ✓ with **−**, and the next unresolved path is selected; with none left the list reads `All conflicts resolved. Continue with Ctrl+Enter.`
+Covered by (interaction): `conflict_selection_prefers_the_next_path`, `hand_edits_in_the_result_are_what_stage_resolution_stages_and_minus_reopens` (apps/git-good/src/main.rs); `markers_and_legend_name_the_sides` (apps/git-good/src/conflict_workspace.rs); `a_staged_resolution_reopens_as_a_conflict` (crates/git/tests/conflict.rs)
 
 ### INT-19 Ours and Theirs labels name their source (merge, cherry-pick, revert)
 Fixture: `fx-merge-conflict`; `fx-cherry-pick-conflict`; `fx-revert-conflict`
 Layer: product
-- Then block columns, the Whole file sources, side panes and narrow tabs name each side: merge `Ours (main)` / `Theirs (feature/login)` (the ref at `MERGE_HEAD`, else its short ID and subject); cherry-pick `Ours (main)` / `Theirs (<8-char id> <subject>)` of the picked commit; revert `Ours (main)` / `Theirs (<8-char id> <subject>)` of the reverted commit, with the hint `Ours is the current branch. Theirs is the reverted change.`; a detached HEAD reads `Ours (HEAD <8-char id>)`
-- And a name longer than 24 characters is shortened with `…` (`Theirs (1a2b3c4d Add the login…)`), the full label on hover; the block choice buttons keep their short labels and name both sides only in their tooltips (`Theirs (feature/login), then Ours (main)`); Ours is blue and Theirs amber, but the text alone identifies each side
-Covered by (backend, interaction, partial): `conflict_labels_name_both_sides_for_each_operation`, `conflict_workspace_shows_side_names` (apps/git-good/src/main.rs), `choice_tooltips_name_both_sides` (apps/git-good/src/conflict_blocks.rs); `side_names_follow_the_operation` (crates/git/tests/conflict.rs) (merge, rebase and cherry-pick names; revert and the detached case not checked)
+- Then block columns and the Whole file columns name each side: merge `Ours · main (current branch)` / `Theirs · origin/main (being merged)` (the ref at `MERGE_HEAD`, else its short ID); cherry-pick `Theirs · <8-char id> (picked commit)`; revert `Theirs · undo of <8-char id>`; a detached HEAD reads `Ours · HEAD <8-char id> (current branch)`
+- And the stage number and full identity are in the label's tooltip (`Stage 3 · 9a4f9a95 Add login`), not the text; the block choice tooltips name both sides (`Theirs · origin/main (being merged), then Ours · main (current branch)`); Ours is blue and Theirs amber, but the text alone identifies each side
+Covered by (backend, interaction, partial): `side_labels_name_the_real_refs_with_the_stage_in_the_tooltip` (apps/git-good/src/conflict_workspace.rs), `conflict_workspace_shows_side_names` (apps/git-good/src/main.rs), `choice_tooltips_name_both_sides` (apps/git-good/src/conflict_blocks.rs); `side_names_follow_the_operation` (crates/git/tests/conflict.rs)
 
 ### INT-20 Text file opens Block by block with Base/Ours/Theirs per block
 Fixture: `fx-merge-conflict`, `src/app.rs` selected
 Layer: visual
-- Then **Block by block** is selected, each block shows Base, Ours and Theirs side by side (stacked when narrow, indentation kept), its header names `line 10` in our version and `Conflict 1 of 1`, and lists **1 Ours**, **2 Theirs**, **3 Ours + theirs**, **4 Theirs + ours** at the right
-Covered by (backend, interaction): `blocks_know_their_start_lines_and_how_many_are_left` (src/conflict_blocks.rs); `blocks_split_the_conflict_and_compose_a_staged_resolution` (crates/git/tests/conflict.rs)
+- Then the file header reads the path, `1 conflict left`, **Block by block** (selected) | **Whole file**, **Open in editor**, **Refresh external edits**; each block is a bordered frame (amber until chosen, green after) whose header reads `Conflict 1/1` and `line 10` with **Ours**, **Theirs**, **Ours + theirs**, **Theirs + ours** at the right, then Base, Ours and Theirs in three equal columns
+- And a long line (`eframe = { version = "0.37", default-features = false, features = [...] }`) wraps inside its own column at 1120 and 720 px; no column paints over its neighbour
+Covered by (backend, interaction): `blocks_know_their_start_lines_and_how_many_are_left`, `long_lines_wrap_inside_their_column` (apps/git-good/src/conflict_blocks.rs); `blocks_split_the_conflict_and_compose_a_staged_resolution` (crates/git/tests/conflict.rs)
 
 ### INT-21 Keys 1–4 choose for the current block and advance
 Fixture: proposed `fx-merge-conflict-multi` (one file, three blocks)
@@ -2688,20 +2741,20 @@ Layer: interaction
 - Then current wraps to the first, then to the last, and the clicked block becomes current
 Covered by (interaction): `brackets_move_between_blocks_and_wrap` (src/conflict_blocks.rs)
 
-### INT-23 Result preview keeps markers for open blocks
+### INT-23 Result keeps named markers for open blocks
 Fixture: proposed `fx-merge-conflict-multi`
 Layer: product
 - Given only block 1 has a choice
-- Then the numbered **Result** preview shows block 1 resolved and blocks 2–3 with `<<<<<<< ours` / `||||||| base` / `=======` / `>>>>>>> theirs`; **Stage resolution** is disabled
-Covered by (backend, partial): `composes_choices_and_keeps_markers_for_open_blocks` (crates/engine/src/conflict.rs); GUI path not automated
+- Then the line-numbered **Result** shows block 1 resolved and blocks 2–3 with `<<<<<<< main` / `=======` / `>>>>>>> origin/main` in the warning tint with orange markers; **Stage resolution** is disabled
+Covered by (backend, interaction): `unresolved_blocks_carry_named_markers` (apps/git-good/src/conflict_result.rs); `markers_of_unresolved_blocks_take_the_warning_color` (apps/git-good/src/conflict_workspace.rs)
 
-### INT-24 Stage resolution publishes the composed text and stages the path
+### INT-24 Stage resolution publishes the Result and stages the path
 Fixture: `fx-merge-conflict`, `src/app.rs`
 Layer: product
-- Given every block has a choice
-- When **Stage resolution** (`Ctrl+S`) is pressed
-- Then the working file equals the Result preview (no markers), the path is staged (not unmerged), the footer reads `Resolved src/app.rs`, and the next unresolved path is selected
-Covered by (backend, interaction): `blocks_split_the_conflict_and_compose_a_staged_resolution` (crates/git/tests/conflict.rs); `conflict_staging_uses_the_operation_worker` (src/main.rs)
+- Given the Result has no markers left
+- When **Stage resolution** (`Ctrl+S`, also while typing in the Result) is pressed
+- Then the working file equals the Result, hand edits included, the path is staged (not unmerged), the footer reads `Resolved src/app.rs`, and the next unresolved path is selected
+Covered by (backend, interaction): `blocks_split_the_conflict_and_compose_a_staged_resolution` (crates/git/tests/conflict.rs); `hand_edits_in_the_result_are_what_stage_resolution_stages_and_minus_reopens`, `conflict_staging_uses_the_operation_worker` (apps/git-good/src/main.rs)
 
 ### INT-25 Blocks come from the index stages; a hand-edited working file is detected
 Fixture: `fx-merge-conflict` with `git config merge.conflictStyle zdiff3`; variant: working `src/app.rs` also edited by hand outside the conflict markers
@@ -2714,16 +2767,16 @@ Covered by (backend, interaction): `an_edited_working_file_offers_use_working_fi
 ### INT-26 Whole file sources only change the preview
 Fixture: `fx-merge-conflict`, `src/app.rs`
 Layer: product
-- When **Whole file** is chosen and Base, Ours, Theirs, Working are picked in turn
-- Then only **Result** changes (Working is the default), the note reads `Choosing a source only changes this preview. Stage resolution publishes it once.`, and the working file and index are unchanged until **Stage resolution**
-Covered by (backend, interaction): `conflict_preview_is_read_only_until_stage_resolution` (src/main.rs); `previewed_sides_publish_only_after_validation` (crates/git/tests/conflict.rs)
+- When **Whole file** is chosen and **Take ours**, **Take theirs**, **Keep working file** are picked in turn
+- Then only the read-only **Result** changes (Keep working file is the default; each column shows the side's size, `12 lines · text`), and the working file and index are unchanged until **Stage resolution**
+Covered by (backend, interaction): `conflict_preview_is_read_only_until_stage_resolution` (apps/git-good/src/main.rs); `previewed_sides_publish_only_after_validation` (crates/git/tests/conflict.rs)
 
 ### INT-27 External edit makes the preview stale
 Fixture: `fx-merge-conflict`, `src/app.rs` previewed in Whole file
 Layer: product
 - Given the file is changed on disk after the preview was read
 - When **Stage resolution** is pressed
-- Then nothing is written; the workspace and status line show `The conflict changed. Refresh external edits and retry.`; after **Refresh external edits** the new bytes preview and staging succeeds
+- Then nothing is written; the workspace and footer show `The conflict changed. Refresh external edits and retry.`; after **Refresh external edits** the new bytes preview and staging succeeds
 Covered by (backend, partial): `publish_rejects_changed_stages_or_working_bytes` (crates/git/tests/conflict.rs); `composed_resolution_refuses_a_changed_working_file` (crates/git/tests/conflict.rs)
 
 ### INT-28 Binary conflict has no blocks; whole-file sides apply
@@ -2767,19 +2820,19 @@ Layer: product
 - Then the stub receives `--line 1 <abs path>/src/app.rs`; with `myedit` (no `{file}`) the path is appended; an empty command uses `xdg-open`/`open`/`start`; gg does not wait, and the saved file is picked up by the watcher
 Covered by (interaction, partial): `the_file_goes_where_the_command_says_or_at_the_end` (src/editor.rs)
 
-### INT-34 All resolved: empty state and Continue enabled
+### INT-34 All resolved: the band turns purple and Continue is primary
 Fixture: `fx-merge-conflict`
 Layer: product
 - Given all three paths are staged in the workspace
-- Then the workspace's reserved line reads `All conflicts resolved.`, the operation area shows 0 conflicts and **Continue** is enabled
-Covered by (Not automated)
+- Then the file list reads `All conflicts resolved. Continue with Ctrl+Enter.`, the band is purple with `Merge ready · …` and `All files staged`, and **Continue** is the filled primary with `Ctrl+Enter`
+Covered by (interaction, partial): `continue_is_the_primary_only_once_nothing_is_conflicted` (apps/git-good/src/operation_band.rs); the workspace state not driven
 
-### INT-35 Duplicate and incompatible actions disabled while the worker runs
+### INT-35 A running Continue keeps the band in place
 Fixture: `fx-merge-conflict`
 Layer: interaction
 - When **Continue** is clicked
-- Then while it runs the area names it (`Continuing merge…`-style pending label) and Continue/Abort/Merge/Pull/Stash are disabled; a failure clears the pending label and keeps Git's state with **Details…**
-Covered by (Not automated)
+- Then while it runs the band keeps its layout: the icon becomes a spinner, the title reads `Continuing merge · merging …` (`Skipping cherry-pick`, `Aborting revert`), line 2 reads `Writing the merge commit…`, and every button stays in place disabled; Merge/Pull/Stash are disabled; a failure stays in the footer with **Details…** and keeps Git's state
+Covered by (interaction): `a_running_job_keeps_the_buttons_and_names_itself`, `the_busy_band_keeps_every_button_in_place` (apps/git-good/src/operation_band.rs)
 
 ### INT-36 Stage a conflicted path from Local Changes is refused
 Fixture: `fx-merge-conflict`
@@ -2793,9 +2846,36 @@ Covered by (interaction): `conflicts_and_staged_discards_are_refused_before_spaw
 ### INT-38 Rebase conflict labels name the base and the replayed commit
 Fixture: `fx-rebase-conflict` (step 4 of 6, replaying `<id> <subject>` onto `origin/main`)
 Layer: product
-- When **Resolve conflicts…** opens the conflicted file
-- Then block columns, Whole file sources and side panes read `Ours (onto origin/main)` and `Theirs (<8-char id> <subject>)`, shortened to 24 characters with `…` (full label on hover); the hint reads `Ours is the branch being rebased onto, with the commits replayed so far. Theirs is the commit being replayed.`; keys `1`/`2` choose the sides as labeled
-Covered by (backend, interaction, partial): `conflict_labels_name_both_sides_for_each_operation` (apps/git-good/src/main.rs); `side_names_follow_the_operation` (crates/git/tests/conflict.rs) (labels only; the rebase workspace and keys not driven)
+- When **Resolve conflicts** opens the conflicted file
+- Then block columns read `Ours · rewritten branch (onto origin/main)` and `Theirs · <8-char id> (replayed commit)` (the subject in the tooltip), the legend reads `In a rebase, Ours is the rewritten branch so far and Theirs is the commit being replayed.`, the footer's right reads `Abort restores <backup ref>`; keys `1`/`2` choose the sides as labeled
+Covered by (backend, interaction, partial): `side_labels_name_the_real_refs_with_the_stage_in_the_tooltip`, `markers_and_legend_name_the_sides` (apps/git-good/src/conflict_workspace.rs); `side_names_follow_the_operation` (crates/git/tests/conflict.rs) (the rebase workspace and keys not driven)
+
+### INT-39 The Result is editable and keeps hand edits
+Fixture: `fx-merge-conflict`, `src/app.rs`
+Layer: interaction
+- When the user types in the Result, then chooses an option for another block
+- Then only that block's region is rewritten and the typed text stays; choosing an option for a block already edited by hand asks first (`Replace edited block`, **Cancel** `Esc`, danger **Replace block**); `Ctrl+Z` undoes typing and choices together, `Ctrl+Y` redoes
+Covered by (interaction): `typing_in_the_result_edits_it_and_ctrl_z_undoes` (apps/git-good/src/main.rs); `an_option_replaces_only_its_block`, `undo_restores_text_and_origins_and_typing_coalesces`, `an_emptied_block_comes_back_in_place` (apps/git-good/src/conflict_result.rs); `a_hand_edited_block_asks_before_an_option_replaces_it` (apps/git-good/src/conflict_blocks.rs)
+
+### INT-40 Result lines are tinted by origin
+Fixture: `fx-merge-conflict`, `src/app.rs`
+Layer: visual
+- Given block 1 is **Ours + theirs** and block 2 is open
+- Then block 1's Ours lines carry the Ours tint (blue), its Theirs lines the Theirs tint (amber), block 2 the warning tint with orange markers, common lines none; a typed line turns neutral and the others keep their tint while typing
+Covered by (interaction): `origins_tint_each_line_and_stay_while_typing` (apps/git-good/src/conflict_result.rs); `markers_of_unresolved_blocks_take_the_warning_color` (apps/git-good/src/conflict_workspace.rs)
+
+### INT-41 − unstages a resolution back to conflicted
+Fixture: `fx-merge-conflict`, `src/app.rs` resolved and staged
+Layer: product
+- When **−** is clicked on its `RESOLVED, STAGED` row (tooltip `Unstage resolution · back to conflicted`)
+- Then Git recreates the conflict (markers back in the working file) and the path returns under `CONFLICTED`; a path with nothing to recreate is unstaged to a plain change
+Covered by (backend, interaction): `a_staged_resolution_reopens_as_a_conflict` (crates/git/tests/conflict.rs); `hand_edits_in_the_result_are_what_stage_resolution_stages_and_minus_reopens` (apps/git-good/src/main.rs)
+
+### INT-42 Workspace layout matches Final · Rebase conflict
+Fixture: `fx-merge-conflict` at 1440×900 and 1120×740
+Layer: visual
+- Then the left pane is 300 px with 22 px rows, the file header 28 px, the blocks take up to 60% of the height and scroll, and the Result fills the rest; the footer reads `1 / 2 / 3 / 4: ours · theirs · ours+theirs · theirs+ours`, `[ ]: previous / next conflict`, `Ctrl+S: stage file`, `Esc: changes list`, and at the right `Abort restores main to its tip before the merge`
+Covered by (Not automated; native screenshots against the mockup)
 
 ## Rewrite and recovery
 
@@ -3039,18 +3119,18 @@ Layer: product
 - Then the dialog closes, no rewrite job starts, no backup ref is created, HEAD is unchanged
 Covered by (interaction): `rebase_dialog_keys_choose_actions_and_start_only_when_valid` (apps/git-good/src/main.rs)
 
-### RWR-40 Start rebase runs in the background with one operation area
+### RWR-40 Start rebase runs in the background with one operation band
 Fixture: `fx-rebase`, a reorder plan
 Layer: interaction
 - When the user presses `Ctrl+Enter`
-- Then the dialog closes at once; the operation area alone reads **Rewriting commits…** (with `Browsing stays available`), then **Refreshing history…**; History stays browsable; duplicate rewrites are disabled; the area clears when the new history is adopted without the viewport jumping
-Covered by (interaction): `rewrite_progress_lives_once_in_the_operation_area`, `rewrite_refresh_clears_the_operation_area` (apps/git-good/src/main.rs)
+- Then the dialog closes at once; the purple band alone reads `Rewriting <branch> · step <n> of <m> · picking <8-char id>` with a spinner, `Browsing stays available; the old history is labelled until the new one is accepted.`, the step strip, and no buttons; the footer reads `Backup: refs/gg/backup/…`; then the band reads `Refreshing history…` (every step ✓) and the footer `Rewrote <n> commits · backup <ref>`; History stays browsable; duplicate rewrites are disabled; the band clears when the new history is adopted without the viewport jumping
+Covered by (interaction): `rewrite_progress_lives_once_in_the_operation_area`, `rewrite_refresh_clears_the_operation_area` (apps/git-good/src/main.rs); `the_rewrite_band_names_the_step_git_is_applying` (apps/git-good/src/operation_band.rs); `rewrite_reorders_commits_and_records_the_previous_tip` (crates/git/tests/rewrite.rs)
 
 ### RWR-41 A rewrite creates a private backup before Git runs
 Fixture: `fx-rebase`
 Layer: product
 - When a rewrite completes
-- Then `refs/gg/backup/rewrite/<unix-nanos>` points at the old HEAD; it is not shown in the sidebar or graph; the outcome lists `Backup: refs/gg/backup/rewrite/…`
+- Then `refs/gg/backup/rewrite/<unix-nanos>` points at the old HEAD before Git rewrites anything (the footer names it while Git runs); it is not shown in the sidebar or graph; the receipt reads `Rewrote <n> commits · backup refs/gg/backup/rewrite/…`
 Covered by (backend, partial): `rewrite_reorders_commits_and_records_the_previous_tip` (crates/git/tests/rewrite.rs); `backup_refs_point_at_the_previous_tip_and_stay_out_of_refs` (crates/git/tests/backup.rs)
 
 ### RWR-42 The post-rewrite follow-up matches the upstream relationship
@@ -3061,7 +3141,7 @@ Layer: product
 - When a pushed commit is reworded in `fx-remote-even` with **Offer force-with-lease after a rewrite** on
 - Then the follow-up is **Push with force-with-lease…**, opening the confirmation naming the lease commit (NET-22); with the preference off it is **Recovery…**
 - When a rewrite succeeds in `fx-rebase-local`, or leaves the branch even with its upstream
-- Then the follow-up is **Recovery…**, opening the Backups source; a rewrite that stops on conflicts offers **Resolve conflicts…** instead. gg reads the relation from local refs only (no fetch)
+- Then the follow-up is **Recovery…**, opening the Backups source; a rewrite that stops on conflicts shows the band, whose **Resolve conflicts** takes over. gg reads the relation from local refs only (no fetch)
 Covered by (backend, interaction, partial): `rewrite_follow_up_offers_the_push_the_result_needs`, `outcome_recovery_button_opens_backups` (apps/git-good/src/main.rs); `upstream_relation_reads_local_refs_only` (crates/git/tests/sync.rs), `upstream_relation_follows_ahead_and_behind_counts` (crates/engine/src/sync.rs) (the choice of follow-up; the lease confirmation it opens not driven)
 
 ### RWR-43 Rewrite failure keeps recovery reachable
@@ -3074,8 +3154,9 @@ Covered by (interaction): `rewrite_failure_keeps_backup_recovery_reachable`, `re
 ### RWR-44 Reopen stop band
 Fixture: `fx-rewrite-reopened` (stopped by gg's reopen at step 3 of 6)
 Layer: visual
-- Then the operation band is purple with a pause glyph; line 1 reads `Rebase stopped · step 3 of 6 · reopened <8-char id>` with **Continue** (`Ctrl+Enter`), **Skip commit**, **Abort and restore** (red); line 2 reads `Its changes are staged. Edit, unstage parts to split, then continue.`; line 3 shows step chips (`✓ <id> pick` for done, the current filled chip reading `reopen`, then next steps; subject on hover)
-Covered by (interaction): `reopened_commit_opens_local_changes_with_its_message_and_waits_to_continue` (apps/git-good/src/main.rs); `titles_name_the_stop` (apps/git-good/src/rebase_stop.rs)
+- Then the operation band is purple with a pause glyph; line 1 reads `Rebase stopped · step 3 of 6 · reopened <8-char id>` with **Continue** (`Ctrl+Enter`), **Skip commit**, **Abort and restore** (red); line 2 reads `Its changes are staged. Edit, unstage parts to split, then continue.` followed by the step chips (`✓ <id> pick` for done, the current filled chip reading `reopen`, then next steps; subject on hover)
+- And with a 12-step plan at 1120 and 720 px the strip shows `✓ n done`, the current chip, the next chips that fit, and `+N next` (the plan on hover), with no scroll area, never overlapping the explanation or leaving the band
+Covered by (interaction): `reopened_commit_opens_local_changes_with_its_message_and_waits_to_continue` (apps/git-good/src/main.rs); `titles_name_the_stop` (apps/git-good/src/rebase_stop.rs); `the_band_holds_its_lines_chips_and_status_without_clipping`, `the_strip_keeps_the_current_step_and_collapses_the_rest` (apps/git-good/src/operation_band.rs)
 
 ### RWR-45 Reopened commit opens Local Changes with its message
 Fixture: `fx-rewrite-reopened`
@@ -3090,13 +3171,13 @@ Covered by (interaction): `reopened_commit_opens_local_changes_with_its_message_
 Fixture: `fx-rewrite-reopened`
 Layer: product
 - When the user commits in two parts
-- Then the band lists `Commits made at this stop: <id> <subject>, …` and Local Changes shows `COMMITS MADE AT THIS STOP` under STAGED (wide) with 8-char IDs; once no tracked changes remain, **Continue** is enabled and highlighted blue
+- Then the band lists `Commits made at this stop: <id> <subject>, …` and Local Changes shows `COMMITS MADE AT THIS STOP` under STAGED (wide) with 8-char IDs; once no tracked changes remain, **Continue** is enabled as the filled blue primary
 Covered by (interaction): `commits_made_at_a_stop_are_listed_and_continue_is_ready` (apps/git-good/src/main.rs); `commits_made_at_a_rebase_stop_sit_under_the_lists` (apps/git-good/src/status_view.rs)
 
 ### RWR-48 Continue waits while tracked changes remain at a reopened stop
 Fixture: `fx-rewrite-reopened`
 Layer: product
-- Then **Continue** is disabled with `Commit or stash the 2 remaining changed files first.` beside it; `Ctrl+Enter` with no text field focused does nothing
+- Then **Continue** is disabled and the band's status reads `Commit or stash the 2 remaining changed files first.` at normal size; `Ctrl+Enter` with no text field focused does nothing
 Covered by (interaction): `continue_waits_for_conflicts_and_remaining_changes` (apps/git-good/src/rebase_stop.rs)
 
 ### RWR-49 Reopening a root commit stays at HEAD in amend mode
@@ -3109,8 +3190,8 @@ Covered by (backend, partial): `rewrite_reopen_of_a_root_commit_stays_at_head` (
 ### RWR-50 Conflict stop band
 Fixture: `fx-rebase-conflict`
 Layer: visual
-- Then the band is amber with a warning glyph; line 1 reads `Conflict · step 4 of 6 · applying <8-char id> <subject>` with **Resolve conflicts…**, **Continue** (disabled, `Resolve and stage 1 conflicted file first.`), **Skip commit**, **Abort and restore**; line 2 `Resolve each conflicted file and stage the result, then continue.`; **Recovery…** is not among the continuation buttons
-Covered by (interaction): `continue_waits_for_conflicts_and_remaining_changes`, `titles_name_the_stop` (apps/git-good/src/rebase_stop.rs); `rebase_operation_area_keeps_recovery_out_of_continuation` (apps/git-good/src/main.rs)
+- Then the band is amber with a warning glyph; line 1 reads `Conflict · step 4 of 6 · applying <8-char id> <subject>`, then the status `Resolve and stage 1 conflicted file first.` at normal size (the title truncates first; at 1120 px the status reads in full), then **Resolve conflicts** (filled primary, hidden while the workspace is open), **Continue** (disabled), **Skip commit**, **Abort and restore**; line 2 `Resolve each conflicted file and stage the result, then continue.` and the step chips, unclipped inside the band; **Recovery…** is not among the continuation buttons
+Covered by (interaction): `continue_waits_for_conflicts_and_remaining_changes`, `titles_name_the_stop`, `a_conflict_stop_offers_resolve_conflicts_until_the_workspace_opens` (apps/git-good/src/rebase_stop.rs); `the_band_holds_its_lines_chips_and_status_without_clipping` (apps/git-good/src/operation_band.rs); `rebase_operation_area_keeps_recovery_out_of_continuation` (apps/git-good/src/main.rs)
 
 ### RWR-51 Window title and branch button during a stop
 Fixture: `fx-rebase-edit`, then `fx-rebase-conflict`
@@ -3224,25 +3305,27 @@ Layer: product
 - Then no dialog opens; the rewrite starts at once (**Rewriting commits…**) and drops the commit; a `refs/gg/backup/rewrite/…` ref is written
 Covered by (Not automated)
 
-### RWR-68 Recovery window: one source selector, fits 720×480
+### RWR-68 Recovery window: Backups | Reflog switch, fits 720×480
 Fixture: `fx-backups`, size 720×480
 Layer: interaction
 - When the user opens **Repository › Recovery…** (or its search Action)
-- Then a non-modal Recovery window with one **Backups** / **Reflog** source selector opens fully inside the viewport with no clipped controls, on Backups the first time and on the last chosen source after that; History stays usable beside it; there are no separate **Backups…** or **Reflog…** commands
-Covered by (interaction, partial): `recovery_window_offers_one_source_selector`, `recovery_window_stays_inside_the_narrow_viewport`, `repository_recovery_opens_one_window_on_the_last_source`, `commands_off_the_toolbar_keep_their_menu_home_and_search_entry` (apps/git-good/src/main.rs)
+- Then a non-modal window titled *Recovery* with a **Backups <n> | Reflog** switch in its header opens fully inside the viewport with no clipped controls, on Backups the first time and on the last chosen source after that; History stays usable beside it; there are no separate **Backups…** or **Reflog…** commands and no Refresh button
+Covered by (interaction, partial): `recovery_window_switches_backups_and_reflog_in_its_header`, `recovery_window_stays_inside_the_narrow_viewport`, `repository_recovery_opens_one_window_on_the_last_source`, `commands_off_the_toolbar_keep_their_menu_home_and_search_entry` (apps/git-good/src/main.rs)
 
 ### RWR-69 Backups list and actions
 Fixture: `fx-backups`
 Layer: product
-- Then three backups are listed newest first with label, short commit, subject, full private ref, commit time; selecting one offers **Open commit**, **Reset branch here** (Soft, Mixed, Hard), **Create branch here…**, **Copy hash**, **Copy ref**; two backups at one commit stay separately selectable
-Covered by (interaction): `lists_and_renders_rewrite_backups`, `keeps_distinct_backups_at_one_commit_selectable` (apps/git-good/src/backups_view.rs)
+- Then the backups are listed newest first in 22 px rows under *Saved by gg before each rebase, amend or rewrite. Hidden from the refs sidebar.*: SAVED (relative time), BRANCH (pill), BEFORE (rebase, amend, rewrite), TIP, SUBJECT; the selected one is a label grid of TIP (copy button), SAVED (*<date>, <time> · before rebase of <branch>*), BRANCH NOW (tip and *<n> commits differ from the backup*) and REF (copy button); the footer holds **Delete backup…**, **⋯** (Copy commit ID `Ctrl+C`, Copy ref `Ctrl+Shift+C`, Reset branch here ▸ Soft *keep index and files* / Mixed *keep files* / Hard… *discard changes*, Delete backup… `Del`), **Open commit**, **Create branch here…** and the filled **Restore <branch>…** `Enter`; two backups at one commit stay separately selectable
+Covered by (backend, interaction, partial): `backups_show_time_branch_and_a_label_grid_without_refresh` (apps/git-good/src/recovery_view.rs), `backups_record_the_rewritten_branch_and_their_save_time` (crates/git/tests/backup.rs) (the ⋯ menu not opened)
 
 ### RWR-70 Restore from a backup after a rewrite
 Fixture: `fx-rebase` after a rewrite that dropped a commit
 Layer: product
-- When the user opens **Repository › Recovery…** (the outcome offers **Push** here, since the branch is still ahead of its upstream, RWR-42) and on the newest backup chooses **Reset branch here › Hard**, confirming **Hard reset**
-- Then `main` is back at the pre-rewrite tip with the dropped commit; the backup ref still exists; refs/history/status and the Backups list refresh
-Covered by (interaction, partial): `outcome_recovery_button_opens_backups`, `repository_recovery_opens_one_window_on_the_last_source` (apps/git-good/src/main.rs) (opening only)
+- When the user opens **Repository › Recovery…** and on the newest backup presses **Restore main…** (or `Enter`)
+- Then the confirmation asks *Move main from <tip> back to <id> <subject>?* with *✓ Files are checked out to match the backup.* and *✓ The current tip <tip> is saved as a new backup, so this can be undone.*, Cancel `Esc` and **Restore branch** `Enter`
+- When confirmed
+- Then a `restore` backup of the rewritten tip is created first, then `main` is hard reset to the pre-rewrite tip with the dropped commit; the old backup still exists; the status strip reads *Restored main to <id> · the previous tip <tip> is saved as a backup*; refs, history, status and the Backups list refresh
+Covered by (backend, interaction): `restore_is_one_confirmed_hard_reset_that_saves_the_tip_first` (apps/git-good/src/recovery_view.rs), `restore_saves_the_current_tip_then_hard_resets_a_clean_branch` (crates/git/tests/backup.rs)
 
 ### RWR-71 Create branch here from a backup does not switch
 Fixture: `fx-backups`
@@ -3258,25 +3341,25 @@ Layer: interaction
 - Then the commit review opens; Back returns to Recovery › Backups with that entry selected (same for Reflog with a non-HEAD reference filter)
 Covered by (interaction): `recovery_return_location_reopens_the_same_source`, `recovery_return_location_restores_the_reflog_reference_and_entry` (apps/git-good/src/main.rs)
 
-### RWR-73 Reflog source lists entries and offers restore actions
+### RWR-73 Reflog source lists entries in plain language
 Fixture: `fx-backups`
 Layer: product
 - When the user switches to **Reflog**
-- Then `HEAD` is the default with a selector for `HEAD` and local branches; entries show `HEAD@{n}`, relative time, action and detail (reset, amend, rebase, checkout); selecting one shows its full ID with **Open commit**, **Reset branch here** (Soft/Mixed/Hard), **Create branch here…**, **Copy hash**
-Covered by (backend, interaction): `loads_entries_and_renders_recovery_actions`, `selects_entries_by_their_own_selector` (apps/git-good/src/reflog_view.rs); `reads_head_and_branch_reflogs_in_order` (crates/git/tests/reflog.rs)
+- Then the header adds **Reference** `HEAD` (24 px menu rows: ✓ HEAD, then local branches with `current` at the right); rows show WHEN, ENTRY `@{n}`, WHAT HAPPENED in plain language (*Reset to …*, *Amended “…”*, *Finished rebase of …*, *Switched from main to …*) and COMMIT; the selected entry shows COMMIT (8-character ID, subject, copy), WHEN (date and relative), ENTRY `HEAD@{n}` (copy) and GIT MESSAGE (the raw `rebase (pick): …`); the footer holds **⋯**, **Open commit**, **Create branch here…** and **Restore <branch> here…** `Enter`, with no **Delete backup…**; the status strip reads *<n> entries · HEAD*
+Covered by (backend, interaction): `reflog_reads_in_plain_language_with_the_raw_message_below`, `reflog_events_read_in_plain_language` (apps/git-good/src/recovery_view.rs); `reads_head_and_branch_reflogs_in_order` (crates/git/tests/reflog.rs)
 
 ### RWR-74 Reflog restore of a pre-amend commit
 Fixture: `fx-backups`
 Layer: product
-- When the user selects the entry before `commit (amend): …` and chooses **Reset branch here › Mixed**, confirms **Reset**
-- Then the branch points at the pre-amend commit; working files unchanged; the Reflog list refreshes with a new `reset` entry
+- When the user selects the entry before `commit (amend): …` and chooses **⋯ › Reset branch here › Mixed**, confirms **Reset**
+- Then the branch points at the pre-amend commit; working files unchanged; the Reflog list refreshes with a new *Reset to …* entry
 Covered by (Not automated)
 
 ### RWR-75 Missing reflog reference shows an error, not stale entries
 Fixture: `fx-backups`, branch `old` deleted while Recovery shows its reflog
 Layer: product
-- Then the Reflog source shows an actionable error and no stale entries; `git good reflog nosuch` fails likewise
-Covered by (backend, interaction): `missing_reference_shows_an_error_instead_of_stale_entries` (apps/git-good/src/reflog_view.rs); `rejects_missing_and_option_shaped_reflogs` (crates/git/tests/reflog.rs)
+- Then the Reflog source shows no stale entries and the status strip names Git's error; an existing reference with no entries reads *No reflog entries for <ref>.*; `git good reflog nosuch` fails likewise
+Covered by (backend, interaction): `reflog_reads_in_plain_language_with_the_raw_message_below` (apps/git-good/src/recovery_view.rs); `rejects_missing_and_option_shaped_reflogs` (crates/git/tests/reflog.rs)
 
 ### RWR-76 Keep private backups prunes old backups on open
 Fixture: `fx-backups`, **Keep private backups** = 30 days
@@ -3285,12 +3368,24 @@ Layer: product
 - Then in the background the 40- and 120-day backups are deleted, the 2-day one stays; no other ref is touched; with 90 days only the 120-day one goes; with **Forever** (default) none go
 Covered by (backend, partial): `prune_deletes_only_gg_backups_older_than_the_age` (crates/git/tests/backup.rs); GUI path not automated
 
-### RWR-77 Recovery actions never delete backups or user files
+### RWR-77 Only Delete backup… deletes a backup; Restore needs a clean tree
 Fixture: `fx-backups`
 Layer: product
-- When the user runs every Recovery action except Hard reset
+- When the user runs every Recovery action except Hard reset and Delete backup…
 - Then all `refs/gg/backup/*` refs remain and no untracked file is removed
-Covered by (Not automated)
+- Given a tracked file is edited, when **Restore <branch>…** is chosen
+- Then the confirmation's footer reads *1 file has uncommitted changes. Commit or stash it first.* with **Restore branch** disabled, and `Enter` does nothing; `Esc` cancels
+- When **Delete backup…** (or `Del`) is confirmed
+- Then only that backup ref is removed, HEAD is unchanged, and an empty list reads *No rewrite backups yet. gg saves one before every rebase, amend or rewrite.*
+Covered by (backend, interaction, partial): `a_dirty_tree_keeps_restore_disabled_and_says_why`, `delete_backup_confirms_then_removes_only_that_ref` (apps/git-good/src/recovery_view.rs), `delete_removes_one_backup_and_refuses_other_references` (crates/git/tests/backup.rs) (the full action sweep not automated)
+
+### RWR-79 Recovery refreshes itself
+Fixture: `fx-backups`
+Layer: interaction
+- Given Recovery is open
+- When a terminal creates a backup or commits, then gg gets focus back; or an amend, rebase, restore or reset finishes in gg
+- Then the open source re-reads in the background without a Refresh button, keeping its row heights and the selected entry; a return location selects its entry once the list arrives
+Covered by (interaction, partial): `recovery_return_location_restores_the_reflog_reference_and_entry` (apps/git-good/src/main.rs), `restore_is_one_confirmed_hard_reset_that_saves_the_tip_first` (apps/git-good/src/recovery_view.rs) (after a restore; focus not simulated)
 
 ### RWR-78 Reset confirmation revalidates on confirm
 Fixture: `fx-dirty`, `c27` selected
@@ -3643,11 +3738,11 @@ Layer: product
 Covered by (backend, partial): `unlock_and_prune_keep_branches` (crates/git/tests/worktree.rs); GUI path not automated
 
 ### SUB-01 Submodule details from the reader
-Fixture: `fx-submodule`, commit adding `vendor/lib` open in Review
+Fixture: `fx-submodule`, commit bumping `vendor/lib` open in Review
 Layer: product
 - When **File actions › Submodule details…** on `vendor/lib`
-- Then the window names the path, Before/After recorded commits, parent index commit, nested HEAD, initialized and dirty state, `.gitmodules` URL and branch, URL differences, and recorded-object availability; nothing is fetched or checked out
-Covered by (backend, interaction): `submodule_details_window_renders_recorded_state_and_update` (apps/git-good/src/main.rs), `details_name_recorded_checked_out_and_index_state` (crates/git/tests/submodule.rs)
+- Then the header reads *Submodule vendor/lib* with the status pill (amber *Different commit*) and one sentence for the status; a label grid lists BEFORE, AFTER, INDEX and CHECKED OUT as 8-character IDs with subjects, copy buttons and hints (*same as After*, *same as Before · 1 commit behind After*), then URL and BRANCH, and *Local config uses a different URL: …* when it differs; no 40-character hash is shown; nothing is fetched or checked out
+Covered by (backend, interaction): `details_show_a_label_grid_with_short_ids_and_same_as_hints` (apps/git-good/src/submodules_view.rs), `submodule_details_window_renders_recorded_state_and_update` (apps/git-good/src/main.rs), `details_name_recorded_checked_out_and_index_state`, `list_reads_every_gitlink_with_subjects_and_how_far_behind_it_is` (crates/git/tests/submodule.rs)
 
 ### SUB-02 Uninitialized submodule
 Fixture: `fx-submodule`
@@ -3659,17 +3754,17 @@ Covered by (backend, partial): `uninitialized_submodule_keeps_the_parent_index_i
 ### SUB-03 Update (init) confirmation and run
 Fixture: `fx-submodule`
 Layer: product
-- When **Update…** on `vendor/uninit`
-- Then the confirmation names path, target commit and URL, says Git may fetch and the parent index is not staged
+- When **Initialize and update…** on `vendor/uninit`
+- Then the confirmation *Update submodule* asks *Initialize and check out <id> in vendor/uninit?*, says *Git may fetch from <url>. The parent index is not changed.*, and has Cancel `Esc` and the filled **Update** `Enter` side by side
 - When confirmed
-- Then progress shows, `git submodule update --init -- vendor/uninit` runs, status rescans to initialized; the parent index is unchanged
-Covered by (backend, partial): `dirty_and_index_mismatch_block_update_and_update_restores_the_index_commit` (crates/git/tests/submodule.rs); GUI path not automated
+- Then `git submodule update --init -- vendor/uninit` runs on the worker, status rescans to initialized, the footer's left reads *Updated vendor/uninit to <id>.*; the parent index is unchanged
+Covered by (backend, interaction, partial): `a_disabled_update_says_why_at_the_footer_left_and_the_confirm_sits_side_by_side` (apps/git-good/src/submodules_view.rs) (confirmation and Enter); `dirty_and_index_mismatch_block_update_and_update_restores_the_index_commit` (crates/git/tests/submodule.rs); the GUI run not automated
 
 ### SUB-04 Update blocked: dirty nested tree / recorded commit differs from index / object missing
 Fixture: `fx-submodule` with an edit inside `vendor/lib`
 Layer: product
-- Then Update is disabled with the dirty reason; viewing a historical commit whose recorded ID differs from the index disables it with that reason; a missing recorded object disables it too
-Covered by (backend, partial): `dirty_and_index_mismatch_block_update_and_update_restores_the_index_commit` (crates/git/tests/submodule.rs); GUI path not automated
+- Then the primary reads **Update…**, disabled, and the reason replaces the result at the footer's left: *vendor/lib has local changes. Open it to inspect or clean them.*; a historical commit whose recorded ID differs from the index reads *Stage the parent gitlink before updating: the index records <id>.*; a missing recorded object disables it with its reason
+Covered by (backend, interaction, partial): `a_disabled_update_says_why_at_the_footer_left_and_the_confirm_sits_side_by_side` (apps/git-good/src/submodules_view.rs) (dirty); `dirty_and_index_mismatch_block_update_and_update_restores_the_index_commit` (crates/git/tests/submodule.rs)
 
 ### SUB-05 Open nested repository
 Fixture: `fx-submodule` (vendor/lib initialized)
@@ -3678,29 +3773,40 @@ Layer: product
 - Then gg shows `vendor/lib` as its own repository; returning to the parent restores its selection and draft
 Covered by (Not automated)
 
-### SUB-06 No Submodules… / LFS… menu placeholders — see FRM-20
+### SUB-06 Submodules… and LFS… menu items — see FRM-20
+
+### SUB-07 Repository › Submodules… lists every gitlink
+Fixture: `fx-submodule`
+Layer: interaction
+- When **Repository › Submodules…**
+- Then a non-modal *Submodules* window with a count pill lists PATH, STATUS, RECORDED and CHECKED OUT in 22 px rows: `vendor/lib` with an amber *Different commit* pill and two 8-character IDs, `vendor/uninit` with a grey *Uninitialized* pill and `—`; pills are amber for differs, red for broken, green for Clean; the footer reads *Recorded = commit staged in the parent index.* with **Open nested repository** and **Details** `Enter`
+- When Down then `Enter`
+- Then Submodule details opens for `vendor/uninit`; the list has no Refresh and re-reads on open, on focus, and after an update; a repository without gitlinks reads *No submodules in this repository.*
+Covered by (backend, interaction): `the_list_has_status_pills_short_ids_and_enter_opens_details` (apps/git-good/src/submodules_view.rs), `list_reads_every_gitlink_with_subjects_and_how_far_behind_it_is` (crates/git/tests/submodule.rs)
 
 ### LFS-01 LFS details for an available pointer
 Fixture: `fx-lfs`, commit adding `art.psd` in Review
 Layer: product
 - When **File actions › LFS details…**
-- Then the window names the path, After pointer OID (`sha256:` 64 hex) and declared size, object present locally, `git-lfs` available, the selected remote; pointer text is never shown as content
-Covered by (backend, interaction): `lfs_window_renders_pointer_identity_and_missing_object_state` (apps/git-good/src/main.rs), `pointer_details_separate_oid_size_and_local_availability` (crates/git/tests/lfs.rs)
+- Then the header reads *LFS art.psd* with a green *Object available* pill; AFTER shows the 8-character OID, the declared size, *available*, and a copy button that copies the full sha256; pointer text is never shown as content
+Covered by (backend, interaction): `details_shorten_oids_and_name_the_file_and_size_in_the_fetch_question` (apps/git-good/src/lfs_view.rs), `lfs_window_renders_pointer_identity_and_missing_object_state` (apps/git-good/src/main.rs), `pointer_details_separate_oid_size_and_local_availability` (crates/git/tests/lfs.rs)
 
 ### LFS-02 Missing object state and Fetch object…
 Fixture: `fx-lfs`
 Layer: product
 - When LFS details for `old.psd`
-- Then it reads object missing and **Fetch object…** is enabled; the confirmation names OID, size and remote and says it may download and does not change working files
+- Then a red *Object missing* pill, AFTER *missing*, GIT LFS *available · remote origin*, *The new version’s content is not in the local LFS store, so the diff shows only the pointer.*, and *Fetching does not change working files.* beside the filled **Fetch object…**
+- When **Fetch object…**
+- Then the confirmation asks *Download the new version of old.psd?* with *<size> from origin. Working files are not changed.* (no OID) and Cancel `Esc` / **Fetch** `Enter` side by side
 - When confirmed
-- Then progress shows, `git lfs fetch … --include=old.psd` runs, availability rescans to present; `old.psd` in the worktree is still pointer text
-Covered by (interaction, partial): `lfs_window_renders_pointer_identity_and_missing_object_state` (apps/git-good/src/main.rs); fetch not automated
+- Then `git lfs fetch … --include=old.psd` runs, availability rescans to present, the footer's left reads *Fetched <id> (<size>).*; `old.psd` in the worktree is still pointer text
+Covered by (interaction, partial): `details_shorten_oids_and_name_the_file_and_size_in_the_fetch_question` (apps/git-good/src/lfs_view.rs); fetch not automated
 
 ### LFS-03 Fetch disabled without git-lfs or when present
 Fixture: `fx-lfs` with `git-lfs` removed from `PATH`
 Layer: product
-- Then details report `git-lfs` unavailable and **Fetch object…** is disabled; for `art.psd` (present) it is disabled too
-Covered by (Not automated)
+- Then the pill reads amber *LFS unavailable*, GIT LFS *not installed*, and *git-lfs is not installed.* replaces the footer note while **Fetch object…** is disabled; for `art.psd` (present) the footer offers **Export original…** instead
+Covered by (interaction, partial): `lfs_window_renders_pointer_identity_and_missing_object_state` (apps/git-good/src/main.rs) (not installed)
 
 ### LFS-04 Non-pointer and malformed pointers
 Fixture: `fx-lfs` plus `notes.txt` plain text and `bad.psd` with `oid sha256:` of 10 hex digits
@@ -3717,8 +3823,10 @@ Covered by (backend, interaction): `working_staged_unstaged_and_untracked_pointe
 ### LFS-06 Bounded content preview of a present object
 Fixture: `fx-lfs` with a small PNG tracked as `logo.psd`
 Layer: product
-- Then details show an image preview; an object >2 MiB shows an explicit over-budget state; a non-image shows the hex preview
-Covered by (backend, partial): `bounded_object_preview_reads_only_an_available_small_object` (crates/git/tests/lfs.rs); GUI path not automated
+- Then details show the image in a 150 px bordered frame labelled *CONTENT PREVIEW · AFTER* with *<w> × <h> PNG* at the right; an object >2 MiB shows an explicit over-budget state; a non-image shows the hex preview in the frame
+- When **Export original…** and a new file is chosen
+- Then the file holds the complete original bytes and the footer's left reads *Exported <size> to <path>.*
+Covered by (backend, partial): `bounded_object_preview_reads_only_an_available_small_object` (crates/git/tests/lfs.rs), `single_content_preview_draws_images_and_hex_within_a_bounded_height` (apps/git-good/src/binary_preview.rs); export not automated
 
 ### LFS-07 No smudge/materialize control
 Fixture: `fx-lfs`
@@ -3726,40 +3834,49 @@ Layer: product
 - Then no control to materialize fetched content into the working file exists (deferred, no placeholder)
 Covered by (Not automated)
 
+### LFS-08 Repository › LFS… fetches the missing objects together
+Fixture: `fx-lfs`
+Layer: product
+- When **Repository › LFS…**
+- Then *LFS objects* opens on **Missing 1 | All 2** with `old.psd` checked (PATH, 8-character OBJECT, SIZE in 22 px rows) and the footer *1 selected · <size> from origin* with **LFS details** and the filled **Fetch 1 object** `Ctrl+Enter`; **All** adds `art.psd` with its checkbox disabled
+- When **Fetch 1 object**
+- Then one `git lfs fetch origin --include=old.psd` runs without a further question, the footer reads *Fetched 1 object (<size>).*, and Missing reads *No missing objects.*; unchecking a row lowers the count and size on the button; the list has no Refresh and re-reads on open and on focus
+Covered by (backend, interaction, partial): `the_list_shows_missing_objects_checked_and_states_the_batch` (apps/git-good/src/lfs_view.rs), `head_pointers_list_only_lfs_pointers_with_availability` (crates/git/tests/lfs.rs); the fetch itself not automated
+
 ## Signing
 
 ### SIG-01 Good signature
 Fixture: `fx-signed`
 Layer: product
 - When the good signed commit is selected and **Signature details…** opened from Commit details
-- Then state **good**, signer identity, key fingerprint, trust label, format `ssh`, and raw detail are shown; configuration, validity and trust are three separate facts
-Covered by (interaction): `signature_window_separates_validity_trust_and_configuration` (apps/git-good/src/main.rs)
+- Then the title reads *Signature · commit <8-char id>*; a green banner with an icon reads *Good signature* · *Signed by an allowed signer.*; the label grid lists only reported rows (SIGNER, KEY with a copy button, TRUST, FORMAT `ssh`); no signing configuration is shown; the footer reads *Read-only check; nothing is changed.* with **Signing settings…**, which opens Preferences › Commit
+Covered by (interaction): `the_window_lists_only_reported_rows_and_links_the_settings`, `titles_name_the_object_kind`, `banners_take_the_state_colour` (apps/git-good/src/signature_view.rs), `signature_window_shows_a_banner_and_links_the_signing_settings` (apps/git-good/src/main.rs)
 
 ### SIG-02 Unknown key is not bad
 Fixture: `fx-signed`
 Layer: product
 - When details for the commit signed by a key not in allowed signers
-- Then state is unknown key (not bad), with the key ID
-Covered by (Not automated)
+- Then an amber banner reads *Unknown key* · *Valid signature, but the key is not in allowed signers.* (not bad), with the KEY row
+Covered by (interaction, partial): `banners_take_the_state_colour` (apps/git-good/src/signature_view.rs) (banner only)
 
 ### SIG-03 Unsigned is explicit
 Fixture: `fx-signed`
 Layer: product
 - When details for the unsigned commit
-- Then state reads unsigned, not an empty success
-Covered by (backend, partial): `unsigned_commit_and_tag_report_kind_without_claiming_validity` (crates/git/tests/signature.rs); GUI path not automated
+- Then a grey banner reads *Unsigned* · *This commit has no signature.*, not an empty success
+Covered by (backend, interaction, partial): `unsigned_commit_and_tag_report_kind_without_claiming_validity` (crates/git/tests/signature.rs), `banners_take_the_state_colour` (apps/git-good/src/signature_view.rs)
 
 ### SIG-04 Bad signature
 Fixture: `fx-signed` with a copy of the good commit whose message bytes were altered (rewritten object keeping the gpgsig header)
 Layer: product
-- Then state is bad
-Covered by (Not automated)
+- Then a red banner reads *Bad signature* · *The signature does not match this commit’s content.*
+Covered by (interaction, partial): `banners_take_the_state_colour` (apps/git-good/src/signature_view.rs) (banner only)
 
 ### SIG-05 Verification unavailable
 Fixture: `fx-signed` with `gpg.program`/`ssh-keygen` absent from `PATH`
 Layer: product
-- Then state is verification unavailable, and configuration shows the tool not available
-Covered by (backend, partial): `config_separates_signing_key_format_and_tool_readiness` (crates/git/tests/signature.rs); UI not automated
+- Then a grey banner reads *Verification unavailable* with Git's reason and a **Signing settings…** link; Preferences › Commit shows the configuration and its note
+Covered by (backend, partial): `config_separates_signing_key_format_and_tool_readiness` (crates/git/tests/signature.rs), `banners_take_the_state_colour` (apps/git-good/src/signature_view.rs)
 
 ### SIG-06 Tag signature from the ref menu
 Fixture: `fx-signed`
@@ -3787,6 +3904,13 @@ Covered by (backend, interaction): `signing_readiness_blocks_the_commit_without_
 
 ### SIG-10 New tag dialog signing — see HIS-71
 
+### SIG-11 Signing configuration in Preferences › Commit
+Fixture: `fx-signed`
+Layer: interaction
+- When **Repository › Preferences… › Commit** (or **Signing settings…** in Signature details)
+- Then under the signing choices read-only rows show Format `ssh · gpg.format`, Signing key `<path> · user.signingkey`, Allowed signers `<path> · gpg.ssh.allowedSignersFile`, then *Read from Git config.* with **Edit in repository config…**, which opens the repository's config in the configured editor; the rows are read in the background and keep their place while Git runs
+Covered by (interaction, partial): `preferences_commit_lists_the_signing_configuration_read_only` (apps/git-good/src/main.rs) (rows and stable height; the editor launch not checked)
+
 ## Repository dialogs
 
 ### DLG-01 Welcome view without a repository — see FRM-03
@@ -3795,10 +3919,10 @@ Covered by (backend, interaction): `signing_readiness_blocks_the_commit_without_
 Fixture: `fx-linear`, recent list of 10
 Layer: interaction
 - When `Ctrl+O`
-- Then a modal shows a folder field with **Browse…**, at most eight recent repositories, **Clone…**, **Cancel** (`Esc`), **Open** (`Enter`)
+- Then a modal shows a folder field with **Browse…**, up to ten recent repositories (the limit shared with the welcome view, FRM-04), **Clone…**, **Cancel** (`Esc`), **Open** (`Enter`)
 - When `bran` is typed
 - Then only `fx-branchy` stays listed (name match first, path dimmed)
-Covered by (Not automated)
+Covered by (interaction, partial): `one_recent_limit_for_the_welcome_list_open_recent_and_open` (apps/git-good/src/main.rs) — the limit; filtering Not automated
 
 ### DLG-03 Open a valid path and invalid path
 Fixture: `fx-linear`; target `fx-branchy` and `fx-not-repo`
@@ -3826,10 +3950,11 @@ Covered by (Not automated)
 ### DLG-06 Open recent menu
 Fixture: `fx-linear` open; recent `[fx-linear, fx-branchy, deleted-repo]`
 Layer: interaction
-- Then **Repository › Open recent** lists folder name then path; `fx-linear` has a checkmark; `deleted-repo` is disabled with *Not found*; the list ends with **Clear recent**
+- Then **Repository › Open recent** lists up to ten entries, folder name then path; `fx-linear` has a checkmark; `deleted-repo` is disabled with *Not found*; the list ends with **Clear recent**
 - When **Clear recent**
 - Then the submenu is empty (except Clear recent) and `recent_repositories` is empty after restart
-Covered by (Not automated)
+- And `recent_repositories` stores `{"path", "opened"}` entries; a settings file with plain path strings from older versions still loads
+Covered by (interaction, partial): `one_recent_limit_for_the_welcome_list_open_recent_and_open` (apps/git-good/src/main.rs), `recent_times_round_trip_and_old_path_lists_still_load` (apps/git-good/src/settings.rs); checkmark and Clear recent Not automated
 
 ### DLG-07 Clone dialog Into folder and target line — see NET-03
 
@@ -3843,10 +3968,67 @@ Covered by (Not automated)
 Fixture: `fx-linear`
 Layer: visual
 - When **Help › About gg**
-- Then logo, version, authors (people only), license with link, source link, AI-assistance/no-warranty note; **Copy version info** copies gg version, OS/arch and `git --version`; **Close** closes
-Covered by (interaction, partial): `about_names_the_license_and_the_human_authors` (apps/git-good/src/branding.rs); copy not automated
+- Then the dialog frame (title **About gg** and × in one row, footer below) shows the logo, version, **Commit** (8 characters), **Built** (`YYYY-MM-DD · <target triple>`), authors (people only), license with link, source link, AI-assistance/no-warranty note; **Copy version info** copies four plain lines (`gg <version>`, `commit <id>`, `built <date>`, `target <triple>`); **Close** or `Esc` closes
+Covered by (interaction, partial): `about_names_the_license_and_the_human_authors`, `version_info_is_four_plain_build_lines` (apps/git-good/src/branding.rs); the rendered frame is checked by native review
 
 ### DLG-12 Decision dialogs are modal — see FRM-64
+
+### DLG-13 Welcome recent rows: keys, remove, branch and opened time
+Fixture: `fx-not-repo` (cwd); recent `[fx-linear (opened 2 h ago), fx-branchy (yesterday), fx-dirty (3 days ago)]`
+Layer: interaction
+- Then the first row is selected; rows are 22 px with name 132 px, `~` path (mono, truncating, full path on hover), branch 128 px (`main`, blank until read, nothing shifts when it arrives), opened 76 px (`2 h ago`, `yesterday`, `3 days ago`; older dates as `Oct 12`), × on hover or selection
+- When ↓ ↓ ↑ then `Del`
+- Then `fx-branchy` leaves the list (its folder is untouched) and the count reads `2`
+- When `Enter`
+- Then the selected row stays selected while the footer reads `Reading <~path>`, the pane shows no loading text, and the repository opens
+Covered by (interaction): `recent_rows_take_arrows_enter_and_delete` (apps/git-good/src/main.rs), `opened_times_read_relative_then_as_dates`, `the_branch_is_read_from_head_for_repositories_and_worktrees` (apps/git-good/src/welcome_view.rs)
+
+### DLG-14 A recent row that fails to open shows its fix in place
+Fixture: `fx-not-repo` (cwd); recent `[<moved folder>, <plain folder that was a repository>]`
+Layer: product
+- When the moved folder's row is opened
+- Then the row becomes one amber line in the same 22 px slot: `<~path> no longer exists.` with **Remove from recent** and **Locate…**; **Locate…** picks a folder that replaces the entry and opens it; **Remove from recent** removes the entry
+- When the plain folder's row is opened
+- Then its slot reads `<~path> is no longer a Git repository.` with **Remove from recent**; the launch line is unchanged
+Covered by (interaction): `a_missing_recent_folder_is_marked_and_offers_remove_and_locate`, `recent_rows_take_arrows_enter_and_delete` (apps/git-good/src/main.rs)
+
+### DLG-15 First run and filtering many recent repositories
+Fixture: `fx-not-repo` (cwd), an empty `XDG_CONFIG_HOME`; then a recent list of 12
+Layer: visual
+- Given no recent repositories
+- Then the title reads **Welcome to gg** with *Open a repository to see its history and changes.*; RECENT is absent; the lines *Repositories you open are listed here. Drop a folder on this window to open it.* and `Clone folder: <~folder> · Change in Preferences…` show; the link opens Preferences › General
+- Given 12 recent repositories
+- When `repo-1` is typed while the list has the keyboard
+- Then only matching rows show (every word must match the name or path), the count reads `1 of 10`, and the list keeps its height; `Esc` clears; with six or fewer entries typing does not filter
+Covered by (interaction): `first_run_explains_where_repositories_will_appear`, `typing_filters_many_recent_repositories_and_esc_clears` (apps/git-good/src/main.rs), `every_word_must_match_the_name_or_path_and_the_list_is_capped` (apps/git-good/src/welcome_view.rs)
+
+### DLG-16 Drop a folder on the welcome view
+Fixture: `fx-not-repo` (cwd); `fx-linear`; an empty folder `<plain>`
+Layer: interaction
+- When `fx-linear` is dragged over the window
+- Then an overlay with a dashed `#2f8fc4` border reads `Drop to open <~fx-linear>` (`Drop to open` when the platform gives no path)
+- When it is dropped (or a file inside it)
+- Then `fx-linear` opens
+- When `<plain>` is dropped
+- Then the New repository dialog opens on `<plain>`
+Covered by (interaction, partial): `a_dropped_file_stands_for_its_folder` (apps/git-good/src/welcome_view.rs); overlay and drop Not automated
+
+### DLG-17 New repository dialog
+Fixture: `fx-not-repo` with 14 files, 3 of them ignored by its `.gitignore`; `fx-linear`
+Layer: product
+- When **Repository › New repository…** (or the welcome card, or **Initialize here…**)
+- Then a modal *New repository* shows **Folder** with **Choose…**, **First branch** `main`, checked **Commit the existing files as “Initial commit”**, and the weak line `<~folder> has 14 files (3 ignored by .gitignore).` (read in the background; `will be created.` for a missing folder), **Cancel** (`Esc`) and the filled **Create repository** (`Enter`)
+- When **Create repository**
+- Then the repository is created on `main`, the 11 files are committed as `Initial commit`, and it opens in History and joins the recent list; unchecked, it opens in Local Changes with nothing committed
+- When the folder is `<fx-linear>/docs`
+- Then the line reads `<~fx-linear>/docs is inside the repository <~fx-linear>. Open it instead?` with **Open <~fx-linear>**, and **Create repository** stays disabled
+Covered by (backend, interaction): `init_commits_the_existing_files_except_ignored_ones`, `init_refuses_inside_an_existing_repository`, `init_creates_the_folder_on_the_named_branch_without_committing` (crates/git/tests/init.rs), `the_new_repository_dialog_creates_and_opens_the_repository` (apps/git-good/src/main.rs)
+
+### DLG-18 Narrow welcome view
+Fixture: `fx-not-repo` (cwd), recent list of 6; window 720×480
+Layer: visual
+- Then the column fills the width; the cards stay three across with short subtitles (`Ctrl+O`, `into <~folder>`, `git init`); the branch column drops while the opened time stays; the logo and version line hide below 760 px; search is its icon
+Covered by (interaction): `the_narrow_welcome_keeps_three_cards_and_drops_logo_version_and_branch` (apps/git-good/src/main.rs)
 
 ## CLI
 
@@ -4067,6 +4249,15 @@ Covered by (Not automated)
 
 ### CLI-27 Launch with PATH opens the GUI on that repository — see FRM-02
 
+### CLI-28 Init creates a repository and refuses inside one
+Fixture: an empty temporary folder with `notes/a.txt`; `fx-linear`
+Layer: product
+- When `git good init --branch trunk --commit notes`
+- Then stdout is one receipt `{"operation":"init","path","branch":"trunk","head","files":1,"complete":true}`, `notes` is a repository on `trunk` whose HEAD is `head` (`Initial commit`)
+- When `git good init` runs in `notes/docs`
+- Then it exits nonzero with `is inside the repository` on stderr, empty stdout, and nothing created
+Covered by (end-to-end): `init_cli_creates_commits_and_refuses_inside_a_repository` (apps/git-good/tests/cli.rs)
+
 Rules every area relies on, cases that span areas, and the CLI contract. Area cases cite a rule when they check one instance of it.
 
 ## Shared rules
@@ -4109,7 +4300,7 @@ Covered by (Not automated)
 Fixture: `fx-merge-conflict`, `src/app.rs` resolved and staged, block choices made but not staged in `docs.md`
 Layer: product
 - When gg is quit and reopened
-- Then the operation area reads `merge in progress · <commit> · 2 conflicts`; `src/app.rs` is under `RESOLVED, STAGED`; the unstaged choices were never written, so the working files of the open paths still hold their markers; **Continue** stays disabled; **Abort** restores the pre-merge state
+- Then the amber band reads `Merge conflict · merging <ref> <id> into main` · `2 conflicts left in 2 files`; `src/app.rs` is listed under `ALSO CHANGED BY THIS MERGE` (the session's RESOLVED, STAGED list starts empty); the unstaged choices were never written, so the working files of the open paths still hold their markers; **Continue** stays disabled; **Abort** restores the pre-merge state
 Covered by (Not automated)
 
 ### XCT-04 Kill gg during autostash restoration
@@ -4209,9 +4400,9 @@ Covered by (Not automated)
 ### XCT-16 Keyboard-only recovery
 Fixture: `fx-rebase` after a rewrite that dropped a commit, no pointer input
 Layer: interaction
-- When the user opens **Recovery…** via `Ctrl+K`, selects the newest backup with Up/Down, opens **Reset branch here › Hard**, and confirms with `Enter`
-- Then the branch is back at the pre-rewrite tip
-Covered by (Not automated)
+- When the user opens **Recovery…** via `Ctrl+K`, selects the newest backup with Up/Down, presses `Enter` for **Restore main…**, and confirms with `Enter`
+- Then the branch is back at the pre-rewrite tip, and the tip it left is a new backup
+Covered by (interaction, partial): `restore_is_one_confirmed_hard_reset_that_saves_the_tip_first` (apps/git-good/src/recovery_view.rs) (`Enter` twice; opening via search not automated)
 
 ### XCT-17 Focus is always visible
 Fixture: `fx-dirty`, `fx-rebase`
@@ -4280,7 +4471,7 @@ Covered by (Not automated)
 Fixture: `fx-branchy`, a conflicting `feature/login` commit
 Layer: product
 - When **Cherry-pick onto HEAD** stops on a conflict, the path is resolved and staged in the GUI, and `git good cherry-pick --continue` runs in a terminal
-- Then the CLI receipt reports `applied: true`, `in_progress: false`, and gg's operation area clears without user action
+- Then the CLI receipt reports `applied: true`, `in_progress: false`, and gg's operation band clears without user action
 Covered by (Not automated)
 
 ### XCT-27 Reopened stop: CLI and GUI agree on Continue
@@ -4395,7 +4586,7 @@ Covered by (end-to-end, partial): `show_file_uses_exact_non_utf8_path_bytes` (ap
 
 Contradictions and gaps found while writing these cases. Each needs a decision; the affected cases follow the code where the specs disagree, or the proposed contract where marked *Proposed*.
 
-1. **View menu.** architecture.md says **Commit details** (`Space`) in one place and **Commit inspector** in another; final-design.md also lists diff layout, density and theme items there. Only final-design.md gives Help › Keyboard shortcuts `?`. (The architecture.md keyboard table still lists `Ctrl+R` refresh and `Ctrl+F` filter; FRM-60 and FRM-53 follow the decided behavior.)
+1. **View menu.** architecture.md says **Commit details** (`Space`) in one place and **Commit inspector** in another; final-design.md also lists diff layout, density and theme items there. Only final-design.md gives Help › Keyboard shortcuts `?`. (FRM-60 and FRM-53 follow the decided behavior: `Ctrl+R` is Reword.)
 2. **Search Files group.** final-design.md calls it later work; the code and architecture.md ship it.
 3. **Network Cancel location.** architecture.md says the status line (footer); a test name says operation area.
 4. **Branch work called "later".** architecture.md §Branch switching says delete, rename, tracking and tag creation remain later work; they ship.
@@ -4405,7 +4596,7 @@ Contradictions and gaps found while writing these cases. Each needs a decision; 
 8. **Preferences.** final-design.md calls it a non-blocking window, architecture.md a modal; **Load avatars from the network** is listed under both General and Appearance; theme order differs; the `settings.json` key list misses `zoom`, `code_font`, `editor`, `sign_tags`, `recent_repositories`, `reopen_last`, `backup_days`, `pull_strategy` and more. The Avatars section still reads as Gravatar-on-by-default.
 9. **Worktrees.** One sentence says pruning a missing registration is not offered, the next offers **Prune**; there is **Unlock** but no Lock; the CLI has neither.
 10. **CLI drift.** `tag --sign` versus `--sign|--no-sign`; `switch --stash`, worktree `--branch/--create/--at`, submodule `--recorded/--before` are missing from cli.md; `--help` prints `git-good`; no `-h`; `--help` says `clone` "opens" the clone but the CLI only prints a receipt (CLI-C01).
-11. **Recent repositories and signing defaults.** Open… shows 8, welcome 10; **Sign tags** preference versus `tag.gpgsign`; Sign commits has three modes but the Signing text says it follows `commit.gpgsign`.
+11. **Signing defaults.** **Sign tags** preference versus `tag.gpgsign`; Sign commits has three modes but the Signing text says it follows `commit.gpgsign`.
 12. **Stale user flows.** user-flows F07 still describes a Stashes window and Restore…; line 32 lists old toolbar menus; the toolbar now holds only Fetch, Pull and Push (FRM-23).
 13. **Unspecified states.** Bare repository UI; the missing-parent incomplete comparison label; operation band first line for merge/cherry-pick/revert; pending labels during Continue/Abort; disabled reasons for Fetch, Push, Merge and Recovery; empty refs-sidebar groups while filtering (spec keeps headers, test expects `No matching refs`).
 14. **Recovery window Refresh.** The Backups and Reflog sources each have a **Refresh** button in code, against "There is no Refresh command".

@@ -59,8 +59,10 @@ fn fast_forward_and_up_to_date() -> Result {
     git(p, &["commit", "-qm", "feature"])?;
     git(p, &["switch", "-q", "main"])?;
     let base = head(p)?;
+    assert_eq!(gg_git::merge::incoming(p, "feature")?, 1);
 
     let receipt = gg_git::merge::merge(p, "feature", false)?;
+    assert_eq!(gg_git::merge::incoming(p, "feature")?, 0);
     assert!(receipt.applied);
     assert!(!receipt.in_progress);
     assert_eq!(receipt.kind, Some(gg_engine::merge::Kind::FastForward));

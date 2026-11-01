@@ -41,6 +41,7 @@ impl Lines {
         let key = owned.clone();
         Self::with(key, ctx, move || {
             let output = std::process::Command::new("git")
+                .env("GIT_OPTIONAL_LOCKS", "0")
                 .arg("-C")
                 .arg(&repo)
                 .args(&owned)

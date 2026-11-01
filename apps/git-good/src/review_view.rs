@@ -10,6 +10,10 @@ use std::{collections::BTreeMap, ops::Range};
 const ROW: f32 = crate::density::COMPACT_ROW;
 /// Width of the file list beside the reader in wide layouts.
 const FILE_LIST_WIDTH: f32 = 300.0;
+
+/// The status line of the narrow reading view.
+const NARROW_READING_HINT: &str =
+    "Esc: history · F: files · Alt+Up/Down: next file · [ ]: changes · B: blame · H: file history";
 /// Font of the per-file line counts.
 fn stat_font() -> egui::FontId {
     egui::FontId::monospace(10.5)
@@ -109,11 +113,15 @@ pub struct Review {
     /// The commit's parents, kept while comparing against HEAD (that
     /// comparison does not list them) so Compare with can return to one.
     known_parents: Vec<String>,
+    /// The commit message, when the caller knows it: the narrow file list
+    /// shows its body under MESSAGE.
+    message: Option<String>,
 }
 impl Review {
     pub fn new(request: ReviewRequest, subject: String, ctx: &egui::Context) -> Self {
         let mut view = Self {
             known_parents: Vec::new(),
+            message: None,
             request,
             subject,
             worker: None,
@@ -156,6 +164,39 @@ impl Review {
         self
     }
 
+    /// The file Review opens on once its row arrives.
+    #[cfg(test)]
+    pub fn pending_path(&self) -> Option<&str> {
+        self.pending_path.as_deref()
+    }
+
+    /// The commit's full message, shown under MESSAGE in the narrow file list.
+    pub fn with_message(mut self, message: String) -> Self {
+        self.message = Some(message);
+        self
+    }
+
+    /// MESSAGE under the narrow file list: the body (or the subject when
+    /// there is none) and the byline, so nothing of the wide identity row is
+    /// lost (narrow proposal).
+    fn draw_message(&self, ui: &mut egui::Ui) {
+        ui.label(egui::RichText::new("MESSAGE").small().weak());
+        let body = self
+            .message
+            .as_deref()
+            .and_then(|message| message.split_once('\n'))
+            .map_or("", |(_, body)| body.trim());
+        ui.add(egui::Label::new(if body.is_empty() { &self.subject } else { body }).wrap());
+        if let Some(comparison) = self
+            .comparison
+            .as_ref()
+            .filter(|comparison| !comparison.author.is_empty())
+        {
+            ui.add_space(6.0);
+            ui.weak(format!("{} · {}", comparison.author, comparison.date));
+        }
+    }
+
     /// Open on `path`: select it and show its reader once its row arrives.
     pub fn select_path(mut self, path: String) -> Self {
         self.pending_path = Some(path);
@@ -164,7 +205,8 @@ impl Review {
 
     /// One-line commit identity: short ID and subject.
     /// Subject, hash pill, and author · date, as in the Review mockup.
-    fn draw_identity(&self, ui: &mut egui::Ui) {
+    /// Narrow windows leave the byline to the file list's MESSAGE section.
+    fn draw_identity(&self, ui: &mut egui::Ui, narrow: bool) {
         let id = self
             .comparison
             .as_ref()
@@ -173,7 +215,7 @@ impl Review {
         let byline = self
             .comparison
             .as_ref()
-            .filter(|comparison| !comparison.author.is_empty())
+            .filter(|comparison| !comparison.author.is_empty() && !narrow)
             .map(|comparison| format!("{} · {}", comparison.author, comparison.date));
         // The subject truncates; the hash pill and the byline keep their width.
         let byline_width = byline.as_ref().map_or(0.0, |text| {
@@ -231,8 +273,13 @@ impl Review {
     }
 
     /// Take an LFS-details request raised by the reader.
-    /// Take the path chosen with ⋯ › Open in editor.
-    pub fn take_editor_request(&mut self) -> Option<String> {
+    /// The footer receipt of a finished ⋯ › Export.
+    pub fn take_export_receipt(&mut self) -> Option<String> {
+        self.diff.take_export_receipt()
+    }
+
+    /// Take the path chosen with ⋯ › Open in editor or Reveal in folder.
+    pub fn take_editor_request(&mut self) -> Option<crate::editor::Request> {
         self.diff.take_editor_request()
     }
 
@@ -634,24 +681,28 @@ impl Review {
             .max(1.0) as usize;
     }
 
-    /// Draw the history strip above whichever reader path is active.
+    /// The version list in the file-list pane while history is open.
+    fn draw_history_list(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        if let Some(history) = &mut self.history {
+            history.draw_list(ui, ctx);
+        }
+    }
+
+    /// Draw whichever reader path is active, fed by history when it is open.
     fn draw_reader(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, reading: bool) {
         let mut message = None;
-        let mut close = false;
-        if let Some(history) = &mut self.history {
-            history.draw_strip(ui, ctx);
-            close = history.take_close();
-            if !close {
-                ui.separator();
-                message = history.prepare(&mut self.diff, ctx);
-            }
-        }
-        if close {
+        if self
+            .history
+            .as_ref()
+            .is_some_and(|history| history.close_requested())
+        {
             self.close_history(ctx);
-            return;
+        }
+        if let Some(history) = &mut self.history {
+            message = history.prepare(&mut self.diff, ctx);
         }
         if let Some(message) = message {
-            bounded_text::field(ui, message, egui::FontId::proportional(12.0), 22.0);
+            bounded_text::field_named(ui, message, egui::FontId::proportional(12.0), 22.0, "Error");
             return;
         }
         // A finished comparison with no files: say why, and offer the other
@@ -683,17 +734,23 @@ impl Review {
             }
             return;
         }
-        // History sits on the reader's mode row (mockup), not in the header.
+        // History sits on the reader's mode row (mockup), pressed while the
+        // version list is open.
         self.diff.set_history_button(
-            (self.history.is_none() && !self.embedded).then_some(self.selected.is_some()),
+            (!self.embedded).then_some(self.selected.is_some() || self.history.is_some()),
+            self.history.is_some(),
         );
         if reading || self.history.is_some() {
             self.diff.draw_reading(ui);
         } else {
             self.diff.draw(ui);
         }
-        if self.diff.take_history_request() && self.history.is_none() {
-            self.open_history = true;
+        if self.diff.take_history_request() {
+            if self.history.is_some() {
+                self.close_history(ctx);
+            } else {
+                self.open_history = true;
+            }
             ctx.request_repaint();
         }
         if let Some(lines) = self.diff.take_line_history() {
@@ -710,7 +767,15 @@ impl Review {
     fn back_label(&self) -> &'static str {
         if self.show_diff {
             "‹ Files"
-        } else if matches!(
+        } else {
+            self.caller_label()
+        }
+    }
+
+    /// The caller the identity row returns to: `‹ History`, `‹ Rebase`, or
+    /// `‹ Recovery`.
+    fn caller_label(&self) -> &'static str {
+        if matches!(
             self.return_location,
             Some(crate::return_location::ReturnLocation::Recovery { .. })
         ) {
@@ -886,11 +951,18 @@ impl Review {
         self.reveal_selection = false;
         if crate::navigation::available(ctx) && !self.diff.export_open() {
             if self.history.is_none() {
-                back = ctx.input_mut(|i| {
-                    i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)
-                        || i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft)
+                let files_key = self.show_diff && crate::navigation::activation_available(ctx);
+                let (escape, left, files) = ctx.input_mut(|i| {
+                    (
+                        i.consume_key(egui::Modifiers::NONE, egui::Key::Escape),
+                        i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft),
+                        files_key && i.consume_key(egui::Modifiers::NONE, egui::Key::F),
+                    )
                 });
-                if back && self.show_diff {
+                back = escape || left;
+                // Narrow windows: Esc goes back to the caller from the
+                // reading view too; F (or Left) returns to the file list.
+                if (back && self.show_diff && !(narrow && escape)) || files {
                     self.show_diff = false;
                     self.restore_files = true;
                     back = false;
@@ -971,20 +1043,27 @@ impl Review {
             .exact_size(34.0)
             .show(ui, |ui| {
                 ui.horizontal_centered(|ui| {
+                    // Narrow: the identity row always goes back to the
+                    // caller; `‹ Files` is on the reader's header row.
+                    let label = if narrow {
+                        self.caller_label()
+                    } else {
+                        self.back_label()
+                    };
                     if !self.embedded
                         && self.history.is_none()
                         && ui
-                            .button((self.back_label(), egui::RichText::new("Esc").small().weak()))
+                            .button((label, egui::RichText::new("Esc").small().weak()))
                             .clicked()
                     {
-                        if self.show_diff {
+                        if self.show_diff && !narrow {
                             self.show_diff = false;
                             self.restore_files = true;
                         } else {
                             back = true;
                         }
                     }
-                    if !self.embedded {
+                    if !self.embedded && !narrow {
                         ui.separator();
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -1021,7 +1100,7 @@ impl Review {
                             };
                             let mut choice = None;
                             egui::ComboBox::from_id_salt("review-parent")
-                                .width(150.0)
+                                .width(if narrow { 128.0 } else { 150.0 })
                                 .selected_text(current)
                                 .show_ui(ui, |ui| {
                                     for (index, id) in parents.iter().enumerate() {
@@ -1043,7 +1122,9 @@ impl Review {
                                         choice = Some(None);
                                     }
                                 });
-                            ui.weak("Compare with");
+                            // Narrow: the identity row's `vs` picker holds
+                            // the endpoints the wide reader header shows.
+                            ui.weak(if narrow { "vs" } else { "Compare with" });
                             match choice {
                                 Some(Some(parent))
                                     if against_head
@@ -1062,41 +1143,23 @@ impl Review {
                         {
                             self.retry(ctx);
                         }
-                        // Only the narrow file list (no reader) keeps History
-                        // in the header; otherwise it is on the reader's row.
-                        let history_shown = self.history.is_none() && narrow && !self.show_diff;
-                        if ui
-                            .add_visible(
-                                history_shown,
-                                egui::Button::new("History").sense(if history_available {
-                                    egui::Sense::click()
-                                } else {
-                                    egui::Sense::hover()
-                                }),
-                            )
-                            .on_hover_text(if history_available {
-                                "Follow the selected file's history (H)"
-                            } else {
-                                "Select a file to follow its history"
-                            })
-                            .clicked()
-                            && history_available
-                        {
-                            self.open_history = true;
-                            ctx.request_repaint();
-                        }
+                        // File history is on the reader's row (wide) or in
+                        // its ⋯ (narrow), and H opens it. Narrow windows
+                        // change files with Alt+Up/Down, so the identity
+                        // row stays one line (narrow proposal).
                         let next_enabled = self.show_diff
                             && self.count > 0
                             && self.selected.map_or(0, |row| row + 1) < self.count;
-                        if ui
-                            .scope(|ui| {
-                                if !self.show_diff {
-                                    ui.set_invisible();
-                                }
-                                ui.add_enabled(next_enabled, egui::Button::new("Next file"))
-                            })
-                            .inner
-                            .clicked()
+                        if !narrow
+                            && ui
+                                .scope(|ui| {
+                                    if !self.show_diff {
+                                        ui.set_invisible();
+                                    }
+                                    ui.add_enabled(next_enabled, egui::Button::new("Next file"))
+                                })
+                                .inner
+                                .clicked()
                         {
                             self.selected = Some(
                                 self.selected
@@ -1108,15 +1171,16 @@ impl Review {
                         }
                         let prev_enabled =
                             self.show_diff && self.count > 0 && self.selected.unwrap_or(0) > 0;
-                        if ui
-                            .scope(|ui| {
-                                if !self.show_diff {
-                                    ui.set_invisible();
-                                }
-                                ui.add_enabled(prev_enabled, egui::Button::new("Prev file"))
-                            })
-                            .inner
-                            .clicked()
+                        if !narrow
+                            && ui
+                                .scope(|ui| {
+                                    if !self.show_diff {
+                                        ui.set_invisible();
+                                    }
+                                    ui.add_enabled(prev_enabled, egui::Button::new("Prev file"))
+                                })
+                                .inner
+                                .clicked()
                         {
                             self.selected = Some(self.selected.unwrap_or(0).saturating_sub(1));
                             reveal = true;
@@ -1124,7 +1188,7 @@ impl Review {
                         if self.history.is_none() && !self.embedded {
                             ui.with_layout(
                                 egui::Layout::left_to_right(egui::Align::Center),
-                                |ui| self.draw_identity(ui),
+                                |ui| self.draw_identity(ui, narrow),
                             );
                         }
                     });
@@ -1160,21 +1224,20 @@ impl Review {
                         .history
                         .as_ref()
                         .map(|history| (history.pending(), history.error().map(str::to_owned)));
-                    let text = if let Some((pending, error)) = &history_state {
-                        if let Some(error) = error {
-                            error.as_str()
-                        } else if *pending {
-                            "Loading earlier versions…"
-                        } else {
-                            crate::navigation::HISTORY_HINT
-                        }
+                    // Paging and failures live in the version list itself.
+                    let text = if history_state.is_some() {
+                        crate::navigation::HISTORY_HINT
                     } else {
                         failure.as_deref().unwrap_or(if self.replacing {
                             &pending
                         } else if self.show_diff && self.diff.binary() {
                             "Scroll to inspect · Export either side · Esc: files"
+                        } else if self.show_diff && narrow {
+                            NARROW_READING_HINT
                         } else if self.show_diff {
                             crate::navigation::READING_HINT
+                        } else if narrow && self.complete {
+                            "Up/Down: choose · Enter: read file · Esc: history · Alt+Left/Right: versions"
                         } else if self.complete {
                             "Esc: history · Up/Down: files · [ ]: changes · Alt+Left/Right: versions · H: file history · B: blame"
                         } else {
@@ -1184,11 +1247,37 @@ impl Review {
                     bounded_text::field(ui, text, egui::FontId::proportional(12.0), 18.0);
                 });
         }
-        if self.show_diff {
+        if self.history.is_some() && !self.embedded {
+            // The version list takes the file-list pane: at the left when
+            // wide, above the reader when narrow.
+            if narrow {
+                egui::Panel::top("review-history")
+                    .exact_size(crate::density::row() * 7.0)
+                    .show(ui, |ui| self.draw_history_list(ui, ctx));
+            } else {
+                egui::Panel::left("review-files")
+                    .exact_size(FILE_LIST_WIDTH)
+                    .resizable(false)
+                    .show(ui, |ui| self.draw_history_list(ui, ctx));
+            }
             egui::CentralPanel::default().show(ui, |ui| self.draw_reader(ui, ctx, true));
             bounded_text::show_disclosure(ctx);
             return back;
         }
+        if self.show_diff {
+            // Narrow: `‹ Files 1/3` starts the reader's one header row.
+            let position = (narrow && self.history.is_none())
+                .then(|| format!("{}/{}", self.selected.map_or(0, |row| row + 1), self.count));
+            self.diff.set_narrow_header(position, narrow);
+            egui::CentralPanel::default().show(ui, |ui| self.draw_reader(ui, ctx, true));
+            if self.diff.take_files_request() {
+                self.show_diff = false;
+                self.restore_files = true;
+            }
+            bounded_text::show_disclosure(ctx);
+            return back;
+        }
+        self.diff.set_narrow_header(None, false);
         if self.embedded {
             let height = (ui.available_height() * 0.72).max(120.0);
             egui::Panel::bottom("review-file-diff")
@@ -1196,7 +1285,24 @@ impl Review {
                 .show(ui, |ui| self.draw_reader(ui, ctx, false));
             egui::CentralPanel::default().show(ui, |ui| self.draw_files(ui, reveal));
         } else if narrow {
-            egui::CentralPanel::default().show(ui, |ui| self.draw_files(ui, reveal));
+            // The file list over the commit message (narrow proposal); the
+            // list takes what its rows need, at most 60% of the height.
+            egui::CentralPanel::default().show(ui, |ui| {
+                let rows = (self.count as f32 + 1.0) * crate::density::row() + 4.0;
+                let height = rows
+                    .min(ui.available_height() * 0.6)
+                    .max(4.0 * crate::density::row());
+                let width = ui.available_width();
+                ui.allocate_ui(egui::vec2(width, height), |ui| {
+                    ui.set_height(height);
+                    self.draw_files(ui, reveal);
+                });
+                ui.separator();
+                egui::ScrollArea::vertical()
+                    .id_salt("review-message")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| self.draw_message(ui));
+            });
         } else {
             // A fixed file list at the left, the reader in the remaining
             // width, as in the Review mockup.
@@ -1899,15 +2005,20 @@ mod tests {
                     _ => None,
                 })
                 .collect::<Vec<_>>();
-            for label in [
-                "Prev file",
-                "Next file",
+            // Narrow windows start the header row with `‹ Files 1/n` and
+            // change files with Alt+Up/Down; wide ones show Prev/Next file.
+            let files: &[&str] = if width < 1040.0 {
+                &["‹ Files", "1/"]
+            } else {
+                &["Prev file", "Next file"]
+            };
+            for label in files.iter().copied().chain([
                 "Diff",
                 "Full file",
                 "No changes",
                 crate::phosphor::CARET_LEFT,
                 crate::phosphor::CARET_RIGHT,
-            ] {
+            ]) {
                 assert!(
                     text.iter().any(|line| line.contains(label)),
                     "missing {label} at {width}: {text:?}"
@@ -1976,17 +2087,19 @@ mod tests {
         }
     }
     #[test]
-    fn narrow_diff_back_preserves_file_selection_and_offset() {
+    fn narrow_files_key_returns_to_the_list_and_escape_to_the_caller() {
         let ctx = egui::Context::default();
         let mut view = Review::fixture(&ctx);
         let frame = |view: &mut Review, events| {
+            let mut back = false;
             let _ = crate::tests::run_ui(
                 &ctx,
                 crate::tests::frame_input(720.0, 480.0, events),
                 |ctx| {
-                    view.draw_ui(ctx);
+                    back = view.draw_ui(ctx);
                 },
             );
+            back
         };
         frame(&mut view, vec![]);
         view.selected = Some(20);
@@ -2003,10 +2116,16 @@ mod tests {
         frame(&mut view, vec![event(egui::Key::ArrowDown)]);
         assert_eq!(view.selected, Some(20));
         assert_eq!(view.offset, 300.0);
-        frame(&mut view, vec![event(egui::Key::Escape)]);
-        assert!(!view.show_diff);
+        assert!(!frame(&mut view, vec![event(egui::Key::F)]));
+        assert!(!view.show_diff, "F returns to the file list");
         assert_eq!(view.selected, Some(20));
         assert_eq!(view.offset, 300.0);
+        view.show_diff = true;
+        frame(&mut view, vec![]);
+        assert!(
+            frame(&mut view, vec![event(egui::Key::Escape)]),
+            "Esc in the narrow reading view goes back to the caller"
+        );
     }
     #[test]
     fn compact_rows_and_placeholder_identity_survive_arrival() -> Result<(), String> {
@@ -2082,17 +2201,19 @@ mod tests {
         let file_offset = view.offset;
         let (_, text) = frame(&mut view, &ctx, 1120.0, 740.0, vec![]);
         assert!(view.history.is_some());
-        for label in [
-            "File history",
-            "Older version",
-            "Newer version",
-            "Version 1 of 2",
-        ] {
+        // The version list takes the file-list pane; History stays on the
+        // reader row.
+        for label in ["FILE HISTORY 2", "×", "History"] {
             assert!(
-                text.iter().any(|line| line.contains(label)),
+                text.contains(&label.to_string()),
                 "missing {label}: {text:?}"
             );
         }
+        assert!(
+            !text.iter().any(|line| line.starts_with("FILES ")),
+            "the file list is replaced: {text:?}"
+        );
+        assert!(!text.iter().any(|line| line.contains("Older version")));
         let (back, _) = frame(
             &mut view,
             &ctx,
@@ -2207,7 +2328,10 @@ mod tests {
         let saved = install_history(&mut view)?;
         let (_, text) = frame(&mut view, &ctx, 720.0, 480.0, vec![]);
         assert!(view.history.is_some());
-        assert!(text.iter().any(|line| line.contains("Older version")));
+        assert!(
+            text.iter().any(|line| line.starts_with("FILE HISTORY")),
+            "{text:?}"
+        );
         let (back, _) = frame(
             &mut view,
             &ctx,
@@ -2229,16 +2353,10 @@ mod tests {
             480.0,
             vec![key_event(egui::Key::Escape, egui::Modifiers::NONE)],
         );
-        assert!(!back);
-        assert!(!view.show_diff, "the next Escape returns to the file list");
-        let (back, _) = frame(
-            &mut view,
-            &ctx,
-            720.0,
-            480.0,
-            vec![key_event(egui::Key::Escape, egui::Modifiers::NONE)],
+        assert!(
+            back,
+            "the next Escape leaves the narrow review (F returns to the files)"
         );
-        assert!(back, "the last Escape leaves the review");
         Ok(())
     }
 
@@ -2330,8 +2448,8 @@ mod tests {
         assert!(view.history.is_some());
         assert!(
             text.iter()
-                .any(|line| line.contains("Choose the earlier version")),
-            "the chooser stays inside the version strip: {text:?}"
+                .any(|line| line.contains("CHOOSE EARLIER VERSION 1")),
+            "candidates nest under the merge row: {text:?}"
         );
         let capabilities = view.diff.capabilities();
         assert!(!capabilities.diff, "Diff waits for the earlier edge");

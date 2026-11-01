@@ -74,6 +74,15 @@ pub fn selection(visuals: &Visuals) -> Color32 {
 
 pub fn apply(ctx: &eframe::egui::Context) {
     for theme in [eframe::egui::Theme::Dark, eframe::egui::Theme::Light] {
+        // Solid scroll bars: shown whenever a pane overflows, in their own
+        // gutter, so they never cover row content such as counts or checks.
+        ctx.style_mut_of(theme, |style| {
+            if style.spacing.scroll.floating {
+                style.spacing.scroll = eframe::egui::style::ScrollStyle::solid();
+            }
+        });
+    }
+    for theme in [eframe::egui::Theme::Dark, eframe::egui::Theme::Light] {
         let style = ctx.style_of(theme);
         let visuals = &style.visuals;
         if visuals.dark_mode || visuals.weak_text_color == Some(Color32::from_gray(90)) {
@@ -94,6 +103,17 @@ pub fn apply(ctx: &eframe::egui::Context) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scroll_bars_take_their_own_space_in_both_themes() {
+        let ctx = eframe::egui::Context::default();
+        apply(&ctx);
+        for theme in [eframe::egui::Theme::Dark, eframe::egui::Theme::Light] {
+            let scroll = ctx.style_of(theme).spacing.scroll;
+            assert!(!scroll.floating, "{theme:?} bars must not cover rows");
+            assert!(scroll.bar_width >= 6.0, "{theme:?} bars stay visible");
+        }
+    }
 
     #[test]
     fn review_change_markers_match_their_labels() {

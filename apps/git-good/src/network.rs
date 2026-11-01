@@ -33,13 +33,32 @@ pub enum Message {
 
 pub struct Worker {
     pub operation: Operation,
+    /// What the footer calls the job: `Fetching origin`,
+    /// `Pushing main to origin`, `Cloning gg`.
+    pub label: String,
     receiver: mpsc::Receiver<Message>,
     cancel: Arc<AtomicBool>,
     #[cfg(test)]
     _keep_alive: Option<mpsc::Sender<Message>>,
 }
 
+/// The footer's default name for a job before the caller names its target.
+fn default_label(operation: Operation) -> String {
+    match operation {
+        Operation::Fetch => "Fetching",
+        Operation::Push => "Pushing",
+        Operation::Clone => "Cloning",
+    }
+    .into()
+}
+
 impl Worker {
+    /// Name the job for the footer.
+    pub fn labelled(mut self, label: impl Into<String>) -> Self {
+        self.label = label.into();
+        self
+    }
+
     pub fn fetch(
         ctx: &egui::Context,
         path: PathBuf,
@@ -136,6 +155,7 @@ impl Worker {
         let (sender, receiver) = mpsc::channel();
         Self {
             operation,
+            label: default_label(operation),
             receiver,
             cancel: Arc::new(AtomicBool::new(false)),
             _keep_alive: Some(sender),
@@ -170,6 +190,7 @@ fn start(
         .map_err(|e| format!("Start {} operation: {e}", operation.as_str()))?;
     Ok(Worker {
         operation,
+        label: default_label(operation),
         receiver,
         cancel,
         #[cfg(test)]

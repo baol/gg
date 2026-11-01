@@ -1,8 +1,13 @@
-//! A bounded newest-to-oldest content-version strip for the shared reader.
+//! A bounded newest-to-oldest version list for the shared reader.
 //!
 //! History changes the reader's comparison source. It owns the worker-backed
 //! timeline and the current version, but it never renders a second content
-//! viewer: `prepare` hands the current edge to the review's `DiffView`.
+//! viewer: `prepare` hands the current edge to the review's `DiffView`. The
+//! list replaces the changed-file list while it is open: 22 px rows of kind,
+//! short ID, subject (a rename adds `← old path`) and date, the selected row
+//! being the comparison's metadata. Pages load as the list scrolls, with the
+//! next slot blank; a failed page is one red row with **Retry**; merge
+//! candidates nest under the merge row.
 use crate::{
     bounded_text,
     diff_view::DiffView,
@@ -53,7 +58,25 @@ pub struct FileHistory {
     map_generation: u64,
     map_worker: Option<line_map_worker::Worker>,
     pending_map: Option<PendingMap>,
+    /// The highlighted merge candidate (Up/Down, Enter picks it).
+    choice: usize,
+    /// Scroll the list so the selected row shows on the next frame.
+    reveal: bool,
 }
+
+/// One row of the version list.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Row {
+    Version(usize),
+    /// `CHOOSE EARLIER VERSION n` under a merge row.
+    Choose(usize),
+    Candidate(usize),
+    /// The next page: blank while it loads.
+    Next,
+    Failed,
+}
+
+const ROW: f32 = 22.0;
 
 impl FileHistory {
     pub fn new(
@@ -88,6 +111,8 @@ impl FileHistory {
             map_generation: 0,
             map_worker: None,
             pending_map: None,
+            choice: 0,
+            reveal: true,
         };
         view.start(ctx);
         view
@@ -231,9 +256,9 @@ impl FileHistory {
         }
     }
 
-    /// True when the strip's close control was clicked.
-    pub fn take_close(&mut self) -> bool {
-        std::mem::take(&mut self.close)
+    /// True when the list's × was clicked.
+    pub fn close_requested(&self) -> bool {
+        self.close
     }
 
     pub fn pending(&self) -> bool {
@@ -288,6 +313,7 @@ impl FileHistory {
         ) && !self.pending()
     }
 
+    #[cfg(test)]
     fn can_newer(&self) -> bool {
         !self.mapping && self.line_newer_blocked.is_none() && self.index > 0
     }
@@ -304,6 +330,7 @@ impl FileHistory {
             .before_reason(self.index, self.pending())
     }
 
+    #[cfg(test)]
     fn newer_reason(&self) -> Option<&'static str> {
         self.timeline.as_ref()?.after_reason(self.index)
     }
@@ -587,15 +614,37 @@ impl FileHistory {
         }
         // Match Alt+Left/Right before the plain Back key: egui ignores extra
         // Alt modifiers when matching `Modifiers::NONE`.
+        // Up/Down and Enter pick among merge candidates while they show.
+        if let Some(count) = self
+            .timeline
+            .as_ref()
+            .and_then(|timeline| timeline.choices(self.index))
+            .map(<[VersionCandidate]>::len)
+            .filter(|count| *count > 0)
+        {
+            ctx.input_mut(|input| {
+                if input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown) {
+                    self.choice = (self.choice + 1).min(count - 1);
+                }
+                if input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp) {
+                    self.choice = self.choice.saturating_sub(1);
+                }
+            });
+            if ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter)) {
+                self.choose(self.choice.min(count - 1), ctx);
+            }
+        }
         let older =
             ctx.input_mut(|input| input.consume_key(egui::Modifiers::ALT, egui::Key::ArrowLeft));
         if older {
             self.older(ctx);
+            self.reveal = true;
         }
         let newer =
             ctx.input_mut(|input| input.consume_key(egui::Modifiers::ALT, egui::Key::ArrowRight));
         if newer {
             self.newer_with_map(ctx);
+            self.reveal = true;
         }
         ctx.input_mut(|input| {
             input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)
@@ -603,161 +652,387 @@ impl FileHistory {
         })
     }
 
-    /// Draw the compact version strip directly above the shared reader.
-    pub fn draw_strip(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        ui.horizontal_wrapped(|ui| {
-            ui.strong("File history");
-            ui.separator();
-            if ui
-                .add_enabled(self.can_older(), egui::Button::new("Older version"))
-                .on_disabled_hover_text(
-                    self.older_reason()
-                        .unwrap_or_else(|| "The earlier version is not available".into()),
-                )
-                .clicked()
-            {
-                self.older(ctx);
+    /// `FILE HISTORY 12+`, or `LINE HISTORY 41–46` for a line range.
+    fn title(&self) -> String {
+        match self.line {
+            Some((start, end)) if start == end => format!("LINE HISTORY {start}"),
+            Some((start, end)) => format!("LINE HISTORY {start}–{end}"),
+            None => {
+                let (count, more) = self.timeline.as_ref().map_or((0, "+"), |timeline| {
+                    (
+                        timeline.versions.len(),
+                        if timeline.complete { "" } else { "+" },
+                    )
+                });
+                format!("FILE HISTORY {count}{more}")
             }
-            if ui
-                .add_enabled(self.can_newer(), egui::Button::new("Newer version"))
-                .on_disabled_hover_text("Newest version")
-                .clicked()
-            {
-                self.newer_with_map(ctx);
-            }
-            if let Some(timeline) = &self.timeline {
-                ui.weak(timeline.position(self.index));
-            } else if self.error.is_some() {
-                ui.weak("History unavailable");
-            }
-        });
-        if let Some(version) = self.current().cloned() {
-            let kind = version.kind.map(HistoryKind::label).unwrap_or("Version");
-            let line = format!("{kind} · {} · {}", version.short_commit(), version.subject);
-            ui.horizontal(|ui| {
-                let width = (ui.available_width() - 132.0).max(80.0);
-                ui.allocate_ui_with_layout(
-                    egui::vec2(width, 18.0),
-                    egui::Layout::left_to_right(egui::Align::Center),
-                    |ui| {
-                        bounded_text::field(ui, &line, egui::FontId::monospace(11.0), 18.0);
-                    },
-                );
-                if ui.button("Close file history").clicked() {
-                    self.close = true;
-                }
-            });
-            let mut detail = format!("{} · {}", version.author, date(version.time));
-            if let Some(old) = &version.old_path
-                && old != &version.path
-            {
-                detail.push_str(&format!(" · from {old}"));
-            }
-            if let Some((start, end)) = self.line {
-                if start == end {
-                    detail.push_str(&format!(" · line {start}"));
-                } else {
-                    detail.push_str(&format!(" · lines {start}–{end}"));
-                }
-            }
-            if let Some(note) = &self.line_note {
-                detail.push_str(" · ");
-                detail.push_str(note);
-            }
-            let reason = if self.line_note.is_some() {
-                None
-            } else if !self.can_older() {
-                self.older_reason()
-            } else if !self.can_newer() {
-                self.line_newer_blocked
-                    .clone()
-                    .or_else(|| self.newer_reason().map(str::to_owned))
-            } else {
-                None
-            };
-            let note = self
-                .timeline
-                .as_ref()
-                .and_then(|timeline| timeline.note.clone());
-            for part in [reason, note].into_iter().flatten() {
-                detail.push_str(" · ");
-                detail.push_str(&part);
-            }
-            bounded_text::field(ui, &detail, egui::FontId::monospace(11.0), 18.0);
-        }
-        if self.current().is_none() {
-            ui.horizontal(|ui| {
-                if ui.button("Close file history").clicked() {
-                    self.close = true;
-                }
-            });
-        }
-        if let Some(error) = self.error.clone() {
-            let mut retry = false;
-            ui.horizontal(|ui| {
-                let retry_width = 64.0;
-                let width = (ui.available_width() - retry_width - 8.0).max(80.0);
-                let (rect, _) =
-                    ui.allocate_exact_size(egui::vec2(width, 18.0), egui::Sense::hover());
-                bounded_text::paint(
-                    ui,
-                    rect,
-                    &format!("History page failed · {error}"),
-                    egui::FontId::proportional(12.0),
-                    ui.visuals().error_fg_color,
-                );
-                if ui.button("Retry").clicked() {
-                    retry = true;
-                }
-            });
-            if retry {
-                self.retry(ctx);
-            }
-        }
-        if self
-            .timeline
-            .as_ref()
-            .is_some_and(|timeline| timeline.choices(self.index).is_some())
-        {
-            self.chooser(ui, ctx);
         }
     }
 
-    fn chooser(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        let Some(choices) = self
+    /// Why the selection cannot step further, and Git's notes: the header's
+    /// tooltip, since the selected row already is the metadata.
+    fn notes(&self) -> String {
+        let mut notes = Vec::new();
+        if let Some(note) = &self.line_note {
+            notes.push(note.clone());
+        } else if !self.can_older() {
+            notes.extend(self.older_reason());
+        }
+        if let Some(note) = self
+            .timeline
+            .as_ref()
+            .and_then(|timeline| timeline.note.clone())
+        {
+            notes.push(note);
+        }
+        notes.join(" · ")
+    }
+
+    fn rows(&self) -> Vec<Row> {
+        let mut rows = Vec::new();
+        let Some(timeline) = &self.timeline else {
+            return rows;
+        };
+        for index in 0..timeline.versions.len() {
+            rows.push(Row::Version(index));
+            if index == self.index
+                && let Some(choices) = timeline.choices(index)
+            {
+                rows.push(Row::Choose(choices.len()));
+                rows.extend((0..choices.len()).map(Row::Candidate));
+            }
+        }
+        if self.error.is_some() {
+            rows.push(Row::Failed);
+        } else if !timeline.complete
+            && matches!(
+                timeline.versions.last().map(|version| &version.previous),
+                Some(Predecessor::More) | None
+            )
+        {
+            rows.push(Row::Next);
+        }
+        rows
+    }
+
+    /// Select version `index`: adjacent steps keep the line range mapped.
+    fn select(&mut self, index: usize, ctx: &egui::Context) {
+        if index == self.index + 1 {
+            self.older(ctx);
+        } else if index + 1 == self.index {
+            self.newer_with_map(ctx);
+        } else if !self.mapping {
+            self.index = index;
+            self.line_older_blocked = None;
+            self.line_newer_blocked = None;
+            self.choice = 0;
+            self.ensure_loaded(ctx);
+        }
+    }
+
+    /// Draw the version list in the file-list pane: the header with ×,
+    /// then the rows.
+    pub fn draw_list(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        let (header, _) = ui.allocate_exact_size(
+            egui::vec2(ui.available_width(), crate::density::row()),
+            egui::Sense::hover(),
+        );
+        let close =
+            egui::Rect::from_min_max(egui::pos2(header.right() - 24.0, header.top()), header.max);
+        let title = header.shrink2(egui::vec2(6.0, 0.0));
+        let title = egui::Rect::from_min_max(title.min, egui::pos2(close.left(), title.bottom()));
+        bounded_text::paint(
+            ui,
+            title,
+            &self.title(),
+            egui::FontId::proportional(11.0),
+            ui.visuals().weak_text_color(),
+        );
+        let notes = self.notes();
+        if !notes.is_empty() {
+            ui.interact(
+                title,
+                ui.scope_id().with("history-notes"),
+                egui::Sense::hover(),
+            )
+            .on_hover_text(notes);
+        }
+        if ui
+            .put(close.shrink(2.0), egui::Button::new("×").small())
+            .on_hover_text("Close history (Esc)")
+            .clicked()
+        {
+            self.close = true;
+        }
+        let rows = self.rows();
+        let mut scroll = egui::ScrollArea::vertical()
+            .id_salt("file-history-list")
+            .auto_shrink([false, false]);
+        if std::mem::take(&mut self.reveal)
+            && let Some(at) = rows.iter().position(|row| *row == Row::Version(self.index))
+        {
+            let height = ui.available_height();
+            let top = at as f32 * ROW;
+            scroll = scroll.vertical_scroll_offset((top - height / 2.0).max(0.0));
+        }
+        ui.spacing_mut().item_spacing.y = 0.0;
+        let mut picked = None;
+        let mut chosen = None;
+        let mut retry = false;
+        let mut more = false;
+        scroll.show_rows(ui, ROW, rows.len(), |ui, range| {
+            if range.end >= rows.len() && rows.last() == Some(&Row::Next) {
+                more = true;
+            }
+            for row in &rows[range] {
+                let (rect, response) = ui.allocate_exact_size(
+                    egui::vec2(ui.available_width(), ROW),
+                    egui::Sense::click(),
+                );
+                match *row {
+                    Row::Version(index) => {
+                        if self.version_row(ui, rect, &response, index) {
+                            picked = Some(index);
+                        }
+                    }
+                    Row::Choose(count) => {
+                        bounded_text::paint(
+                            ui,
+                            rect.shrink2(egui::vec2(22.0, 0.0)),
+                            &format!("CHOOSE EARLIER VERSION {count}"),
+                            egui::FontId::proportional(10.0),
+                            ui.visuals().weak_text_color(),
+                        );
+                    }
+                    Row::Candidate(index) => {
+                        if self.candidate_row(ui, rect, &response, index) {
+                            chosen = Some(index);
+                        }
+                    }
+                    // The slot stays blank while the next page loads.
+                    Row::Next => {}
+                    Row::Failed => {
+                        let retry_rect = egui::Rect::from_min_max(
+                            egui::pos2(rect.right() - 56.0, rect.top()),
+                            rect.max,
+                        );
+                        let text = egui::Rect::from_min_max(
+                            rect.min + egui::vec2(6.0, 0.0),
+                            egui::pos2(retry_rect.left() - 4.0, rect.bottom()),
+                        );
+                        bounded_text::paint_named(
+                            ui,
+                            text,
+                            &format!(
+                                "History page failed · {}",
+                                self.error.as_deref().unwrap_or_default()
+                            ),
+                            egui::FontId::proportional(12.0),
+                            ui.visuals().error_fg_color,
+                            "Error",
+                        );
+                        retry |= ui
+                            .put(retry_rect.shrink(1.0), egui::Button::new("Retry").small())
+                            .clicked();
+                    }
+                }
+            }
+        });
+        if let Some(index) = picked {
+            self.select(index, ctx);
+        }
+        if let Some(index) = chosen {
+            self.choice = index;
+            self.choose(index, ctx);
+        }
+        if retry {
+            self.retry(ctx);
+        } else if more && !self.pending() && self.error.is_none() {
+            self.request_more(ctx);
+        }
+    }
+
+    /// `~ 9a4f9a95 Wire action chips ← src/review.rs 10-20`; true on click.
+    fn version_row(
+        &self,
+        ui: &egui::Ui,
+        rect: egui::Rect,
+        response: &egui::Response,
+        index: usize,
+    ) -> bool {
+        let Some(version) = self.timeline.as_ref().and_then(|t| t.current(index)) else {
+            return false;
+        };
+        let selected = index == self.index;
+        if selected {
+            ui.painter()
+                .rect_filled(rect, 0.0, crate::colors::selection(ui.visuals()));
+        } else if response.hovered() {
+            ui.painter()
+                .rect_filled(rect, 0.0, ui.visuals().widgets.hovered.weak_bg_fill);
+        }
+        let kind = version.kind.unwrap_or(HistoryKind::Modified).change_kind();
+        let (label, color) = crate::colors::change(ui.visuals(), &kind);
+        let renamed = version
+            .old_path
+            .as_ref()
+            .filter(|old| **old != version.path)
+            .map(|old| format!("← {old}"));
+        paint_row(
+            ui,
+            rect,
+            0.0,
+            (crate::colors::change_symbol(&kind), color),
+            &version.short_commit(),
+            &version.subject,
+            renamed.as_deref(),
+            &short_date(version.time),
+            selected,
+        );
+        let mut tip = format!(
+            "{label} · {} · {}\n{} · {}",
+            version.short_commit(),
+            version.subject,
+            version.author,
+            date(version.time)
+        );
+        if let Some(old) = &renamed {
+            tip.push_str(&format!(" · renamed {old}"));
+        }
+        response.clone().on_hover_text(tip).clicked()
+    }
+
+    fn candidate_row(
+        &self,
+        ui: &egui::Ui,
+        rect: egui::Rect,
+        response: &egui::Response,
+        index: usize,
+    ) -> bool {
+        let Some(choice) = self
             .timeline
             .as_ref()
             .and_then(|timeline| timeline.choices(self.index))
+            .and_then(|choices| choices.get(index))
         else {
-            return;
+            return false;
         };
-        let choices = choices.to_vec();
-        ui.horizontal(|ui| {
-            ui.strong("Choose the earlier version");
-            ui.weak(format!("{} predecessors reach this version", choices.len()));
-        });
         let disabled = self.choosing.is_some() || self.pending();
-        egui::ScrollArea::vertical()
-            .id_salt("file-history-choices")
-            .max_height(132.0)
-            .auto_shrink([false, true])
-            .show(ui, |ui| {
-                for (index, choice) in choices.iter().enumerate() {
-                    let label = choice_label(choice);
-                    if ui
-                        .add_enabled(
-                            !disabled,
-                            egui::Button::new(label)
-                                .min_size(egui::vec2(ui.available_width(), 24.0)),
-                        )
-                        .on_hover_text("Follow this predecessor")
-                        .clicked()
-                    {
-                        self.choose(index, ctx);
-                    }
-                }
-            });
+        let cursor = index == self.choice;
+        if cursor {
+            ui.painter()
+                .rect_filled(rect, 0.0, ui.visuals().widgets.hovered.weak_bg_fill);
+        }
+        let kind = choice.kind.change_kind();
+        let (_, color) = crate::colors::change(ui.visuals(), &kind);
+        let renamed = choice
+            .old_path
+            .as_ref()
+            .filter(|old| **old != choice.path)
+            .map(|old| format!("← {old}"));
+        let who = format!(
+            "{} · {}",
+            choice.author.split_whitespace().next().unwrap_or_default(),
+            short_date(choice.time)
+        );
+        paint_row(
+            ui,
+            rect,
+            16.0,
+            (crate::colors::change_symbol(&kind), color),
+            &choice.short_commit(),
+            &choice.subject,
+            renamed.as_deref(),
+            &who,
+            false,
+        );
+        !disabled
+            && response
+                .clone()
+                .on_hover_text(format!(
+                    "{}\nFollow this predecessor (Enter)",
+                    choice_label(choice)
+                ))
+                .clicked()
     }
+}
+
+/// Paint one list row: kind, short ID, subject, the old path, and the
+/// right-aligned date (or author and date for a candidate).
+#[allow(clippy::too_many_arguments)]
+fn paint_row(
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    indent: f32,
+    (symbol, color): (&str, egui::Color32),
+    hash: &str,
+    subject: &str,
+    extra: Option<&str>,
+    right: &str,
+    selected: bool,
+) {
+    let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
+    let left = rect.left() + 6.0 + indent;
+    let y = rect.center().y;
+    painter.text(
+        egui::pos2(left, y),
+        egui::Align2::LEFT_CENTER,
+        symbol,
+        egui::FontId::proportional(13.0),
+        color,
+    );
+    let weak = ui.visuals().weak_text_color();
+    let strong = if selected {
+        ui.visuals().strong_text_color()
+    } else {
+        ui.visuals().text_color()
+    };
+    painter.text(
+        egui::pos2(left + 16.0, y),
+        egui::Align2::LEFT_CENTER,
+        hash,
+        egui::FontId::monospace(10.5),
+        weak,
+    );
+    let right_width = if right.len() > 6 { 84.0 } else { 40.0 };
+    painter.text(
+        egui::pos2(rect.right() - 6.0, y),
+        egui::Align2::RIGHT_CENTER,
+        right,
+        egui::FontId::proportional(11.0),
+        weak,
+    );
+    let text = egui::Rect::from_min_max(
+        egui::pos2(left + 76.0, rect.top()),
+        egui::pos2(rect.right() - right_width - 8.0, rect.bottom()),
+    );
+    let mut job = egui::text::LayoutJob::default();
+    job.append(
+        subject,
+        0.0,
+        egui::TextFormat::simple(egui::FontId::proportional(12.5), strong),
+    );
+    if let Some(extra) = extra {
+        job.append(
+            extra,
+            8.0,
+            egui::TextFormat::simple(egui::FontId::proportional(11.5), weak),
+        );
+    }
+    job.wrap.max_width = text.width().max(0.0);
+    job.wrap.max_rows = 1;
+    job.wrap.break_anywhere = true;
+    let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
+    ui.painter().with_clip_rect(text).galley(
+        egui::pos2(text.left(), y - galley.size().y / 2.0),
+        galley,
+        strong,
+    );
+}
+
+/// `10-27`: the list's compact date.
+fn short_date(seconds: i64) -> String {
+    date(seconds).get(5..10).unwrap_or_default().to_string()
 }
 
 #[cfg(test)]
@@ -788,6 +1063,8 @@ impl FileHistory {
             map_generation: 0,
             map_worker: None,
             pending_map: None,
+            choice: 0,
+            reveal: false,
         }
     }
 
@@ -915,7 +1192,7 @@ mod tests {
         let output = crate::tests::run_ui(
             &ctx,
             crate::tests::frame_input(1120.0, 740.0, vec![]),
-            |ui| history.draw_strip(ui, &ctx),
+            |ui| history.draw_list(ui, &ctx),
         );
         let text = output
             .shapes
@@ -925,11 +1202,8 @@ mod tests {
                 _ => None,
             })
             .collect::<Vec<_>>();
-        assert!(
-            text.iter().any(|line| line.contains("lines 2–3")
-                && line.contains("Line introduced in this version")),
-            "{text:?}"
-        );
+        assert!(text.contains(&"LINE HISTORY 2–3"), "{text:?}");
+        assert!(history.notes().contains("Line introduced in this version"));
     }
 
     #[test]
@@ -1066,42 +1340,129 @@ mod tests {
     }
 
     #[test]
-    fn the_rendered_strip_names_the_version_and_old_path() {
+    fn the_version_list_names_each_version_and_its_old_path() {
         let ctx = egui::Context::default();
         let mut timeline = Timeline::new(
             vec![
                 version(Predecessor::Linked, Some(HistoryKind::Renamed)),
-                version(Predecessor::Oldest, Some(HistoryKind::Added)),
+                version(Predecessor::More, Some(HistoryKind::Added)),
             ],
-            true,
+            false,
             None,
         );
         timeline.versions[0].old_path = Some("old.rs".into());
         let mut history = view(timeline);
         history.index = 0;
+        history.busy = true;
         let output = crate::tests::run_ui(
             &ctx,
-            crate::tests::frame_input(1120.0, 740.0, vec![]),
+            crate::tests::frame_input(320.0, 740.0, vec![]),
             |ui| {
-                history.draw_strip(ui, &ctx);
+                egui::CentralPanel::default().show(ui, |ui| history.draw_list(ui, &ctx));
             },
         );
-        let text = output
+        let texts = output
             .shapes
             .iter()
             .filter_map(|shape| match &shape.shape {
-                egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                egui::epaint::Shape::Text(text) => Some(text.clone()),
                 _ => None,
             })
             .collect::<Vec<_>>();
-        assert!(text.iter().any(|line| line.contains("Version 1 of 2")));
-        assert!(text.iter().any(|line| line.contains("Renamed")));
-        assert!(text.iter().any(|line| line.contains("from old.rs")));
-        assert!(text.iter().any(|line| line.contains("Newest version")));
-        assert!(text.contains(&"Older version"));
-        assert!(text.contains(&"Newer version"));
-        assert!(!text.iter().any(|line| line.contains("< Before")));
-        assert!(!text.iter().any(|line| line.contains("After >")));
+        let text = texts
+            .iter()
+            .map(|text| text.galley.job.text.as_str())
+            .collect::<Vec<_>>();
+        assert!(text.contains(&"FILE HISTORY 2+"), "{text:?}");
+        assert!(text.contains(&"×"), "the list header closes history");
+        assert!(
+            text.iter().any(|line| line.contains("← old.rs")),
+            "{text:?}"
+        );
+        assert!(
+            !text
+                .iter()
+                .any(|line| line.to_lowercase().contains("loading")),
+            "the next page's slot stays blank: {text:?}"
+        );
+        assert!(!text.iter().any(|line| line.contains("Version 1 of")));
+        assert!(!text.contains(&"Older version"));
+        // 22 px rows: the two hashes sit one row apart.
+        let hashes = texts
+            .iter()
+            .filter(|text| text.galley.job.text == "a".repeat(8))
+            .map(|text| text.pos.y)
+            .collect::<Vec<_>>();
+        assert_eq!(hashes.len(), 2, "{text:?}");
+        assert!((hashes[1] - hashes[0] - ROW).abs() < 0.5, "{hashes:?}");
+        // × in the list header closes history.
+        let close = texts
+            .iter()
+            .find(|text| text.galley.job.text == "×")
+            .map(|text| text.visual_bounding_rect().center())
+            .unwrap_or_default();
+        for pressed in [true, false] {
+            let _ = crate::tests::run_ui(
+                &ctx,
+                crate::tests::frame_input(
+                    320.0,
+                    740.0,
+                    vec![
+                        egui::Event::PointerMoved(close),
+                        egui::Event::PointerButton {
+                            pos: close,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                ),
+                |ui| {
+                    egui::CentralPanel::default().show(ui, |ui| history.draw_list(ui, &ctx));
+                },
+            );
+        }
+        assert!(history.close_requested());
+    }
+
+    #[test]
+    fn a_failed_page_is_one_red_row_with_retry() {
+        let ctx = egui::Context::default();
+        let timeline = Timeline::new(
+            vec![version(Predecessor::More, Some(HistoryKind::Modified))],
+            false,
+            None,
+        );
+        let mut history = view(timeline);
+        history.error = Some("object 0f51a473 not found".into());
+        assert_eq!(
+            history.rows(),
+            [Row::Version(0), Row::Failed],
+            "the failure replaces the next page's slot"
+        );
+        let output = crate::tests::run_ui(
+            &ctx,
+            crate::tests::frame_input(320.0, 400.0, vec![]),
+            |ui| {
+                egui::CentralPanel::default().show(ui, |ui| history.draw_list(ui, &ctx));
+            },
+        );
+        let failed = output.shapes.iter().find_map(|shape| match &shape.shape {
+            egui::epaint::Shape::Text(text)
+                if text.galley.job.text.starts_with("History page failed") =>
+            {
+                Some(text.fallback_color)
+            }
+            _ => None,
+        });
+        assert_eq!(
+            failed,
+            Some(ctx.style_of(ctx.theme()).visuals.error_fg_color)
+        );
+        assert!(output.shapes.iter().any(|shape| matches!(
+            &shape.shape,
+            egui::epaint::Shape::Text(text) if text.galley.job.text == "Retry"
+        )));
     }
 
     #[test]
@@ -1229,7 +1590,7 @@ mod tests {
             &ctx,
             crate::tests::frame_input(720.0, 480.0, vec![]),
             |ui| {
-                history.draw_strip(ui, &ctx);
+                egui::CentralPanel::default().show(ui, |ui| history.draw_list(ui, &ctx));
             },
         );
         let text = output
@@ -1240,17 +1601,38 @@ mod tests {
                 _ => None,
             })
             .collect::<Vec<_>>();
+        assert!(text.contains(&"CHOOSE EARLIER VERSION 2"), "{text:?}");
+        assert_eq!(
+            history.rows(),
+            [
+                Row::Version(0),
+                Row::Choose(2),
+                Row::Candidate(0),
+                Row::Candidate(1)
+            ],
+            "candidates nest under the merge row as list rows"
+        );
+        assert!(text.iter().any(|line| line.contains("Older branch")));
         assert!(
             text.iter()
-                .any(|line| line.contains("Choose the earlier version"))
+                .any(|line| line.contains("Renamed elsewhere") && line.contains("← old.rs")),
+            "{text:?}"
         );
-        assert!(
-            text.iter()
-                .any(|line| line.contains("Older branch") && !line.contains("from old.rs"))
+        // Down then Enter picks the second candidate.
+        let key = |key| egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let _ = crate::tests::run_ui(
+            &ctx,
+            crate::tests::frame_input(720.0, 480.0, vec![key(egui::Key::ArrowDown)]),
+            |ui| {
+                history.keys(ui.ctx());
+            },
         );
-        assert!(
-            text.iter()
-                .any(|line| line.contains("Renamed elsewhere") && line.contains("from old.rs"))
-        );
+        assert_eq!(history.choice, 1);
     }
 }

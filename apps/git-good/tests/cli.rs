@@ -293,6 +293,7 @@ fn help_lists_every_cli_command() -> Result {
         "git-good fetch",
         "git-good push",
         "git-good clone",
+        "git-good init",
         "git-good stash",
         "git-good cherry-pick",
         "git-good revert",
@@ -2972,5 +2973,59 @@ fn branch_create_at_cli_does_not_switch() -> Result {
         .arg(repo.path())
         .output()?;
     assert!(!out.status.success());
+    Ok(())
+}
+
+#[test]
+fn init_cli_creates_commits_and_refuses_inside_a_repository() -> Result {
+    let dir = tempfile::tempdir()?;
+    let target = dir.path().join("notes");
+    std::fs::create_dir(&target)?;
+    std::fs::write(target.join("a.txt"), b"a\n")?;
+    let binary = env!("CARGO_BIN_EXE_git-good");
+    let run = |args: &[&str], cwd: &Path| {
+        Command::new(binary)
+            .args(args)
+            .current_dir(cwd)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env(
+                "GIT_CONFIG_GLOBAL",
+                if cfg!(windows) { "NUL" } else { "/dev/null" },
+            )
+            .env("GIT_AUTHOR_NAME", "Test")
+            .env("GIT_AUTHOR_EMAIL", "test@example.org")
+            .env("GIT_COMMITTER_NAME", "Test")
+            .env("GIT_COMMITTER_EMAIL", "test@example.org")
+            .output()
+    };
+    let out = run(
+        &["init", "--branch", "trunk", "--commit", "notes"],
+        dir.path(),
+    )?;
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let receipt: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(receipt["operation"], "init");
+    assert_eq!(receipt["branch"], "trunk");
+    assert_eq!(receipt["files"], 1);
+    assert_eq!(receipt["complete"], true);
+    assert_eq!(
+        std::fs::canonicalize(receipt["path"].as_str().ok_or("missing path")?)?,
+        std::fs::canonicalize(&target)?
+    );
+    let head = git_output(&target, &["rev-parse", "HEAD"])?;
+    assert_eq!(
+        receipt["head"].as_str().map(str::as_bytes),
+        Some(head.trim_ascii())
+    );
+    std::fs::create_dir(target.join("docs"))?;
+    let refused = run(&["init"], &target.join("docs"))?;
+    assert!(!refused.status.success());
+    assert!(refused.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("is inside the repository"));
+    assert!(!target.join("docs/.git").exists());
     Ok(())
 }

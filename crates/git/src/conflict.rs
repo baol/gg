@@ -156,6 +156,58 @@ fn remove(path: &Path, file: &str, ours: bool, theirs: bool) -> Result<(), Strin
     }
 }
 
+/// Staged paths that are not conflicted: what the operation changed cleanly,
+/// plus the files already resolved and staged.
+pub fn also_changed(path: &Path) -> Result<Vec<String>, String> {
+    let output = run(
+        path,
+        &[
+            "diff".into(),
+            "--cached".into(),
+            "--name-only".into(),
+            "-z".into(),
+            "--diff-filter=ACDMRT".into(),
+        ],
+    )?;
+    if !output.status.success() {
+        return Err(failure("List staged changes", &output));
+    }
+    Ok(output
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|field| !field.is_empty())
+        .map(|field| String::from_utf8_lossy(field).into_owned())
+        .collect())
+}
+
+/// Undo a staged resolution of `file`. Git recreates the conflict from its
+/// resolve-undo record (`git checkout -m`, which rewrites the working file
+/// with markers) and this returns `true`; when Git cannot recreate it, the
+/// path is unstaged to a plain change and this returns `false`.
+pub fn reopen(path: &Path, file: &str) -> Result<bool, String> {
+    validate(file)?;
+    let output = run(
+        path,
+        &["checkout".into(), "-m".into(), "--".into(), file.into()],
+    )?;
+    if output.status.success() && unmerged(path)?.iter().any(|candidate| candidate == file) {
+        return Ok(true);
+    }
+    let output = run(
+        path,
+        &[
+            "restore".into(),
+            "--staged".into(),
+            "--".into(),
+            file.into(),
+        ],
+    )?;
+    if !output.status.success() {
+        return Err(failure(&format!("Unstage {file}"), &output));
+    }
+    Ok(false)
+}
+
 /// Who Ours and Theirs are for the operation in progress: the current
 /// branch and the merged branch for a merge; the base rebased onto and the
 /// replayed commit for a rebase; HEAD's branch and the picked or reverted

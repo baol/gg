@@ -1,11 +1,13 @@
-//! Save and list pre-rewrite tips under private references.
-use gg_engine::recovery::Backup;
+//! Save, list, restore, and delete pre-rewrite tips under private references.
+use gg_engine::recovery::{Backup, Restore};
 use std::{
     path::Path,
     process::{Command, Stdio},
     time::{SystemTime, UNIX_EPOCH},
 };
 
+/// Save `target` as `refs/gg/backup/<label>/<unix-nanos>[/<branch>]`, the
+/// branch being the one checked out (the branch a rewrite is about to move).
 pub fn create(path: &Path, label: &str, target: &str) -> Result<String, String> {
     let target = target.trim();
     if target.is_empty() || target.starts_with('-') || target.contains('\0') {
@@ -16,7 +18,10 @@ pub fn create(path: &Path, label: &str, target: &str) -> Result<String, String> 
         .duration_since(UNIX_EPOCH)
         .map_err(|e| format!("Read the system clock for the backup: {e}"))?
         .as_nanos();
-    let name = format!("refs/gg/backup/{label}/{nanos}");
+    let name = match current_branch(path) {
+        Some(branch) => format!("refs/gg/backup/{label}/{nanos}/{branch}"),
+        None => format!("refs/gg/backup/{label}/{nanos}"),
+    };
     let resolved = run(
         path,
         &[
@@ -87,10 +92,13 @@ pub fn list(path: &Path) -> Result<Vec<Backup>, String> {
         let commit = fields.next().unwrap_or_default();
         let time = fields.next().unwrap_or_default();
         let subject = fields.next().unwrap_or_default();
-        let label = reference
+        let mut parts = reference
             .strip_prefix("refs/gg/backup/")
-            .and_then(|rest| rest.split('/').next())
-            .unwrap_or_default();
+            .unwrap_or_default()
+            .splitn(3, '/');
+        let label = parts.next().unwrap_or_default();
+        let saved = parts.next().unwrap_or_default();
+        let branch = parts.next().filter(|branch| !branch.is_empty());
         if reference.is_empty() || commit.is_empty() || label.is_empty() {
             continue;
         }
@@ -100,6 +108,11 @@ pub fn list(path: &Path) -> Result<Vec<Backup>, String> {
             commit: commit.to_string(),
             time: time.to_string(),
             subject: subject.to_string(),
+            branch: branch.map(str::to_string),
+            saved: saved
+                .parse::<u128>()
+                .map(|nanos| (nanos / 1_000_000_000) as i64)
+                .unwrap_or_default(),
         });
     }
     backups.sort_by(|left, right| {
@@ -112,10 +125,164 @@ pub fn list(path: &Path) -> Result<Vec<Backup>, String> {
 
 fn backup_nanos(reference: &str) -> u128 {
     reference
-        .rsplit('/')
-        .next()
+        .strip_prefix("refs/gg/backup/")
+        .and_then(|rest| rest.split('/').nth(1))
         .and_then(|value| value.parse().ok())
         .unwrap_or_default()
+}
+
+/// The checked-out branch's short name; `None` on a detached HEAD.
+pub fn current_branch(path: &Path) -> Option<String> {
+    let output = run(
+        path,
+        &[
+            "symbolic-ref".into(),
+            "--quiet".into(),
+            "--short".into(),
+            "HEAD".into(),
+        ],
+    )
+    .ok()?;
+    let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (output.status.success() && !name.is_empty()).then_some(name)
+}
+
+/// Tracked files with staged or unstaged changes (untracked files are not
+/// counted: a hard reset keeps them unless it would overwrite one).
+pub fn uncommitted(path: &Path) -> Result<usize, String> {
+    let output = run(
+        path,
+        &[
+            "--no-optional-locks".into(),
+            "status".into(),
+            "--porcelain=v1".into(),
+            "-z".into(),
+            "--untracked-files=no".into(),
+        ],
+    )?;
+    if !output.status.success() {
+        return Err(failure("Read the working tree status", &output));
+    }
+    let mut count = 0;
+    let mut records = output.stdout.split(|byte| *byte == 0);
+    while let Some(record) = records.next() {
+        if record.len() < 3 {
+            continue;
+        }
+        count += 1;
+        // A rename or copy carries its source path as the next record.
+        if matches!(record[0], b'R' | b'C') {
+            records.next();
+        }
+    }
+    Ok(count)
+}
+
+/// Why a restore cannot run with `count` changed files.
+pub fn uncommitted_reason(count: usize) -> String {
+    if count == 1 {
+        "1 file has uncommitted changes. Commit or stash it first.".into()
+    } else {
+        format!("{count} files have uncommitted changes. Commit or stash them first.")
+    }
+}
+
+/// The tip of local `branch` and how many commits differ between it and
+/// `commit` (both sides of the symmetric difference).
+pub fn branch_now(path: &Path, branch: &str, commit: &str) -> Option<(String, usize)> {
+    if branch.starts_with('-') || commit.starts_with('-') {
+        return None;
+    }
+    let tip = run(
+        path,
+        &[
+            "rev-parse".into(),
+            "--verify".into(),
+            "--quiet".into(),
+            format!("refs/heads/{branch}^{{commit}}"),
+        ],
+    )
+    .ok()
+    .filter(|output| output.status.success())?;
+    let tip = String::from_utf8_lossy(&tip.stdout).trim().to_string();
+    let counted = run(
+        path,
+        &[
+            "rev-list".into(),
+            "--count".into(),
+            format!("{tip}...{commit}"),
+        ],
+    )
+    .ok()
+    .filter(|output| output.status.success())?;
+    let count = String::from_utf8_lossy(&counted.stdout)
+        .trim()
+        .parse()
+        .ok()?;
+    Some((tip, count))
+}
+
+/// Delete one gg backup reference; other references are refused.
+pub fn delete(path: &Path, reference: &str) -> Result<(), String> {
+    let valid = reference
+        .strip_prefix("refs/gg/backup/")
+        .is_some_and(|rest| !rest.is_empty() && !rest.split('/').any(|part| part == ".."));
+    if !valid {
+        return Err(format!("{reference} is not a gg backup."));
+    }
+    let output = run(path, &["update-ref".into(), "-d".into(), reference.into()])?;
+    if !output.status.success() {
+        return Err(failure("Delete the backup", &output));
+    }
+    Ok(())
+}
+
+/// Restore checked-out `branch` to `commit`: a hard reset that needs a clean
+/// tree and first saves the current tip as a `restore` backup, so it can be
+/// undone.
+pub fn restore(path: &Path, commit: &str, branch: &str) -> Result<Restore, String> {
+    let commit = commit.trim();
+    if commit.is_empty() || commit.starts_with('-') || commit.contains('\0') {
+        return Err("Restore target is invalid.".into());
+    }
+    match current_branch(path) {
+        Some(current) if current == branch => {}
+        Some(_) => return Err(format!("Switch to {branch} before restoring it.")),
+        None => return Err("Check out a branch before restoring.".into()),
+    }
+    let changed = uncommitted(path)?;
+    if changed > 0 {
+        return Err(uncommitted_reason(changed));
+    }
+    let head = run(
+        path,
+        &["rev-parse".into(), "--verify".into(), "HEAD".into()],
+    )?;
+    if !head.status.success() {
+        return Err(failure("Read the current tip", &head));
+    }
+    let previous = String::from_utf8_lossy(&head.stdout).trim().to_string();
+    let target = run(
+        path,
+        &[
+            "rev-parse".into(),
+            "--verify".into(),
+            "--quiet".into(),
+            format!("{commit}^{{commit}}"),
+        ],
+    )?;
+    if !target.status.success() {
+        return Err(format!("Restore target {commit} was not found."));
+    }
+    let target = String::from_utf8_lossy(&target.stdout).trim().to_string();
+    let saved = create(path, "restore", &previous)?;
+    let receipt = crate::reset::reset(path, &target, gg_engine::reset::Mode::Hard)?;
+    Ok(Restore {
+        branch: branch.to_string(),
+        previous,
+        commit: receipt.commit,
+        saved,
+    })
 }
 
 fn sanitize(label: &str) -> String {

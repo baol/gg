@@ -128,6 +128,8 @@ pub fn rebase_progress(path: &Path) -> Result<Option<RebaseProgress>, String> {
     let status = run(
         path,
         &[
+            // A read: never take index.lock from a mutation running now.
+            "--no-optional-locks".into(),
             "status".into(),
             "--porcelain".into(),
             "--untracked-files=no".into(),

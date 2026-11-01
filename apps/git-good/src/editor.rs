@@ -4,6 +4,25 @@
 use std::path::Path;
 use std::process::Command;
 
+/// ⋯ › Open in editor (`folder` false) or Reveal in folder (true) for a
+/// repository-relative path.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Request {
+    pub path: String,
+    pub folder: bool,
+}
+
+/// Show the folder that holds `file` with the system's file manager.
+pub fn reveal(file: &Path) -> Result<(), String> {
+    let folder = file.parent().unwrap_or(file);
+    let (program, args) = system_opener(folder);
+    Command::new(&program)
+        .args(&args)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("Open {} with {program}: {error}", folder.display()))
+}
+
 /// The program and arguments for `command` opening `file`. `{file}` is
 /// replaced by the path; without it the path is added at the end. Quotes
 /// group words: `"/Applications/My Editor.app/x" --wait`.
