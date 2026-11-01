@@ -16685,8 +16685,12 @@ mod tests {
         std::fs::write(path.join("notes"), b"mine\n")?;
         let before = git_in(path, &["rev-parse", "HEAD"])?;
         app.reset_confirm = Some((target, gg_engine::reset::Mode::Hard));
+        // The notice follows the list by at most a frame.
         let text = frames_until(&ctx, &mut app, vec![], |_, text| {
             text.iter().any(|line| line == "notes")
+                && text
+                    .iter()
+                    .any(|line| line.contains("Move or delete the untracked files"))
         })?;
         assert!(
             text.iter()
