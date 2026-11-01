@@ -17416,8 +17416,9 @@ mod tests {
     fn one_recent_limit_for_the_welcome_list_open_recent_and_open() {
         let ctx = egui::Context::default();
         let mut app = Browser::new("/nowhere".into());
+        // Absolute on every platform (Windows paths need a drive).
         let paths = (0..12)
-            .map(|index| PathBuf::from(format!("/nowhere/limit-{index}")))
+            .map(|index| std::env::temp_dir().join(format!("limit-{index}")))
             .collect::<Vec<_>>();
         app.recent = recent_list(&paths);
         let rows = |texts: &[String]| {
@@ -18693,7 +18694,9 @@ mod tests {
     #[test]
     fn welcome_search_lists_recent_repositories_and_new_repository() {
         let mut app = Browser::new("/nowhere".into());
-        app.recent = recent_list(&[PathBuf::from("/nowhere/blog")]);
+        // Absolute on every platform (Windows paths need a drive).
+        let blog = std::env::temp_dir().join("blog");
+        app.recent = recent_list(std::slice::from_ref(&blog));
         let ready = app.frame_readiness();
         let items = app.search_items(&ready);
         let results = search::results("blog", &items, FrameCommand::Filter("blog".into()));
@@ -18702,7 +18705,7 @@ mod tests {
                 .iter()
                 .any(|item| item.group == search::Group::Repositories
                     && item.label == "blog"
-                    && item.command == FrameCommand::OpenRecent("/nowhere/blog".into()))
+                    && item.command == FrameCommand::OpenRecent(blog.clone()))
         );
         let results = search::results("new repo", &items, FrameCommand::Filter("x".into()));
         assert!(
