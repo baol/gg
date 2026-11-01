@@ -15,7 +15,7 @@ pub enum Action {
     DeleteBranch(String),
     DeleteTag(String),
     VerifyTag(String),
-    /// Open the toolbar stash picker on the entry at this index.
+    /// Open the Stashes picker on the entry at this index.
     OpenStash(usize),
     /// Open another worktree of this repository.
     OpenWorktree(String),

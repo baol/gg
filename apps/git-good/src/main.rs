@@ -544,12 +544,12 @@ fn switcher_branches(refs: &gg_engine::refs::Snapshot, filter: &str) -> Vec<(Str
     branches
 }
 
-/// The toolbar stash picker's popup, also opened from the sidebar.
+/// The Stashes picker popup, opened from Changes › Stashes… and the sidebar.
 fn stash_picker_popup_id() -> egui::Id {
-    egui::Id::unique("toolbar-stash-picker")
+    egui::Id::unique("stash-picker")
 }
 
-/// A command chosen in the toolbar stash picker.
+/// A command chosen in the Stashes picker.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum StashPick {
     Apply(String),
@@ -558,7 +558,7 @@ enum StashPick {
     Drop(String),
 }
 
-/// Toolbar stash picker: selected entry and pending drop confirmation.
+/// Stashes picker: selected entry and pending drop confirmation.
 #[derive(Clone, Debug, Default)]
 struct StashPicker {
     selected: usize,
@@ -678,8 +678,7 @@ struct FrameReadiness {
     stashes: usize,
     /// Changed paths shown on the Changes tab badge; zero when unknown.
     changes: usize,
-    /// Commits in the current branch's own range for the toolbar rewrite.
-    branch_rewrite_count: usize,
+    /// Why Branch › Interactive rebase of current branch… cannot run.
     branch_rewrite_reason: Option<&'static str>,
 }
 
@@ -702,6 +701,7 @@ enum FrameCommand {
     Rewrite,
     /// Interactive rebase from the selected commit through HEAD.
     RewriteSelected,
+    /// Repository › Recovery…: Backups and Reflog in one window.
     Recovery,
     Worktrees,
     Open,
@@ -719,8 +719,6 @@ enum FrameCommand {
     OpenFile(String),
     OpenRecent(PathBuf),
     ClearRecent,
-    Backups,
-    Reflog,
     Quit,
     /// Open the toolbar branch switcher.
     SwitchTo,
@@ -816,6 +814,9 @@ const OPERATION_AREA_HEIGHT: f32 = 44.0;
 
 /// Height of the menu bar row (final design: 26 px).
 const MENU_BAR_HEIGHT: f32 = 26.0;
+
+/// Height of the toolbar row under the menu bar (final design: 34 px).
+const TOOLBAR_HEIGHT: f32 = 34.0;
 
 /// Paints a count badge on the top-right corner of `rect`; nothing for zero.
 fn paint_badge(ui: &egui::Ui, rect: egui::Rect, count: u64) {
@@ -3387,8 +3388,12 @@ impl Browser {
                 });
             }
             FrameCommand::Stash => self.open_stash_dialog(),
-            // The toolbar picker is the one stash surface (proposal).
-            FrameCommand::Stashes => egui::Popup::open_id(ctx, stash_picker_popup_id()),
+            // The picker is the one stash surface (proposal).
+            FrameCommand::Stashes => {
+                self.stash_picker.confirm_drop = false;
+                self.stash_picker.error = None;
+                egui::Popup::open_id(ctx, stash_picker_popup_id());
+            }
             FrameCommand::Rewrite => {
                 let start = self
                     .local_summary
@@ -3405,7 +3410,15 @@ impl Browser {
                     self.run_commit_action(ctx, id, CommitAction::Rewrite);
                 }
             }
-            FrameCommand::Recovery => self.open_recovery_window(),
+            // Reopens on the source last shown; Backups the first time.
+            FrameCommand::Recovery => {
+                if let Some(path) = self.stash_path() {
+                    self.recovery
+                        .get_or_insert_with(|| RecoveryView::new(path))
+                        .open = true;
+                    ctx.request_repaint();
+                }
+            }
             FrameCommand::Worktrees => self.open_worktrees(ctx),
             FrameCommand::Open => self.edit_path = true,
             FrameCommand::Clone => {
@@ -3447,12 +3460,6 @@ impl Browser {
             FrameCommand::OpenRecent(path) => {
                 self.path = path.to_string_lossy().into_owned();
                 self.load(ctx);
-            }
-            FrameCommand::Backups => {
-                self.open_recovery(ctx, return_location::RecoverySource::Backups)
-            }
-            FrameCommand::Reflog => {
-                self.open_recovery(ctx, return_location::RecoverySource::Reflog)
             }
             FrameCommand::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
             FrameCommand::SwitchTo => egui::Popup::open_id(ctx, branch_switcher_popup_id()),
@@ -3816,7 +3823,7 @@ impl Browser {
             let head_ready = head.as_mut().is_none_or(|head| head.get().is_some());
             let notice = guard.changed.then_some(consequence::CHANGED);
             let busy = guard.busy();
-            egui::Window::new("Discard all changes")
+            egui::Window::new("Discard all tracked changes")
                 .id(egui::Id::unique("discard-all"))
                 .modal(ctx, egui::Id::unique("discard-all"))
                 .open(&mut open)
@@ -3826,7 +3833,9 @@ impl Browser {
                 .pivot(egui::Align2::CENTER_CENTER)
                 .show(ctx, |ui| {
                     ui.set_width(460.0);
-                    ui.label("Restore every tracked file, staged and unstaged, to HEAD?");
+                    ui.label(
+                        "Restore every tracked file to HEAD? Staged and unstaged changes are both lost.",
+                    );
                     if let Some(files) = &mut files {
                         consequence::list(
                             ui,
@@ -3835,16 +3844,18 @@ impl Browser {
                             egui::Color32::from_rgb(220, 195, 125),
                         );
                     }
-                    ui.weak("This cannot be undone. Untracked files are kept.");
+                    ui.weak(
+                        "This cannot be undone. Untracked files are kept; files only added to the index become untracked.",
+                    );
                     consequence::notice(ui, notice);
                     ui.horizontal(|ui| {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             let label = match count {
                                 Some(count) => format!(
-                                    "Discard {}",
+                                    "Discard {}, staged and unstaged",
                                     consequence::counted(count, "file", "files")
                                 ),
-                                None => "Discard all".into(),
+                                None => "Discard tracked changes".into(),
                             };
                             let ready = count.is_some_and(|count| count > 0) && head_ready;
                             let enabled = ready && !busy;
@@ -4330,23 +4341,9 @@ impl Browser {
             item("Worktrees…", "", FrameCommand::Worktrees)
                 .unless(idle(ready.has_repo))
                 .entry(),
-            item("Submodules…", "", FrameCommand::Unavailable)
-                .unless(Some(
-                    "Not built yet: open a submodule from a changed file in Local Changes or Review",
-                ))
-                .entry(),
-            item("LFS…", "", FrameCommand::Unavailable)
-                .unless(Some(
-                    "Not built yet: inspect an LFS file from Local Changes or Review",
-                ))
-                .entry(),
-            Entry::Separator,
-            item("Backups…", "", FrameCommand::Backups)
+            item("Recovery…", "", FrameCommand::Recovery)
                 .unless(idle(ready.has_repo))
-                .hint("Private backups taken before every rewrite")
-                .entry(),
-            item("Reflog…", "", FrameCommand::Reflog)
-                .unless(idle(ready.has_repo))
+                .hint("Private backups taken before every rewrite, and the reflog")
                 .entry(),
         ];
         if !cfg!(target_os = "macos") {
@@ -4391,6 +4388,15 @@ impl Browser {
                 item("Rebase current onto…", "", FrameCommand::RebaseOnto)
                     .unless(on_branch)
                     .entry(),
+                // The branch's own commits, independent of the selection.
+                item(
+                    "Interactive rebase of current branch…",
+                    "",
+                    FrameCommand::Rewrite,
+                )
+                .unless(ready.branch_rewrite_reason)
+                .hint("Rewrite the commits the upstream, or else the default branch, lacks")
+                .entry(),
                 item("Set upstream…", "", FrameCommand::SetUpstream)
                     .unless(on_branch)
                     .entry(),
@@ -4484,9 +4490,11 @@ impl Browser {
                             .map(|_| status_view::UNSTAGE_ALL_AMENDING)
                     }))
                     .entry(),
-                item("Discard all…", "", FrameCommand::DiscardAll)
+                item("Discard all tracked changes…", "", FrameCommand::DiscardAll)
                     .unless(changes)
-                    .hint("Restore tracked files to HEAD; untracked files are kept")
+                    .hint(
+                        "Restore tracked files, staged and unstaged, to HEAD; untracked files are kept",
+                    )
                     .danger()
                     .entry(),
                 Entry::Separator,
@@ -4502,7 +4510,11 @@ impl Browser {
                     .unless(ready.stash_reason)
                     .entry(),
                 item("Stashes…", "", FrameCommand::Stashes)
-                    .unless((!ready.stash_idle).then_some(busy))
+                    .unless(
+                        idle(ready.stash_idle)
+                            .or((ready.stashes == 0).then_some("No stashes")),
+                    )
+                    .hint("Apply, pop, show, or drop a stash entry")
                     .entry(),
                 Entry::Separator,
                 item("Resolve conflicts…", "", FrameCommand::ResolveConflicts)
@@ -4591,7 +4603,7 @@ impl Browser {
 
     fn search_items(&self, ready: &FrameReadiness) -> Vec<search::Item<FrameCommand>> {
         use search::Group;
-        // Every menu item, named with its menu, plus the toolbar's own rebase.
+        // Every menu item, named with its menu.
         let mut items = menus::flatten(&self.menu_table(ready))
             .into_iter()
             .filter(|(_, item)| item.command != FrameCommand::Unavailable)
@@ -4604,14 +4616,6 @@ impl Browser {
                 command: item.command,
             })
             .collect::<Vec<_>>();
-        items.push(search::Item {
-            group: Group::Actions,
-            label: "Interactive rebase of this branch".into(),
-            context: "toolbar · the branch's own commits".into(),
-            key: "",
-            disabled: ready.branch_rewrite_reason.map(str::to_string),
-            command: FrameCommand::Rewrite,
-        });
         let head = self
             .state
             .refs
@@ -5099,39 +5103,12 @@ impl Browser {
         pick
     }
 
-    /// The toolbar **Stashes** button and its picker popup.
-    fn stash_picker_button(
-        &mut self,
-        ui: &mut egui::Ui,
-        ready: &FrameReadiness,
-    ) -> Option<StashPick> {
-        let reason = if !ready.stash_idle {
-            Some(if ready.has_repo {
-                "Wait for the current operation to finish"
-            } else {
-                "Open a repository first"
-            })
-        } else if ready.stashes == 0 {
-            Some("No stashes")
-        } else {
-            None
-        };
-        let button = egui::Button::new((
-            crate::phosphor::icon(crate::phosphor::BOX_ARROW_UP).size(17.0),
-            egui::RichText::new(ready.stashes.to_string()).size(11.0),
-            crate::phosphor::icon(crate::phosphor::CARET_DOWN).size(10.0),
-        ))
-        .min_size(egui::vec2(28.0, 26.0))
-        .frame_when_inactive(false);
-        let response = ui.add_enabled(reason.is_none(), button);
-        let tip = format!("Stashes ({}) · apply, pop, show, or drop", ready.stashes);
-        let response = match reason {
-            Some(reason) => response.on_disabled_hover_text(format!("{tip}\n{reason}")),
-            None => response.on_hover_text(tip),
-        };
-        if response.clicked() {
-            self.stash_picker.confirm_drop = false;
-            self.stash_picker.error = None;
+    /// The **Stashes** picker popup, opened by **Changes › Stashes…**, the
+    /// sidebar's stash rows, and the footer recovery; centered under the
+    /// toolbar.
+    fn stash_picker(&mut self, ctx: &egui::Context, layer: egui::LayerId) -> Option<StashPick> {
+        if !egui::Popup::is_id_open(ctx, stash_picker_popup_id()) {
+            return None;
         }
         let entries = self
             .local_summary
@@ -5140,8 +5117,13 @@ impl Browser {
             .unwrap_or_default();
         let picker = &mut self.stash_picker;
         let mut pick = None;
-        egui::Popup::from_toggle_button_response(&response)
-            .id(stash_picker_popup_id())
+        let anchor = egui::pos2(
+            ctx.content_rect().center().x,
+            MENU_BAR_HEIGHT + TOOLBAR_HEIGHT + 4.0,
+        );
+        egui::Popup::new(stash_picker_popup_id(), ctx.clone(), anchor, layer)
+            .open_memory(None)
+            .align(egui::RectAlign::BOTTOM)
             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
             .show(|ui| {
                 ui.set_width(STASH_PICKER_WIDTH);
@@ -5196,7 +5178,7 @@ impl Browser {
                 );
             });
         if pick.is_some() {
-            egui::Popup::close_all(ui.ctx());
+            egui::Popup::close_all(ctx);
         }
         pick
     }
@@ -6318,12 +6300,6 @@ impl Browser {
         });
     }
 
-    fn open_recovery_window(&mut self) {
-        if let Some(history) = &self.state.history {
-            self.recovery = Some(RecoveryView::new(history.path.clone()));
-        }
-    }
-
     /// Readiness shared by the window menus and toolbar.
     fn frame_readiness(&self) -> FrameReadiness {
         let has_repo = self.state.history.is_some();
@@ -6381,7 +6357,6 @@ impl Browser {
             stash_reason,
             stashes: summary.map_or(0, |summary| summary.stashes.len()),
             changes: summary.and_then(|summary| summary.changes).unwrap_or(0),
-            branch_rewrite_count: branch_rewrite.map_or(0, |(_, count)| *count),
             branch_rewrite_reason,
             behind,
             pull_reason,
@@ -9317,12 +9292,11 @@ impl Browser {
                 });
             });
         let mut tool = menu_command;
-        let mut stash_pick = None;
         let mut open_search = false;
         let mut search_field: Option<(egui::Rect, bool)> = None;
         let mut branch_pick = None;
         egui::Panel::top("navigation")
-            .exact_size(34.0)
+            .exact_size(TOOLBAR_HEIGHT)
             .show(ui, |ui| {
                 ui.horizontal_centered(|ui| {
                     ui.spacing_mut().item_spacing.x = 2.0;
@@ -9390,11 +9364,8 @@ impl Browser {
                             no_repo
                         }
                     };
-                    let separator = |ui: &mut egui::Ui| {
-                        ui.add_space(4.0);
-                        ui.separator();
-                        ui.add_space(4.0);
-                    };
+                    // Everyday navigation and sync only; every other command
+                    // lives in its menu and in search.
                     use crate::phosphor as icon;
                     if toolbar_button(ui, icon::DOWNLOAD_SIMPLE, None, "Fetch  Ctrl+Shift+F", idle(ready.network_idle)) {
                         tool = Some(FrameCommand::Fetch);
@@ -9422,57 +9393,6 @@ impl Browser {
                     }
                     if toolbar_button(ui, icon::ARROW_LINE_UP, None, "Push  Ctrl+Shift+P", idle(ready.network_idle)) {
                         tool = Some(FrameCommand::Push);
-                    }
-                    separator(ui);
-                    if toolbar_button(ui, icon::GIT_BRANCH, None, "New branch…  Ctrl+B", idle(ready.branch_idle)) {
-                        tool = Some(FrameCommand::NewBranch);
-                    }
-                    if toolbar_button(ui, icon::TAG, None, "New tag…", idle(ready.branch_idle)) {
-                        tool = Some(FrameCommand::NewTag);
-                    }
-                    if toolbar_button(
-                        ui,
-                        icon::GIT_MERGE,
-                        None,
-                        "Merge into current…",
-                        idle(ready.branch_idle),
-                    ) {
-                        tool = Some(FrameCommand::Merge);
-                    }
-                    separator(ui);
-                    if toolbar_button(ui, icon::ARCHIVE, None, "Stash changes…  Ctrl+Shift+Z", ready.stash_reason) {
-                        tool = Some(FrameCommand::Stash);
-                    }
-                    if let Some(pick) = self.stash_picker_button(ui, &ready) {
-                        stash_pick = Some(pick);
-                    }
-                    separator(ui);
-                    let rewrite_tip = if ready.branch_rewrite_count > 0 {
-                        format!(
-                            "Interactive rebase of this branch · {} commit{} not on the upstream or default branch",
-                            ready.branch_rewrite_count,
-                            if ready.branch_rewrite_count == 1 { "" } else { "s" }
-                        )
-                    } else {
-                        "Interactive rebase of this branch".into()
-                    };
-                    if toolbar_button(
-                        ui,
-                        icon::LIST_NUMBERS,
-                        None,
-                        &rewrite_tip,
-                        ready.branch_rewrite_reason,
-                    ) {
-                        tool = Some(FrameCommand::Rewrite);
-                    }
-                    if toolbar_button(
-                        ui,
-                        icon::CLOCK_COUNTER_CLOCKWISE,
-                        None,
-                        "Recovery…",
-                        idle(ready.has_repo),
-                    ) {
-                        tool = Some(FrameCommand::Recovery);
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let icon = crate::phosphor::icon(crate::phosphor::MAGNIFYING_GLASS);
@@ -9534,7 +9454,9 @@ impl Browser {
                     });
                 });
             });
-        if let Some(pick) = stash_pick {
+        // Changes › Stashes… and the sidebar's stash rows open the picker
+        // centered under the toolbar.
+        if let Some(pick) = self.stash_picker(ctx, ui.layer_id()) {
             self.apply_stash_pick(ctx, pick);
         }
         match branch_pick {
@@ -16230,17 +16152,18 @@ mod tests {
             lists_ready(app, &["discard", "discard-head"])
         })?;
         std::fs::write(path.join("b"), b"also mine\n")?;
-        click_label(&ctx, &mut app, "Discard 1 file")?;
+        click_label(&ctx, &mut app, "Discard 1 file, staged and unstaged")?;
         let text = frames_until(&ctx, &mut app, vec![], |_, text| {
             text.iter().any(|line| line == consequence::CHANGED)
         })?;
         assert!(
-            text.iter().any(|line| line == "Discard 2 files"),
+            text.iter()
+                .any(|line| line == "Discard 2 files, staged and unstaged"),
             "{text:?}"
         );
         assert!(app.discard_confirm, "the dialog stays open");
         assert_eq!(std::fs::read(path.join("a"))?, b"mine\n", "not run");
-        click_label(&ctx, &mut app, "Discard 2 files")?;
+        click_label(&ctx, &mut app, "Discard 2 files, staged and unstaged")?;
         let _ = frames_until(&ctx, &mut app, vec![], |app, _| !app.discard_confirm)?;
         assert_eq!(std::fs::read(path.join("a"))?, b"two\n");
         assert_eq!(std::fs::read(path.join("b"))?, b"one\n");
@@ -16369,11 +16292,7 @@ mod tests {
                     "Push with force-with-lease…",
                     "-",
                     "Worktrees…",
-                    "Submodules…",
-                    "LFS…",
-                    "-",
-                    "Backups…",
-                    "Reflog…",
+                    "Recovery…",
                     "-",
                     "Preferences…",
                     "Quit"
@@ -16390,6 +16309,7 @@ mod tests {
                 "-",
                 "Merge into current…",
                 "Rebase current onto…",
+                "Interactive rebase of current branch…",
                 "Set upstream…",
                 "Track remote branch…",
                 "-",
@@ -16421,7 +16341,7 @@ mod tests {
             [
                 "Stage all",
                 "Unstage all",
-                "Discard all…",
+                "Discard all tracked changes…",
                 "-",
                 "Commit",
                 "Amend HEAD",
@@ -16778,22 +16698,30 @@ mod tests {
     }
 
     #[test]
-    fn window_toolbar_keeps_its_icons_in_place_across_views_and_widths()
+    fn window_toolbar_holds_navigation_and_sync_in_place_across_views_and_widths()
     -> Result<(), Box<dyn std::error::Error>> {
+        // Everyday navigation and sync only; the rest live in the menus.
         let order = [
             crate::phosphor::SIDEBAR_SIMPLE,
             crate::phosphor::DOWNLOAD_SIMPLE,
             crate::phosphor::ARROW_LINE_DOWN,
             crate::phosphor::ARROW_LINE_UP,
-            crate::phosphor::GIT_BRANCH,
-            crate::phosphor::TAG,
-            crate::phosphor::GIT_MERGE,
-            crate::phosphor::ARCHIVE,
-            crate::phosphor::BOX_ARROW_UP,
-            crate::phosphor::LIST_NUMBERS,
-            crate::phosphor::CLOCK_COUNTER_CLOCKWISE,
             crate::phosphor::MAGNIFYING_GLASS,
         ];
+        // The branch button adds its own glyph and caret; nothing else.
+        let allowed = [
+            crate::phosphor::SIDEBAR_SIMPLE,
+            crate::phosphor::DOWNLOAD_SIMPLE,
+            crate::phosphor::ARROW_LINE_DOWN,
+            crate::phosphor::ARROW_LINE_UP,
+            crate::phosphor::GIT_BRANCH,
+            crate::phosphor::CARET_DOWN,
+            crate::phosphor::MAGNIFYING_GLASS,
+        ];
+        let icon_glyph = |text: &str| {
+            text.chars().count() == 1
+                && text.chars().all(|c| ('\u{E000}'..='\u{F8FF}').contains(&c))
+        };
         for width in [720.0, 1120.0] {
             let ctx = egui::Context::default();
             crate::phosphor::install(&ctx);
@@ -16833,6 +16761,25 @@ mod tests {
                             .ok_or(format!("missing toolbar glyph {glyph:?} at {width}"))
                     })
                     .collect::<Result<Vec<_>, _>>()?;
+                let extra = output
+                    .shapes
+                    .iter()
+                    .filter_map(|shape| match &shape.shape {
+                        egui::epaint::Shape::Text(text)
+                            if (MENU_BAR_HEIGHT..MENU_BAR_HEIGHT + TOOLBAR_HEIGHT)
+                                .contains(&text.pos.y)
+                                && icon_glyph(&text.galley.job.text)
+                                && !allowed.contains(&text.galley.job.text.as_str()) =>
+                        {
+                            Some(text.galley.job.text.clone())
+                        }
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                assert!(
+                    extra.is_empty(),
+                    "only navigation and sync stay on the toolbar at {width}: {extra:?}"
+                );
                 assert!(
                     xs.windows(2).all(|pair| pair[0] + 17.0 <= pair[1]),
                     "toolbar icons keep their order without overlapping at {width}: {xs:?}"
@@ -16849,7 +16796,7 @@ mod tests {
     }
 
     #[test]
-    fn toolbar_rewrite_covers_the_branch_and_keeps_the_selection()
+    fn branch_menu_rewrite_covers_the_branch_and_keeps_the_selection()
     -> Result<(), Box<dyn std::error::Error>> {
         let git = |path: &std::path::Path, args: &[&str]| -> Result<String, String> {
             let output = std::process::Command::new("git")
@@ -16912,44 +16859,23 @@ mod tests {
                 shallow: false,
             }),
         );
-        // Select an older commit on main: the toolbar must not depend on it.
+        // Select an older commit on main: the branch rewrite must not depend on it.
         let selected = ids[3].clone();
         app.state.selected = Some(selected.clone());
         app.state.reconcile_selection();
         app.local_summary = Some(LocalSummary::read(path.to_path_buf()));
-        let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+        let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
             app.draw_ui(ctx)
         });
-        let pos = output
-            .shapes
-            .iter()
-            .find_map(|shape| match &shape.shape {
-                egui::epaint::Shape::Text(text)
-                    if text.galley.job.text == crate::phosphor::LIST_NUMBERS =>
-                {
-                    Some(text.pos + text.galley.size() / 2.0)
-                }
-                _ => None,
-            })
-            .ok_or("missing rewrite toolbar button")?;
-        let events = vec![
-            egui::Event::PointerMoved(pos),
-            egui::Event::PointerButton {
-                pos,
-                button: egui::PointerButton::Primary,
-                pressed: true,
-                modifiers: egui::Modifiers::NONE,
-            },
-            egui::Event::PointerButton {
-                pos,
-                button: egui::PointerButton::Primary,
-                pressed: false,
-                modifiers: egui::Modifiers::NONE,
-            },
-        ];
-        let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, events), |ctx| {
-            app.draw_ui(ctx)
-        });
+        let ready = app.frame_readiness();
+        let (menu, item) = menus::flatten(&app.menu_table(&ready))
+            .into_iter()
+            .find(|(_, item)| item.command == FrameCommand::Rewrite)
+            .ok_or("Interactive rebase of current branch… has no menu home")?;
+        assert_eq!(menu, "Branch");
+        assert_eq!(item.disabled, None, "the branch has own commits");
+        let (mut local, mut history) = (false, false);
+        app.run_frame_command(&ctx, item.command, &mut local, &mut history);
         let dialog = app
             .rewrite_dialog
             .as_ref()
@@ -16957,7 +16883,7 @@ mod tests {
         assert_eq!(
             app.state.selected.as_deref(),
             Some(selected.as_str()),
-            "the toolbar leaves the history selection alone"
+            "the branch rewrite leaves the history selection alone"
         );
         assert_eq!(
             dialog.from, ids[1],
@@ -17037,37 +16963,23 @@ mod tests {
             rebase: None,
             files: Vec::new(),
         });
-        let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+        let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
             app.draw_ui(ctx)
         });
-        let pos = output
-            .shapes
-            .iter()
-            .find_map(|shape| match &shape.shape {
-                egui::epaint::Shape::Text(text)
-                    if text.galley.job.text == crate::phosphor::BOX_ARROW_UP =>
-                {
-                    Some(text.pos + text.galley.size() / 2.0)
-                }
-                _ => None,
-            })
-            .ok_or("missing stash picker button")?;
-        let click = vec![
-            egui::Event::PointerMoved(pos),
-            egui::Event::PointerButton {
-                pos,
-                button: egui::PointerButton::Primary,
-                pressed: true,
-                modifiers: egui::Modifiers::NONE,
-            },
-            egui::Event::PointerButton {
-                pos,
-                button: egui::PointerButton::Primary,
-                pressed: false,
-                modifiers: egui::Modifiers::NONE,
-            },
-        ];
-        let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, click), |ctx| {
+        // Changes › Stashes… opens the picker; there is no toolbar button.
+        let ready = app.frame_readiness();
+        let (menu, item) = menus::flatten(&app.menu_table(&ready))
+            .into_iter()
+            .find(|(_, item)| item.command == FrameCommand::Stashes)
+            .ok_or("Stashes… has no menu home")?;
+        assert_eq!(
+            (menu.as_str(), item.label.as_str()),
+            ("Changes", "Stashes…")
+        );
+        assert_eq!(item.disabled, None);
+        let (mut local, mut history) = (false, false);
+        app.run_frame_command(&ctx, item.command, &mut local, &mut history);
+        let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
             app.draw_ui(ctx)
         });
         let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
@@ -17082,7 +16994,6 @@ mod tests {
             })
             .collect::<Vec<_>>();
         for expected in [
-            "2",
             "Apply stash@{0}",
             "Pop",
             "Show changes",
@@ -17477,8 +17388,159 @@ mod tests {
         let ready = app.frame_readiness();
         assert_eq!(ready.stash_reason, None);
         assert_eq!(ready.stashes, 1);
-        assert_eq!(ready.branch_rewrite_count, 2);
         assert_eq!(ready.branch_rewrite_reason, None);
+    }
+
+    #[test]
+    fn commands_off_the_toolbar_keep_their_menu_home_and_search_entry() -> Result<(), String> {
+        let mut app = layout_fixture();
+        app.local_summary = Some(LocalSummary {
+            worktrees: Vec::new(),
+            changes: Some(0),
+            stashes: Vec::new(),
+            branch_start: None,
+            rebase: None,
+            files: Vec::new(),
+        });
+        let ready = app.frame_readiness();
+        let menu = menus::flatten(&app.menu_table(&ready));
+        let search = app.search_items(&ready);
+        for (command, home) in [
+            (FrameCommand::NewBranch, "Branch"),
+            (FrameCommand::NewTag, "Branch"),
+            (FrameCommand::Merge, "Branch"),
+            (FrameCommand::Rewrite, "Branch"),
+            (FrameCommand::Stash, "Changes"),
+            (FrameCommand::Stashes, "Changes"),
+            (FrameCommand::Recovery, "Repository"),
+        ] {
+            let found = menu
+                .iter()
+                .filter(|(_, item)| item.command == command)
+                .collect::<Vec<_>>();
+            assert_eq!(found.len(), 1, "{command:?} has one menu home");
+            assert_eq!(found[0].0, home, "{command:?}");
+            let entry = search
+                .iter()
+                .find(|item| item.command == command)
+                .ok_or(format!("{command:?} is missing from search"))?;
+            assert_eq!(entry.context, format!("{home} menu"));
+            assert_eq!(entry.disabled, found[0].1.disabled, "{command:?}");
+        }
+        // One Recovery entry point holds both sources.
+        for label in ["Backups…", "Reflog…", "Submodules…", "LFS…"] {
+            assert!(
+                !menu.iter().any(|(_, item)| item.label == label),
+                "{label} is gone"
+            );
+        }
+        // Disabled items explain the repository state, never a missing feature.
+        assert!(
+            menu.iter()
+                .filter_map(|(_, item)| item.disabled.as_deref())
+                .all(|reason| !reason.contains("Not built")),
+        );
+        let stashes = menu
+            .iter()
+            .find(|(_, item)| item.command == FrameCommand::Stashes)
+            .and_then(|(_, item)| item.disabled.clone());
+        assert_eq!(stashes.as_deref(), Some("No stashes"));
+        Ok(())
+    }
+
+    #[test]
+    fn discard_all_names_staged_changes_and_keeps_untracked_files() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        let (mut local, mut history) = (false, false);
+        app.run_frame_command(&ctx, FrameCommand::DiscardAll, &mut local, &mut history);
+        let _ = crate::tests::run_ui(&ctx, frame_input(720.0, 480.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        let output = crate::tests::run_ui(&ctx, frame_input(720.0, 480.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        let text = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        for expected in [
+            "Discard all tracked changes",
+            "Restore every tracked file to HEAD? Staged and unstaged changes are both lost.",
+            "This cannot be undone. Untracked files are kept; files only added to the index become untracked.",
+            "Discard tracked changes",
+        ] {
+            assert!(text.contains(&expected), "missing {expected:?} in {text:?}");
+        }
+    }
+
+    #[test]
+    fn repository_recovery_opens_one_window_on_the_last_source() -> Result<(), &'static str> {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        let (mut local, mut history) = (false, false);
+        app.run_frame_command(&ctx, FrameCommand::Recovery, &mut local, &mut history);
+        let view = app.recovery.as_mut().ok_or("Recovery… opens the window")?;
+        assert!(view.open);
+        assert_eq!(view.source, return_location::RecoverySource::Backups);
+        view.source = return_location::RecoverySource::Reflog;
+        view.open = false;
+        app.run_frame_command(&ctx, FrameCommand::Recovery, &mut local, &mut history);
+        let view = app.recovery.as_ref().ok_or("the window reopens")?;
+        assert!(view.open);
+        assert_eq!(view.source, return_location::RecoverySource::Reflog);
+        Ok(())
+    }
+
+    #[test]
+    fn changes_stashes_opens_the_picker_inside_the_narrow_window()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        crate::phosphor::install(&ctx);
+        let mut app = layout_fixture();
+        app.local_summary = Some(LocalSummary {
+            worktrees: Vec::new(),
+            changes: Some(0),
+            stashes: vec![gg_engine::stash::StashEntry {
+                index: 0,
+                reference: "stash@{0}".into(),
+                commit: "f".repeat(40),
+                message: "WIP on main: work".into(),
+                branch: Some("main".into()),
+                age: "2 hours ago".into(),
+                files: Some(1),
+            }],
+            branch_start: None,
+            rebase: None,
+            files: Vec::new(),
+        });
+        let _ = crate::tests::run_ui(&ctx, frame_input(720.0, 480.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        let (mut local, mut history) = (false, false);
+        app.run_frame_command(&ctx, FrameCommand::Stashes, &mut local, &mut history);
+        for _ in 0..2 {
+            let _ = crate::tests::run_ui(&ctx, frame_input(720.0, 480.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+        }
+        assert!(egui::Popup::is_id_open(&ctx, stash_picker_popup_id()));
+        let rect = ctx
+            .memory(|memory| memory.area_rect(stash_picker_popup_id()))
+            .ok_or("the picker popup has no area")?;
+        assert!(
+            rect.min.x >= 0.0 && rect.max.x <= 720.0 && rect.max.y <= 480.0,
+            "the picker stays inside 720x480: {rect:?}"
+        );
+        assert!(
+            rect.min.y >= MENU_BAR_HEIGHT + 34.0,
+            "the picker opens below the toolbar: {rect:?}"
+        );
+        Ok(())
     }
 
     fn tracking_fixture(app: &mut Browser, ahead: u64, behind: u64) {

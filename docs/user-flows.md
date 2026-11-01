@@ -101,7 +101,7 @@ flowchart TD
 
 **Amend entry:** Local Changes → Amend. Switch to the separate amend draft or HEAD message and display the affected hash/subject. Staged becomes **HEAD parent → index**, showing the amended commit's actual contents. Stage adds working changes; Unstage removes content from the amended commit while preserving working files. Allow message-only amend. Save a private backup before rewriting, preserve the author, run hooks including post-rewrite, then refresh. Backup failure aborts before publication. Turning Amend off restores the normal draft. Hook failure retains the amend draft.
 
-**Discard entry:** Unstaged → Discard file/hunk/selected. Show the exact path and scope; explain that tracked working content is restored from the index, untracked files are removed, and the index is unchanged. Cancel preserves everything and returns focus to the invoking action. Confirm refreshes both lists and the active comparison in place. Refuse stale/unsupported/conflicted scopes with a reason; never broaden the requested scope. **Completion:** only the confirmed content changes. **Mockup:** Stage → Discard → Stage; amend is specified here rather than simulated.
+**Discard entry:** Unstaged → Discard unstaged changes…/hunk/selected lines. Show the exact path and scope; explain that tracked working content is restored from the index, untracked files are removed, and the index is unchanged. Cancel preserves everything and returns focus to the invoking action. Confirm refreshes both lists and the active comparison in place. Refuse stale/unsupported/conflicted scopes with a reason; never broaden the requested scope. **Completion:** only the confirmed content changes. **Mockup:** Stage → Discard → Stage; amend is specified here rather than simulated.
 
 ### F05 · Switch, create, track, and delete references
 
@@ -165,7 +165,7 @@ flowchart TD
 
 ### F10 · Rewrite and recover a previous tip
 
-**Entry:** selected history commit → Interactive rebase from here (`R`), or the toolbar's Interactive rebase of this branch.
+**Entry:** selected history commit → Interactive rebase from here (`R`), or **Branch › Interactive rebase of current branch…**.
 
 1. Resolve the inclusive linear range; reject merge ranges. Show every commit exactly once, newest first, with move controls, drag, and an action chip: Pick, Reword, Reopen, Squash, Fixup, Drop. Squash and Fixup combine into the nearest kept commit below; consequence badges say where.
 2. Inspect the selected commit's files and diff beside the plan, or Open in Review and come back to the same plan. Reword edits the message in place.

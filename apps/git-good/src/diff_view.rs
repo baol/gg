@@ -2046,7 +2046,14 @@ impl DiffView {
                     ui.close();
                 }
             }
-            if self.can_drop_whole() && ui.button("Discard file…").clicked() {
+            if self.can_drop_whole()
+                && ui
+                    .button("Discard unstaged changes…")
+                    .on_hover_text(
+                        "Restore the working file from the index (an untracked file is removed); the index is unchanged",
+                    )
+                    .clicked()
+            {
                 self.stage_edit = Some(self.file_edit(true));
                 ui.close();
             }

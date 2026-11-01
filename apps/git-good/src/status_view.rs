@@ -1584,7 +1584,7 @@ impl StatusView {
                     "the selected lines' change blocks".into()
                 }
                 crate::diff_view::StageScope::Hunk => "this hunk".into(),
-                crate::diff_view::StageScope::File => "all working changes".into(),
+                crate::diff_view::StageScope::File => "unstaged changes".into(),
             };
             ui.horizontal_wrapped(|ui| {
                 ui.colored_label(
@@ -3509,7 +3509,7 @@ mod tests {
         assert!(text.contains(&"Copy path"));
         assert!(text.contains(&"Open in editor"));
         assert!(!text.contains(&"Stage file"));
-        assert!(!text.contains(&"Discard file…"));
+        assert!(!text.contains(&"Discard unstaged changes…"));
         assert!(!view.busy(), "selection and navigation stay available");
         assert!(view.mutations_blocked());
         Ok(())
@@ -4284,6 +4284,12 @@ mod tests {
             let output = run(&ctx, &mut view, width, vec![]);
             let drop = text_pos(&output, "Discard hunk").ok_or("missing drop hunk")?;
             click(&ctx, &mut view, width, drop + egui::vec2(5.0, 0.0));
+            wait_text(
+                &ctx,
+                &mut view,
+                width,
+                "Discard this hunk from a? The index is unchanged.",
+            )?;
             let discard = wait_text(&ctx, &mut view, width, "Discard")?;
             click(&ctx, &mut view, width, discard + egui::vec2(5.0, 0.0));
             pump(&ctx, &mut view, width, |view| {
@@ -4300,7 +4306,14 @@ mod tests {
             );
             assert_eq!(std::fs::read(dir.path().join(".git/index"))?, index);
 
-            click_file_action(&ctx, &mut view, width, "Discard file…")?;
+            // The whole-file action names its scope: unstaged changes only.
+            click_file_action(&ctx, &mut view, width, "Discard unstaged changes…")?;
+            wait_text(
+                &ctx,
+                &mut view,
+                width,
+                "Discard unstaged changes from a? The index is unchanged.",
+            )?;
             let discard = wait_text(&ctx, &mut view, width, "Discard")?;
             click(&ctx, &mut view, width, discard + egui::vec2(5.0, 0.0));
             pump(&ctx, &mut view, width, |view| {
