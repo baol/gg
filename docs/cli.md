@@ -38,6 +38,8 @@ git good tag --delete TAG [--repo PATH]
 git good reset --soft|--mixed|--hard COMMIT [--repo PATH]
 ```
 
+`git good reset --hard` refuses, exiting nonzero with nothing changed, when it would overwrite untracked or ignored files whose paths are tracked in COMMIT; the error lists those paths, one per line, after `Move or delete them, then retry:`.
+
 ## Sync and stash
 
 ```sh

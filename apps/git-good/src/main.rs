@@ -1619,6 +1619,8 @@ struct Browser {
     commit_stats_worker: Option<commit_stats::Worker>,
     /// What each open destructive dialog will remove, read in the background.
     consequences: std::collections::BTreeMap<&'static str, consequence::Lines>,
+    /// Per open destructive dialog, the re-read of its lists on confirm.
+    guards: std::collections::BTreeMap<&'static str, consequence::Guard>,
     refs_query: String,
     refs_width: f32,
     state: state::State,
@@ -1787,6 +1789,7 @@ impl Browser {
             delete_remote: None,
             commit_stats_worker: None,
             consequences: std::collections::BTreeMap::new(),
+            guards: std::collections::BTreeMap::new(),
             refs_query: String::new(),
             refs_width: 0.0,
             state: state::State::default(),
@@ -2829,7 +2832,7 @@ impl Browser {
                                 "Rebase and interactive rebase dialogs start with this choice; each rebase still asks.",
                             );
                             ui.checkbox(&mut prefs.confirm_destructive, "Confirm before Drop and Reset");
-                            ui.weak("Off: Commit › Drop… runs without the plan, and Reset current branch to here… resets Mixed (never Hard). Both still save a backup.");
+                            ui.weak("Off: Commit › Drop… runs without the plan, and Reset current branch to here… runs a Soft or Mixed reset at once. A Hard reset always asks first. Both still save a backup.");
                             ui.separator();
                             ui.strong("Pull strategy");
                             ui.horizontal(|ui| {
@@ -3196,12 +3199,26 @@ impl Browser {
                 if matches!(operation, Some(gg_engine::sync::Operation::Fetch)) {
                     self.pull_rebase = None;
                 }
-                let error =
-                    if force_push && matches!(operation, Some(gg_engine::sync::Operation::Push)) {
+                let repository = !matches!(operation, Some(gg_engine::sync::Operation::Clone))
+                    && self.state.history.is_some();
+                let cancelled = error.strip_suffix(gg_git::sync::CANCELLED);
+                let error = match cancelled {
+                    // Git was stopped mid-way and part of it may have run:
+                    // re-read refs, history and status before Retry.
+                    Some(label) if repository => format!(
+                        "{label} cancelled. gg re-read the repository; check what changed before retrying."
+                    ),
+                    _ if force_push
+                        && matches!(operation, Some(gg_engine::sync::Operation::Push)) =>
+                    {
                         format!("Force push with lease failed: {error}")
-                    } else {
-                        error
-                    };
+                    }
+                    _ => error,
+                };
+                if repository {
+                    self.load(ctx);
+                    self.refresh_working(ctx);
+                }
                 let recovery = match operation {
                     Some(gg_engine::sync::Operation::Push) if !force_push => {
                         push_failure_follow_up(&error)
@@ -3778,16 +3795,27 @@ impl Browser {
                 self.delete_pick = None;
             }
         }
+        const DISCARD_SLOTS: [&str; 2] = ["discard", "discard-head"];
         if !self.discard_confirm {
-            self.consequences.remove("discard");
+            for slot in DISCARD_SLOTS {
+                self.consequences.remove(slot);
+            }
+            self.guards.remove("discard");
         }
         if self.discard_confirm {
             let mut open = true;
             let mut cancel = false;
             let mut confirm = false;
+            // Discard only when a re-read on confirm matches what was shown.
+            let mut guard = self.guards.remove("discard").unwrap_or_default();
+            let run = guard.poll(&mut self.consequences) == Some(true);
             let mut files =
                 self.take_consequence("discard", &["status", "--porcelain=v1", "-uno"], ctx);
+            let mut head = self.take_consequence("discard-head", &["rev-parse", "HEAD"], ctx);
             let count = files.as_mut().and_then(consequence::Lines::count);
+            let head_ready = head.as_mut().is_none_or(|head| head.get().is_some());
+            let notice = guard.changed.then_some(consequence::CHANGED);
+            let busy = guard.busy();
             egui::Window::new("Discard all changes")
                 .id(egui::Id::unique("discard-all"))
                 .modal(ctx, egui::Id::unique("discard-all"))
@@ -3808,7 +3836,7 @@ impl Browser {
                         );
                     }
                     ui.weak("This cannot be undone. Untracked files are kept.");
-                    ui.add_space(4.0);
+                    consequence::notice(ui, notice);
                     ui.horizontal(|ui| {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             let label = match count {
@@ -3818,9 +3846,10 @@ impl Browser {
                                 ),
                                 None => "Discard all".into(),
                             };
-                            let ready = count.is_some_and(|count| count > 0);
+                            let ready = count.is_some_and(|count| count > 0) && head_ready;
+                            let enabled = ready && !busy;
                             confirm |= ui
-                                .add_enabled(ready, consequence::danger_button(label, ready))
+                                .add_enabled(enabled, consequence::danger_button(label, ready))
                                 .clicked();
                             cancel |= ui
                                 .button(("Cancel", egui::RichText::new("Esc").small().weak()))
@@ -3828,18 +3857,26 @@ impl Browser {
                         });
                     });
                     if count.is_some_and(|count| count > 0)
+                        && head_ready
+                        && !busy
                         && ui.input(|i| i.key_pressed(egui::Key::Enter))
                     {
                         confirm = true;
                     }
                 });
-            if let Some(files) = files {
-                self.consequences.insert("discard", files);
+            for (slot, lines) in DISCARD_SLOTS.into_iter().zip([files, head]) {
+                if let Some(lines) = lines {
+                    self.consequences.insert(slot, lines);
+                }
             }
+            if confirm {
+                guard.confirm(&self.consequences, &DISCARD_SLOTS, ctx);
+            }
+            self.guards.insert("discard", guard);
             if cancel {
                 open = false;
             }
-            if confirm {
+            if run {
                 self.discard_confirm = false;
                 self.change_all(ctx, gg_git::worktree_changes::discard_all);
             } else if !open {
@@ -4833,6 +4870,27 @@ impl Browser {
         }
     }
 
+    /// The Reset dialog's untracked and ignored files that a hard reset to
+    /// `commit` would overwrite, read in the background like
+    /// [`Self::take_consequence`].
+    fn take_overwritten(
+        &mut self,
+        commit: &str,
+        ctx: &egui::Context,
+    ) -> Option<consequence::Lines> {
+        let repo = self.state.history.as_ref()?.path.clone();
+        let key = vec!["overwritten-untracked".to_owned(), commit.to_owned()];
+        match self.consequences.remove("reset-overwritten") {
+            Some(lines) if lines.key == key => Some(lines),
+            _ => {
+                let commit = commit.to_owned();
+                Some(consequence::Lines::with(key, ctx, move || {
+                    gg_git::reset::overwritten_untracked(&repo, &commit)
+                }))
+            }
+        }
+    }
+
     /// The toolbar current-branch button and its filterable switcher popup.
     fn branch_switcher_button(
         &mut self,
@@ -5801,11 +5859,11 @@ impl Browser {
                 }
             }
             CommitAction::Reset(mode) => {
-                if self.prefs.confirm_destructive {
+                // The chosen mode runs as chosen; Hard always asks first
+                // because it discards working changes.
+                if self.prefs.confirm_destructive || mode == gg_engine::reset::Mode::Hard {
                     self.reset_confirm = Some((id, mode));
-                } else if let Err(error) = self.start_reset(ctx, &id, gg_engine::reset::Mode::Mixed)
-                {
-                    // Without the question, never Hard: working files stay.
+                } else if let Err(error) = self.start_reset(ctx, &id, mode) {
                     self.mutation_error = Some(error);
                 }
             }
@@ -8911,7 +8969,7 @@ impl Browser {
                     Err(std::sync::mpsc::TryRecvError::Empty) => break,
                     Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                         network_done =
-                            Some(Err("Network worker stopped. Refresh and retry.".into()));
+                            Some(Err("Network worker stopped. gg re-read the repository; check what changed before retrying.".into()));
                         break;
                     }
                 }
@@ -10417,28 +10475,42 @@ impl Browser {
         }
 
         let mut branch_delete_action = None;
+        let mut branch_delete_confirmed = false;
         let mut branch_delete_open = true;
+        const BRANCH_DELETE_SLOTS: [&str; 2] = ["delete-branch", "delete-branch-tips"];
+        // Delete only when a re-read on confirm matches what was shown.
+        let mut branch_guard = self.guards.remove("delete-branch").unwrap_or_default();
+        let branch_verdict = branch_guard.poll(&mut self.consequences);
         // The commits only this branch has (dialogs proposal): an unmerged
         // branch names them and its one button forces the delete.
-        let mut unmerged = match self
+        let (mut unmerged, mut tips) = match self
             .branch_delete
             .as_ref()
             .map(|dialog| dialog.name.clone())
         {
             Some(name) => {
                 let range = format!("HEAD..refs/heads/{name}");
-                self.take_consequence(
-                    "delete-branch",
-                    &["log", "--oneline", "--no-decorate", &range],
-                    ctx,
+                let tip = format!("refs/heads/{name}");
+                (
+                    self.take_consequence(
+                        "delete-branch",
+                        &["log", "--oneline", "--no-decorate", &range],
+                        ctx,
+                    ),
+                    self.take_consequence("delete-branch-tips", &["rev-parse", "HEAD", &tip], ctx),
                 )
             }
             None => {
-                self.consequences.remove("delete-branch");
-                None
+                for slot in BRANCH_DELETE_SLOTS {
+                    self.consequences.remove(slot);
+                }
+                (None, None)
             }
         };
         let unmerged_count = unmerged.as_mut().and_then(consequence::Lines::count);
+        let tips_ready = tips.as_mut().is_none_or(|tips| tips.get().is_some());
+        let branch_notice = branch_guard.changed.then_some(consequence::CHANGED);
+        let branch_busy = branch_guard.busy();
         if let Some(dialog) = &mut self.branch_delete {
             let mut cancelled = false;
             egui::Window::new("Delete branch")
@@ -10463,9 +10535,10 @@ impl Browser {
                     if let Some(error) = &dialog.error {
                         ui.colored_label(ui.visuals().error_fg_color, error);
                     }
+                    consequence::notice(ui, branch_notice);
                     ui.horizontal(|ui| {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let (label, force) = match unmerged_count {
+                            let (label, _) = match unmerged_count {
                                 Some(0) => (format!("Delete {}", dialog.name), false),
                                 Some(count) => (
                                     format!(
@@ -10481,12 +10554,15 @@ impl Browser {
                                 ),
                                 None => (format!("Delete {}", dialog.name), false),
                             };
-                            let ready = unmerged_count.is_some();
+                            let ready = unmerged_count.is_some() && tips_ready;
                             if ui
-                                .add_enabled(ready, consequence::danger_button(label, ready))
+                                .add_enabled(
+                                    ready && !branch_busy,
+                                    consequence::danger_button(label, ready),
+                                )
                                 .clicked()
                             {
-                                branch_delete_action = Some((dialog.name.clone(), force));
+                                branch_delete_confirmed = true;
                             }
                             if ui
                                 .button(("Cancel", egui::RichText::new("Esc").small().weak()))
@@ -10497,9 +10573,25 @@ impl Browser {
                         });
                     });
                 });
-            if let Some(unmerged) = unmerged.take() {
-                self.consequences.insert("delete-branch", unmerged);
+            // Unchanged lists: force exactly when unmerged commits were shown.
+            if branch_verdict == Some(true) {
+                branch_delete_action = Some((
+                    dialog.name.clone(),
+                    unmerged_count.is_some_and(|count| count > 0),
+                ));
             }
+            for (slot, lines) in BRANCH_DELETE_SLOTS
+                .into_iter()
+                .zip([unmerged.take(), tips.take()])
+            {
+                if let Some(lines) = lines {
+                    self.consequences.insert(slot, lines);
+                }
+            }
+            if branch_delete_confirmed {
+                branch_guard.confirm(&self.consequences, &BRANCH_DELETE_SLOTS, ctx);
+            }
+            self.guards.insert("delete-branch", branch_guard);
             if cancelled {
                 branch_delete_open = false;
             }
@@ -10557,27 +10649,69 @@ impl Browser {
         let mut reset_submit = None;
         let mut reset_cancel = false;
         let mut reset_mode = None;
+        let mut reset_confirmed = false;
+        const RESET_SLOTS: [&str; 4] = [
+            "reset-commits",
+            "reset-head",
+            "reset-files",
+            "reset-overwritten",
+        ];
         if self.reset_confirm.is_none() {
-            self.consequences.remove("reset-commits");
-            self.consequences.remove("reset-files");
+            for slot in RESET_SLOTS {
+                self.consequences.remove(slot);
+            }
+            self.guards.remove("reset");
         }
         if let Some((commit, mode)) = self.reset_confirm.clone() {
+            // A confirmation runs only when the re-read lists match what the
+            // dialog showed; otherwise they update in place.
+            let mut guard = self.guards.remove("reset").unwrap_or_default();
+            if guard.poll(&mut self.consequences) == Some(true) {
+                reset_submit = Some((commit.clone(), mode));
+            }
             let summary = self.commit_summary(&commit);
             // The commits that leave the branch, and for a hard reset the
-            // files whose changes are lost (dialogs proposal).
+            // files whose changes are lost and the untracked files it would
+            // overwrite (dialogs proposal).
             let range = format!("{commit}..HEAD");
             let mut leaving = self.take_consequence(
                 "reset-commits",
                 &["log", "--oneline", "--no-decorate", &range],
                 ctx,
             );
+            let target = format!("{commit}^{{commit}}");
+            let mut head =
+                self.take_consequence("reset-head", &["rev-parse", "HEAD", &target], ctx);
             let hard = mode == gg_engine::reset::Mode::Hard;
-            let mut lost = if hard {
-                self.take_consequence("reset-files", &["status", "--porcelain=v1", "-uno"], ctx)
+            let (mut lost, mut overwritten) = if hard {
+                (
+                    self.take_consequence(
+                        "reset-files",
+                        &["status", "--porcelain=v1", "-uno"],
+                        ctx,
+                    ),
+                    self.take_overwritten(&commit, ctx),
+                )
             } else {
                 self.consequences.remove("reset-files");
+                self.consequences.remove("reset-overwritten");
+                (None, None)
+            };
+            let ready = [&mut leaving, &mut head, &mut lost, &mut overwritten]
+                .into_iter()
+                .all(|lines| lines.as_mut().is_none_or(|lines| lines.get().is_some()));
+            let blocked = overwritten
+                .as_mut()
+                .and_then(consequence::Lines::count)
+                .is_some_and(|count| count > 0);
+            let notice = if guard.changed {
+                Some(consequence::CHANGED)
+            } else if blocked {
+                Some("Move or delete the untracked files listed above, then reset.")
+            } else {
                 None
             };
+            let enabled = ready && !blocked && !guard.busy();
             egui::Window::new("Reset here")
                 .id(egui::Id::unique("reset-here"))
                 .modal(ctx, egui::Id::unique("reset-here"))
@@ -10635,12 +10769,26 @@ impl Browser {
                             egui::Color32::from_rgb(245, 160, 160),
                         );
                     }
+                    if let Some(overwritten) = &mut overwritten {
+                        consequence::list(
+                            ui,
+                            "UNTRACKED FILES OVERWRITTEN",
+                            overwritten,
+                            egui::Color32::from_rgb(245, 160, 160),
+                        );
+                    }
+                    consequence::notice(ui, notice);
                     ui.horizontal(|ui| {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             let submit = if hard {
-                                ui.add(consequence::danger_button("Hard reset", true))
+                                ui.add_enabled(
+                                    enabled,
+                                    // Stays red while a confirmation is checked.
+                                    consequence::danger_button("Hard reset", ready && !blocked),
+                                )
                             } else {
-                                ui.add(
+                                ui.add_enabled(
+                                    enabled,
                                     egui::Button::new((
                                         egui::RichText::new("Reset").color(egui::Color32::WHITE),
                                         egui::RichText::new("Enter")
@@ -10650,8 +10798,12 @@ impl Browser {
                                     .fill(egui::Color32::from_rgb(11, 85, 119)),
                                 )
                             };
+                            let submit = match notice {
+                                Some(reason) if blocked => submit.on_disabled_hover_text(reason),
+                                _ => submit,
+                            };
                             if submit.clicked() {
-                                reset_submit = Some((commit.clone(), mode));
+                                reset_confirmed = true;
                             }
                             if ui
                                 .button(("Cancel", egui::RichText::new("Esc").small().weak()))
@@ -10662,15 +10814,23 @@ impl Browser {
                         });
                     });
                 });
-            if let Some(leaving) = leaving {
-                self.consequences.insert("reset-commits", leaving);
+            for (slot, lines) in RESET_SLOTS
+                .into_iter()
+                .zip([leaving, head, lost, overwritten])
+            {
+                if let Some(lines) = lines {
+                    self.consequences.insert(slot, lines);
+                }
             }
-            if let Some(lost) = lost {
-                self.consequences.insert("reset-files", lost);
+            if reset_confirmed {
+                guard.confirm(&self.consequences, &RESET_SLOTS, ctx);
             }
+            self.guards.insert("reset", guard);
         }
         if let (Some(mode), Some((_, current))) = (reset_mode, &mut self.reset_confirm) {
             *current = mode;
+            // A different mode shows different lists; confirm them anew.
+            self.guards.remove("reset");
         }
         if reset_cancel {
             self.reset_confirm = None;
@@ -11338,6 +11498,10 @@ impl Browser {
             let mut dismiss_clicked = false;
             let network_running = !operation_active
                 && self.network.as_ref().is_some_and(|worker| !worker.is_cancelled());
+            let rereading = self
+                .pending
+                .is_some()
+                .then_some("Wait for gg to re-read the repository");
             let mut cancel_clicked = false;
             ui.horizontal(|ui| {
                 if idle && let Some(count) = changes.filter(|count| *count > 0) {
@@ -11372,8 +11536,17 @@ impl Browser {
                 if details.is_some() && ui.small_button("Details…").clicked() {
                     details_clicked = true;
                 }
+                // A network retry waits until the repository was re-read.
+                let retry_ready = rereading.is_none()
+                    || !matches!(
+                        recovery,
+                        Some(RecoveryAction::RetryFetch | RecoveryAction::RetryPush)
+                    );
                 if let Some(action) = recovery
-                    && ui.small_button(recovery_label(action)).clicked()
+                    && ui
+                        .add_enabled(retry_ready, egui::Button::new(recovery_label(action)).small())
+                        .on_disabled_hover_text(rereading.unwrap_or_default())
+                        .clicked()
                 {
                     recovery_clicked = Some(action);
                 }
@@ -14707,6 +14880,30 @@ mod tests {
     }
 
     #[test]
+    fn cancelled_fetch_rereads_the_repository_before_offering_retry() -> Checked {
+        let ctx = egui::Context::default();
+        let (_dir, mut app) = two_commits()?;
+        app.finish_network(
+            &ctx,
+            Err(format!("Fetch from origin{}", gg_git::sync::CANCELLED)),
+            Some(gg_engine::sync::Operation::Fetch),
+        );
+        let outcome = app.outcome.as_ref().ok_or("missing cancel outcome")?;
+        assert_eq!(
+            outcome.summary,
+            "Fetch from origin cancelled. gg re-read the repository; check what changed before retrying."
+        );
+        assert!(outcome.recovery == Some(RecoveryAction::RetryFetch));
+        assert!(app.pending.is_some(), "refs and history are re-read");
+        let text = frames_until(&ctx, &mut app, vec![], |app, _| app.pending.is_none())?;
+        assert!(
+            text.iter().any(|line| line == "Retry fetch"),
+            "Retry is offered once the re-read finished: {text:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn finish_network_clone_opens_the_new_repository() -> Result<(), Box<dyn std::error::Error>> {
         let ctx = egui::Context::default();
         let mut app = Browser::new(".".into());
@@ -15794,28 +15991,260 @@ mod tests {
         );
     }
 
+    type Checked = Result<(), Box<dyn std::error::Error>>;
+
+    /// Run Git in `path` with a fixed identity; its trimmed output.
+    fn git_in(path: &Path, args: &[&str]) -> Result<String, Box<dyn std::error::Error>> {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(path)
+            .args(args)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_AUTHOR_NAME", "Test")
+            .env("GIT_AUTHOR_EMAIL", "test@example.org")
+            .env("GIT_COMMITTER_NAME", "Test")
+            .env("GIT_COMMITTER_EMAIL", "test@example.org")
+            .output()?;
+        if !output.status.success() {
+            return Err(String::from_utf8_lossy(&output.stderr).into_owned().into());
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+    }
+
+    /// A repository with commits `one` and `two` of file `a` (and `b` in
+    /// `one`), opened in gg.
+    fn two_commits() -> Result<(tempfile::TempDir, Browser), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path();
+        git_in(path, &["init", "-q", "-b", "main"])?;
+        git_in(path, &["config", "core.autocrlf", "false"])?;
+        std::fs::write(path.join("a"), b"one\n")?;
+        std::fs::write(path.join("b"), b"one\n")?;
+        git_in(path, &["add", "a", "b"])?;
+        git_in(path, &["commit", "-qm", "one"])?;
+        std::fs::write(path.join("a"), b"two\n")?;
+        git_in(path, &["commit", "-qam", "two"])?;
+        let mut app = Browser::new(path.to_path_buf());
+        app.state.history = Some(gg_engine::History {
+            path: path.to_path_buf(),
+            head: "main".into(),
+            commits: Vec::new(),
+            truncated: false,
+            shallow: false,
+        });
+        Ok((dir, app))
+    }
+
+    /// Draw frames until `done` holds for the shown text (background reads
+    /// arrive between frames); the last frame's text.
+    fn frames_until(
+        ctx: &egui::Context,
+        app: &mut Browser,
+        events: Vec<egui::Event>,
+        mut done: impl FnMut(&mut Browser, &[String]) -> bool,
+    ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let mut events = Some(events);
+        loop {
+            let output = crate::tests::run_ui(
+                ctx,
+                frame_input(1120.0, 740.0, events.take().unwrap_or_default()),
+                |ctx| app.draw_ui(ctx),
+            );
+            let text = shown_text(&output);
+            if done(app, &text) {
+                return Ok(text);
+            }
+            if std::time::Instant::now() > until {
+                return Err(format!("timed out; shown: {text:?}").into());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+
+    /// Every one of a dialog's background lists has arrived.
+    fn lists_ready(app: &mut Browser, slots: &[&'static str]) -> bool {
+        slots.iter().all(|slot| {
+            app.consequences
+                .get_mut(slot)
+                .is_some_and(|lines| lines.get().is_some())
+        })
+    }
+
+    /// Click the shown text `label` (a button's label).
+    fn click_label(ctx: &egui::Context, app: &mut Browser, label: &str) -> Checked {
+        let output = crate::tests::run_ui(ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        let pos = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) if text.galley.job.text == label => {
+                    Some(text.visual_bounding_rect().center())
+                }
+                _ => None,
+            })
+            .ok_or(format!("{label} not shown"))?;
+        let _ = crate::tests::run_ui(ctx, frame_input(1120.0, 740.0, click_at(pos)), |ctx| {
+            app.draw_ui(ctx)
+        });
+        Ok(())
+    }
+
     #[test]
-    fn reset_asks_first_unless_confirmation_is_off() {
+    fn reset_runs_as_chosen_and_hard_always_asks() -> Checked {
         let ctx = egui::Context::default();
-        let mut app = layout_fixture();
-        let id = "a".repeat(40);
+        let (dir, mut app) = two_commits()?;
+        let path = dir.path();
+        let first = git_in(path, &["rev-parse", "HEAD^"])?;
+        let second = git_in(path, &["rev-parse", "HEAD"])?;
         app.run_commit_action(
             &ctx,
-            id.clone(),
-            CommitAction::Reset(gg_engine::reset::Mode::Hard),
+            first.clone(),
+            CommitAction::Reset(gg_engine::reset::Mode::Mixed),
         );
         assert_eq!(
             app.reset_confirm,
-            Some((id.clone(), gg_engine::reset::Mode::Hard)),
+            Some((first.clone(), gg_engine::reset::Mode::Mixed)),
             "the question comes first by default"
         );
         app.reset_confirm = None;
         app.prefs.confirm_destructive = false;
-        app.run_commit_action(&ctx, id, CommitAction::Reset(gg_engine::reset::Mode::Hard));
-        assert_eq!(
-            app.reset_confirm, None,
-            "no question when confirmation is off"
+        app.run_commit_action(
+            &ctx,
+            first.clone(),
+            CommitAction::Reset(gg_engine::reset::Mode::Hard),
         );
+        assert_eq!(
+            app.reset_confirm,
+            Some((first.clone(), gg_engine::reset::Mode::Hard)),
+            "Hard asks even when confirmation is off"
+        );
+        assert_eq!(git_in(path, &["rev-parse", "HEAD"])?, second, "not run");
+        app.reset_confirm = None;
+        app.run_commit_action(
+            &ctx,
+            first.clone(),
+            CommitAction::Reset(gg_engine::reset::Mode::Soft),
+        );
+        assert_eq!(app.reset_confirm, None, "Soft runs without the question");
+        assert_eq!(git_in(path, &["rev-parse", "HEAD"])?, first);
+        assert_eq!(
+            git_in(path, &["diff", "--cached", "--name-only"])?,
+            "a",
+            "Soft, as chosen, keeps the index"
+        );
+        git_in(path, &["reset", "-q", "--soft", &second])?;
+        app.run_commit_action(
+            &ctx,
+            first.clone(),
+            CommitAction::Reset(gg_engine::reset::Mode::Mixed),
+        );
+        assert_eq!(app.reset_confirm, None, "Mixed runs without the question");
+        assert_eq!(git_in(path, &["rev-parse", "HEAD"])?, first);
+        assert_eq!(git_in(path, &["diff", "--cached", "--name-only"])?, "");
+        assert_eq!(
+            std::fs::read(path.join("a"))?,
+            b"two\n",
+            "working files stay"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn hard_reset_lists_untracked_files_it_would_overwrite_and_refuses() -> Checked {
+        let ctx = egui::Context::default();
+        let (dir, mut app) = two_commits()?;
+        let path = dir.path();
+        std::fs::write(path.join("notes"), b"tracked\n")?;
+        git_in(path, &["add", "notes"])?;
+        git_in(path, &["commit", "-qm", "notes"])?;
+        let target = git_in(path, &["rev-parse", "HEAD"])?;
+        git_in(path, &["rm", "-q", "--cached", "notes"])?;
+        git_in(path, &["commit", "-qm", "untrack notes"])?;
+        std::fs::write(path.join("notes"), b"mine\n")?;
+        let before = git_in(path, &["rev-parse", "HEAD"])?;
+        app.reset_confirm = Some((target, gg_engine::reset::Mode::Hard));
+        let text = frames_until(&ctx, &mut app, vec![], |_, text| {
+            text.iter().any(|line| line == "notes")
+        })?;
+        assert!(
+            text.iter()
+                .any(|line| line.contains("UNTRACKED FILES OVERWRITTEN"))
+        );
+        assert!(
+            text.iter()
+                .any(|line| line.contains("Move or delete the untracked files")),
+            "{text:?}"
+        );
+        click_label(&ctx, &mut app, "Hard reset")?;
+        let _ = frames_until(&ctx, &mut app, vec![], |_, _| true)?;
+        assert!(app.reset_confirm.is_some(), "the dialog stays open");
+        assert_eq!(git_in(path, &["rev-parse", "HEAD"])?, before, "refused");
+        assert_eq!(std::fs::read(path.join("notes"))?, b"mine\n");
+        Ok(())
+    }
+
+    #[test]
+    fn reset_confirmation_rereads_and_asks_again_after_an_outside_change() -> Checked {
+        let ctx = egui::Context::default();
+        let (dir, mut app) = two_commits()?;
+        let path = dir.path();
+        let first = git_in(path, &["rev-parse", "HEAD^"])?;
+        app.reset_confirm = Some((first.clone(), gg_engine::reset::Mode::Mixed));
+        let _ = frames_until(&ctx, &mut app, vec![], |app, _| {
+            lists_ready(app, &["reset-commits", "reset-head"])
+        })?;
+        // Someone commits while the dialog is open.
+        git_in(path, &["commit", "-q", "--allow-empty", "-m", "outside"])?;
+        let outside = git_in(path, &["rev-parse", "HEAD"])?;
+        click_label(&ctx, &mut app, "Reset")?;
+        let text = frames_until(&ctx, &mut app, vec![], |_, text| {
+            text.iter().any(|line| line == consequence::CHANGED)
+        })?;
+        assert!(
+            text.iter().any(|line| line.ends_with("outside")),
+            "{text:?}"
+        );
+        assert!(app.reset_confirm.is_some(), "the dialog stays open");
+        assert_eq!(git_in(path, &["rev-parse", "HEAD"])?, outside, "not run");
+        click_label(&ctx, &mut app, "Reset")?;
+        let _ = frames_until(&ctx, &mut app, vec![], |app, _| app.reset_confirm.is_none())?;
+        assert_eq!(
+            git_in(path, &["rev-parse", "HEAD"])?,
+            first,
+            "confirmed again"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn discard_all_rereads_and_asks_again_after_an_outside_change() -> Checked {
+        let ctx = egui::Context::default();
+        let (dir, mut app) = two_commits()?;
+        let path = dir.path();
+        std::fs::write(path.join("a"), b"mine\n")?;
+        app.discard_confirm = true;
+        let _ = frames_until(&ctx, &mut app, vec![], |app, _| {
+            lists_ready(app, &["discard", "discard-head"])
+        })?;
+        std::fs::write(path.join("b"), b"also mine\n")?;
+        click_label(&ctx, &mut app, "Discard 1 file")?;
+        let text = frames_until(&ctx, &mut app, vec![], |_, text| {
+            text.iter().any(|line| line == consequence::CHANGED)
+        })?;
+        assert!(
+            text.iter().any(|line| line == "Discard 2 files"),
+            "{text:?}"
+        );
+        assert!(app.discard_confirm, "the dialog stays open");
+        assert_eq!(std::fs::read(path.join("a"))?, b"mine\n", "not run");
+        click_label(&ctx, &mut app, "Discard 2 files")?;
+        let _ = frames_until(&ctx, &mut app, vec![], |app, _| !app.discard_confirm)?;
+        assert_eq!(std::fs::read(path.join("a"))?, b"two\n");
+        assert_eq!(std::fs::read(path.join("b"))?, b"one\n");
+        Ok(())
     }
 
     #[test]

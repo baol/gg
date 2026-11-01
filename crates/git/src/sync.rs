@@ -578,9 +578,15 @@ fn truncate(text: &str, limit: usize) -> String {
     truncated
 }
 
+/// Ends the error of a cancelled network operation after its label (`Fetch
+/// from origin`): Git was stopped mid-way, so part of it may have happened
+/// and nothing was rolled back.
+pub const CANCELLED: &str =
+    " cancelled. Git may have finished part of it; check what changed before retrying.";
+
 fn finish(output: GitOutput, label: String) -> Result<(), String> {
     if output.cancelled {
-        return Err(format!("{label} cancelled. Refresh before retrying."));
+        return Err(format!("{label}{CANCELLED}"));
     }
     if output.status.success() {
         return Ok(());

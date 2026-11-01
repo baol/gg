@@ -73,6 +73,33 @@ fn lines(count: usize) -> String {
     }
 }
 
+/// `1 change block (2 lines)`: what a picked-lines discard reverts.
+fn blocks_counted(blocks: &[crate::diff_view::ChangeBlock]) -> String {
+    let changed = blocks
+        .iter()
+        .map(crate::diff_view::ChangeBlock::lines)
+        .sum();
+    format!(
+        "{} change block{} ({})",
+        blocks.len(),
+        if blocks.len() == 1 { "" } else { "s" },
+        lines(changed)
+    )
+}
+
+/// `1 change block (2 lines) at line 12`, naming at most five places.
+fn blocks_named(blocks: &[crate::diff_view::ChangeBlock]) -> String {
+    let mut places = blocks
+        .iter()
+        .take(5)
+        .map(crate::diff_view::ChangeBlock::range)
+        .collect::<Vec<_>>();
+    if blocks.len() > 5 {
+        places.push("…".into());
+    }
+    format!("{} at {}", blocks_counted(blocks), places.join(", "))
+}
+
 /// The subject length against the guide from Preferences › Commit, painted
 /// in the message field's lower-right corner so nothing moves; past the
 /// guide it turns to the warning color.
@@ -191,6 +218,9 @@ pub struct StatusView {
     /// A discard waiting for confirmation: one file or hunk edit, or the
     /// picked lines across hunks.
     drop_confirm: Option<Vec<crate::diff_view::StageEdit>>,
+    /// The change blocks a picked-lines discard reverts, named in its
+    /// confirmation.
+    drop_blocks: Vec<crate::diff_view::ChangeBlock>,
     /// Commits made at a stopped rebase's reopened commit: ID and subject.
     stop_commits: Vec<(String, String)>,
     /// What the clean view shows: HEAD's ID and subject, and the current
@@ -252,6 +282,7 @@ impl StatusView {
             stage: crate::stage_view::StageActions::default(),
             reader: crate::diff_view::DiffView::default(),
             drop_confirm: None,
+            drop_blocks: Vec::new(),
             group_request: None,
             stop_commits: Vec::new(),
             clean_context: CleanContext::default(),
@@ -1546,9 +1577,14 @@ impl StatusView {
         let mut confirmed = false;
         if let Some(edit) = confirm.as_ref().and_then(|edits| edits.first()) {
             let scope = match edit.scope {
-                crate::diff_view::StageScope::Selected => "the selected lines' change blocks",
-                crate::diff_view::StageScope::Hunk => "this hunk",
-                crate::diff_view::StageScope::File => "all working changes",
+                crate::diff_view::StageScope::Selected if !self.drop_blocks.is_empty() => {
+                    blocks_named(&self.drop_blocks)
+                }
+                crate::diff_view::StageScope::Selected => {
+                    "the selected lines' change blocks".into()
+                }
+                crate::diff_view::StageScope::Hunk => "this hunk".into(),
+                crate::diff_view::StageScope::File => "all working changes".into(),
             };
             ui.horizontal_wrapped(|ui| {
                 ui.colored_label(
@@ -1667,15 +1703,26 @@ impl StatusView {
                 self.reader.clear_line_selection();
                 self.stage.apply_all(edits, ctx);
             }
+            // A discard reverts whole change blocks, so it names them, not
+            // the picked lines.
+            let blocks = if discard {
+                self.reader.discard_blocks()
+            } else {
+                Vec::new()
+            };
             if discard
                 && ui
-                    .add_enabled(!blocked, egui::Button::new(format!("Discard {count}")))
+                    .add_enabled(
+                        !blocked,
+                        egui::Button::new(format!("Discard {}", blocks_counted(&blocks))),
+                    )
                     .on_hover_text(
-                        "Discard the change blocks of the picked lines from the working file",
+                        "Discard every change block that holds a picked line from the working file",
                     )
                     .clicked()
             {
                 self.drop_confirm = Some(self.reader.selection_edits(true));
+                self.drop_blocks = blocks;
             }
             if ui
                 .button("Clear")
@@ -2223,6 +2270,7 @@ mod tests {
             stage: crate::stage_view::StageActions::default(),
             reader: crate::diff_view::DiffView::default(),
             drop_confirm: None,
+            drop_blocks: Vec::new(),
             group_request: None,
             stop_commits: Vec::new(),
             clean_context: CleanContext::default(),
@@ -4124,6 +4172,27 @@ mod tests {
     }
 
     #[test]
+    fn line_discards_name_their_blocks_and_line_ranges() {
+        use crate::diff_view::ChangeBlock;
+        let replacement = ChangeBlock {
+            deleted: vec![3],
+            added: vec![3, 4],
+        };
+        let removal = ChangeBlock {
+            deleted: vec![9, 10],
+            added: vec![],
+        };
+        assert_eq!(
+            blocks_counted(std::slice::from_ref(&replacement)),
+            "1 change block (3 lines)"
+        );
+        assert_eq!(
+            blocks_named(&[replacement, removal]),
+            "2 change blocks (5 lines) at lines 3–4, deleted lines 9–10"
+        );
+    }
+
+    #[test]
     fn selected_line_drop_reverts_the_whole_change_block() -> Result<(), Box<dyn std::error::Error>>
     {
         let dir = tempfile::tempdir()?;
@@ -4144,9 +4213,19 @@ mod tests {
         let line = text_pos(&output, "TWELVE").ok_or("missing selected line")?;
         click(&ctx, &mut view, 1120.0, line + egui::vec2(5.0, 0.0));
         let output = run(&ctx, &mut view, 1120.0, vec![]);
-        let drop = text_pos(&output, "Discard 1 line").ok_or("missing selected drop")?;
+        // One picked line, but the discard names the whole replacement.
+        let drop =
+            text_pos(&output, "Discard 1 change block (2 lines)").ok_or("missing selected drop")?;
         click(&ctx, &mut view, 1120.0, drop + egui::vec2(5.0, 0.0));
         let output = run(&ctx, &mut view, 1120.0, vec![]);
+        assert!(
+            texts(&output).contains(
+                &"Discard 1 change block (2 lines) at line 12 from a? The index is unchanged."
+                    .to_string()
+            ),
+            "{:?}",
+            texts(&output)
+        );
         let discard = text_pos(&output, "Discard").ok_or("missing discard")?;
         click(&ctx, &mut view, 1120.0, discard + egui::vec2(5.0, 0.0));
         pump(&ctx, &mut view, 1120.0, |view| {
@@ -4449,7 +4528,10 @@ mod tests {
             let output = run(&ctx, &mut view, width, vec![]);
             let text = texts(&output);
             assert!(text.contains(&"Stage 1 line".to_string()), "{text:?}");
-            assert!(text.contains(&"Discard 1 line".to_string()));
+            assert!(
+                text.contains(&"Discard 1 change block (2 lines)".to_string()),
+                "a discard names the whole block of the picked line"
+            );
             assert!(
                 text.contains(&"Stage hunk".to_string()),
                 "hunk buttons keep acting on the whole hunk"

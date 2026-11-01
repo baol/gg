@@ -2225,6 +2225,35 @@ fn reset_cli_applies_soft_mixed_and_hard() -> Result {
 }
 
 #[test]
+fn reset_cli_hard_refuses_to_overwrite_untracked_files() -> Result {
+    let repo = tempfile::tempdir()?;
+    init(repo.path(), &["-b", "main"])?;
+    git(repo.path(), &["config", "user.name", "Test"])?;
+    git(repo.path(), &["config", "user.email", "test@example.org"])?;
+    std::fs::write(repo.path().join("a"), b"one\n")?;
+    std::fs::write(repo.path().join("notes"), b"tracked\n")?;
+    git(repo.path(), &["add", "a", "notes"])?;
+    git(repo.path(), &["commit", "-qm", "one"])?;
+    git(repo.path(), &["rm", "-q", "--cached", "notes"])?;
+    git(repo.path(), &["commit", "-qm", "untrack notes"])?;
+    std::fs::write(repo.path().join("notes"), b"mine\n")?;
+    let before = git_output(repo.path(), &["rev-parse", "HEAD"])?;
+
+    let out = Command::new(env!("CARGO_BIN_EXE_git-good"))
+        .args(["reset", "--hard", "HEAD^", "--repo"])
+        .arg(repo.path())
+        .output()?;
+    assert!(!out.status.success());
+    assert!(out.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("overwrite untracked files"), "{stderr}");
+    assert!(stderr.contains("notes"), "{stderr}");
+    assert_eq!(git_output(repo.path(), &["rev-parse", "HEAD"])?, before);
+    assert_eq!(std::fs::read(repo.path().join("notes"))?, b"mine\n");
+    Ok(())
+}
+
+#[test]
 fn show_against_compares_with_an_arbitrary_base() -> Result {
     let repo = tempfile::tempdir()?;
     init(repo.path(), &["-b", "main"])?;

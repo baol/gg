@@ -234,7 +234,14 @@ fn cancellation_reports_cancel_without_a_receipt() -> Result {
         Ok(_) => return Err("cancelled clone unexpectedly succeeded".into()),
         Err(error) => error,
     };
-    assert!(error.contains("cancelled"), "{error}");
+    assert!(
+        error.ends_with(gg_git::sync::CANCELLED) && error.starts_with("Clone "),
+        "{error}"
+    );
+    assert!(
+        !error.contains("Refresh"),
+        "gg refreshes on its own; there is no Refresh to press"
+    );
     Ok(())
 }
 

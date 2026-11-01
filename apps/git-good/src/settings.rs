@@ -427,7 +427,8 @@ pub struct Prefs {
     /// Launched without a path outside a repository: open the last one.
     pub reopen_last: bool,
     /// Drop… and Reset current branch to here… ask first; off runs them at
-    /// once (Reset as Mixed, never Hard), still saving a backup.
+    /// once (Soft and Mixed reset as chosen; Hard still asks), still saving
+    /// a backup.
     pub confirm_destructive: bool,
     /// Delete gg's private backups older than this many days; 0 keeps
     /// them forever (the default, so upgrading never deletes backups).

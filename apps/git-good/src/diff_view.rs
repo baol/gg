@@ -65,6 +65,39 @@ pub struct StageEdit {
     pub changes: Vec<(RowKind, usize)>,
 }
 
+/// One run of adjacent changed lines that a line discard reverts whole:
+/// the index-side numbers of its deleted lines and the working-file numbers
+/// of its added lines.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ChangeBlock {
+    pub deleted: Vec<usize>,
+    pub added: Vec<usize>,
+}
+
+impl ChangeBlock {
+    /// Changed lines in the block, deleted and added.
+    pub fn lines(&self) -> usize {
+        self.deleted.len() + self.added.len()
+    }
+
+    /// Where the block is: `line 12`, `lines 12–14` of the working file, or
+    /// `deleted lines 4–5` (index numbering) when nothing was added.
+    pub fn range(&self) -> String {
+        let (prefix, lines) = if self.added.is_empty() {
+            ("deleted ", &self.deleted)
+        } else {
+            ("", &self.added)
+        };
+        let first = lines.iter().min().copied().unwrap_or(0);
+        let last = lines.iter().max().copied().unwrap_or(0);
+        if first == last {
+            format!("{prefix}line {first}")
+        } else {
+            format!("{prefix}lines {first}–{last}")
+        }
+    }
+}
+
 /// The Unstaged | Staged toggle in a Local Changes reader header. Each side
 /// carries the reason it is unavailable for the selected path, if any.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -945,6 +978,66 @@ impl DiffView {
         }
     }
 
+    /// The change blocks (runs of adjacent added and deleted rows) within
+    /// `bounds` that hold a picked row, each as its changed lines.
+    fn touched_blocks(&self, bounds: Range<usize>) -> Vec<Vec<(RowKind, usize)>> {
+        type Block = (Vec<usize>, Vec<(RowKind, usize)>);
+        let mut blocks: Vec<Block> = vec![];
+        let mut current: Block = (vec![], vec![]);
+        let mut last: Option<usize> = None;
+        for (row, data) in self.rows.range(bounds) {
+            let line = match data.kind {
+                RowKind::Added => data.new_line.map(|line| (data.kind, line)),
+                RowKind::Deleted => data.old_line.map(|line| (data.kind, line)),
+                _ => None,
+            };
+            match line {
+                Some(line) => {
+                    if !last.is_some_and(|last| *row == last + 1) && !current.0.is_empty() {
+                        blocks.push(std::mem::take(&mut current));
+                    }
+                    current.0.push(*row);
+                    current.1.push(line);
+                    last = Some(*row);
+                }
+                None => {
+                    if !current.0.is_empty() {
+                        blocks.push(std::mem::take(&mut current));
+                    }
+                    last = None;
+                }
+            }
+        }
+        if !current.0.is_empty() {
+            blocks.push(current);
+        }
+        blocks
+            .into_iter()
+            .filter(|(rows, _)| rows.iter().any(|row| self.stage_selected.contains_key(row)))
+            .map(|(_, lines)| lines)
+            .collect()
+    }
+
+    /// The whole change blocks a discard of the picked lines reverts.
+    pub fn discard_blocks(&self) -> Vec<ChangeBlock> {
+        self.hunks
+            .iter()
+            .flat_map(|header| self.touched_blocks(self.hunk_bounds(*header)))
+            .map(|lines| ChangeBlock {
+                deleted: lines
+                    .iter()
+                    .filter(|(kind, _)| *kind == RowKind::Deleted)
+                    .map(|(_, line)| *line)
+                    .collect(),
+                added: lines
+                    .iter()
+                    .filter(|(kind, _)| *kind == RowKind::Added)
+                    .map(|(_, line)| *line)
+                    .collect(),
+            })
+            .collect()
+    }
+
     fn hunk_edit(&self, header: usize, discard: bool) -> StageEdit {
         let bounds = self.hunk_bounds(header);
         let chosen: Vec<(usize, RowKind, usize)> = self
@@ -958,43 +1051,7 @@ impl DiffView {
         } else if discard {
             // Expand each touched block so a discard cannot remove half of a
             // replacement that shares the block.
-            let picked: std::collections::BTreeSet<usize> =
-                chosen.iter().map(|(row, _, _)| *row).collect();
-            type Block = (Vec<usize>, Vec<(RowKind, usize)>);
-            let mut blocks: Vec<Block> = vec![];
-            let mut current: (Vec<usize>, Vec<(RowKind, usize)>) = (vec![], vec![]);
-            let mut last: Option<usize> = None;
-            for (row, data) in self.rows.range(bounds.clone()) {
-                let line = match data.kind {
-                    RowKind::Added => data.new_line.map(|line| (data.kind, line)),
-                    RowKind::Deleted => data.old_line.map(|line| (data.kind, line)),
-                    _ => None,
-                };
-                match line {
-                    Some(line) => {
-                        if !last.is_some_and(|last| *row == last + 1) && !current.0.is_empty() {
-                            blocks.push(std::mem::take(&mut current));
-                        }
-                        current.0.push(*row);
-                        current.1.push(line);
-                        last = Some(*row);
-                    }
-                    None => {
-                        if !current.0.is_empty() {
-                            blocks.push(std::mem::take(&mut current));
-                        }
-                        last = None;
-                    }
-                }
-            }
-            if !current.0.is_empty() {
-                blocks.push(current);
-            }
-            blocks
-                .into_iter()
-                .filter(|(rows, _)| rows.iter().any(|row| picked.contains(row)))
-                .flat_map(|(_, lines)| lines)
-                .collect()
+            self.touched_blocks(bounds).into_iter().flatten().collect()
         } else {
             chosen
                 .into_iter()
