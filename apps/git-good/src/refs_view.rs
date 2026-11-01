@@ -8,8 +8,10 @@ const ICON_SIZE: f32 = 12.0;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Action {
     Switch(String),
+    /// Switch to a remote branch (`origin/feature`): the local branch of
+    /// that name, or a new one tracking it (as the branch switcher does).
+    SwitchRemote(String),
     Jump(String),
-    Track(String),
     Merge(String),
     Rebase(String),
     DeleteBranch(String),
@@ -520,7 +522,7 @@ fn render_leaf(
             item.full_name,
             short(&item.commit)
         )
-    } else if item.kind == RefKind::Branch {
+    } else if matches!(item.kind, RefKind::Branch | RefKind::Remote) {
         format!("{inspect}\nDouble-click to switch\nRight-click for ref actions")
     } else {
         format!("{inspect}\nRight-click for ref actions")
@@ -537,8 +539,12 @@ fn render_leaf(
         response.scroll_to_me(None);
     }
     if response.double_clicked() {
-        if item.kind == RefKind::Branch && !current && !busy {
-            *action = Some(Action::Switch(item.name.clone()));
+        if !current && !busy {
+            match item.kind {
+                RefKind::Branch => *action = Some(Action::Switch(item.name.clone())),
+                RefKind::Remote => *action = Some(Action::SwitchRemote(item.name.clone())),
+                _ => {}
+            }
         }
     } else if response.clicked() {
         *action = Some(Action::Jump(item.commit.clone()));
@@ -652,14 +658,21 @@ fn render_leaf(
                 );
             }
             RefKind::Remote => {
+                // One step, as double-click and the switcher: the local
+                // branch of that name, or a new one tracking this.
                 entry(
                     ui,
-                    "Create tracking branch…".into(),
+                    format!(
+                        "Switch to {}",
+                        item.name
+                            .split_once('/')
+                            .map_or(item.name.as_str(), |(_, local)| local)
+                    ),
                     "",
                     idle,
                     wait,
                     false,
-                    Action::Track(item.name.clone()),
+                    Action::SwitchRemote(item.name.clone()),
                 );
                 entry(
                     ui,
@@ -1341,9 +1354,11 @@ mod tests {
     }
 
     #[test]
-    fn double_clicking_a_remote_row_never_creates_a_tracking_branch() {
-        let action = click_label("origin", "origin/main", 2);
-        assert_ne!(action, Some(Action::Track("origin/main".into())));
-        assert_ne!(action, Some(Action::Switch("origin/main".into())));
+    fn double_clicking_a_remote_row_switches_to_it() {
+        // Like the switcher: a local branch of the same name, or track it.
+        assert_eq!(
+            click_label("origin", "origin/main", 2),
+            Some(Action::SwitchRemote("origin/main".into()))
+        );
     }
 }
