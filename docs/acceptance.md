@@ -1226,7 +1226,7 @@ Layer: interaction
 - Given Review on the merge with the pointer over the reader
 - When the user chooses `parent 2` in **Compare with**
 - Then the old file list and diff stay visible and labeled with their identity while loading; the new list and diff are adopted together as soon as both arrive, even under the pointer; the new comparison starts at its first file; no loading text appears in the panes
-Covered by (interaction): `parent_replacement_retains_identity_until_pointer_leaves_and_resets_selection` (review_view.rs)
+Covered by (interaction): `parent_replacement_keeps_labelled_content_until_it_arrives_and_resets_selection` (review_view.rs)
 
 ### REV-07 Compare with HEAD
 Fixture: `fx-linear`

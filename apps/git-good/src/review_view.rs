@@ -94,7 +94,8 @@ pub struct Review {
     page: usize,
     rect: egui::Rect,
     row_rects: Vec<(usize, egui::Rect)>,
-    last_scroll: f64,
+    /// Keeps a click off a file row that changed under a still pointer.
+    guard: crate::target_guard::Guard<Option<Vec<u8>>>,
     diff: crate::diff_view::DiffView,
     show_diff: bool,
     restore_files: bool,
@@ -139,7 +140,7 @@ impl Review {
             page: 1,
             rect: egui::Rect::NOTHING,
             row_rects: vec![],
-            last_scroll: f64::NEG_INFINITY,
+            guard: Default::default(),
             diff: crate::diff_view::DiffView::default(),
             show_diff: false,
             restore_files: false,
@@ -488,7 +489,6 @@ impl Review {
         self.offset = 0.0;
         self.viewport = 0..64;
         self.restore_files = true;
-        self.diff = crate::diff_view::DiffView::default();
     }
     /// Adopt line counts. A retried, immutable comparison keeps its finished
     /// total while the new counter catches up.
@@ -555,6 +555,7 @@ impl Review {
         self.rect = ui.available_rect_before_wrap();
         if self.count == 0 {
             // An empty list stays empty; the reader says why (proposal).
+            self.guard.leave();
             return;
         }
         let mut scroll = egui::ScrollArea::vertical().id_salt("review-files");
@@ -590,6 +591,16 @@ impl Review {
             })
             .size()
             .x;
+        let (now, moved, pressed, released) = ui.input(|i| {
+            (
+                i.time,
+                // The guard compares pointer positions itself.
+                i.smooth_scroll_delta != egui::Vec2::ZERO || i.pointer.is_decidedly_dragging(),
+                i.pointer.primary_pressed(),
+                i.pointer.primary_released(),
+            )
+        });
+        let mut hovered = false;
         let result = scroll.show_rows(ui, crate::density::row(), self.count, |ui, rows| {
             self.viewport = rows.start.saturating_sub(24)..rows.end.saturating_add(24);
             self.row_rects.clear();
@@ -613,6 +624,21 @@ impl Review {
                         }),
                 );
                 self.row_rects.push((row, response.rect));
+                // A row that changed under a still pointer fades in and
+                // refuses clicks briefly.
+                let point = ui
+                    .ctx()
+                    .pointer_hover_pos()
+                    .filter(|_| ui.rect_contains_pointer(response.rect));
+                let target = if let Some(point) = point {
+                    hovered = true;
+                    let key = change.map(|change| change.path_bytes.clone());
+                    self.guard.hover(now, &key, point, moved, pressed)
+                } else {
+                    crate::target_guard::Target::STILL
+                };
+                let opacity = ui.opacity();
+                ui.multiply_opacity(target.alpha);
                 let rect = response.rect.shrink2(egui::vec2(6.0, 0.0));
                 let status = egui::Rect::from_min_max(
                     rect.min,
@@ -663,7 +689,9 @@ impl Review {
                         egui::FontId::proportional(13.0),
                         color,
                     );
-                    if response.double_clicked() {
+                    if !target.clickable {
+                        // The row changed under the pointer: drop the click.
+                    } else if response.double_clicked() {
                         response.surrender_focus();
                         self.selected = Some(row);
                         self.show_diff = true;
@@ -673,8 +701,18 @@ impl Review {
                     }
                 }
                 // A row not read yet keeps its slot, empty.
+                ui.set_opacity(opacity);
             }
         });
+        if !hovered {
+            self.guard.leave();
+        }
+        if released {
+            self.guard.release();
+        }
+        if self.guard.animating(now) {
+            ui.ctx().request_repaint();
+        }
         self.offset = result.state.clamped_offset().y;
         self.page = (result.inner_rect.height() / crate::density::row())
             .floor()
@@ -839,37 +877,22 @@ impl Review {
             self.open_history = true;
             ctx.request_repaint();
         }
-        let (point, active, now) = ctx.input(|i| {
-            (
-                i.pointer.hover_pos(),
-                i.pointer.any_down() || i.smooth_scroll_delta != egui::Vec2::ZERO,
-                i.time,
-            )
+        // The scrollbar keeps its extent while its thumb is dragged.
+        let bar_drag = ctx.input(|i| {
+            i.pointer.primary_down()
+                && i.pointer
+                    .press_origin()
+                    .is_some_and(|p| self.rect.contains(p) && p.x >= self.rect.right() - 18.0)
         });
-        if active {
-            self.last_scroll = now;
-        }
-        let quiet = !active && now - self.last_scroll > 0.2;
-        if !quiet {
-            ctx.request_repaint_after(std::time::Duration::from_millis(200));
-        }
-        let pinned = point.and_then(|p| {
-            self.row_rects
-                .iter()
-                .find(|(_, r)| r.contains(p))
-                .map(|(row, _)| *row)
-        });
-        let scrollbar =
-            point.is_some_and(|p| self.rect.contains(p) && p.x >= self.rect.right() - 18.0);
         if let Some(result) = self.worker.as_ref().and_then(Worker::poll) {
             match result {
                 Ok(update) => self.staged = Some(update),
                 Err(error) => self.error = Some(error),
             }
         }
-        let replacement_safe =
-            quiet && point.is_none_or(|p| !self.rect.contains(p)) && !self.diff.hovered(point);
-        if self.replacing && self.staged.is_some() && replacement_safe {
+        // A replacement comparison is adopted as soon as it arrives; the
+        // reader keeps the old diff, labelled, until the new one arrives.
+        if self.replacing && self.staged.is_some() {
             self.adopt_replacement();
         }
         // Counts wait while a replacement is pending; they name its rows.
@@ -879,34 +902,28 @@ impl Review {
             self.apply_stats(update);
         }
         if !self.replacing
-            && let Some(update) = &self.staged
+            && !bar_drag
+            && let Some(update) = self.staged.take()
         {
-            for (row, change) in &update.rows {
-                if pinned != Some(*row) || self.rows.contains_key(row) {
-                    self.rows.entry(*row).or_insert_with(|| change.clone());
-                }
+            for (row, change) in update.rows {
+                self.rows.entry(row).or_insert(change);
             }
-            if quiet && !scrollbar {
-                self.count = if update.complete {
-                    update.count
-                } else {
-                    self.count.max(update.count)
-                };
-                self.complete = update.complete;
-                self.error = update.error.clone();
-                self.subject = update.comparison.subject.clone();
-                self.request.revision = update.comparison.commit.clone();
-                self.request.path = update.comparison.path.clone();
-                if !update.comparison.parents.is_empty() {
-                    self.known_parents = update.comparison.parents.clone();
-                }
-                self.comparison = Some(update.comparison.clone());
-                if self.selected.is_none() && self.count > 0 && pinned.is_none() {
-                    self.selected = Some(0);
-                }
+            self.count = if update.complete {
+                update.count
+            } else {
+                self.count.max(update.count)
+            };
+            self.complete = update.complete;
+            self.error = update.error;
+            self.subject = update.comparison.subject.clone();
+            self.request.revision = update.comparison.commit.clone();
+            self.request.path = update.comparison.path.clone();
+            if !update.comparison.parents.is_empty() {
+                self.known_parents = update.comparison.parents.clone();
             }
-            if quiet && pinned.is_none() && !scrollbar {
-                self.staged = None;
+            self.comparison = Some(update.comparison);
+            if self.selected.is_none() && self.count > 0 {
+                self.selected = Some(0);
             }
         }
         if let Some(path) = &self.pending_path {
@@ -929,11 +946,7 @@ impl Review {
                 .rows
                 .keys()
                 .copied()
-                .filter(|row| {
-                    !self.viewport.contains(row)
-                        && Some(*row) != self.selected
-                        && Some(*row) != pinned
-                })
+                .filter(|row| !self.viewport.contains(row) && Some(*row) != self.selected)
                 .max_by_key(|row| row.abs_diff(self.viewport.start));
             if let Some(row) = victim {
                 self.rows.remove(&row);
@@ -1890,7 +1903,7 @@ mod tests {
     }
 
     #[test]
-    fn parent_replacement_retains_identity_until_pointer_leaves_and_resets_selection()
+    fn parent_replacement_keeps_labelled_content_until_it_arrives_and_resets_selection()
     -> Result<(), String> {
         for width in [720.0, 1120.0] {
             let ctx = egui::Context::default();
@@ -1915,6 +1928,15 @@ mod tests {
             assert_eq!(view.request.revision, "commit");
             assert_eq!(view.request.parent, Some(2));
             assert_eq!(view.selected, Some(2));
+            // Until the replacement arrives the old comparison stays, labelled.
+            frame(&mut view, vec![egui::Event::PointerMoved(point)], 1.05);
+            assert_eq!(
+                view.comparison.as_ref().and_then(|c| c.parent.as_deref()),
+                Some("first")
+            );
+            assert_eq!(view.rows.len(), 64);
+            assert_eq!(view.selected, Some(2));
+            assert!(view.replacing);
             let mut file = view.rows[&0].clone();
             file.path = "second-parent.rs".into();
             file.path_bytes = file.path.as_bytes().to_vec();
@@ -1925,14 +1947,8 @@ mod tests {
                 error: None,
                 rows: vec![(0, file)],
             });
-            frame(&mut view, vec![egui::Event::PointerMoved(point)], 1.1);
-            assert_eq!(
-                view.comparison.as_ref().and_then(|c| c.parent.as_deref()),
-                Some("first")
-            );
-            assert_eq!(view.selected, Some(2));
-            assert!(view.replacing);
-            frame(&mut view, vec![egui::Event::PointerGone], 1.4);
+            // It is adopted as soon as it arrives, even under the pointer.
+            frame(&mut view, vec![], 1.1);
             assert_eq!(
                 view.comparison.as_ref().and_then(|c| c.parent.as_deref()),
                 Some("second")
@@ -2170,11 +2186,100 @@ mod tests {
                 error: None,
                 rows: vec![(2, change)],
             });
+            // The row fills in place at once and fades in; a click already
+            // on its way lands within the grace and is dropped.
             frame(&mut view, vec![], 1.3);
-            assert!(!view.rows.contains_key(&2));
-            frame(&mut view, vec![egui::Event::PointerGone], 1.4);
             assert!(view.rows.contains_key(&2));
+            let selected = view.selected;
+            let output = frame(&mut view, vec![button(point, true)], 1.4);
+            let opacity = output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text)
+                        if text.galley.job.text.ends_with("/0002.rs") =>
+                    {
+                        Some(text.fallback_color.a())
+                    }
+                    _ => None,
+                })
+                .ok_or("arrived row painted")?;
+            assert!(opacity < 200, "the arrived row fades in: {opacity}");
+            frame(&mut view, vec![button(point, false)], 1.45);
+            assert_eq!(view.selected, selected);
+            // After the grace a fresh click on the same row acts.
+            frame(&mut view, vec![], 1.7);
+            frame(&mut view, vec![button(point, true)], 1.75);
+            frame(&mut view, vec![button(point, false)], 1.8);
+            assert_eq!(view.selected, Some(2));
         }
+        Ok(())
+    }
+
+    fn button(pos: egui::Pos2, pressed: bool) -> egui::Event {
+        egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+
+    #[test]
+    fn moving_onto_a_row_or_scrolling_keeps_it_clickable() -> Result<(), String> {
+        let ctx = egui::Context::default();
+        let mut view = Review::fixture(&ctx);
+        let frame = |view: &mut Review, events, time| {
+            let mut input = crate::tests::frame_input(1120.0, 740.0, events);
+            input.time = Some(time);
+            let _ = crate::tests::run_ui(&ctx, input, |ctx| {
+                view.draw_ui(ctx);
+            });
+        };
+        frame(&mut view, vec![], 1.0);
+        let rect = |view: &Review, row| {
+            view.row_rects
+                .iter()
+                .find(|(at, _)| *at == row)
+                .map(|(_, rect)| rect.center())
+                .ok_or("row missing")
+        };
+        let first = rect(&view, 3)?;
+        frame(&mut view, vec![egui::Event::PointerMoved(first)], 1.1);
+        // The user's own motion onto another row starts no grace.
+        let second = rect(&view, 4)?;
+        frame(&mut view, vec![egui::Event::PointerMoved(second)], 1.2);
+        frame(&mut view, vec![button(second, true)], 1.21);
+        frame(&mut view, vec![button(second, false)], 1.22);
+        assert_eq!(view.selected, Some(4));
+        // Scrolling the list under a still pointer is the user's motion too.
+        frame(
+            &mut view,
+            vec![egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Line,
+                delta: egui::vec2(0.0, -3.0),
+                phase: egui::TouchPhase::Move,
+                modifiers: egui::Modifiers::NONE,
+                source: egui::MouseWheelSource::Unknown,
+            }],
+            1.3,
+        );
+        let mut time = 1.3;
+        while time < 3.0 {
+            time += 0.016;
+            frame(&mut view, vec![], time);
+        }
+        assert!(view.offset > ROW, "the list scrolled: {}", view.offset);
+        let row = view
+            .row_rects
+            .iter()
+            .find(|(_, rect)| rect.contains(second))
+            .map(|(row, _)| *row)
+            .ok_or("row under the pointer")?;
+        assert_ne!(row, 4);
+        frame(&mut view, vec![button(second, true)], time + 0.01);
+        frame(&mut view, vec![button(second, false)], time + 0.02);
+        assert_eq!(view.selected, Some(row));
         Ok(())
     }
 

@@ -128,7 +128,7 @@ Before connecting M1 controls, test Review/Back anchor restoration, active-view 
 - Git-oracle fixtures cover root/first-parent changes, merge-parent selection, nested paths, additions/deletions, IDs/modes, file-to-directory replacement, empty comparisons, invalid parents/revisions, and pinned comparisons with unavailable blobs.
 - Process tests cover nested discovery, explicit repository, exact path bytes, JSON, and error exits.
 - Controlled reader tests cover early delivery, 10,000-file completion, deep/back page reload, retained partial errors, and worker shutdown.
-- Input tests cover review/history isolation, late history results, Back anchors, fixed rows, and hovered placeholders at wide/narrow sizes. `unread_rows_stay_empty_and_loaded_rows_stay_put` checks that unread Review rows keep empty slots, loaded rows stay visible, and no loading or resolving text appears in the pane.
+- Input tests cover review/history isolation, late history results, Back anchors, fixed rows, and placeholders that fill under a still pointer at wide/narrow sizes: `compact_rows_and_placeholder_identity_survive_arrival` checks the row fades in and drops a click within the grace, and `moving_onto_a_row_or_scrolling_keeps_it_clickable` checks that the user's own motion starts no grace. `unread_rows_stay_empty_and_loaded_rows_stay_put` checks that unread Review rows keep empty slots, loaded rows stay visible, and no loading or resolving text appears in the pane.
 
 ## M1 selected-file text
 

@@ -438,9 +438,6 @@ impl DiffView {
     pub fn binary(&self) -> bool {
         self.preview.is_some()
     }
-    pub fn hovered(&self, point: Option<egui::Pos2>) -> bool {
-        point.is_some_and(|p| self.bounds.contains(p))
-    }
     pub fn select(&mut self, path: PathBuf, change: Option<FileChange>, ctx: &egui::Context) {
         let same = self.path == path
             && self
