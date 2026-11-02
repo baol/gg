@@ -1023,6 +1023,13 @@ Layer: product
 - Then the first switch succeeds keeping `new.txt`; the colliding one fails with Git's message and the file is untouched
 Covered by (backend, partial): `untracked_files_do_not_block_switching_or_creation`, `git_rejects_untracked_files_that_would_be_overwritten` (branch.rs); GUI path not automated
 
+### HIS-81 A refused switch names Git's reason
+Fixture: `fx-branchy` + `other` checked out in a second worktree (set up in Given)
+Layer: product
+- When switching to `other`
+- Then HEAD stays; the warning reads `Can’t switch to other: 'other' is already used by worktree at '<path>'` (Git's last `fatal:` or `error:` line, without the exit status) with **Retry switch**, and **Details…** shows Git's full output
+Covered by (interaction): `a_refused_switch_shows_gits_reason`, `git_reason_reads_the_last_fatal_or_error_line` (main.rs)
+
 ### HIS-58 Post-checkout hook failure is a warning
 Fixture: `fx-branchy` + failing `post-checkout` hook
 Layer: product
