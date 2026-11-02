@@ -8,6 +8,8 @@ use std::time::{Duration, Instant};
 /// The shortest repaint delay that counts as idle; a blinking text caret
 /// wakes twice a second, so views are checked with no text field focused.
 const IDLE: Duration = Duration::from_secs(1);
+/// How long every frame must stay quiet before a view counts as settled.
+const SETTLED: Duration = Duration::from_millis(1500);
 
 struct Harness {
     ctx: egui::Context,
@@ -81,19 +83,21 @@ impl Harness {
             .map_or(Duration::MAX, |viewport| viewport.repaint_delay)
     }
 
-    /// Draw frames until three in a row ask for nothing sooner than
-    /// [`IDLE`], sleeping as long as each asked; false if that never
-    /// happens within 20 s of real time.
+    /// Draw frames until every frame for [`SETTLED`] of real time asked for
+    /// nothing sooner than [`IDLE`]: long enough for the file watcher's
+    /// debounce and a refresh it starts, which arrive late on Windows for
+    /// files written just before opening. False if that never happens
+    /// within 20 s, as with a refresh that keeps starting another.
     fn settle(&mut self) -> bool {
         let deadline = Instant::now() + Duration::from_secs(20);
-        let mut quiet = 0;
+        let mut quiet_since = Instant::now();
         while Instant::now() < deadline {
-            let delay = self.frame();
-            quiet = if delay >= IDLE { quiet + 1 } else { 0 };
-            if quiet >= 3 {
+            if self.frame() < IDLE {
+                quiet_since = Instant::now();
+            } else if quiet_since.elapsed() >= SETTLED {
                 return true;
             }
-            std::thread::sleep(delay.min(Duration::from_millis(20)));
+            std::thread::sleep(Duration::from_millis(20));
         }
         false
     }
