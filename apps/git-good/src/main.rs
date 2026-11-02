@@ -9754,7 +9754,7 @@ impl Browser {
             match result {
                 Ok(receipt) => {
                     self.pending_switch = None;
-                    self.branch_after_create = None;
+                    let created = self.branch_after_create.take().is_some() || receipt.created;
                     if self.outcome.as_ref().is_some_and(|outcome| {
                         matches!(
                             outcome.recovery,
@@ -9793,7 +9793,7 @@ impl Browser {
                         .head
                         .as_ref()
                         .is_some_and(|head| !head.detached && head.commit.is_some());
-                    if from_branch && !receipt.created {
+                    if from_branch && !created {
                         self.state.refs.head = Some(gg_engine::refs::Head {
                             name: Some(format!("refs/heads/{}", receipt.branch)),
                             detached: false,
@@ -9833,7 +9833,7 @@ impl Browser {
                             _ if dirty => "changed files would be overwritten".into(),
                             _ => error.lines().next().unwrap_or_default().to_string(),
                         };
-                        let summary = match created {
+                        let summary = match &created {
                             Some(branch) => {
                                 format!("Created {branch} but can’t switch to it: {reason}")
                             }
@@ -9844,6 +9844,10 @@ impl Browser {
                         } else {
                             RecoveryAction::RetrySwitch
                         };
+                        if created.is_some() {
+                            // The new branch still has to appear.
+                            self.load(ctx);
+                        }
                         self.set_outcome(OutcomeSeverity::Warning, summary, None, Some(recovery));
                     } else {
                         self.branch_error = Some(error);
@@ -11158,18 +11162,21 @@ impl Browser {
                             self.commit_summary(&receipt.commit)
                         );
                         self.create_branch = None;
-                        self.load(ctx);
                         if let Some(view) = &mut self.recovery
                             && source.is_some()
                         {
                             view.notice(notice);
                         }
                         if switch {
+                            // Reload once the switch ends: a read started
+                            // now would land after it with the old HEAD.
                             self.branch_after_create = Some(receipt.branch.clone());
                             self.start_branch(ctx, receipt.branch.clone(), false);
                             if self.branch.is_none() {
                                 self.branch_after_create = None;
-                                if let Some(error) = self.branch_error.take() {
+                                let error = self.branch_error.take();
+                                self.load(ctx);
+                                if let Some(error) = error {
                                     let summary = format!(
                                         "Created {} but the switch could not start: {error}",
                                         receipt.branch
@@ -11177,7 +11184,10 @@ impl Browser {
                                     self.set_outcome(OutcomeSeverity::Warning, summary, None, None);
                                 }
                             }
-                        } else if source.is_none() {
+                        } else {
+                            self.load(ctx);
+                        }
+                        if !switch && source.is_none() {
                             self.branch_warning = Some(format!("Created {}", receipt.branch));
                         }
                     }
@@ -17848,6 +17858,58 @@ mod tests {
         let _ = crate::tests::run_ui(ctx, frame_input(1120.0, 740.0, click_at(pos)), |ctx| {
             app.draw_ui(ctx)
         });
+        Ok(())
+    }
+
+    #[test]
+    fn new_branch_switches_after_creation() -> Checked {
+        let ctx = egui::Context::default();
+        let (dir, mut app) = two_commits()?;
+        let path = dir.path();
+        let head = git_in(path, &["rev-parse", "HEAD"])?;
+        app.load(&ctx);
+        frames_until(&ctx, &mut app, vec![], |app, _| {
+            app.pending.is_none() && app.state.refs.head.is_some()
+        })?;
+        app.create_branch = Some(CreateBranchDialog {
+            name: "feature".into(),
+            commit: head,
+            selector: "current HEAD".into(),
+            switch: true,
+            recovery_source: None,
+            error: None,
+        });
+        frames_until(&ctx, &mut app, vec![], |_, text| {
+            text.iter().any(|line| line == "Create")
+        })?;
+        click_label(&ctx, &mut app, "Create")?;
+        // The pointer rests over the history, holding back any reread until
+        // the switch has ended; then it leaves and the reread lands.
+        frames_until(&ctx, &mut app, vec![], |app, _| app.branch.is_none())?;
+        frames_until(&ctx, &mut app, vec![egui::Event::PointerGone], |app, _| {
+            app.create_branch.is_none() && app.branch.is_none() && app.pending.is_none()
+        })?;
+        assert_eq!(
+            git_in(path, &["symbolic-ref", "HEAD"])?,
+            "refs/heads/feature"
+        );
+        assert_eq!(
+            app.state
+                .refs
+                .head
+                .as_ref()
+                .and_then(|head| head.name.as_deref()),
+            Some("refs/heads/feature"),
+            "the shown HEAD follows the switch"
+        );
+        assert!(
+            app.state
+                .refs
+                .items
+                .iter()
+                .any(|item| item.full_name == "refs/heads/feature"),
+            "the new branch is listed"
+        );
         Ok(())
     }
 

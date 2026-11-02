@@ -1035,8 +1035,8 @@ Fixture: `fx-branchy`
 Layer: product
 - Given c25 selected
 - When **New branch here…** (or **Branch › New branch…** `Ctrl+B`) with name `fix`, **Switch after creation** on, **Create**
-- Then the dialog reads `Create a branch at <selector>`; `fix` is created at c25 and HEAD switches to it
-Covered by (backend, interaction): `creates_and_switches_to_a_new_branch`, `creates_a_branch_at_a_revision_without_switching` (branch.rs), `branch_creation_window_renders_at_supported_widths` (main.rs)
+- Then the dialog reads `Create a branch at <selector>`; `fix` is created at c25 and HEAD switches to it; the refs sidebar lists `fix` as the current branch, also when the pointer rests on the history while the switch runs
+Covered by (backend, interaction, GUI): `creates_and_switches_to_a_new_branch`, `creates_a_branch_at_a_revision_without_switching` (branch.rs), `branch_creation_window_renders_at_supported_widths`, `new_branch_switches_after_creation` (main.rs)
 
 ### HIS-60 Create rejects invalid and colliding names
 Fixture: `fx-branchy`
