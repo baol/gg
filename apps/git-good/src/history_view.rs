@@ -370,7 +370,31 @@ fn ref_label_colors(
     (background, foreground)
 }
 
+/// One commit row. `target` is what the target guard allows this frame: a
+/// row that just changed under the pointer fades in and takes no click.
+#[allow(clippy::too_many_arguments)]
 pub fn row(
+    ui: &mut egui::Ui,
+    commit: &Commit,
+    graph: Option<&crate::graph::Row>,
+    refs: &[gg_engine::refs::RefItem],
+    head_name: Option<&str>,
+    selected: bool,
+    avatars: &mut Avatars,
+    target: crate::target_guard::Target,
+) -> (egui::Response, Option<RefAction>) {
+    ui.scope(|ui| {
+        let opacity = ui.opacity();
+        if !target.clickable {
+            ui.disable();
+        }
+        ui.set_opacity(opacity * target.alpha);
+        contents(ui, commit, graph, refs, head_name, selected, avatars)
+    })
+    .inner
+}
+
+fn contents(
     ui: &mut egui::Ui,
     commit: &Commit,
     graph: Option<&crate::graph::Row>,
@@ -697,7 +721,16 @@ mod tests {
             },
             |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    let _ = row(ui, &commit, None, &refs, None, false, &mut avatars);
+                    let _ = row(
+                        ui,
+                        &commit,
+                        None,
+                        &refs,
+                        None,
+                        false,
+                        &mut avatars,
+                        crate::target_guard::Target::STILL,
+                    );
                 });
             },
         );
@@ -744,8 +777,16 @@ mod tests {
                 },
                 |ctx| {
                     egui::CentralPanel::default().show(ctx, |ui| {
-                        let (response, next) =
-                            row(ui, &commit, None, refs, head_name, false, &mut avatars);
+                        let (response, next) = row(
+                            ui,
+                            &commit,
+                            None,
+                            refs,
+                            head_name,
+                            false,
+                            &mut avatars,
+                            crate::target_guard::Target::STILL,
+                        );
                         row_rect = response.rect;
                         action = next;
                     });
@@ -883,7 +924,16 @@ mod tests {
             },
             |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    let _ = row(ui, &commit, None, &refs, None, false, &mut avatars);
+                    let _ = row(
+                        ui,
+                        &commit,
+                        None,
+                        &refs,
+                        None,
+                        false,
+                        &mut avatars,
+                        crate::target_guard::Target::STILL,
+                    );
                 });
             },
         );
@@ -947,7 +997,16 @@ mod tests {
                 },
                 |ctx| {
                     egui::CentralPanel::default().show(ctx, |ui| {
-                        let (response, _) = row(ui, &commit, None, &[], None, true, &mut avatars);
+                        let (response, _) = row(
+                            ui,
+                            &commit,
+                            None,
+                            &[],
+                            None,
+                            true,
+                            &mut avatars,
+                            crate::target_guard::Target::STILL,
+                        );
                         assert_eq!(response.rect.height(), ROW_HEIGHT);
                     });
                 },

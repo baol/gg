@@ -71,13 +71,10 @@ impl State {
         update.query == self.query && update.request.revision == self.filter_revision
     }
 
-    pub fn accept(
-        &mut self,
-        update: crate::stream::Update,
-        replace: bool,
-        safe: bool,
-        pinned: Option<usize>,
-    ) {
+    /// Show an update as it arrives. `extent` is false while the scrollbar
+    /// thumb is dragged: the count and scan progress then wait, so the
+    /// thumb keeps its grab offset, while rows and selection still apply.
+    pub fn accept(&mut self, update: crate::stream::Update, replace: bool, extent: bool) {
         if !replace && !self.is_current(&update) {
             return;
         }
@@ -106,7 +103,7 @@ impl State {
             self.requested = None;
             self.loaded_generation = self.generation;
         }
-        if safe || replace {
+        if extent || replace {
             self.count = update.count;
             self.scanned = update.scanned;
             self.finished = update.complete;
@@ -114,21 +111,17 @@ impl State {
                 self.error = update.error.clone();
             }
         }
-        if safe || replace || self.details.is_none() {
-            if selection_current && let Some((row, commit)) = update.selection {
-                self.selected = Some(commit.id.clone());
-                self.selected_row = Some(row);
-                self.details = Some(commit);
-            } else if update.complete && update.count == 0 {
-                self.selected = None;
-                self.selected_row = None;
-                self.details = None;
-            }
+        if selection_current && let Some((row, commit)) = update.selection {
+            self.selected = Some(commit.id.clone());
+            self.selected_row = Some(row);
+            self.details = Some(commit);
+        } else if update.complete && update.count == 0 {
+            self.selected = None;
+            self.selected_row = None;
+            self.details = None;
         }
         for (row, commit) in update.rows {
-            if pinned != Some(row) || self.rows.contains_key(&row) {
-                self.rows.entry(row).or_insert(commit);
-            }
+            self.rows.entry(row).or_insert(commit);
         }
         for (row, graph) in update.graphs {
             self.graph_lanes = self.graph_lanes.max(graph.lanes_used());
@@ -142,7 +135,7 @@ impl State {
                 .rows
                 .keys()
                 .copied()
-                .filter(|r| Some(*r) != pinned && !self.viewport.contains(r))
+                .filter(|r| !self.viewport.contains(r))
                 .max_by_key(|r| r.abs_diff(center));
             if let Some(row) = victim {
                 self.rows.remove(&row);
@@ -382,32 +375,39 @@ mod streaming_tests {
         }
     }
     #[test]
-    fn hover_pins_placeholder_and_extent_while_other_rows_arrive() {
+    fn unfilled_slots_fill_in_place_while_the_extent_is_frozen() {
         let mut state = State::default();
-        state.accept(update(0, 32), true, true, None);
+        state.accept(update(0, 32), true, true);
         state.rows.remove(&10);
-        state.rows.remove(&11);
-        state.accept(update(0, 1000), false, false, Some(10));
+        state.select_row(5);
+        // A thumb drag freezes the extent; rows and selection still arrive.
+        let mut dragged = update(0, 1000);
+        dragged.request.selected_id = state.selected.clone();
+        dragged.request.selected_row = Some(5);
+        dragged.selection = dragged.rows.get(5).cloned();
+        state.accept(dragged, false, false);
         assert_eq!(state.count, 32);
-        assert!(!state.rows.contains_key(&10));
-        assert!(state.rows.contains_key(&11));
-        assert_eq!(state.selected_row, Some(0));
-        state.accept(update(0, 1000), false, true, None);
-        assert_eq!(state.count, 1000);
         assert!(state.rows.contains_key(&10));
+        assert_eq!(state.selected_row, Some(5));
+        assert_eq!(
+            state.details.as_ref().map(|c| &c.id),
+            state.selected.as_ref()
+        );
+        state.accept(update(0, 1000), false, true);
+        assert_eq!(state.count, 1000);
     }
     #[test]
     fn pages_evict_and_reload_without_losing_identity_or_selection() {
         let mut state = State::default();
-        state.accept(update(0, 100_000), true, true, None);
+        state.accept(update(0, 100_000), true, true);
         for start in (64..2048).step_by(64) {
-            state.accept(update(start, 100_000), false, true, None);
+            state.accept(update(start, 100_000), false, true);
             assert!(state.rows.len() <= crate::stream::CACHE_ROWS);
             assert!(state.rows.contains_key(&start));
             assert_eq!(state.selected_row, Some(0));
         }
         assert!(!state.rows.contains_key(&0));
-        state.accept(update(0, 100_000), false, true, None);
+        state.accept(update(0, 100_000), false, true);
         assert_eq!(
             state.rows.get(&0).map(|c| c.id.as_str()),
             Some("0000000000000000000000000000000000000000")
@@ -416,13 +416,13 @@ mod streaming_tests {
     #[test]
     fn late_query_and_selection_results_do_not_replace_new_intent() {
         let mut state = State::default();
-        state.accept(update(0, 100), true, true, None);
+        state.accept(update(0, 100), true, true);
         state.select_row(10);
-        state.accept(update(0, 100), false, true, None);
+        state.accept(update(0, 100), false, true);
         assert_eq!(state.selected_row, Some(10));
         state.query = "new filter".into();
         state.start_filter();
-        state.accept(update(0, 100), false, true, None);
+        state.accept(update(0, 100), false, true);
         assert_eq!(state.count, 0);
         assert!(state.rows.is_empty());
     }

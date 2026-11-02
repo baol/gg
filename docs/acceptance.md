@@ -665,15 +665,15 @@ Layer: interaction
 - Given the user scrolls by wheel mid-history while counting continues
 - When the discovered extent grows
 - Then the row under the pointer and its pixel offset stay put while the extent grows; the scrollbar follows the new extent
-Covered by (interaction): `incoming_count_waits_for_wheel_settling_and_preserves_hovered_content_and_offset` (main.rs)
+Covered by (interaction): `a_growing_count_shows_at_once_and_keeps_the_hovered_row_and_offset` (interaction_tests.rs)
 
 ### HIS-06 Scrollbar drag keeps the grab offset
 Fixture: `fx-large` (opt-in)
 Layer: interaction
 - Given the user drags the scrollbar thumb while rows stream
 - When the user releases (even with pointer motion in the same frame)
-- Then the extent stayed frozen during the drag and the release position is preserved
-Covered by (interaction): `scrollbar_drag_freezes_extent_and_release_preserves_offset`, `scrollbar_release_followed_by_pointer_motion_in_one_frame_keeps_release_position` (apps/git-good/src/interaction_tests.rs)
+- Then the extent stayed frozen during the drag while rows still filled in place, the release position is preserved, and the grown extent applies right after release
+Covered by (interaction): `scrollbar_drag_freezes_extent_and_release_preserves_offset`, `scrollbar_release_followed_by_pointer_motion_in_one_frame_keeps_release_position` (apps/git-good/src/interaction_tests.rs), `unfilled_slots_fill_in_place_while_the_extent_is_frozen` (state.rs)
 
 ### HIS-07 A row arriving under the pointer fades in and refuses an early click
 Fixture: `fx-large` (opt-in)
@@ -681,7 +681,7 @@ Layer: interaction
 - Given the pointer rests on an unfilled slot
 - When the slot's commit arrives, and the user presses on it
 - Then the commit's row fades in over 0.25 s and a press within 0.3 s of its arrival does nothing; a press after that selects it; a press and release act only on the same row, so a row that swaps while the button is down is not clicked
-Covered by (interaction): `loading_row_stays_inert_through_press_and_becomes_clickable_after_reentry` (interaction_tests.rs), `hover_pins_placeholder_and_extent_while_other_rows_arrive` (state.rs)
+Covered by (interaction): `a_row_arriving_under_the_pointer_fades_in_and_refuses_an_early_click`, `moving_onto_a_row_or_scrolling_never_starts_the_grace`, `a_replacement_under_a_press_shows_at_once_and_the_release_clicks_nothing` (interaction_tests.rs)
 
 ### HIS-08 External ref change refreshes history and keeps selection
 Fixture: `fx-branchy`
@@ -691,13 +691,13 @@ Layer: interaction
 - Then History reloads (no Refresh command exists); c27 stays selected at the same pixel offset; the new ref appears
 Covered by (interaction): `refresh_preserves_commit_anchor_and_fractional_row_offset` (interaction_tests.rs)
 
-### HIS-09 Refresh replacement waits for an active press
+### HIS-09 A refresh replacement under a press shows at once and clicks nothing
 Fixture: `fx-branchy`
 Layer: interaction
 - Given the user is pressing a row
 - When a replacement history session becomes ready
-- Then it is adopted only after release; a retired worker never overwrites the adopted rows
-Covered by (interaction): `replacement_waits_for_pressed_row_and_retired_worker_cannot_overwrite_it` (interaction_tests.rs)
+- Then it shows at once; the release does not click the row that replaced the pressed one (RULE-17); a retired worker never overwrites the adopted rows
+Covered by (interaction): `a_replacement_under_a_press_shows_at_once_and_the_release_clicks_nothing` (interaction_tests.rs)
 
 ### HIS-10 Refresh selects the first row when the selection vanished
 Fixture: `fx-branchy`
@@ -2662,7 +2662,7 @@ Layer: interaction
 - Given the pointer resting over History, where the Stash dialog sat
 - When the user stashes
 - Then the stash runs one Git process, as `git stash push` does, and the history, refs and sidebar show the result as soon as Git returns, without waiting for the pointer to leave; the top row and scroll position hold (RULE-16)
-Covered by (interaction): `a_stash_shows_its_history_at_once_under_the_pointer` (main.rs), `a_command_reload_shows_under_the_pointer_at_its_old_top_row` (interaction_tests.rs), `push_receipt_names_the_newest_entry_as_git_lists_it` (stash.rs)
+Covered by (interaction): `a_stash_shows_its_history_at_once_under_the_pointer` (main.rs), `a_reload_under_the_pointer_shows_once_its_old_top_row_is_found`, `a_branch_switch_shows_its_first_page_at_once_under_the_pointer` (interaction_tests.rs), `push_receipt_names_the_newest_entry_as_git_lists_it` (stash.rs)
 
 ## Merge, cherry-pick, revert and conflicts
 
