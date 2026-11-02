@@ -29,6 +29,8 @@ mod folders;
 mod footer;
 mod graph;
 mod history_view;
+#[cfg(test)]
+mod idle_tests;
 mod init_cli;
 mod inspect_ui;
 #[cfg(test)]
