@@ -9666,15 +9666,42 @@ impl Browser {
                             pull.is_some().then_some(RecoveryAction::PullRebase),
                         );
                     }
-                    self.state.query.clear();
-                    self.state.start_filter();
-                    self.state.selected = Some(receipt.head);
-                    self.state.selected_row = None;
-                    self.state.details = None;
-                    self.scroll_offset = 0.0;
-                    self.scroll_to_selection = true;
-                    self.history_jump = true;
-                    self.load(ctx);
+                    // History holds HEAD and every ref, so switching from
+                    // one branch to another existing one changes no row:
+                    // move HEAD and select its tip in the list already
+                    // shown. A new branch, or leaving a detached HEAD (whose
+                    // commits may drop out), reads the history again.
+                    let from_branch = self
+                        .state
+                        .refs
+                        .head
+                        .as_ref()
+                        .is_some_and(|head| !head.detached && head.commit.is_some());
+                    if from_branch && !receipt.created {
+                        self.state.refs.head = Some(gg_engine::refs::Head {
+                            name: Some(format!("refs/heads/{}", receipt.branch)),
+                            detached: false,
+                            commit: Some(receipt.head.clone()),
+                        });
+                        self.jump_to_ref(receipt.head);
+                        self.scroll_to_selection = true;
+                        // The switch's own HEAD change must not make the
+                        // watcher read the unchanged history again.
+                        self.last_load = Some(std::time::Instant::now());
+                        self.refresh_mutation();
+                        self.refresh_local_summary(ctx);
+                        self.refresh_working(ctx);
+                    } else {
+                        self.state.query.clear();
+                        self.state.start_filter();
+                        self.state.selected = Some(receipt.head);
+                        self.state.selected_row = None;
+                        self.state.details = None;
+                        self.scroll_offset = 0.0;
+                        self.scroll_to_selection = true;
+                        self.history_jump = true;
+                        self.load(ctx);
+                    }
                 }
                 Err(error) => {
                     self.branch_warning = None;
@@ -17200,6 +17227,45 @@ mod tests {
             events,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn switching_between_branches_moves_head_without_rereading_history() {
+        // History holds HEAD and every ref, so a switch between branches
+        // changes no row: HEAD moves, the new tip is selected, and the list
+        // is not read again.
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        let tip = format!("{:040x}", 7);
+        app.state.refs.head = Some(gg_engine::refs::Head {
+            name: Some("refs/heads/main".into()),
+            detached: false,
+            commit: Some(format!("{:040x}", 0)),
+        });
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        let _ = tx.send(Ok(gg_git::branch::Receipt {
+            branch: "feature/login".into(),
+            head: tip.clone(),
+            created: false,
+            warnings: Vec::new(),
+            stash: None,
+        }));
+        app.branch = Some(rx);
+        let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        assert!(app.pending.is_none(), "no history re-read");
+        assert!(app.last_load.is_some(), "the watcher sees it as read");
+        assert_eq!(
+            app.state.refs.head,
+            Some(gg_engine::refs::Head {
+                name: Some("refs/heads/feature/login".into()),
+                detached: false,
+                commit: Some(tip.clone()),
+            })
+        );
+        assert_eq!(app.state.selected.as_deref(), Some(tip.as_str()));
+        assert_eq!(app.current_branch().as_deref(), Some("feature/login"));
     }
 
     #[test]
