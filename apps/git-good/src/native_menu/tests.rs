@@ -56,7 +56,7 @@ fn table(recent: u8, inline: bool, fetch: bool) -> Vec<menus::Menu<Cmd>> {
             title: "Help",
             entries: vec![
                 item("Keyboard shortcuts", "?", Cmd::Shortcuts).entry(),
-                item("About gg", "", Cmd::About).entry(),
+                item("About Git Good", "", Cmd::About).entry(),
             ],
         },
     ]
@@ -82,23 +82,23 @@ fn ids(nodes: &[Node]) -> Vec<String> {
 fn gg_gets_a_mac_app_menu_window_menu_and_help() {
     let l = layout(&table(2, true, true));
     let titles: Vec<&str> = l.bar.menus.iter().map(|m| m.title.as_str()).collect();
-    assert_eq!(titles, ["gg", "Repository", "View", "Window", "Help"]);
+    assert_eq!(titles, ["Git Good", "Repository", "View", "Window", "Help"]);
     let app = &l.bar.menus[0];
     assert_eq!(app.role, MenuRole::App);
     assert_eq!(
         ids(&app.children),
         [
-            "About gg",
+            "About Git Good",
             "---",
             "Settings…",
             "---",
             "<Services>",
             "---",
-            "Hide gg",
+            "Hide Git Good",
             "<HideOthers>",
             "<ShowAll>",
             "---",
-            "Quit gg"
+            "Quit Git Good"
         ]
     );
     let shortcut = |label: &str| {
@@ -109,8 +109,8 @@ fn gg_gets_a_mac_app_menu_window_menu_and_help() {
             .and_then(|i| i.shortcut.clone())
     };
     assert_eq!(shortcut("Settings…").as_deref(), Some("Cmd+,"));
-    assert_eq!(shortcut("Quit gg").as_deref(), Some("Cmd+Q"));
-    assert_eq!(shortcut("Hide gg").as_deref(), Some("Cmd+H"));
+    assert_eq!(shortcut("Quit Git Good").as_deref(), Some("Cmd+Q"));
+    assert_eq!(shortcut("Hide Git Good").as_deref(), Some("Cmd+H"));
     assert!(l.clashes.is_empty(), "{:?}", l.clashes);
     let window = l.bar.menu(MenuRole::Window).map(|m| ids(&m.children));
     assert_eq!(
@@ -130,14 +130,14 @@ fn gg_gets_a_mac_app_menu_window_menu_and_help() {
     );
 }
 
-/// The in-window "gg" menu macOS shows today empties into the app menu.
+/// The in-window "Git Good" menu macOS shows today empties into the app menu.
 #[test]
 fn a_menu_emptied_by_the_moves_goes_away() {
     let mut menus = table(0, true, true);
     menus.insert(
         0,
         menus::Menu {
-            title: "gg",
+            title: "Git Good",
             entries: vec![
                 item("Settings…", "Cmd+,", Cmd::Preferences).entry(),
                 Entry::Separator,
@@ -148,7 +148,7 @@ fn a_menu_emptied_by_the_moves_goes_away() {
     menus[1].entries.truncate(4);
     let l = layout(&menus);
     let titles: Vec<&str> = l.bar.menus.iter().map(|m| m.title.as_str()).collect();
-    assert_eq!(titles, ["gg", "Repository", "View", "Window", "Help"]);
+    assert_eq!(titles, ["Git Good", "Repository", "View", "Window", "Help"]);
     assert_eq!(l.bar.menus[0].role, MenuRole::App);
 }
 

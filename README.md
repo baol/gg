@@ -1,8 +1,8 @@
-# gg · good git
+# Git Good
 
-![gg native history view](docs/screenshots/gg-native-wide.png)
+![Git Good native history view](docs/screenshots/gg-native-wide.png)
 
-Purpose: introduce gg and explain installation and use.
+Purpose: introduce Git Good and explain installation and use.
 
 A fast, native Git desktop app. Browse history, inspect diffs, stage hunks or lines, commit, and recover rewrites without leaving the UI.
 

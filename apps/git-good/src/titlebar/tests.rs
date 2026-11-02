@@ -4,7 +4,7 @@ use super::*;
 use eframe::egui::{Event, RawInput, ViewportId};
 
 const QUIT: u8 = 99;
-const IDENTITY: &str = "gg — ~/dev/gg";
+const IDENTITY: &str = "Git Good — ~/dev/gg";
 
 /// A headless window `width` pt wide showing the menu bar and the resize zones.
 struct Win {
@@ -203,7 +203,7 @@ fn the_identity_is_centred_in_the_free_gap() {
     let out = w.frame(vec![]);
     let min = w.caption(Caption::Minimize);
     for (text, rect) in texts(&out) {
-        if text.starts_with("gg") {
+        if text.starts_with("Git Good") {
             assert!(rect.right() <= min.left(), "{rect:?} {min:?}");
         }
     }
@@ -215,7 +215,7 @@ fn close_runs_quit_and_the_others_follow_the_window_state() {
     w.frame(vec![]);
     let close = w.caption(Caption::Close).center();
     w.click(close);
-    assert_eq!(w.chosen, [QUIT], "Close runs gg's own Quit");
+    assert_eq!(w.chosen, [QUIT], "Close runs Git Good's own Quit");
     let (min, max) = (
         w.caption(Caption::Minimize).center(),
         w.caption(Caption::Maximize).center(),

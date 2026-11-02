@@ -114,7 +114,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("--help")) {
         println!(
-            "gg · good git\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good refs [PATH]      Print branches, remotes, tags, and HEAD as JSON\ngit-good status [PATH] [--file PATH --area AREA]   Print working status or diff as JSON\ngit-good stage --file PATH [--hunk HEADER]... [--repo PATH]   Stage one file or selected hunks\ngit-good unstage --file PATH [--repo PATH]   Unstage one file\ngit-good commit [--amend] [--sign|--no-sign] -m MESSAGE [--repo PATH]   Commit the index or amend HEAD after Git hooks\ngit-good reflog [REF] [--repo PATH]   Print reflog entries as JSON\ngit-good blame PATH [--revision REF] [--lines START,END] [--repo PATH]   Print line attribution as JSON\ngit-good worktree <list|add|remove> [OPTIONS] [--repo PATH]   List, add, or remove worktrees\ngit-good submodule <status|update> PATH [OPTIONS] [--repo PATH]   Inspect or update a gitlink submodule\ngit-good lfs <status|fetch> PATH [--area staged|unstaged|untracked|conflict] [--revision REF] [--before REF] [--repo PATH]   Inspect or fetch an LFS pointer\ngit-good signature <config|verify> [REF] [--repo PATH]   Read signing config or verify a commit/tag\ngit-good switch [--create] [--stash [--include-untracked]] BRANCH [--repo PATH]   Switch to or create a local branch, optionally stashing changes first\ngit-good fetch [REMOTE] [--prune] [--repo PATH]   Fetch and update remote-tracking refs\ngit-good push [REMOTE] [BRANCH] [--set-upstream] [--force-with-lease] [--repo PATH]   Push a local branch, with an explicit lease when rewriting\ngit-good clone URL [PATH]   Clone a repository and open it\ngit-good init [--branch NAME] [--commit] [PATH]   Create a repository, optionally committing the files already there\ngit-good stash <list|push|apply|pop|drop> [OPTIONS] [--repo PATH]   List or mutate stashes\ngit-good cherry-pick COMMIT [--repo PATH]   Apply a commit\ngit-good revert COMMIT [--repo PATH]   Invert a commit\ngit-good merge REF [--no-ff] [--repo PATH]   Merge a branch, remote, or tag\ngit-good rebase REF [--autostash] [--repo PATH]   Rebase the current branch onto a branch, remote, or tag\ngit-good rebase --continue|--skip|--abort [--repo PATH]   Recover an in-progress rebase\ngit-good rewrite --from COMMIT STEP... [--autostash] [--repo PATH]   Pick, reword, edit, squash, fixup, drop, or reorder a linear range (STEP: --pick|--edit|--squash|--fixup|--drop COMMIT, --reword COMMIT MESSAGE)\ngit-good rewrite --continue|--skip|--abort [--repo PATH]   Recover an in-progress rewrite\ngit-good conflicts [--repo PATH]   List unmerged paths\ngit-good conflict --file PATH [--use ours|theirs|deletion|--stage] [--repo PATH]   Read or resolve a conflict\ngit-good reset --soft|--mixed|--hard COMMIT [--repo PATH]   Reset the current branch\ngit-good branch --delete BRANCH [--force] [--repo PATH]   Delete a local branch\ngit-good branch --create NAME [--at REF] [--repo PATH]   Create a local branch without switching\ngit-good tag --delete TAG [--repo PATH]   Delete a local tag
+            "Git Good\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good refs [PATH]      Print branches, remotes, tags, and HEAD as JSON\ngit-good status [PATH] [--file PATH --area AREA]   Print working status or diff as JSON\ngit-good stage --file PATH [--hunk HEADER]... [--repo PATH]   Stage one file or selected hunks\ngit-good unstage --file PATH [--repo PATH]   Unstage one file\ngit-good commit [--amend] [--sign|--no-sign] -m MESSAGE [--repo PATH]   Commit the index or amend HEAD after Git hooks\ngit-good reflog [REF] [--repo PATH]   Print reflog entries as JSON\ngit-good blame PATH [--revision REF] [--lines START,END] [--repo PATH]   Print line attribution as JSON\ngit-good worktree <list|add|remove> [OPTIONS] [--repo PATH]   List, add, or remove worktrees\ngit-good submodule <status|update> PATH [OPTIONS] [--repo PATH]   Inspect or update a gitlink submodule\ngit-good lfs <status|fetch> PATH [--area staged|unstaged|untracked|conflict] [--revision REF] [--before REF] [--repo PATH]   Inspect or fetch an LFS pointer\ngit-good signature <config|verify> [REF] [--repo PATH]   Read signing config or verify a commit/tag\ngit-good switch [--create] [--stash [--include-untracked]] BRANCH [--repo PATH]   Switch to or create a local branch, optionally stashing changes first\ngit-good fetch [REMOTE] [--prune] [--repo PATH]   Fetch and update remote-tracking refs\ngit-good push [REMOTE] [BRANCH] [--set-upstream] [--force-with-lease] [--repo PATH]   Push a local branch, with an explicit lease when rewriting\ngit-good clone URL [PATH]   Clone a repository and open it\ngit-good init [--branch NAME] [--commit] [PATH]   Create a repository, optionally committing the files already there\ngit-good stash <list|push|apply|pop|drop> [OPTIONS] [--repo PATH]   List or mutate stashes\ngit-good cherry-pick COMMIT [--repo PATH]   Apply a commit\ngit-good revert COMMIT [--repo PATH]   Invert a commit\ngit-good merge REF [--no-ff] [--repo PATH]   Merge a branch, remote, or tag\ngit-good rebase REF [--autostash] [--repo PATH]   Rebase the current branch onto a branch, remote, or tag\ngit-good rebase --continue|--skip|--abort [--repo PATH]   Recover an in-progress rebase\ngit-good rewrite --from COMMIT STEP... [--autostash] [--repo PATH]   Pick, reword, edit, squash, fixup, drop, or reorder a linear range (STEP: --pick|--edit|--squash|--fixup|--drop COMMIT, --reword COMMIT MESSAGE)\ngit-good rewrite --continue|--skip|--abort [--repo PATH]   Recover an in-progress rewrite\ngit-good conflicts [--repo PATH]   List unmerged paths\ngit-good conflict --file PATH [--use ours|theirs|deletion|--stage] [--repo PATH]   Read or resolve a conflict\ngit-good reset --soft|--mixed|--hard COMMIT [--repo PATH]   Reset the current branch\ngit-good branch --delete BRANCH [--force] [--repo PATH]   Delete a local branch\ngit-good branch --create NAME [--at REF] [--repo PATH]   Create a local branch without switching\ngit-good tag --delete TAG [--repo PATH]   Delete a local tag
 git-good tag --create TAG --at REF -m MESSAGE [--sign] [--repo PATH]   Create an annotated or signed tag\ngit-good show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]   Review or export\n\nBrowse commits reachable from HEAD and all local, remote, and tag refs."
         );
         return Ok(());
@@ -269,7 +269,7 @@ git-good tag --create TAG --at REF -m MESSAGE [--sign] [--repo PATH]   Create an
     }
     let custom_titlebar = custom_titlebar(&settings::Prefs::load());
     eframe::run_native(
-        "gg · good git",
+        "Git Good",
         native_options(custom_titlebar, window_size, branding::icon()?.clone()),
         Box::new(move |cc| {
             phosphor::install(&cc.egui_ctx);
@@ -310,6 +310,8 @@ fn native_options(
 ) -> eframe::NativeOptions {
     eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
+            // The name docks and taskbars show (Wayland app ID, X11 class).
+            .with_app_id(native_menu::APP_NAME)
             .with_icon(icon)
             .with_inner_size(size)
             .with_min_inner_size([720.0, 480.0])
@@ -939,7 +941,7 @@ fn count_badge<'a>(count: u64) -> egui::Atom<'a> {
     })
 }
 
-/// The OS window title, as in the mockups: `gg — ~/path`, and the rebase
+/// The OS window title, as in the mockups: `Git Good — ~/path`, and the rebase
 /// step while one is stopped.
 fn window_title(
     path: &str,
@@ -954,7 +956,7 @@ fn window_title(
         },
         None => path.to_string(),
     };
-    let mut title = format!("gg — {shown}");
+    let mut title = format!("Git Good — {shown}");
     if let Some(progress) = rebase {
         let (step, total) = progress.position();
         if progress.stop == gg_engine::mutation::RebaseStop::Conflict {
@@ -1791,7 +1793,7 @@ struct Browser {
     caption_style: Option<titlebar::CaptionStyleFn>,
     /// macOS: the native menu bar, which hides the in-window menus.
     native_menu: Option<native_menu::NativeMenu<FrameCommand>>,
-    /// The larger logo drawn in About gg.
+    /// The larger logo drawn in About Git Good.
     about_logo: Option<egui::TextureHandle>,
     discard_confirm: bool,
     rename_dialog: Option<RenameDialog>,
@@ -1974,7 +1976,7 @@ impl Browser {
             welcome: welcome_view::Welcome::default(),
             new_repository: None,
             open_changes_after_load: false,
-            // Debug builds open About gg with `GG_ABOUT=1` for native review.
+            // Debug builds open About Git Good with `GG_ABOUT=1` for native review.
             about_open: cfg!(debug_assertions) && std::env::var_os("GG_ABOUT").is_some(),
             chrome: titlebar::Chrome::default(),
             caption_style: None,
@@ -2942,7 +2944,7 @@ impl Browser {
                                 &mut prefs.reopen_last,
                                 "Reopen the last repository when launched outside one",
                             );
-                            ui.weak("Without a path gg opens the current folder; when that is not a repository, the most recent one opens instead.");
+                            ui.weak("Without a path Git Good opens the current folder; when that is not a repository, the most recent one opens instead.");
                             ui.separator();
                             ui.strong("Fetch");
                             ui.checkbox(
@@ -3072,9 +3074,9 @@ impl Browser {
                                                 "Use the system title bar",
                                             )
                                             .on_hover_text(
-                                                "Off: gg's menu bar is the title bar, with its own window buttons.",
+                                                "Off: Git Good's menu bar is the title bar, with its own window buttons.",
                                             );
-                                            ui.weak("Takes effect when gg restarts.");
+                                            ui.weak("Takes effect when Git Good restarts.");
                                         });
                                         ui.end_row();
                                     }
@@ -3601,7 +3603,7 @@ impl Browser {
                     // Git was stopped mid-way and part of it may have run:
                     // re-read refs, history and status before Retry.
                     Some(label) if repository => format!(
-                        "{label} cancelled. gg re-read the repository; check what changed before retrying."
+                        "{label} cancelled. Git Good re-read the repository; check what changed before retrying."
                     ),
                     _ if force_push
                         && matches!(operation, Some(gg_engine::sync::Operation::Push)) =>
@@ -4943,7 +4945,7 @@ impl Browser {
                     let shown = window_title(&path.display().to_string(), home.as_deref(), None);
                     let missing = !path.exists();
                     item(
-                        format!("{name}   {}", shown.trim_start_matches("gg — ")),
+                        format!("{name}   {}", shown.trim_start_matches("Git Good — ")),
                         "",
                         FrameCommand::OpenRecent(path.clone()),
                     )
@@ -5039,7 +5041,7 @@ impl Browser {
         let mut table = Vec::new();
         if cfg!(target_os = "macos") {
             table.push(Menu {
-                title: "gg",
+                title: native_menu::APP_NAME,
                 entries: vec![
                     item("Settings…", "Cmd+,", FrameCommand::Preferences).entry(),
                     Entry::Separator,
@@ -5280,9 +5282,9 @@ impl Browser {
             entries: vec![
                 item("Keyboard shortcuts", "?", FrameCommand::Shortcuts).entry(),
                 item("Documentation", "", FrameCommand::Documentation)
-                    .hint("Open the gg README in the browser")
+                    .hint("Open the Git Good README in the browser")
                     .entry(),
-                item("About gg", "", FrameCommand::About).entry(),
+                item("About Git Good", "", FrameCommand::About).entry(),
             ],
         });
         table
@@ -6801,7 +6803,7 @@ impl Browser {
                     )
                 {
                     recovery.enabled = false;
-                    recovery.tip = "Wait for gg to re-read the repository".into();
+                    recovery.tip = "Wait for Git Good to re-read the repository".into();
                 }
                 message.buttons.push(recovery);
             }
@@ -9870,7 +9872,7 @@ impl Browser {
                     Err(std::sync::mpsc::TryRecvError::Empty) => break,
                     Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                         network_done =
-                            Some(Err("Network worker stopped. gg re-read the repository; check what changed before retrying.".into()));
+                            Some(Err("Network worker stopped. Git Good re-read the repository; check what changed before retrying.".into()));
                         break;
                     }
                 }
@@ -10210,7 +10212,7 @@ impl Browser {
                     format!("{}  ·  shallow", self.window_title)
                 }
                 Some(_) => self.window_title.clone(),
-                None => "gg — open a repository".into(),
+                None => "Git Good — open a repository".into(),
             };
             if let Some(read) = &self.caption_style {
                 self.chrome.style = read(ctx);
@@ -10723,9 +10725,11 @@ impl Browser {
                                 let row = ui.add(
                                     egui::Button::new((
                                         egui::RichText::new(name),
-                                        egui::RichText::new(shown.trim_start_matches("gg — "))
-                                            .small()
-                                            .weak(),
+                                        egui::RichText::new(
+                                            shown.trim_start_matches("Git Good — "),
+                                        )
+                                        .small()
+                                        .weak(),
                                     ))
                                     .frame_when_inactive(false)
                                     .truncate()
@@ -10893,7 +10897,7 @@ impl Browser {
                             let home = std::env::var("HOME").ok();
                             let shown = window_title(dialog.folder.trim(), home.as_deref(), None);
                             egui::ComboBox::from_id_salt("clone-folder")
-                                .selected_text(shown.trim_start_matches("gg — ").to_string())
+                                .selected_text(shown.trim_start_matches("Git Good — ").to_string())
                                 .width(260.0)
                                 .show_ui(ui, |ui| {
                                     for candidate in &candidates {
@@ -12344,7 +12348,7 @@ impl Browser {
                                     } else {
                                         ui.weak(format!(
                                             "Create or copy files into {}, then commit them.",
-                                            self.window_title.trim_start_matches("gg — ")
+                                            self.window_title.trim_start_matches("Git Good — ")
                                         ));
                                     }
                                 } else {
@@ -16478,7 +16482,7 @@ mod tests {
         let outcome = app.outcome.as_ref().ok_or("missing cancel outcome")?;
         assert_eq!(
             outcome.summary,
-            "Fetch from origin cancelled. gg re-read the repository; check what changed before retrying."
+            "Fetch from origin cancelled. Git Good re-read the repository; check what changed before retrying."
         );
         assert!(outcome.recovery == Some(RecoveryAction::RetryFetch));
         assert!(app.pending.is_some(), "refs and history are re-read");
@@ -18113,11 +18117,11 @@ mod tests {
     fn window_title_names_the_folder_and_a_stopped_rebase() {
         assert_eq!(
             window_title("/home/me/src/gg", Some("/home/me"), None),
-            "gg — ~/src/gg"
+            "Git Good — ~/src/gg"
         );
         assert_eq!(
             window_title("/home/meow/gg", Some("/home/me"), None),
-            "gg — /home/meow/gg"
+            "Git Good — /home/meow/gg"
         );
         let step = |id: char| gg_engine::mutation::RebaseStep {
             action: "pick".into(),
@@ -18133,12 +18137,12 @@ mod tests {
         };
         assert_eq!(
             window_title("/r", None, Some(&progress)),
-            "gg — /r — rebasing feature · step 2 of 4"
+            "Git Good — /r — rebasing feature · step 2 of 4"
         );
         progress.stop = gg_engine::mutation::RebaseStop::Conflict;
         assert_eq!(
             window_title("/r", None, Some(&progress)),
-            "gg — /r — rebase conflict · step 2 of 4"
+            "Git Good — /r — rebase conflict · step 2 of 4"
         );
     }
 
@@ -18246,7 +18250,7 @@ mod tests {
             })
             .collect::<Vec<_>>()
         };
-        let version = format!("gg {}", env!("CARGO_PKG_VERSION"));
+        let version = format!("Git Good {}", env!("CARGO_PKG_VERSION"));
         let wide = texts(&mut app, 1120.0);
         assert!(
             wide.iter().any(|text| text.starts_with(&version)),
@@ -18276,7 +18280,7 @@ mod tests {
         let mut app = Browser::new("/nowhere".into());
         let texts = welcome_texts(&ctx, &mut app, vec![]);
         for shown in [
-            "Welcome to gg",
+            "Welcome to Git Good",
             "Open a repository to see its history and changes.",
             "Repositories you open are listed here. Drop a folder on this window to open it.",
             "Clone folder:",
@@ -18595,7 +18599,7 @@ mod tests {
             assert_eq!(
                 titles,
                 [
-                    "gg",
+                    "Git Good",
                     "Repository",
                     "Branch",
                     "Commit",
@@ -18704,7 +18708,7 @@ mod tests {
         );
         assert_eq!(
             labels("Help"),
-            ["Keyboard shortcuts", "Documentation", "About gg"]
+            ["Keyboard shortcuts", "Documentation", "About Git Good"]
         );
     }
 
@@ -18771,7 +18775,7 @@ mod tests {
         assert_eq!(
             titles,
             [
-                "gg",
+                "Git Good",
                 "Repository",
                 "Branch",
                 "Commit",
@@ -18792,10 +18796,10 @@ mod tests {
         assert_eq!(
             app_menu,
             [
-                ("About gg".to_string(), None),
+                ("About Git Good".to_string(), None),
                 ("Settings…".to_string(), Some("Cmd+,".to_string())),
-                ("Hide gg".to_string(), Some("Cmd+H".to_string())),
-                ("Quit gg".to_string(), Some("Cmd+Q".to_string())),
+                ("Hide Git Good".to_string(), Some("Cmd+H".to_string())),
+                ("Quit Git Good".to_string(), Some("Cmd+Q".to_string())),
             ]
         );
         let command = |label: &str| {
@@ -18809,11 +18813,11 @@ mod tests {
         };
         assert_eq!(command("Settings…"), Some(FrameCommand::Preferences));
         assert_eq!(
-            command("Quit gg"),
+            command("Quit Git Good"),
             Some(FrameCommand::Quit),
-            "gg's own Quit"
+            "Git Good's own Quit"
         );
-        assert_eq!(command("About gg"), Some(FrameCommand::About));
+        assert_eq!(command("About Git Good"), Some(FrameCommand::About));
         // Every in-window item is there with its label, enablement and check.
         let native = layout.bar.items();
         for (_, item) in menus::flatten(&table) {
@@ -18987,13 +18991,13 @@ mod tests {
             .and_then(|bar| {
                 bar.items()
                     .into_iter()
-                    .find(|i| i.label == "About gg")
+                    .find(|i| i.label == "About Git Good")
                     .map(|i| i.id.clone())
             })
-            .ok_or("no About gg")?;
+            .ok_or("no About Git Good")?;
         fake.borrow_mut().events = vec![native_menu::Event::Click(about)];
         let _ = frame(&mut app);
-        assert!(app.about_open, "the click ran Help › About gg");
+        assert!(app.about_open, "the click ran Help › About Git Good");
         Ok(())
     }
 

@@ -14,13 +14,13 @@ pub fn icon() -> Result<&'static egui::IconData, String> {
         })
     })
     .as_ref()
-    .map_err(|error| format!("Load embedded gg icon: {error}"))
+    .map_err(|error| format!("Load embedded Git Good icon: {error}"))
 }
 
 /// The gg logo at `points` square, cached in `texture` per physical size.
 pub fn logo(ui: &mut egui::Ui, texture: &mut Option<egui::TextureHandle>, points: f32) {
     let Ok(icon) = icon() else {
-        ui.label("gg");
+        ui.label("Git Good");
         return;
     };
     let size = crate::thumbnails::physical_size(points, ui.ctx().pixels_per_point());
@@ -33,7 +33,7 @@ pub fn logo(ui: &mut egui::Ui, texture: &mut Option<egui::TextureHandle>, points
             &icon.rgba,
         );
         *texture = Some(ui.ctx().load_texture(
-            "gg icon",
+            "Git Good icon",
             crate::thumbnails::resize(&source, size),
             egui::TextureOptions::LINEAR,
         ));
@@ -44,12 +44,12 @@ pub fn logo(ui: &mut egui::Ui, texture: &mut Option<egui::TextureHandle>, points
     ui.add(
         egui::Image::new(texture)
             .fit_to_exact_size(egui::vec2(points, points))
-            .alt_text("gg · good git"),
+            .alt_text("Git Good"),
     )
-    .on_hover_text("gg · good git");
+    .on_hover_text("Git Good");
 }
 
-/// Version, license, and authors for About gg. Authors are the people who
+/// Version, license, and authors for About Git Good. Authors are the people who
 /// wrote gg; tools used along the way are named in the note instead.
 pub struct About {
     pub version: &'static str,
@@ -75,17 +75,17 @@ pub fn about() -> About {
             .split(':')
             .filter(|name| !name.is_empty())
             .collect(),
-        note: "Parts of gg were written with AI coding assistants. gg comes with no warranty; see the license.",
+        note: "Parts of Git Good were written with AI coding assistants. Git Good comes with no warranty; see the license.",
     }
 }
 
-/// Help › About gg in the dialog frame: title and × in the first row, the
+/// Help › About Git Good in the dialog frame: title and × in the first row, the
 /// logo, version and a label grid with the build facts, then the footer
 /// with **Copy version info** and **Close**. Returns true when it closes.
 pub fn show_about(ctx: &egui::Context, texture: &mut Option<egui::TextureHandle>) -> bool {
     let about = about();
     let mut close = false;
-    egui::Window::new("About gg")
+    egui::Window::new("About Git Good")
         .id(egui::Id::unique("about-gg"))
         .title_bar(false)
         .collapsible(false)
@@ -95,7 +95,7 @@ pub fn show_about(ctx: &egui::Context, texture: &mut Option<egui::TextureHandle>
         .show(ctx, |ui| {
             ui.set_width(360.0);
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("About gg").size(16.0));
+                ui.label(egui::RichText::new("About Git Good").size(16.0));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     close |= ui.button("×").on_hover_text("Close (Esc)").clicked();
                 });
@@ -103,7 +103,7 @@ pub fn show_about(ctx: &egui::Context, texture: &mut Option<egui::TextureHandle>
             ui.separator();
             ui.vertical_centered(|ui| {
                 logo(ui, texture, 96.0);
-                ui.heading("gg · good git");
+                ui.heading("Git Good");
                 ui.weak(format!("Version {}", about.version));
             });
             ui.add_space(8.0);
@@ -153,7 +153,7 @@ impl About {
     /// plain text for bug reports.
     pub fn version_info(&self) -> String {
         format!(
-            "gg {}\ncommit {}\nbuilt {}\ntarget {}",
+            "Git Good {}\ncommit {}\nbuilt {}\ntarget {}",
             self.version, self.commit, self.built, self.target
         )
     }
@@ -168,7 +168,7 @@ mod tests {
         let info = about().version_info();
         let lines = info.lines().collect::<Vec<_>>();
         assert_eq!(lines.len(), 4, "{info}");
-        assert_eq!(lines[0], format!("gg {}", env!("CARGO_PKG_VERSION")));
+        assert_eq!(lines[0], format!("Git Good {}", env!("CARGO_PKG_VERSION")));
         assert!(lines[1].starts_with("commit ") && lines[1].len() > "commit ".len());
         let date = lines[2].trim_start_matches("built ");
         assert_eq!(date.len(), 10, "{date}");

@@ -463,7 +463,7 @@ impl RecoveryView {
                 close = self.header(ui, references);
                 match self.source {
                     RecoverySource::Backups => {
-                        ui.weak("Saved by gg before each rebase, amend or rewrite. Hidden from the refs sidebar.");
+                        ui.weak("Saved by Git Good before each rebase, amend or rewrite. Hidden from the refs sidebar.");
                         self.backup_list(ui, list_height);
                     }
                     RecoverySource::Reflog => self.reflog_list(ui, list_height),
@@ -558,7 +558,7 @@ impl RecoveryView {
                         ui,
                         height,
                         "No rewrite backups yet.",
-                        Some("gg saves one before every rebase, amend or rewrite."),
+                        Some("Git Good saves one before every rebase, amend or rewrite."),
                     );
                 }
                 return;
@@ -1028,7 +1028,7 @@ impl RecoveryView {
                             inspect_ui::short(commit)
                         ),
                     });
-                    ui.weak("Only gg's private ref is removed. The commit stays while a branch, tag, or the reflog still reaches it.");
+                    ui.weak("Only Git Good's private ref is removed. The commit stays while a branch, tag, or the reflog still reaches it.");
                 },
             ),
         };
@@ -1400,7 +1400,7 @@ mod tests {
         assert_eq!(run(dir.path(), &["rev-parse", "HEAD"])?, next);
         for expected in [
             "No rewrite backups yet.",
-            "gg saves one before every rebase, amend or rewrite.",
+            "Git Good saves one before every rebase, amend or rewrite.",
         ] {
             assert!(has(&text, expected), "missing {expected}: {text:?}");
         }

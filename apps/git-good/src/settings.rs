@@ -857,7 +857,7 @@ mod tests {
         assert!(prefs.network_avatars);
         assert!(prefs.branch_switch, "absent keys keep their defaults");
         assert!(prefs.details_visible);
-        assert!(!prefs.system_title_bar, "gg's title bar by default");
+        assert!(!prefs.system_title_bar, "Git Good's title bar by default");
         assert_eq!(prefs.sign_commits, SignCommits::Git);
         assert_eq!(
             prefs.diff_layout,

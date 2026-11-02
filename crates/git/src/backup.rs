@@ -228,7 +228,7 @@ pub fn delete(path: &Path, reference: &str) -> Result<(), String> {
         .strip_prefix("refs/gg/backup/")
         .is_some_and(|rest| !rest.is_empty() && !rest.split('/').any(|part| part == ".."));
     if !valid {
-        return Err(format!("{reference} is not a gg backup."));
+        return Err(format!("{reference} is not a Git Good backup."));
     }
     let output = run(path, &["update-ref".into(), "-d".into(), reference.into()])?;
     if !output.status.success() {
