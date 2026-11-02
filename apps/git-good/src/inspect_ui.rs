@@ -371,7 +371,8 @@ pub fn table_row(
     if selected {
         ui.painter()
             .rect_filled(rect, 3.0, Color32::from_rgb(14, 58, 79));
-    } else if response.hovered() {
+    } else if ui.rect_contains_pointer(rect) {
+        // Also under a cell's tooltip text, which takes the hover itself.
         ui.painter()
             .rect_filled(rect, 3.0, Color32::from_rgb(44, 44, 44));
     }
@@ -392,6 +393,9 @@ pub fn table_row(
                 .layout(egui::Layout::left_to_right(egui::Align::Center)),
         );
         child.set_clip_rect(cell.intersect(ui.clip_rect()));
+        // The row takes the pointer: selectable text in a cell would take
+        // clicks and hover from it.
+        child.style_mut().interaction.selectable_labels = false;
         uis.push(child);
         x = right + 10.0;
     }
