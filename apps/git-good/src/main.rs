@@ -88,6 +88,7 @@ mod submodule_worker;
 mod submodules_view;
 mod sync_cli;
 mod tag_cli;
+mod target_guard;
 mod thumbnails;
 mod titlebar;
 mod watcher;
