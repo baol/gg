@@ -19,5 +19,15 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 wgpu = { version = "30", default-features = false, features = ["vulkan", "metal", "dx12", "gles"] }
 notify = "8"
+
+# The macOS menu bar (mac_menu.rs): muda is a standalone native menu crate
+# (from the tauri-apps org, but not Tauri: no webview, no JS), AppKit menus
+# behind a safe API. objc2 and objc2-app-kit read AppKit's current event (key
+# equivalent or click) and hide the app; already in Cargo.lock. Pinned
+# exactly, as photocraft pins them: review the diff before bumping.
+[target.'cfg(target_os = "macos")'.dependencies]
+muda = { version = "=0.21.2", default-features = false }
+objc2 = "=0.6.5"
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSApplication", "NSEvent", "NSResponder"] }
 [lints]
 workspace = true

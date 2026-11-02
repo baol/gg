@@ -542,6 +542,9 @@ pub struct Prefs {
     pub show_invisibles: bool,
     /// The reader wraps long lines instead of scrolling sideways.
     pub wrap_lines: bool,
+    /// Windows and Linux: keep the system's title bar instead of gg's menu
+    /// bar being the title bar; read at launch.
+    pub system_title_bar: bool,
     path: Option<PathBuf>,
 }
 
@@ -584,6 +587,7 @@ impl Default for Prefs {
             diff_whitespace: Whitespace::All,
             show_invisibles: true,
             wrap_lines: false,
+            system_title_bar: false,
             path: None,
         }
     }
@@ -647,6 +651,7 @@ impl Prefs {
             diff_whitespace: read(path, "diff_whitespace").unwrap_or(defaults.diff_whitespace),
             show_invisibles: read(path, "show_invisibles").unwrap_or(defaults.show_invisibles),
             wrap_lines: read(path, "wrap_lines").unwrap_or(defaults.wrap_lines),
+            system_title_bar: read(path, "system_title_bar").unwrap_or(defaults.system_title_bar),
             path: Some(path.to_path_buf()),
         }
     }
@@ -693,7 +698,8 @@ impl Prefs {
         write(path, "diff_context", &self.diff_context)?;
         write(path, "diff_whitespace", &self.diff_whitespace)?;
         write(path, "show_invisibles", &self.show_invisibles)?;
-        write(path, "wrap_lines", &self.wrap_lines)
+        write(path, "wrap_lines", &self.wrap_lines)?;
+        write(path, "system_title_bar", &self.system_title_bar)
     }
 
     /// The comparison options Diff mode reads with.
@@ -830,6 +836,7 @@ mod tests {
         prefs.diff_whitespace = Whitespace::IgnoreAtEol;
         prefs.show_invisibles = false;
         prefs.wrap_lines = true;
+        prefs.system_title_bar = true;
         prefs.save()?;
         assert_eq!(Prefs::load_from(&path), prefs);
         assert_eq!(read::<u32>(&path, "future_option"), Some(7));
@@ -850,6 +857,7 @@ mod tests {
         assert!(prefs.network_avatars);
         assert!(prefs.branch_switch, "absent keys keep their defaults");
         assert!(prefs.details_visible);
+        assert!(!prefs.system_title_bar, "gg's title bar by default");
         assert_eq!(prefs.sign_commits, SignCommits::Git);
         assert_eq!(
             prefs.diff_layout,

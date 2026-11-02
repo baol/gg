@@ -8,3 +8,9 @@ Licensed under MIT OR Apache-2.0; used here under Apache-2.0.
 Adapted from photocraft's egui menu bar (crates/ui-egui/src/menus/):
 - menu_keys.rs and menu_keys/harness_tests.rs → apps/git-good/src/menu_keys.rs, apps/git-good/src/menu_tests.rs
 - menu_nav.rs and menu_nav/tests.rs → apps/git-good/src/menu_nav.rs, apps/git-good/src/menu_tests.rs
+Adapted from photocraft's window frame and macOS menu bar:
+- crates/ui-egui/src/panels/titlebar.rs (with its tests) and crates/ui-egui/src/panels/title_bar.rs → apps/git-good/src/titlebar.rs, apps/git-good/src/titlebar/tests.rs
+- apps/photocraft/src/caption_style.rs → apps/git-good/src/caption_style.rs
+- crates/ui-egui/src/menus/native_menu.rs (with its tests) → apps/git-good/src/native_menu.rs, apps/git-good/src/native_menu/tests.rs
+- apps/photocraft/src/mac_menu.rs → apps/git-good/src/mac_menu.rs
+Each adapted file starts with an "Adapted from photocraft <path>" line.

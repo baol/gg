@@ -144,7 +144,7 @@ Covered by (interaction): `window_title_names_the_folder_and_a_stopped_rebase` (
 Fixture: `fx-linear`, `fx-shallow`
 Layer: visual
 - When opened at 1440 px
-- Then the menu bar's right-aligned identity equals the OS title text; for `fx-shallow` it adds `· shallow`; the branch name is not repeated there
+- Then the menu bar's identity (right-aligned with the system title bar, centred in the free gap with gg's, FRM-84) equals the OS title text; for `fx-shallow` it adds `· shallow`; the branch name is not repeated there
 Covered by (interaction, partial): `the_branch_and_its_tracking_show_only_on_the_branch_button` (apps/git-good/src/main.rs) — branch not repeated; shallow suffix Not automated
 
 ### FRM-13 Failed repository switch keeps the displayed repository
@@ -178,14 +178,14 @@ Covered by (interaction, partial): `menus_follow_the_final_design_mockup`, `comm
 ### FRM-18 macOS gg menu moves Settings and Quit
 Fixture: `fx-linear` on macOS
 Layer: visual
-- Then **gg** holds **Settings…** (`Cmd+,`) and **Quit** (`Cmd+Q`); **Repository** does not end with Preferences…/Quit
+- Then **gg** holds **Settings…** (`Cmd+,`) and **Quit** (`Cmd+Q`); **Repository** does not end with Preferences…/Quit; the native menu bar shows it as the app menu (FRM-88)
 Covered by (interaction): `menus_follow_the_final_design_mockup` (apps/git-good/src/main.rs, macOS branch)
 
 ### FRM-19 Menus are in-window egui menus with uniform rows
 Fixture: `fx-linear`
 Layer: visual
 - When **View** is opened and the pointer moves to **Help**
-- Then Help opens without a second click; rows are 24 px with a 14 px check column, label, shortcut; the active item (current view, current density) shows a checkmark and no selected fill; no native OS menu bar entries appear
+- Then Help opens without a second click; rows are 24 px with a 14 px check column, label, shortcut; the active item (current view, current density) shows a checkmark and no selected fill; on Windows and Linux no native OS menu bar entries appear (macOS: FRM-88)
 Covered by (interaction): `checked_rows_show_a_checkmark_and_no_selected_fill` (apps/git-good/src/menus.rs); `moving_onto_another_title_switches_the_open_menu_and_a_click_closes_it` (apps/git-good/src/menu_tests.rs)
 
 ### FRM-20 Submodules… and LFS… are real windows
@@ -587,6 +587,43 @@ Layer: interaction
 - When the user selects file B while file A's diff is shown, switches repository while History shows `fx-linear`, and moves the History selection quickly
 - Then in every frame each pane's label (file path and endpoints, window title and identity, commit header) names the content shown: the old label with the old content until the new content arrives, then both change in the same frame; never a new label over old rows
 Covered by (interaction, partial): `selection_keeps_displayed_diff_until_replacement_arrives`, `pending_endpoint_labels_wait_for_matching_content` (apps/git-good/src/diff_view.rs), `failed_switch_keeps_displayed_identity_and_retry_adopts_new_repository` (apps/git-good/src/interaction_tests.rs); the hold during a successful repository switch is Not automated
+
+### FRM-84 The menu bar is the title bar on Windows and Linux
+Fixture: `fx-linear`, 720, 1120 and 1440 px, Windows or Linux, Use the system title bar off
+Layer: interaction
+- When the window is shown
+- Then the window has no OS decorations; the 26 px menu bar holds the menus at the left, the window identity centred on the window in the free gap (slid toward the menus, then shortened, when it does not fit), and minimize, maximize/restore and close buttons at the end the desktop's layout names; no menu title or identity overlaps a caption button
+- And Close runs **Repository › Quit**; Maximize reads Restore while maximized
+Covered by (interaction): `gg_draws_the_title_bar_with_menus_identity_and_caption_buttons` (apps/git-good/src/main.rs), `caption_buttons_take_the_right_end_and_nothing_overlaps_them`, `the_identity_is_centred_in_the_free_gap`, `close_runs_quit_and_the_others_follow_the_window_state` (apps/git-good/src/titlebar/tests.rs)
+
+### FRM-85 Only the free gap moves the window; the edges resize it
+Fixture: `fx-linear`, 1440 px, gg's title bar
+Layer: interaction
+- When the primary button drags the gap between the menus and the caption buttons (the identity included), double-clicks it, drags a menu title, and presses within 8 px of a window edge (12 px at a corner)
+- Then the gap starts an OS move and a double-click maximizes or restores; a menu title keeps its press; an edge starts an OS resize in its direction with a one-sided resize cursor; a maximized window has no resize zones; after an OS move or resize whose release the compositor kept, the next press works
+Covered by (interaction): `empty_bar_space_drags_and_double_click_maximizes`, `edge_zones_resize_unless_maximized`, `after_an_os_resize_the_edge_hovers_and_shows_its_cursor_again`, `after_an_os_move_the_bar_and_the_edges_take_the_next_press`, `a_release_the_os_sends_is_not_doubled` (apps/git-good/src/titlebar/tests.rs)
+
+### FRM-86 Caption buttons follow the desktop
+Fixture: `fx-linear` on Windows, GNOME, KDE and another Linux desktop
+Layer: interaction
+- When the window is shown
+- Then Windows shows 46 px full-height buttons at the right, Close red on hover; GNOME shows libadwaita's round buttons in its `button-layout` order (default: Close only, at the right); KDE shows Breeze's in KWin's order; other desktops show plain round buttons in `gtk-decoration-layout` order (Adwaita's or Breeze's under those GTK themes); round buttons also drag the window; `GG_CAPTION_STYLE` and `GG_CAPTION_LAYOUT` override what is found
+Covered by (interaction, partial): `gtk_layouts_pick_the_buttons_and_their_sides`, `linux_buttons_sit_where_the_layout_says_and_drag_the_window`, `only_sides_with_buttons_take_room` (apps/git-good/src/titlebar/tests.rs), `the_desktop_comes_from_the_first_variable_set`, `the_family_follows_the_desktop_then_the_gtk_theme`, `kwin_button_letters_become_a_gtk_layout`, `layouts_and_overrides_resolve_to_a_style`, `settings_files_are_read_from_the_config_dir` (apps/git-good/src/caption_style.rs); reading GNOME's setting from a live desktop is Not automated
+
+### FRM-87 Use the system title bar
+Fixture: `fx-linear`, Windows or Linux
+Layer: interaction
+- When **Preferences › Appearance › Use the system title bar** is turned on and gg restarts
+- Then the window has the OS title bar and frame; the menu bar shows the menus and the right-aligned identity, no caption buttons, no drag gap and no resize zones; the choice is saved in `settings.json` (`system_title_bar`, off by default); macOS has no such preference
+Covered by (interaction): `the_system_title_bar_preference_keeps_the_window_decorations`, `preferences_search_keeps_sections_with_a_match` (apps/git-good/src/main.rs), `the_system_title_bar_keeps_the_identity_at_the_right_and_no_buttons` (apps/git-good/src/titlebar/tests.rs), `round_trips_and_keeps_unknown_keys` (apps/git-good/src/settings.rs)
+
+### FRM-88 macOS menu bar
+Fixture: `fx-linear` on macOS
+Layer: interaction
+- When the window is shown
+- Then the screen's menu bar holds **gg** (About gg · Settings… `⌘,` · Services · Hide gg `⌘H` · Hide Others · Show All · Quit gg `⌘Q`), **Repository · Branch · Commit · Changes · View** with the in-window items, labels, shortcuts, enablement and checks, **Window** (Minimize · Zoom · Bring All to Front) and **Help** with the system search; the window has no in-window menu bar and the toolbar is its top row
+- And a key equivalent reaches gg as the key press it was (text fields keep ⌘C, ⌘X, ⌘V, ⌘A and ⌘Z, which are not key equivalents); a click runs the command as the in-window menu does; a new Open recent entry rebuilds the menu, other changes update it in place; a system key gg binds moves Hide to ⌃⌘H and Minimize to ⌃⌘M
+Covered by (interaction, partial): `the_mac_menu_bar_comes_from_the_command_table`, `selection_changes_update_the_mac_menu_in_place`, `the_native_menu_bar_replaces_the_in_window_menus` (apps/git-good/src/main.rs), `key_equivalents_reach_egui_as_key_presses_and_clicks_run_commands`, `clashes_with_system_keys_are_resolved_in_ggs_favour`, `gg_shortcuts_become_the_key_presses_egui_sees` (apps/git-good/src/native_menu/tests.rs); AppKit itself (muda) is Not automated
 
 ## History and refs
 
