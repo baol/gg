@@ -669,6 +669,21 @@ use recovery_view::RecoveryView;
 /// history, so it shows as soon as its first page arrives. A reload after
 /// the user's own command (`asked`) shows even under the pointer, still at
 /// its old top row.
+/// The reason Git gave for refusing, from its last `fatal:` or `error:`
+/// line, such as *'feature' is already used by worktree at '/src/x'*.
+fn git_reason(output: &str) -> Option<&str> {
+    output
+        .lines()
+        .rev()
+        .find_map(|line| {
+            let line = line.trim();
+            line.strip_prefix("fatal:")
+                .or_else(|| line.strip_prefix("error:"))
+        })
+        .map(str::trim)
+        .filter(|reason| !reason.is_empty())
+}
+
 fn accept_history_now(
     safe: bool,
     shown: bool,
@@ -9833,8 +9848,12 @@ impl Browser {
                                 operation_band::plural(count, "changed file")
                             ),
                             _ if dirty => "changed files would be overwritten".into(),
-                            _ => error.lines().next().unwrap_or_default().to_string(),
+                            _ => git_reason(&error)
+                                .unwrap_or_else(|| error.lines().next().unwrap_or_default())
+                                .to_string(),
                         };
+                        // Git's full output stays readable behind Details….
+                        let details = error.contains('\n').then(|| error.clone());
                         let summary = match &created {
                             Some(branch) => {
                                 format!("Created {branch} but can’t switch to it: {reason}")
@@ -9850,7 +9869,12 @@ impl Browser {
                             // The new branch still has to appear.
                             self.load(ctx);
                         }
-                        self.set_outcome(OutcomeSeverity::Warning, summary, None, Some(recovery));
+                        self.set_outcome(
+                            OutcomeSeverity::Warning,
+                            summary,
+                            details,
+                            Some(recovery),
+                        );
                     } else {
                         self.branch_error = Some(error);
                     }
@@ -17914,6 +17938,67 @@ mod tests {
                 .any(|item| item.full_name == "refs/heads/feature"),
             "the new branch is listed"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn git_reason_reads_the_last_fatal_or_error_line() {
+        assert_eq!(
+            git_reason(
+                "Branch switch failed (exit status: 128). Review the current branch and hook output before retrying.\nfatal: 'x' is already used by worktree at '/w'"
+            ),
+            Some("'x' is already used by worktree at '/w'")
+        );
+        assert_eq!(
+            git_reason("hint: a\nerror: first\nfatal: last"),
+            Some("last")
+        );
+        assert_eq!(git_reason("Branch switch failed (exit status: 1)."), None);
+        assert_eq!(git_reason("fatal:   "), None);
+    }
+
+    #[test]
+    fn a_refused_switch_shows_gits_reason() -> Checked {
+        let ctx = egui::Context::default();
+        let (dir, mut app) = two_commits()?;
+        let path = dir.path();
+        let other = tempfile::tempdir()?;
+        let worktree = other.path().join("onion");
+        git_in(
+            path,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "onion",
+                &worktree.to_string_lossy(),
+            ],
+        )?;
+        app.load(&ctx);
+        frames_until(&ctx, &mut app, vec![], |app, _| app.pending.is_none())?;
+        app.start_branch(&ctx, "onion".into(), false);
+        frames_until(&ctx, &mut app, vec![], |app, _| app.branch.is_none())?;
+        let outcome = app.outcome.as_ref().ok_or("no outcome")?;
+        assert!(
+            outcome.summary.starts_with("Can’t switch to onion: ")
+                && outcome.summary.contains("worktree"),
+            "the summary gives Git's reason: {}",
+            outcome.summary
+        );
+        assert!(
+            !outcome.summary.contains("exit status"),
+            "{}",
+            outcome.summary
+        );
+        assert!(
+            outcome
+                .details
+                .as_deref()
+                .is_some_and(|details| details.contains("fatal:")),
+            "Git's output is behind Details…"
+        );
+        assert_eq!(git_in(path, &["symbolic-ref", "HEAD"])?, "refs/heads/main");
         Ok(())
     }
 
