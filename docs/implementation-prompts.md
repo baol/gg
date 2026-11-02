@@ -1,6 +1,6 @@
 # Implementation and verification prompts
 
-Purpose: provide ready-to-dispatch subagent assignments for the coherent native gg interface, with dependencies and independent acceptance gates.
+Purpose: provide ready-to-dispatch subagent assignments for the coherent native Git Good interface, with dependencies and independent acceptance gates.
 
 These prompts implement the [coherence proposal](ui-coherence.md). They are future assignments, not implementation evidence. The user's required Local Changes layout is **Unstaged upper left; Staged lower left; selected diff right; commit/amend lower right**.
 

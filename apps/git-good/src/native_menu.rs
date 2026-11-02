@@ -6,9 +6,9 @@
 //!
 //! Pure and platform-free, so it is tested everywhere; only the backend
 //! touches AppKit. What the layout does ([`mac_layout`]):
-//! - an **app menu** named gg: About gg (from Help), Settings… (Repository ›
-//!   Preferences, `Cmd+,`), Services, Hide gg, Hide Others, Show All and
-//!   Quit gg (gg's own Quit);
+//! - an **app menu** named Git Good: About Git Good (from Help), Settings… (Repository ›
+//!   Preferences, `Cmd+,`), Services, Hide Git Good, Hide Others, Show All and
+//!   Quit Git Good (Git Good's own Quit);
 //! - a **Window** menu with Minimize, Zoom and Bring All to Front, and the
 //!   **Help** menu gets the system search field;
 //! - **clashes** with the system's keys (⌘H, ⌘M, ⌘,, ⌘Q) are resolved in
@@ -31,7 +31,7 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use crate::menus;
 use eframe::egui::{self, Key, Modifiers};
 
-pub const APP_NAME: &str = "gg";
+pub const APP_NAME: &str = "Git Good";
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct MenuBar {
@@ -100,7 +100,7 @@ pub enum Standard {
     BringAllToFront,
 }
 
-/// Hide gg: a custom item, as the predefined one always takes ⌘H.
+/// Hide Git Good: a custom item, as the predefined one always takes ⌘H.
 pub const HIDE: &str = "app.hide";
 /// Minimize: a custom item, used when gg binds ⌘M itself.
 pub const MINIMIZE: &str = "window.minimize";
@@ -489,7 +489,7 @@ pub fn mac_layout(bar: &MenuBar) -> Layout {
         menu.push(Node::Item(quit));
     }
 
-    // A menu emptied by the moves goes away (gg's in-window "gg" menu on
+    // A menu emptied by the moves goes away (gg's in-window "Git Good" menu on
     // macOS); Help stays, it has the search field.
     for m in &mut bar.menus {
         m.children = tidy(std::mem::take(&mut m.children));
@@ -672,7 +672,7 @@ impl<C: Clone> NativeMenu<C> {
         if !self.logged {
             for clash in &layout.clashes {
                 eprintln!(
-                    "menu: {} is {} on macOS and {} in gg; {}",
+                    "menu: {} is {} on macOS and {} in Git Good; {}",
                     clash.shortcut, clash.system, clash.command, clash.resolution
                 );
             }

@@ -22,7 +22,7 @@ use crate::menu_nav::Nav;
 /// View takes I and nothing takes A or V: Alt+A opens the commit actions and
 /// Alt+V pages up in the reading views ([`TOP_RESERVED`]).
 pub const TOP_PREFERRED: [(&str, char); 7] = [
-    ("gg", 'G'),
+    ("Git Good", 'G'),
     ("Repository", 'R'),
     ("Branch", 'B'),
     ("Commit", 'C'),
@@ -469,7 +469,10 @@ mod tests {
             top_mnemonics(&titles),
             "RBCNIH".chars().map(Some).collect::<Vec<_>>()
         );
-        assert_eq!(top_mnemonics(&["gg", "Repository"]), [Some('G'), Some('R')]);
+        assert_eq!(
+            top_mnemonics(&["Git Good", "Repository"]),
+            [Some('G'), Some('R')]
+        );
         // Without preferences the reserved letters are still skipped.
         assert_eq!(
             assign(&["Apply", "View"], &[], &TOP_RESERVED),

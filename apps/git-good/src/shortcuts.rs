@@ -296,7 +296,7 @@ mod tests {
             },
             Menu {
                 title: "Help",
-                entries: vec![item("About gg", "", 4).entry()],
+                entries: vec![item("About Git Good", "", 4).entry()],
             },
         ]
     }

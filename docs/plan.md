@@ -109,7 +109,7 @@ Differences between the [final design](final-design.md) and what shipped, plus p
 
 Design not yet implemented:
 
-1. **Shortcuts and menus · fixed.** A real 26 px menu bar; View lists Local Changes (`Ctrl+1`), History (`Ctrl+2`), Commit details (`Space`), and Refs sidebar (`Ctrl+\`), and the shortcuts work. Repository ends with Preferences and Quit; macOS has a gg menu with Settings… (`Cmd+,`) and Quit.
+1. **Shortcuts and menus · fixed.** A real 26 px menu bar; View lists Local Changes (`Ctrl+1`), History (`Ctrl+2`), Commit details (`Space`), and Refs sidebar (`Ctrl+\`), and the shortcuts work. Repository ends with Preferences and Quit; macOS has a Git Good menu with Settings… (`Cmd+,`) and Quit.
 2. **Stashes picker · fixed.** Rows show ref, message, branch, age, and file count in fixed slots; the picker keeps a fixed size.
 3. **Search · fixed.** A toolbar search field on wide windows (`Ctrl+K` focuses it), the icon on narrow ones, and a Files group that opens the latest commit changing the file in Review on that file.
 4. **Conflict stop · fixed.** Resolve conflicts opens in the main workspace under the operation area; Close or `Esc` returns.
@@ -130,7 +130,7 @@ Placeholder text in panes:
 
 ### Mockup alignment · reviewed 2026-10-30 · in progress
 
-Second pass comparing every Final-page board with the app. Done: the Changes reader's Unstaged | Staged toggle (decided: follow the mockup) and line selection bar with Clear, menus from one command table, About gg, rebase plan and stop wording, Changes group headers with Stage all/Unstage all, commit box wording, toolbar tooltips with shortcuts, the search placeholder, Blame and the ‹ › ⋯ reader buttons, refs sidebar groups, history pill order and colors, the History footer, the window title, and `[`/`]` between conflict blocks.
+Second pass comparing every Final-page board with the app. Done: the Changes reader's Unstaged | Staged toggle (decided: follow the mockup) and line selection bar with Clear, menus from one command table, About Git Good, rebase plan and stop wording, Changes group headers with Stage all/Unstage all, commit box wording, toolbar tooltips with shortcuts, the search placeholder, Blame and the ‹ › ⋯ reader buttons, refs sidebar groups, history pill order and colors, the History footer, the window title, and `[`/`]` between conflict blocks.
 
 Still to build (medium):
 

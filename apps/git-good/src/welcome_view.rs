@@ -250,7 +250,7 @@ impl Welcome {
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 2.0;
                 let title = if first_run {
-                    "Welcome to gg"
+                    "Welcome to Git Good"
                 } else {
                     "Open a repository"
                 };
@@ -259,7 +259,7 @@ impl Welcome {
                     ui.weak("Open a repository to see its history and changes.");
                 } else if !compact {
                     // The Git part fills in when read; the line is always there.
-                    let mut line = format!("gg {}", env!("CARGO_PKG_VERSION"));
+                    let mut line = format!("Git Good {}", env!("CARGO_PKG_VERSION"));
                     if let Some(git) = self.git_version() {
                         line.push_str(&format!(" · Git {git}"));
                     }

@@ -1,6 +1,6 @@
 # User flows and UI mockups
 
-Purpose: review gg's feature coverage and describe end-to-end desktop journeys, recovery states, and proposed M7 interfaces.
+Purpose: review Git Good's feature coverage and describe end-to-end desktop journeys, recovery states, and proposed M7 interfaces.
 
 Design review dated 2026-10-25. This document describes interaction design; it does not mark proposals as shipped. Behavior remains owned by [architecture](architecture.md), delivery order by [plan](plan.md), and release gates by [roadmap](../ROADMAP.md). The [interactive mockups](ui-mockups.html) use fictional repository data and simulate actions locally; they never execute Git.
 

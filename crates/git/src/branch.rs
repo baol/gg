@@ -119,7 +119,7 @@ pub fn switch_with_stash(
             "Local branch {branch} does not exist. Refresh refs or create it first."
         ));
     }
-    let message = format!("gg: switch to {branch}");
+    let message = format!("Git Good: switch to {branch}");
     let stash = crate::stash::push(path, Some(&message), include_untracked, false)?;
     let reference = stash
         .reference
