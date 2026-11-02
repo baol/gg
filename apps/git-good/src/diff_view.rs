@@ -187,8 +187,10 @@ impl Aim {
         });
         self.file = file;
         self.now = now;
-        // Reading keys may already have marked this frame as the user's motion.
-        self.moved |= scrolled || point != std::mem::replace(&mut self.point, point);
+        // Reading keys may already have marked this frame as the user's
+        // motion; the guard compares pointer positions itself.
+        self.moved |= scrolled;
+        self.point = point;
         self.pressed = pressed;
         self.hit = false;
     }
@@ -201,12 +203,16 @@ impl Aim {
         rect: egui::Rect,
         line: impl FnOnce() -> Line,
     ) -> crate::target_guard::Target {
-        if self.hit || !ui.rect_contains_pointer(rect) {
+        let Some(point) = self
+            .point
+            .filter(|_| !self.hit && ui.rect_contains_pointer(rect))
+        else {
             return crate::target_guard::Target::STILL;
-        }
+        };
         self.hit = true;
         let key = (self.file.0.clone(), self.file.1, line());
-        self.guard.hover(self.now, &key, self.moved, self.pressed)
+        self.guard
+            .hover(self.now, &key, point, self.moved, self.pressed)
     }
 
     fn end(&mut self, ctx: &egui::Context) {

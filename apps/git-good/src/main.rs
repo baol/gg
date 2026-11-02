@@ -12712,12 +12712,12 @@ impl Browser {
                         if let Some(offset) = self.restore_offset.take() {
                             scroll = scroll.vertical_scroll_offset(offset);
                         }
-                        // The user's own motion never starts the guard's grace.
+                        // Scrolls, drags and keys are the user's own motion; the
+                        // guard compares pointer positions itself.
                         let (now, moved, pressed, released) = ctx.input(|i| {
                             (
                                 i.time,
-                                i.pointer.delta() != egui::Vec2::ZERO
-                                    || i.smooth_scroll_delta != egui::Vec2::ZERO
+                                i.smooth_scroll_delta != egui::Vec2::ZERO
                                     || i.pointer.is_decidedly_dragging()
                                     || i.events.iter().any(|event| {
                                         matches!(event, egui::Event::Key { pressed: true, .. })
@@ -12749,11 +12749,16 @@ impl Browser {
                                         egui::vec2(ui.available_width(), crate::density::row()),
                                     );
                                     let mut target = target_guard::Target::STILL;
-                                    if ui.rect_contains_pointer(slot) {
+                                    if let Some(point) = ui
+                                        .ctx()
+                                        .pointer_hover_pos()
+                                        .filter(|_| ui.rect_contains_pointer(slot))
+                                    {
                                         hovered = true;
                                         let key = self.state.rows.get(&row).map(|c| c.id.clone());
-                                        target =
-                                            self.history_guard.hover(now, &key, moved, pressed);
+                                        target = self
+                                            .history_guard
+                                            .hover(now, &key, point, moved, pressed);
                                     }
                                     if let Some(commit) = self.state.rows.get(&row) {
                                         let mut refs = self

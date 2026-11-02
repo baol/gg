@@ -576,11 +576,11 @@ impl StatusView {
             self.lists.iter().enumerate().find_map(|(index, list)| {
                 list.rect.contains(point).then(|| {
                     let row = (point.y - list.rect.top() + list.offset) / crate::density::row();
-                    (index, row.max(0.0) as usize)
+                    (index, row.max(0.0) as usize, point)
                 })
             })
         });
-        self.under = at.map(|(index, row)| {
+        self.under = at.map(|(index, row, point)| {
             let list = &self.lists[index];
             let key = (
                 index,
@@ -589,7 +589,10 @@ impl StatusView {
                     .map(|entry| (entry.path_bytes.clone(), entry.area)),
             );
             let moved = moved || list.reveal;
-            ((index, row), self.guard.hover(now, &key, moved, pressed))
+            (
+                (index, row),
+                self.guard.hover(now, &key, point, moved, pressed),
+            )
         });
         if self.under.is_none() {
             self.guard.leave();
@@ -1388,7 +1391,7 @@ impl StatusView {
                 // shown on hover never shifts a press onto the next row.
                 let (_, rect) =
                     ui.allocate_space(egui::vec2(ui.available_width(), crate::density::row()));
-                let id = egui::Id::new(("working-row", index, row));
+                let id = egui::Id::unique(("working-row", index, row));
                 let response = ui.interact(rect, id, egui::Sense::click());
                 if list.selected_row == Some(row) {
                     let fill = if active {
@@ -2122,9 +2125,8 @@ impl StatusView {
         let (now, moved, pressed, released, point) = ctx.input(|i| {
             (
                 i.time,
-                i.pointer.delta() != egui::Vec2::ZERO
-                    || i.smooth_scroll_delta != egui::Vec2::ZERO
-                    || i.pointer.is_decidedly_dragging(),
+                // The guard compares pointer positions itself.
+                i.smooth_scroll_delta != egui::Vec2::ZERO || i.pointer.is_decidedly_dragging(),
                 i.pointer.primary_pressed(),
                 i.pointer.any_released(),
                 i.pointer.hover_pos(),
@@ -2559,7 +2561,10 @@ mod tests {
         view.staged = Some(update(10, 0, true));
         run_at(&ctx, &mut view, 1120.0, vec![], 1.0);
         assert!(view.lists[0].rows.contains_key(&2));
-        let (at, target) = view.under.expect("the pointer is over row 2");
+        assert!(view.under.is_some(), "the pointer is over row 2");
+        let Some((at, target)) = view.under else {
+            return;
+        };
         assert_eq!(at, (0, 2));
         assert_eq!(target.alpha, 0.0);
         assert!(!target.clickable);

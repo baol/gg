@@ -37,8 +37,9 @@ impl Target {
 /// frame, before acting on its click.
 #[derive(Debug)]
 pub struct Guard<K> {
-    /// What the pointer was over last frame.
+    /// What the pointer was over last frame, and where the pointer was.
     under: Option<K>,
+    point: Option<eframe::egui::Pos2>,
     /// When it last changed under a still pointer.
     changed: f64,
     /// What was under the pointer when the button went down.
@@ -57,6 +58,7 @@ impl<K> Default for Guard<K> {
     fn default() -> Self {
         Self {
             under: None,
+            point: None,
             changed: f64::NEG_INFINITY,
             press: Press::Up,
         }
@@ -64,10 +66,21 @@ impl<K> Default for Guard<K> {
 }
 
 impl<K: PartialEq + Clone> Guard<K> {
-    /// The row showing `key` is under the pointer at `now`. `moved` is true
-    /// when the user moved the pointer or scrolled this frame; `pressed` on
-    /// the frame the primary button went down.
-    pub fn hover(&mut self, now: f64, key: &K, moved: bool, pressed: bool) -> Target {
+    /// The row showing `key` is under the pointer at `point` at `now`.
+    /// `acted` is true when the user scrolled, dragged or pressed a reading
+    /// key this frame; a pointer at a new position counts as the user's own
+    /// motion too, compared here rather than by egui's delta, which reads
+    /// zero when the pointer comes back after leaving the window. `pressed`
+    /// is true on the frame the primary button went down.
+    pub fn hover(
+        &mut self,
+        now: f64,
+        key: &K,
+        point: eframe::egui::Pos2,
+        acted: bool,
+        pressed: bool,
+    ) -> Target {
+        let moved = acted || self.point.replace(point) != Some(point);
         match &self.under {
             Some(old) if old != key && !moved => {
                 self.changed = now;
@@ -98,6 +111,7 @@ impl<K: PartialEq + Clone> Guard<K> {
     /// Nothing of this list is under the pointer this frame.
     pub fn leave(&mut self) {
         self.under = None;
+        self.point = None;
         self.changed = f64::NEG_INFINITY;
         self.press = Press::Up;
     }
@@ -117,54 +131,70 @@ impl<K: PartialEq + Clone> Guard<K> {
 mod tests {
     use super::*;
 
+    const HERE: eframe::egui::Pos2 = eframe::egui::pos2(10.0, 10.0);
+    const THERE: eframe::egui::Pos2 = eframe::egui::pos2(10.0, 40.0);
+
     #[test]
     fn a_resting_row_is_still_and_clickable() {
         let mut guard = Guard::default();
-        assert_eq!(guard.hover(0.0, &"a", true, false), Target::STILL);
-        assert_eq!(guard.hover(1.0, &"a", false, false), Target::STILL);
+        assert_eq!(guard.hover(0.0, &"a", THERE, false, false), Target::STILL);
+        assert_eq!(guard.hover(1.0, &"a", HERE, false, false), Target::STILL);
     }
 
     #[test]
     fn moving_or_scrolling_onto_another_row_is_not_a_change() {
         let mut guard = Guard::default();
-        guard.hover(0.0, &"a", false, false);
-        assert_eq!(guard.hover(0.01, &"b", true, false), Target::STILL);
+        guard.hover(0.0, &"a", HERE, false, false);
+        assert_eq!(guard.hover(0.01, &"b", THERE, false, false), Target::STILL);
     }
 
     #[test]
     fn a_row_that_changes_under_a_still_pointer_fades_in_and_refuses_clicks_briefly() {
         let mut guard = Guard::default();
-        guard.hover(0.0, &"a", false, false);
-        let swapped = guard.hover(1.0, &"b", false, false);
+        guard.hover(0.0, &"a", HERE, false, false);
+        let swapped = guard.hover(1.0, &"b", HERE, false, false);
         assert_eq!(swapped.alpha, 0.0);
         assert!(!swapped.clickable);
-        let half = guard.hover(1.0 + FADE / 2.0, &"b", false, false);
+        let half = guard.hover(1.0 + FADE / 2.0, &"b", HERE, false, false);
         assert!(half.alpha > 0.4 && half.alpha < 0.6);
         assert!(!half.clickable);
         assert!(guard.animating(1.0 + FADE));
-        assert_eq!(guard.hover(1.0 + GRACE, &"b", false, false), Target::STILL);
+        assert_eq!(
+            guard.hover(1.0 + GRACE, &"b", HERE, false, false),
+            Target::STILL
+        );
         assert!(!guard.animating(1.0 + GRACE));
     }
 
     #[test]
     fn a_click_counts_only_on_the_row_that_was_pressed() {
         let mut guard = Guard::default();
-        guard.hover(0.0, &"a", false, true);
+        guard.hover(0.0, &"a", HERE, false, true);
         // The row swapped between press and release: that press is void,
         // even once the grace has passed.
-        assert!(!guard.hover(0.1, &"b", false, false).clickable);
-        assert!(!guard.hover(0.1 + GRACE, &"b", false, false).clickable);
+        assert!(!guard.hover(0.1, &"b", HERE, false, false).clickable);
+        assert!(!guard.hover(0.1 + GRACE, &"b", HERE, false, false).clickable);
         guard.release();
-        guard.hover(1.0, &"b", false, true);
-        assert!(guard.hover(1.05, &"b", false, false).clickable);
+        guard.hover(1.0, &"b", HERE, false, true);
+        assert!(guard.hover(1.05, &"b", HERE, false, false).clickable);
     }
 
     #[test]
     fn leaving_clears_the_grace_and_the_press() {
         let mut guard = Guard::default();
-        guard.hover(0.0, &"a", false, true);
-        guard.hover(0.1, &"b", false, false);
+        guard.hover(0.0, &"a", HERE, false, true);
+        guard.hover(0.1, &"b", HERE, false, false);
         guard.leave();
-        assert_eq!(guard.hover(0.15, &"b", true, false), Target::STILL);
+        assert_eq!(guard.hover(0.15, &"b", THERE, false, false), Target::STILL);
+    }
+
+    #[test]
+    fn coming_back_onto_another_row_after_leaving_the_window_is_not_a_change() {
+        let mut guard = Guard::default();
+        guard.hover(0.0, &"a", HERE, false, false);
+        // egui reports no delta here; the position still moved.
+        assert_eq!(guard.hover(0.01, &"b", THERE, false, false), Target::STILL);
+        // A scroll under a still pointer is the user's motion as well.
+        assert_eq!(guard.hover(0.02, &"c", THERE, true, false), Target::STILL);
     }
 }
