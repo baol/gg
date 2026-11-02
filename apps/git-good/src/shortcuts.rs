@@ -88,6 +88,7 @@ pub fn groups<C: Clone>(table: &[menus::Menu<C>]) -> Vec<Group> {
             }),
         }
     }
+    groups.push(menu_bar_group(table));
     groups.extend(SCOPES.iter().map(|(title, rows)| {
         Group {
             title: (*title).to_string(),
@@ -101,6 +102,36 @@ pub fn groups<C: Clone>(table: &[menus::Menu<C>]) -> Vec<Group> {
         }
     }));
     groups
+}
+
+/// The in-window menu bar's keys ([`crate::menu_keys`], [`crate::menu_nav`]),
+/// with each menu's Alt+letter from its title.
+fn menu_bar_group<C>(table: &[menus::Menu<C>]) -> Group {
+    let titles: Vec<&str> = table.iter().map(|menu| menu.title).collect();
+    let row = |key: &str, action: &str| Row {
+        key: key.to_string(),
+        action: action.to_string(),
+    };
+    let mut rows = vec![row(
+        "Alt  F10",
+        "Keyboard to the menu bar · ← → choose · ↓ open",
+    )];
+    for (title, key) in titles.iter().zip(crate::menu_keys::top_mnemonics(&titles)) {
+        if let Some(key) = key {
+            rows.push(row(&format!("Alt+{key}"), &format!("Open {title} menu")));
+        }
+    }
+    rows.extend([
+        row("↑ ↓", "Move in an open menu"),
+        row("← →", "Close or open a submenu · previous or next menu"),
+        row("Enter  Space", "Run the highlighted item"),
+        row("Letter", "Run the item with that underlined letter"),
+        row("Esc", "Close the menu"),
+    ]);
+    Group {
+        title: "Menu bar".to_string(),
+        rows,
+    }
 }
 
 /// Rows whose key or action contains `query` (case-insensitive); groups with
@@ -281,6 +312,7 @@ mod tests {
             titles,
             [
                 "Repository",
+                "Menu bar",
                 "History list",
                 "Changes list",
                 "Review",
@@ -290,6 +322,16 @@ mod tests {
             ],
             "a menu without keyed items is left out"
         );
+        let bar = &groups[1].rows;
+        assert!(
+            bar.iter()
+                .any(|row| row.key == "Alt+R" && row.action == "Open Repository menu")
+        );
+        assert!(
+            bar.iter()
+                .any(|row| row.key == "Alt+H" && row.action == "Open Help menu")
+        );
+        assert!(bar.iter().any(|row| row.key == "Alt  F10"));
         assert_eq!(
             groups[0].rows,
             [

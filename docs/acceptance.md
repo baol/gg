@@ -186,7 +186,7 @@ Fixture: `fx-linear`
 Layer: visual
 - When **View** is opened and the pointer moves to **Help**
 - Then Help opens without a second click; rows are 24 px with a 14 px check column, label, shortcut; the active item (current view, current density) shows a checkmark and no selected fill; no native OS menu bar entries appear
-Covered by (interaction): `checked_rows_show_a_checkmark_and_no_selected_fill` (apps/git-good/src/menus.rs)
+Covered by (interaction): `checked_rows_show_a_checkmark_and_no_selected_fill` (apps/git-good/src/menus.rs); `moving_onto_another_title_switches_the_open_menu_and_a_click_closes_it` (apps/git-good/src/menu_tests.rs)
 
 ### FRM-20 Submodules… and LFS… are real windows
 Fixture: `fx-linear`, `fx-submodule`
@@ -206,8 +206,36 @@ Covered by (interaction): `menu_bar_is_one_row_and_view_shortcuts_switch_views` 
 Fixture: `fx-linear`
 Layer: interaction
 - When **Help › Keyboard shortcuts** (`?`, list focused, or Preferences › Keyboard › **Show keyboard shortcuts…**), then `reword` is typed in **Filter shortcuts**, then **Edit keys…** is clicked; reopened, `Esc`
-- Then a non-modal window shows one key | action table generated from the command table, grouped by menu (Repository, Branch, Commit, Changes, View, Help) then by list scope (History list, Changes list, Review, Rebase list, Conflicts, Stashes), including `Ctrl+O`, `Ctrl+B`, `Ctrl+Shift+B/F/L/P/S/U/Z`, `Ctrl+1`, `Ctrl+2`, `Ctrl+\`, `F2`, `Ctrl+Enter` and `Ctrl+R` Reword… and no Refresh row; the filter keeps only rows whose key or action matches and hides empty groups; **Edit keys…** closes it and opens Preferences › Keyboard; `Esc` closes it. About gg is DLG-11
+- Then a non-modal window shows one key | action table generated from the command table, grouped by menu (Repository, Branch, Commit, Changes, View, Help), then the **Menu bar** keys (Alt or F10, each menu's Alt+letter, the open-menu keys), then by list scope (History list, Changes list, Review, Rebase list, Conflicts, Stashes), including `Ctrl+O`, `Ctrl+B`, `Ctrl+Shift+B/F/L/P/S/U/Z`, `Ctrl+1`, `Ctrl+2`, `Ctrl+\`, `F2`, `Ctrl+Enter` and `Ctrl+R` Reword… and no Refresh row; the filter keeps only rows whose key or action matches and hides empty groups; **Edit keys…** closes it and opens Preferences › Keyboard; `Esc` closes it. About gg is DLG-11
 Covered by (interaction): `help_shortcuts_window_renders`, `keyboard_shortcuts_come_from_the_command_table`, `keyboard_shortcuts_close_on_escape_and_edit_keys_opens_preferences` (apps/git-good/src/main.rs); `groups_follow_the_menus_then_the_list_scopes`, `the_filter_matches_keys_or_actions_and_hides_empty_groups`, `no_row_offers_refresh` (apps/git-good/src/shortcuts.rs)
+
+### FRM-80 The menu bar from the keyboard
+Fixture: `fx-linear` (Linux/Windows)
+Layer: interaction
+- When Alt is tapped, then Right, then Down; then Esc and `Alt+B`; then Alt is held while a key, a wheel turn, a click or a switch to another window happens; then `F10`, Space
+- Then the tap lights **Repository** with no menu open and the History shortcuts wait; Right lights **Branch** and Down opens it with its first row lit and the mnemonics underlined; `Alt+B` opens Branch at once; Alt with another key, the wheel, a click or a window switch is no tap (`Alt+A` still opens the commit actions, `Alt+V` still pages up: no menu takes A or V, View is `Alt+I`); `F10` lights Repository and Space leaves the bar opening nothing; a second tap, Esc or a click leaves the bar; a command shortcut such as `Ctrl+B` leaves it and runs; a focused text field types none of the letters the bar or an open menu took
+Covered by (interaction): `alt_focuses_the_bar_arrows_move_and_down_opens_the_lit_menu`, `f10_focuses_the_bar_and_enter_opens_the_lit_menu`, `alt_with_a_key_a_wheel_a_click_or_lost_focus_is_no_tap`, `a_held_alt_repeating_is_still_one_tap`, `a_second_alt_esc_space_or_a_click_takes_the_keyboard_off_the_bar`, `alt_with_a_letter_opens_that_menu_but_never_takes_alt_shortcuts`, `a_command_shortcut_leaves_the_bar_and_runs`, `a_focused_text_field_keeps_its_text_while_the_bar_or_a_menu_has_the_keys` (apps/git-good/src/menu_tests.rs); `top_letters_are_unique_conventional_and_avoid_alt_shortcuts` (apps/git-good/src/menu_keys.rs)
+
+### FRM-81 Mnemonics in open menus
+Fixture: `fx-linear` (Linux/Windows)
+Layer: interaction
+- When **Repository** is opened with the mouse, then Alt is held; then it is opened with `Alt+R` and a row's underlined letter is typed
+- Then a mouse-opened menu shows no underlines until Alt is held; each row's letter is unique in its menu level (word starts first); typing it runs the row, or opens its submenu with the first row lit; a disabled row's letter does nothing
+Covered by (interaction): `mnemonics_are_underlined_only_with_alt_or_a_keyboard_opened_menu`, `a_letter_in_an_open_menu_runs_the_row_with_that_mnemonic_or_opens_its_submenu` (apps/git-good/src/menu_tests.rs); `item_letters_take_word_starts_first_then_any_free_letter`, `underlined_text_marks_the_mnemonic_once` (apps/git-good/src/menu_keys.rs)
+
+### FRM-82 Open menus navigate like native menus
+Fixture: `fx-linear` (Linux/Windows)
+Layer: interaction
+- When a menu is open and Up/Down, Right/Left, Enter/Space and Esc are pressed, and the pointer moves over rows
+- Then Up/Down move one highlight, shared with the pointer and drawn like a hovered row, skipping disabled rows and wrapping; Right opens the lit submenu (its first row lit) or the next menu, Left closes the submenu or opens the previous menu; Enter or Space runs the lit item (or opens its submenu); Esc closes the menu; the commit actions popup and choice lists keep Up/Down/Enter/Esc
+Covered by (interaction): `arrows_skip_disabled_rows_wrap_and_enter_runs_the_lit_row`, `right_and_left_open_and_close_submenus_and_switch_menus`, `the_pointer_and_the_keys_share_one_highlight`, `the_lit_row_and_the_focused_title_are_filled_like_hovered_ones`, `context_menus_and_choice_lists_keep_egui_keyboard_navigation` (apps/git-good/src/menu_tests.rs)
+
+### FRM-83 Tall menus scroll and submenus wait for the pointer
+Fixture: `fx-linear` (Linux/Windows), a window shorter than a menu
+Layer: interaction
+- When a menu taller than the window is opened; Up is pressed; the wheel turns; the pointer rests on the bottom arrow; then a submenu is opened by hovering its row and the pointer heads for it diagonally across other rows, pausing briefly, then rests on a row
+- Then the menu stays below the menu bar and inside the window, scrolls with ▲/▼ arrows at its ends, keeps the lit row in view, scrolls by wheel and while the pointer rests on an arrow; the submenu stays open and its row stays lit while the pointer heads for it, and the rested row takes over after about 0.3 s
+Covered by (interaction): `a_menu_taller_than_the_window_scrolls_by_keys_wheel_and_arrows`, `an_open_submenu_stays_open_while_the_pointer_heads_for_it` (apps/git-good/src/menu_tests.rs); `heading_accepts_the_triangle_toward_the_submenu_only`, `level_room_keeps_every_level_below_the_bar` (apps/git-good/src/menu_nav.rs)
 
 ### Toolbar
 

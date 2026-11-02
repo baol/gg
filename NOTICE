@@ -1,0 +1,10 @@
+gg
+Copyright the gg authors. Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Third-party material
+
+photocraft — https://github.com/storytold/photocraft
+Licensed under MIT OR Apache-2.0; used here under Apache-2.0.
+Adapted from photocraft's egui menu bar (crates/ui-egui/src/menus/):
+- menu_keys.rs and menu_keys/harness_tests.rs → apps/git-good/src/menu_keys.rs, apps/git-good/src/menu_tests.rs
+- menu_nav.rs and menu_nav/tests.rs → apps/git-good/src/menu_nav.rs, apps/git-good/src/menu_tests.rs

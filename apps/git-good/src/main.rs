@@ -36,6 +36,10 @@ mod lfs_cli;
 mod lfs_view;
 mod lfs_worker;
 mod line_map_worker;
+mod menu_keys;
+mod menu_nav;
+#[cfg(test)]
+mod menu_tests;
 mod menus;
 mod merge_cli;
 mod mutation_cli;
@@ -9513,6 +9517,9 @@ impl Browser {
     }
 
     fn draw_ui(&mut self, ui: &mut egui::Ui) {
+        // A shortcut pressed with the keyboard on the menu bar leaves the bar
+        // and runs, so this comes before any shortcut is read.
+        crate::menu_keys::leave_for_shortcut(ui.ctx());
         // The open repository's absolute path, else the requested one.
         let shown_path = self
             .state
