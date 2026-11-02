@@ -664,24 +664,24 @@ Fixture: `fx-large` (opt-in)
 Layer: interaction
 - Given the user scrolls by wheel mid-history while counting continues
 - When the discovered extent grows
-- Then the row under the pointer and its pixel offset stay put; the scrollbar geometry is frozen until the wheel settles, then the pending extent applies
-Covered by (interaction): `incoming_count_waits_for_wheel_settling_and_preserves_hovered_content_and_offset` (main.rs)
+- Then the row under the pointer and its pixel offset stay put while the extent grows; the scrollbar follows the new extent
+Covered by (interaction): `a_growing_count_shows_at_once_and_keeps_the_hovered_row_and_offset` (interaction_tests.rs)
 
 ### HIS-06 Scrollbar drag keeps the grab offset
 Fixture: `fx-large` (opt-in)
 Layer: interaction
 - Given the user drags the scrollbar thumb while rows stream
 - When the user releases (even with pointer motion in the same frame)
-- Then the extent stayed frozen during the drag and the release position is preserved
-Covered by (interaction): `scrollbar_drag_freezes_extent_and_release_preserves_offset`, `scrollbar_release_followed_by_pointer_motion_in_one_frame_keeps_release_position` (apps/git-good/src/interaction_tests.rs)
+- Then the extent stayed frozen during the drag while rows still filled in place, the release position is preserved, and the grown extent applies right after release
+Covered by (interaction): `scrollbar_drag_freezes_extent_and_release_preserves_offset`, `scrollbar_release_followed_by_pointer_motion_in_one_frame_keeps_release_position` (apps/git-good/src/interaction_tests.rs), `unfilled_slots_fill_in_place_while_the_extent_is_frozen` (state.rs)
 
-### HIS-07 Hovered loading slot is inert until re-entry
+### HIS-07 A row arriving under the pointer fades in and refuses an early click
 Fixture: `fx-large` (opt-in)
 Layer: interaction
 - Given the pointer rests on an unfilled slot
 - When the slot's commit arrives, and the user presses on it
-- Then the press does nothing; after pointer leave and re-entry the row is clickable; press and release bind to the same commit
-Covered by (interaction): `loading_row_stays_inert_through_press_and_becomes_clickable_after_reentry` (interaction_tests.rs), `hover_pins_placeholder_and_extent_while_other_rows_arrive` (state.rs)
+- Then the commit's row fades in over 0.25 s and a press within 0.3 s of its arrival does nothing; a press after that selects it; a press and release act only on the same row, so a row that swaps while the button is down is not clicked
+Covered by (interaction): `a_row_arriving_under_the_pointer_fades_in_and_refuses_an_early_click`, `moving_onto_a_row_or_scrolling_never_starts_the_grace`, `a_replacement_under_a_press_shows_at_once_and_the_release_clicks_nothing` (interaction_tests.rs)
 
 ### HIS-08 External ref change refreshes history and keeps selection
 Fixture: `fx-branchy`
@@ -691,13 +691,13 @@ Layer: interaction
 - Then History reloads (no Refresh command exists); c27 stays selected at the same pixel offset; the new ref appears
 Covered by (interaction): `refresh_preserves_commit_anchor_and_fractional_row_offset` (interaction_tests.rs)
 
-### HIS-09 Refresh replacement waits for an active press
+### HIS-09 A refresh replacement under a press shows at once and clicks nothing
 Fixture: `fx-branchy`
 Layer: interaction
 - Given the user is pressing a row
 - When a replacement history session becomes ready
-- Then it is adopted only after release; a retired worker never overwrites the adopted rows
-Covered by (interaction): `replacement_waits_for_pressed_row_and_retired_worker_cannot_overwrite_it` (interaction_tests.rs)
+- Then it shows at once; the release does not click the row that replaced the pressed one (RULE-17); a retired worker never overwrites the adopted rows
+Covered by (interaction): `a_replacement_under_a_press_shows_at_once_and_the_release_clicks_nothing` (interaction_tests.rs)
 
 ### HIS-10 Refresh selects the first row when the selection vanished
 Fixture: `fx-branchy`
@@ -1220,13 +1220,13 @@ Layer: product
 - Then the comparison is against parent 1; **Compare with** lists `parent 1 <short>` and `parent 2 <short>` in stored order with one-based numbers and full IDs in tooltips, plus **HEAD**
 Covered by (backend, partial): `review_merge_defaults_to_first_parent_and_can_select_second` (crates/git/tests/history.rs); GUI path not automated
 
-### REV-06 Switching parent keeps the displayed comparison until replacement settles
+### REV-06 Switching parent keeps the displayed comparison until the replacement arrives
 Fixture: `fx-branchy`
 Layer: interaction
 - Given Review on the merge with the pointer over the reader
 - When the user chooses `parent 2` in **Compare with**
-- Then the old file list and diff stay visible and labeled with their identity while loading; the new list and diff are adopted together only after the pointer leaves and scrolling settles; the new comparison starts at its first file; no loading text appears in the panes
-Covered by (interaction): `parent_replacement_retains_identity_until_pointer_leaves_and_resets_selection` (review_view.rs)
+- Then the old file list and diff stay visible and labeled with their identity while loading; the new list and diff are adopted together as soon as both arrive, even under the pointer; the new comparison starts at its first file; no loading text appears in the panes
+Covered by (interaction): `parent_replacement_keeps_labelled_content_until_it_arrives_and_resets_selection` (review_view.rs)
 
 ### REV-07 Compare with HEAD
 Fixture: `fx-linear`
@@ -1315,7 +1315,7 @@ Layer: interaction
 - Given Review on a multi-file commit, reader showing file A scrolled down, pointer on the reader
 - When the user selects file B with the keyboard in the list
 - Then A's rows and offset stay until B's identity, metadata, and rows arrive together; an explicit selection publishes even with the pointer resting on the reader; B starts at its first row
-Covered by (interaction): `selection_keeps_displayed_diff_until_replacement_arrives` (diff_view.rs), `a_new_selection_reveals_while_the_pointer_rests_on_the_reader` (diff_view.rs)
+Covered by (interaction): `selection_keeps_displayed_diff_until_replacement_arrives` (diff_view.rs), `reading_keys_scroll_without_changing_file_and_a_replacement_shows_under_the_pointer` (diff_view.rs)
 
 ### REV-20 Rapid selection never shows a stale file
 Fixture: `fx-large`
@@ -1324,12 +1324,12 @@ Layer: interaction
 - Then superseded diff requests are cancelled; the reader finally shows exactly the last selected file with matching header path and endpoints
 Covered by (interaction): `packed_diff_stress_and_rapid_selection` (diff_view.rs), `selection_cancels_old_work_and_pages_reuse_the_document` (diff_worker.rs)
 
-### REV-21 Asynchronous page replacement waits for hover
+### REV-21 A page arriving under the pointer fades in and refuses an early click
 Fixture: `fx-file-history` (`long.txt` change)
 Layer: interaction
 - Given the pointer resting over the reader while a later page of rows arrives
-- Then displayed rows and placeholders under the pointer do not change until hover clears
-Covered by (interaction): `stale_pages_and_hovered_placeholders_preserve_displayed_rows` (diff_view.rs), `reading_keys_scroll_without_changing_file_and_replacement_waits_for_hover` (diff_view.rs)
+- Then rows show as they arrive; the row under the pointer fades in and ignores a click within 0.3 s of changing; the scroll position holds
+Covered by (interaction): `a_page_arriving_under_the_pointer_fades_in_and_refuses_an_early_click`, `a_hunk_that_changes_under_the_pointer_refuses_its_stage_button_briefly`, `stale_pages_are_ignored_and_a_page_fills_its_slots_at_once` (diff_view.rs)
 
 ### REV-22 Retry keeps selection, anchor, and diff
 Fixture: `fx-linear`
@@ -2156,8 +2156,9 @@ Fixture: `fx-dirty`
 Layer: interaction
 - Given Local Changes open, `c.txt` selected
 - When an external editor appends a line to `c.txt` and creates `z.txt`, and a terminal runs `git add b.txt`/`git reset b.txt`
-- Then within ~300 ms of quiet the lists and the reader update without user action; no Refresh button exists; previous content stays until replaced; selection and offsets retained
-Covered by (interaction): `a_real_repository_reports_a_changed_file` (apps/git-good/src/watcher.rs); `refresh_rereads_working_bytes_when_head_and_index_are_unchanged` (status_view.rs)
+- Then within ~300 ms of quiet the lists and the reader update without user action, even with the pointer over the lists; no Refresh button exists; previous content stays until replaced; selection and offsets retained
+- And a list row that changes under a still pointer fades in and drops a click made within 0.3 s; a click acts only on the row that was pressed (RULE-17)
+Covered by (interaction): `a_real_repository_reports_a_changed_file` (apps/git-good/src/watcher.rs); `refresh_rereads_working_bytes_when_head_and_index_are_unchanged`, `rows_and_refresh_results_show_at_once_under_the_pointer`, `a_row_filling_under_the_pointer_fades_in_and_refuses_an_early_click`, `moving_onto_a_row_or_pressing_one_that_swaps_follows_the_aimed_row` (status_view.rs)
 
 ### CHG-67 Failed scan keeps results and offers Retry
 Fixture: `fx-dirty`, then make the worktree unreadable (e.g. `chmod 000 notes`)
@@ -2662,7 +2663,7 @@ Layer: interaction
 - Given the pointer resting over History, where the Stash dialog sat
 - When the user stashes
 - Then the stash runs one Git process, as `git stash push` does, and the history, refs and sidebar show the result as soon as Git returns, without waiting for the pointer to leave; the top row and scroll position hold (RULE-16)
-Covered by (interaction): `a_stash_shows_its_history_at_once_under_the_pointer` (main.rs), `a_command_reload_shows_under_the_pointer_at_its_old_top_row` (interaction_tests.rs), `push_receipt_names_the_newest_entry_as_git_lists_it` (stash.rs)
+Covered by (interaction): `a_stash_shows_its_history_at_once_under_the_pointer` (main.rs), `a_reload_under_the_pointer_shows_once_its_old_top_row_is_found`, `a_branch_switch_shows_its_first_page_at_once_under_the_pointer` (interaction_tests.rs), `push_receipt_names_the_newest_entry_as_git_lists_it` (stash.rs)
 
 ## Merge, cherry-pick, revert and conflicts
 
@@ -4375,6 +4376,7 @@ Rules every area relies on, cases that span areas, and the CLI contract. Area ca
 14. **RULE-14 Keyboard completes every workflow.** Each workflow can be finished without a pointer; text fields keep their keys; closing a dialog restores focus to where it was opened (XCT-13 … XCT-18).
 15. **RULE-15 CLI and GUI share state and consequences.** Both read the same operation state, validate with the same rules and report the same consequences and backups (XCT-24 … XCT-28).
 16. **RULE-16 Commands cost what Git costs.** A command run from the GUI takes no more than 1 % longer than the same Git command from the CLI on the same repository. Git Good adds no Git process before or after Git's own on the UI thread, and the refreshes it runs afterwards are background reads that never delay the result being shown (STA-26).
+17. **RULE-17 Targets never swap under a click.** New content shows when it arrives; the scroll position, selection and focus follow identity; a row that changes under a still pointer fades in over 0.25 s and refuses clicks for 0.3 s, and a click acts only on the row that was pressed (HIS-05, HIS-07, REV-06, REV-21, CHG-66).
 
 ## Cross-cutting scenarios
 

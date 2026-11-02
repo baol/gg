@@ -15,6 +15,9 @@ const WIDE_LAYOUT: f32 = 1040.0;
 /// Height of the narrow commit form before its message box is resized.
 const NARROW_FORM: f32 = 90.0;
 type Comparison = (Vec<u8>, Area);
+/// A list row's identity for the target guard: its list, and its path and
+/// area once read.
+type RowKey = (usize, Option<Comparison>);
 /// A list row: `(list, row, entry)`.
 type Located = (usize, usize, StatusEntry);
 
@@ -315,7 +318,11 @@ pub struct StatusView {
     counterpart: Option<(Comparison, Option<Located>)>,
     reader_rect: egui::Rect,
     form_rect: egui::Rect,
-    last_scroll: f64,
+    /// Keeps a click on the row it was aimed at when rows change under the
+    /// pointer (`target_guard.rs`).
+    guard: crate::target_guard::Guard<RowKey>,
+    /// The row under the pointer this frame, and what it may do.
+    under: Option<((usize, usize), crate::target_guard::Target)>,
 }
 impl StatusView {
     pub fn new(path: PathBuf, ctx: &egui::Context) -> Self {
@@ -369,7 +376,8 @@ impl StatusView {
             counterpart: None,
             reader_rect: egui::Rect::NOTHING,
             form_rect: egui::Rect::NOTHING,
-            last_scroll: f64::NEG_INFINITY,
+            guard: Default::default(),
+            under: None,
         };
         view.signing = Some(gg_git::signature::config(&view.path));
         view.sign_commit = view
@@ -418,10 +426,7 @@ impl StatusView {
         self.staged = None;
         self.start(ctx, false);
     }
-    fn accept(&mut self, safe: bool, ctx: &egui::Context) {
-        if !safe {
-            return;
-        }
+    fn accept(&mut self, ctx: &egui::Context) {
         if self.replacing
             && self
                 .staged
@@ -467,7 +472,6 @@ impl StatusView {
         if let Some((list, row, entry)) = &selection {
             self.lists[*list].rows.insert(*row, entry.clone());
         }
-        self.prune_rows(selection.as_ref().map(|(list, row, _)| (*list, *row)));
         if self.lists[self.focus].count == 0 && self.lists[1 - self.focus].count > 0 {
             self.focus = 1 - self.focus;
         }
@@ -486,6 +490,7 @@ impl StatusView {
             self.lists[*list].selected = Some((entry.path_bytes.clone(), entry.area));
             self.focus = *list;
         }
+        self.prune_rows();
         if let Some(selected) = self.pending_selection.clone()
             && let Some((list, row)) = self.find_row(&selected)
         {
@@ -536,13 +541,14 @@ impl StatusView {
         self.drop_confirm = None;
         ctx.request_repaint();
     }
-    fn prune_rows(&mut self, pinned: Option<(usize, usize)>) {
-        for index in 0..2 {
-            let list = &mut self.lists[index];
+    /// Drops rows far from each viewport, keeping each list's selected row.
+    fn prune_rows(&mut self) {
+        for list in &mut self.lists {
             let keep =
                 list.viewport.start.saturating_sub(256)..list.viewport.end.saturating_add(256);
+            let selected = list.selected_row;
             list.rows
-                .retain(|row, _| keep.contains(row) || pinned == Some((index, *row)));
+                .retain(|row, _| keep.contains(row) || selected == Some(*row));
         }
         while self.lists[0].rows.len() + self.lists[1].rows.len() > 768 {
             let index = if self.lists[0].rows.len() >= self.lists[1].rows.len() {
@@ -550,15 +556,46 @@ impl StatusView {
             } else {
                 1
             };
-            let victim = self.lists[index]
+            let list = &mut self.lists[index];
+            let Some(row) = list
                 .rows
                 .keys()
                 .copied()
-                .find(|row| pinned != Some((index, *row)));
-            let Some(row) = victim else {
+                .find(|row| list.selected_row != Some(*row))
+            else {
                 break;
             };
-            self.lists[index].rows.remove(&row);
+            list.rows.remove(&row);
+        }
+    }
+    /// Asks the guard about the row under the pointer, found from the
+    /// geometry last drawn, which this frame's rows fill. A keyboard reveal
+    /// scrolls like the wheel: the user's own motion.
+    fn guard_rows(&mut self, now: f64, point: Option<egui::Pos2>, moved: bool, pressed: bool) {
+        let at = point.and_then(|point| {
+            self.lists.iter().enumerate().find_map(|(index, list)| {
+                list.rect.contains(point).then(|| {
+                    let row = (point.y - list.rect.top() + list.offset) / crate::density::row();
+                    (index, row.max(0.0) as usize, point)
+                })
+            })
+        });
+        self.under = at.map(|(index, row, point)| {
+            let list = &self.lists[index];
+            let key = (
+                index,
+                list.rows
+                    .get(&row)
+                    .map(|entry| (entry.path_bytes.clone(), entry.area)),
+            );
+            let moved = moved || list.reveal;
+            (
+                (index, row),
+                self.guard.hover(now, &key, point, moved, pressed),
+            )
+        });
+        if self.under.is_none() {
+            self.guard.leave();
         }
     }
     fn restore_selection_rows(&mut self) {
@@ -822,26 +859,6 @@ impl StatusView {
             }
         }
         self.active_entry = Some(entry);
-    }
-    fn fill_unhovered(&mut self, pinned: Option<(usize, usize)>) {
-        if self.replacing {
-            return;
-        }
-        if let Some(update) = &self.staged {
-            for (index, rows) in update.rows.iter().enumerate() {
-                let count = if index == 0 {
-                    update.unstaged_count()
-                } else {
-                    update.staged
-                };
-                for (row, entry) in rows {
-                    if *row < count && pinned != Some((index, *row)) {
-                        self.lists[index].rows.insert(*row, entry.clone());
-                    }
-                }
-            }
-        }
-        self.prune_rows(pinned);
     }
     pub(crate) fn busy(&self) -> bool {
         self.stage.mutating() || self.commit.is_some()
@@ -1262,6 +1279,7 @@ impl StatusView {
         let amending = self.amend;
         let complete = self.complete;
         let active = self.focus == index;
+        let under = self.under;
         let list = &mut self.lists[index];
         let count = list.count;
         let folded = collapsible && list.folded(complete);
@@ -1369,10 +1387,12 @@ impl StatusView {
         let out = scroll.show_rows(ui, crate::density::row(), count, |ui, visible| {
             list.viewport = visible.start.saturating_sub(16)..visible.end.saturating_add(16);
             for row in visible {
-                let (rect, response) = ui.allocate_exact_size(
-                    egui::vec2(ui.available_width(), crate::density::row()),
-                    egui::Sense::click(),
-                );
+                // Ids follow the row, not the widget count, so a row button
+                // shown on hover never shifts a press onto the next row.
+                let (_, rect) =
+                    ui.allocate_space(egui::vec2(ui.available_width(), crate::density::row()));
+                let id = egui::Id::unique(("working-row", index, row));
+                let response = ui.interact(rect, id, egui::Sense::click());
                 if list.selected_row == Some(row) {
                     let fill = if active {
                         crate::colors::selection(ui.visuals())
@@ -1381,6 +1401,14 @@ impl StatusView {
                     };
                     ui.painter().rect_filled(rect, 0.0, fill);
                 }
+                // A row that just changed under the pointer fades in and
+                // drops the click aimed at what was there before.
+                let target = under
+                    .filter(|(at, _)| *at == (index, row))
+                    .map_or(crate::target_guard::Target::STILL, |(_, target)| target);
+                let busy = busy || !target.clickable;
+                let opacity = ui.opacity();
+                ui.multiply_opacity(target.alpha);
                 if let Some(entry) = list.rows.get(&row) {
                     if response.clicked() && !busy {
                         response.surrender_focus();
@@ -1486,6 +1514,7 @@ impl StatusView {
                     });
                 }
                 // A row not read yet keeps its slot, empty.
+                ui.set_opacity(opacity);
             }
         });
         list.rect = out.inner_rect;
@@ -2093,33 +2122,15 @@ impl StatusView {
             self.stage_follow = None;
             self.stage_follow_ready = false;
         }
-        let (now, scrolling, pointer_down, hovered) = ctx.input(|i| {
+        let (now, moved, pressed, released, point) = ctx.input(|i| {
             (
                 i.time,
-                i.smooth_scroll_delta != egui::Vec2::ZERO,
-                i.pointer.any_down(),
-                i.pointer.hover_pos().is_some_and(|point| {
-                    self.lists[0].rect.contains(point) || self.lists[1].rect.contains(point)
-                }),
+                // The guard compares pointer positions itself.
+                i.smooth_scroll_delta != egui::Vec2::ZERO || i.pointer.is_decidedly_dragging(),
+                i.pointer.primary_pressed(),
+                i.pointer.any_released(),
+                i.pointer.hover_pos(),
             )
-        });
-        if scrolling {
-            self.last_scroll = now;
-            ctx.request_repaint_after(std::time::Duration::from_millis(210));
-        }
-        let safe = !hovered && !pointer_down && now - self.last_scroll > 0.2;
-        let pinned = ctx.input(|i| i.pointer.hover_pos()).and_then(|point| {
-            for (index, list) in self.lists.iter().enumerate() {
-                if list.rect.contains(point) {
-                    return Some((
-                        index,
-                        ((point.y - list.rect.top() + list.offset) / crate::density::row())
-                            .floor()
-                            .max(0.0) as usize,
-                    ));
-                }
-            }
-            None
         });
         if self.replacing
             && let Some(Ok(update)) = self.worker.as_ref().and_then(Worker::poll)
@@ -2129,9 +2140,7 @@ impl StatusView {
                 let count = counts[index];
                 self.lists[index]
                     .rows
-                    .extend(rows.into_iter().filter(|(row, _)| {
-                        *row < count && pinned != Some((index, *row)) && !pointer_down
-                    }));
+                    .extend(rows.into_iter().filter(|(row, _)| *row < count));
             }
         }
         let source = if self.replacing {
@@ -2145,10 +2154,14 @@ impl StatusView {
                 Err(error) => self.error = Some(error),
             }
         }
-        self.accept(safe, ctx);
-        self.prune_rows(pinned);
-        if !safe && !pointer_down {
-            self.fill_unhovered(pinned);
+        self.accept(ctx);
+        self.prune_rows();
+        self.guard_rows(now, point, moved, pressed);
+        if released {
+            self.guard.release();
+        }
+        if self.guard.animating(now) {
+            ctx.request_repaint();
         }
         let mut back = false;
         let mut refresh = false;
@@ -2432,7 +2445,8 @@ mod tests {
             counterpart: None,
             reader_rect: egui::Rect::NOTHING,
             form_rect: egui::Rect::NOTHING,
-            last_scroll: f64::NEG_INFINITY,
+            guard: Default::default(),
+            under: None,
         }
     }
     fn update(unstaged: usize, staged: usize, complete: bool) -> Update {
@@ -2493,11 +2507,10 @@ mod tests {
     }
 
     #[test]
-    fn hovered_rows_and_refresh_results_wait_for_safe_adoption() {
+    fn rows_and_refresh_results_show_at_once_under_the_pointer() {
         let ctx = egui::Context::default();
         let mut view = fixture(10, 0);
         frame(&ctx, &mut view, 720.0, vec![]);
-        view.staged = Some(update(1000, 0, true));
         let point = view.lists[0].rect.center();
         frame(
             &ctx,
@@ -2505,29 +2518,130 @@ mod tests {
             720.0,
             vec![egui::Event::PointerMoved(point)],
         );
-        assert_eq!(view.lists[0].count, 10);
-        frame(&ctx, &mut view, 720.0, vec![egui::Event::PointerGone]);
+        view.staged = Some(update(1000, 0, true));
+        frame(&ctx, &mut view, 720.0, vec![]);
         assert_eq!(view.lists[0].count, 1000);
+        // A refresh keeps the old lists, labeled, until its scan finishes.
         view.replacing = true;
         view.lists[0].selected = Some((entry(0, 8).path_bytes.clone(), entry(0, 8).area));
         view.lists[0].selected_row = Some(8);
         view.lists[0].offset = 60.0;
         view.staged = Some(update(2, 0, false));
-        view.accept(true, &ctx);
+        view.accept(&ctx);
         assert_eq!((view.lists[0].count, view.lists[0].offset), (1000, 60.0));
         let mut failure = update(2, 0, false);
         failure.error = Some("read failed".into());
         view.staged = Some(failure);
-        view.accept(true, &ctx);
+        view.accept(&ctx);
         assert_eq!(view.lists[0].count, 1000);
         assert!(view.error.is_some());
         view.staged = Some(update(0, 0, true));
-        view.accept(false, &ctx);
-        assert_eq!(view.lists[0].count, 1000);
-        view.accept(true, &ctx);
+        view.accept(&ctx);
         assert_eq!(view.total, 0);
         assert!(view.complete);
         assert!(view.error.is_none());
+    }
+    #[test]
+    fn a_row_filling_under_the_pointer_fades_in_and_refuses_an_early_click() {
+        let ctx = egui::Context::default();
+        let mut view = fixture(10, 0);
+        view.lists[0].rows.remove(&2);
+        run_at(&ctx, &mut view, 1120.0, vec![], 0.0);
+        run_at(&ctx, &mut view, 1120.0, vec![], 0.05);
+        let list = view.lists[0].rect;
+        let point = egui::pos2(list.center().x, list.top() + 2.5 * crate::density::row());
+        run_at(
+            &ctx,
+            &mut view,
+            1120.0,
+            vec![egui::Event::PointerMoved(point)],
+            0.1,
+        );
+        // The slot fills while the pointer rests on it.
+        view.staged = Some(update(10, 0, true));
+        run_at(&ctx, &mut view, 1120.0, vec![], 1.0);
+        assert!(view.lists[0].rows.contains_key(&2));
+        assert!(view.under.is_some(), "the pointer is over row 2");
+        let Some((at, target)) = view.under else {
+            return;
+        };
+        assert_eq!(at, (0, 2));
+        assert_eq!(target.alpha, 0.0);
+        assert!(!target.clickable);
+        assert!(view.guard.animating(1.0));
+        let button = |pressed| egui::Event::PointerButton {
+            pos: point,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        // A click already on its way when the row changed is dropped: the
+        // first row, selected when the scan arrived, stays selected.
+        run_at(&ctx, &mut view, 1120.0, vec![button(true)], 1.1);
+        run_at(&ctx, &mut view, 1120.0, vec![button(false)], 1.15);
+        assert_eq!(view.lists[0].selected_row, Some(0));
+        let half = view.under.map(|(_, target)| target.alpha);
+        assert!(half.is_some_and(|alpha| alpha > 0.0 && alpha < 1.0));
+        // Once the grace has passed, the row takes clicks again.
+        run_at(&ctx, &mut view, 1120.0, vec![button(true)], 1.4);
+        run_at(&ctx, &mut view, 1120.0, vec![button(false)], 1.45);
+        assert_eq!(view.lists[0].selected_row, Some(2));
+        assert_eq!(
+            view.under.map(|(_, target)| target),
+            Some(crate::target_guard::Target::STILL)
+        );
+    }
+    #[test]
+    fn moving_onto_a_row_or_pressing_one_that_swaps_follows_the_aimed_row() {
+        let ctx = egui::Context::default();
+        let mut view = fixture(10, 0);
+        run_at(&ctx, &mut view, 1120.0, vec![], 0.0);
+        run_at(&ctx, &mut view, 1120.0, vec![], 0.05);
+        let list = view.lists[0].rect;
+        let at = |row: f32| {
+            egui::pos2(
+                list.center().x,
+                list.top() + (row + 0.5) * crate::density::row(),
+            )
+        };
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        run_at(
+            &ctx,
+            &mut view,
+            1120.0,
+            vec![egui::Event::PointerMoved(at(1.0))],
+            0.1,
+        );
+        // The user's own motion onto another row clicks at once.
+        let point = at(3.0);
+        run_at(
+            &ctx,
+            &mut view,
+            1120.0,
+            vec![egui::Event::PointerMoved(point), button(point, true)],
+            0.2,
+        );
+        run_at(&ctx, &mut view, 1120.0, vec![button(point, false)], 0.25);
+        assert_eq!(view.lists[0].selected_row, Some(3));
+        // A press on row 4 whose path changes before release does nothing,
+        // even after the grace.
+        let point = at(4.0);
+        run_at(
+            &ctx,
+            &mut view,
+            1120.0,
+            vec![egui::Event::PointerMoved(point), button(point, true)],
+            1.0,
+        );
+        view.lists[0].rows.insert(4, entry(1, 4));
+        run_at(&ctx, &mut view, 1120.0, vec![], 1.1);
+        run_at(&ctx, &mut view, 1120.0, vec![button(point, false)], 1.6);
+        assert_eq!(view.lists[0].selected_row, Some(3));
     }
     #[test]
     fn refresh_rereads_working_bytes_when_head_and_index_are_unchanged()
@@ -2636,23 +2750,6 @@ mod tests {
             assert_eq!(view.lists[1].selected_row, Some(10));
             assert!((view.lists[1].offset - second).abs() < 1.0);
         }
-    }
-    #[test]
-    fn loading_rows_fill_around_the_hovered_slot_without_changing_extent() {
-        let mut view = fixture(1000, 0);
-        view.lists[0].rows.clear();
-        view.lists[0].viewport = 500..532;
-        let mut incoming = update(2000, 0, false);
-        incoming.rows[0] = (500..532).map(|row| (row, entry(0, row))).collect();
-        view.staged = Some(incoming);
-        view.fill_unhovered(Some((0, 510)));
-        assert_eq!(view.lists[0].count, 1000);
-        assert!(!view.lists[0].rows.contains_key(&510));
-        assert!(view.lists[0].rows.contains_key(&509) && view.lists[0].rows.contains_key(&511));
-        view.accept(true, &egui::Context::default());
-        assert_eq!(view.lists[0].count, 2000);
-        assert!(view.lists[0].rows.contains_key(&510));
-        assert!(view.lists[0].rows.len() + view.lists[1].rows.len() <= 768);
     }
     #[test]
     fn keyboard_pages_keep_last_page_stable_at_both_widths() {

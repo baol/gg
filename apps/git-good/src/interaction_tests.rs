@@ -58,7 +58,7 @@ impl Harness {
         let (worker, driver) = stream::Worker::controlled();
         let mut app = Browser::new("repo".into());
         app.state
-            .accept(update(stream::Request::default(), count), true, true, None);
+            .accept(update(stream::Request::default(), count), true, true);
         app.worker = Some(worker);
         let mut h = Self {
             app,
@@ -91,6 +91,33 @@ impl Harness {
         Ok(())
     }
 }
+/// The alpha History painted `text` with; 0 when it painted nothing.
+fn text_alpha(output: &egui::FullOutput, text: &str) -> u8 {
+    output
+        .shapes
+        .iter()
+        .filter_map(|shape| match &shape.shape {
+            egui::epaint::Shape::Text(shape) if shape.galley.job.text == text => shape
+                .galley
+                .rows
+                .iter()
+                .flat_map(|row| &row.visuals.mesh.vertices)
+                .map(|v| v.color.a())
+                .max(),
+            _ => None,
+        })
+        .max()
+        .unwrap_or(0)
+}
+fn wheel(rows: f32) -> egui::Event {
+    egui::Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: egui::vec2(0.0, -rows * history_view::ROW_HEIGHT),
+        phase: egui::TouchPhase::Move,
+        source: egui::MouseWheelSource::Unknown,
+        modifiers: egui::Modifiers::NONE,
+    }
+}
 fn button(pos: egui::Pos2, pressed: bool) -> egui::Event {
     egui::Event::PointerButton {
         pos,
@@ -110,20 +137,30 @@ fn key(key: egui::Key) -> egui::Event {
 }
 
 #[test]
-fn loading_row_stays_inert_through_press_and_becomes_clickable_after_reentry() -> Result {
+fn a_row_arriving_under_the_pointer_fades_in_and_refuses_an_early_click() -> Result {
     let mut h = Harness::new(100);
     h.app.state.rows.remove(&5);
     h.frame(vec![]);
     let point = h.point(5)?;
     h.frame(vec![egui::Event::PointerMoved(point)]);
+    h.frame(vec![]);
+    // The slot's commit shows as soon as it arrives under the still
+    // pointer, fading in from transparent.
     h.publish(100)?;
-    h.frame(vec![button(point, true)]);
-    assert!(!h.app.state.rows.contains_key(&5));
+    let arrived = h.frame(vec![]);
+    assert!(h.app.state.rows.contains_key(&5));
+    let full = text_alpha(&arrived, "Commit 6");
+    assert!(full > 0);
+    assert_eq!(text_alpha(&arrived, "Commit 5"), 0);
+    // A click within the grace does nothing.
+    let fading = h.frame(vec![button(point, true)]);
+    let alpha = text_alpha(&fading, "Commit 5");
+    assert!(alpha > 0 && alpha < full, "{alpha} of {full}");
     h.frame(vec![button(point, false)]);
     assert_eq!(h.app.state.selected_row, Some(0));
-    h.frame(vec![egui::Event::PointerMoved(h.point(6)?)]);
-    assert!(h.app.state.rows.contains_key(&5));
-    h.frame(vec![egui::Event::PointerMoved(point)]);
+    // Once the grace has passed, the row is opaque and a click selects it.
+    let settled = h.frame(vec![]);
+    assert_eq!(text_alpha(&settled, "Commit 5"), full);
     h.frame(vec![button(point, true)]);
     h.frame(vec![button(point, false)]);
     assert_eq!(h.app.state.selected_row, Some(5));
@@ -133,6 +170,63 @@ fn loading_row_stays_inert_through_press_and_becomes_clickable_after_reentry() -
         h.app.state.details.as_ref().map(|c| c.message.as_str()),
         Some("Commit 5\n\nFull body 5")
     );
+    Ok(())
+}
+
+#[test]
+fn moving_onto_a_row_or_scrolling_never_starts_the_grace() -> Result {
+    let mut h = Harness::new(100);
+    let point = h.point(5)?;
+    // The pointer arrives and clicks at once: the user's own motion.
+    h.frame(vec![egui::Event::PointerMoved(point), button(point, true)]);
+    h.frame(vec![button(point, false)]);
+    assert_eq!(h.app.state.selected_row, Some(5));
+    // A wheel scroll moves other rows under the pointer; none fades.
+    let full = text_alpha(&h.frame(vec![]), "Commit 6");
+    let mut outputs = vec![h.frame(vec![wheel(3.0)])];
+    for _ in 0..5 {
+        outputs.push(h.frame(vec![]));
+    }
+    assert!(h.app.scroll_offset > 0.0);
+    for output in &outputs {
+        for row in (6..12).filter(|row| h.point(*row).is_ok()) {
+            assert_eq!(
+                text_alpha(output, &format!("Commit {row}")),
+                full,
+                "Commit {row}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn a_growing_count_shows_at_once_and_keeps_the_hovered_row_and_offset() -> Result {
+    let mut h = Harness::new(1000);
+    h.app.restore_offset = Some(40.0 * history_view::ROW_HEIGHT + 7.0);
+    h.frame(vec![]);
+    let point = h.point(45)?;
+    h.frame(vec![egui::Event::PointerMoved(point), wheel(2.0)]);
+    for _ in 0..10 {
+        h.frame(vec![]);
+    }
+    let offset = h.app.scroll_offset;
+    let under = |h: &Harness| {
+        h.app
+            .row_rects
+            .iter()
+            .find(|(_, r)| r.contains(point))
+            .map(|(row, _)| *row)
+    };
+    let before = under(&h);
+    assert!(before.is_some());
+    // The count grows while the pointer rests over History: it shows on
+    // arrival, and the row under the pointer and its offset stay put.
+    h.publish(100_000)?;
+    h.frame(vec![]);
+    assert_eq!(h.app.state.count, 100_000);
+    assert!((h.app.scroll_offset - offset).abs() < 0.1);
+    assert_eq!(under(&h), before);
     Ok(())
 }
 
@@ -156,12 +250,10 @@ fn scrollbar_drag_freezes_extent_and_release_preserves_offset() -> Result {
     h.frame(vec![]);
     assert_eq!(h.app.state.count, 1000);
     assert!((h.app.scroll_offset - offset).abs() < 0.1);
+    // Right after release the held extent applies, at the release offset.
     h.frame(vec![button(moved, false)]);
-    for _ in 0..5 {
-        h.frame(vec![]);
-    }
-    assert_eq!(h.app.state.count, 1000);
-    h.frame(vec![egui::Event::PointerGone]);
+    assert!((h.app.scroll_offset - offset).abs() < 0.1);
+    h.frame(vec![]);
     assert_eq!(h.app.state.count, 100_000);
     assert!((h.app.scroll_offset - offset).abs() < 0.1);
     Ok(())
@@ -205,7 +297,7 @@ fn keyboard_navigation_rejects_late_details_and_loads_an_evicted_row() -> Result
 }
 
 #[test]
-fn replacement_waits_for_pressed_row_and_retired_worker_cannot_overwrite_it() -> Result {
+fn a_replacement_under_a_press_shows_at_once_and_the_release_clicks_nothing() -> Result {
     let mut h = Harness::new(100);
     let point = h.point(5)?;
     h.frame(vec![egui::Event::PointerMoved(point)]);
@@ -214,22 +306,24 @@ fn replacement_waits_for_pressed_row_and_retired_worker_cannot_overwrite_it() ->
     h.app.pending = Some(pending);
     let mut replacement = update(stream::Request::default(), 20);
     replacement.identity.path = "other-repo".into();
+    replacement.rows = (0..20)
+        .map(|row| {
+            let mut commit = commit(row);
+            commit.id = format!("{:040x}", row + 1000);
+            (row, commit)
+        })
+        .collect();
+    replacement.selection = replacement.rows.first().cloned();
     next.publish(Ok(replacement))?;
     h.frame(vec![]);
     assert_eq!(
         h.app.state.history.as_ref().map(|h| h.path.as_path()),
-        Some(std::path::Path::new("repo"))
-    );
-    h.frame(vec![button(point, false)]);
-    assert_eq!(h.app.state.selected_row, Some(5));
-    h.frame(vec![egui::Event::PointerGone]);
-    for _ in 0..4 {
-        h.frame(vec![]);
-    }
-    assert_eq!(
-        h.app.state.history.as_ref().map(|h| h.path.as_path()),
         Some(std::path::Path::new("other-repo"))
     );
+    // The press was aimed at the old row 5: its release selects nothing.
+    h.frame(vec![button(point, false)]);
+    assert_eq!(h.app.state.selected_row, Some(0));
+    // The retired worker never overwrites the adopted rows.
     h.publish(500)?;
     h.frame(vec![]);
     assert_eq!(h.app.state.count, 20);
@@ -771,98 +865,65 @@ fn status_back_preserves_history_selection_and_anchor() {
 }
 
 #[test]
-fn a_branch_switch_shows_its_history_at_once_even_under_the_pointer() {
-    // A background refresh whose old top row has not been found yet, with
-    // the pointer over History: it waits, so rows never shift underneath.
+fn a_reload_under_the_pointer_shows_once_its_old_top_row_is_found() -> Result {
+    let mut h = Harness::new(100);
+    h.app.restore_offset = Some(40.0 * history_view::ROW_HEIGHT + 7.0);
+    h.frame(vec![]);
+    let point = h.point(45)?;
+    h.frame(vec![egui::Event::PointerMoved(point)]);
+    let previous = h.app.scroll_offset;
+    let (pending, next) = stream::Worker::controlled();
+    h.app.pending = Some(pending);
     let request = stream::Request {
-        anchor_id: Some("f".repeat(40)),
+        anchor_id: Some(commit(40).id),
         ..Default::default()
     };
-    let mut waiting = update(request, 3);
-    waiting.anchor_row = None;
-    waiting.complete = false;
-    assert!(!accept_history_now(
-        false,
-        true,
-        false,
-        false,
-        false,
-        Some(&waiting)
-    ));
-    assert!(!accept_history_now(
-        true,
-        true,
-        false,
-        false,
-        false,
-        Some(&waiting)
-    ));
-    // A switch asked for the new history: shown on its first page.
-    assert!(accept_history_now(
-        false,
-        true,
-        true,
-        false,
-        false,
-        Some(&waiting)
-    ));
-    // Nothing staged yet: nothing to show.
-    assert!(!accept_history_now(true, true, true, false, false, None));
-    // Once found or complete, a refresh shows when the pointer leaves.
-    waiting.complete = true;
-    assert!(!accept_history_now(
-        false,
-        true,
-        false,
-        false,
-        false,
-        Some(&waiting)
-    ));
-    assert!(accept_history_now(
-        true,
-        true,
-        false,
-        false,
-        false,
-        Some(&waiting)
-    ));
+    // Two new commits on top; the first page does not reach the old top row
+    // yet, so the old rows stay: waiting for data, not for the pointer.
+    let mut first = update(request.clone(), 102);
+    first.complete = false;
+    first.rows = (0..2).map(|row| (row, commit(row + 500))).collect();
+    next.publish(Ok(first))?;
+    h.frame(vec![]);
+    assert_eq!(h.app.state.count, 100);
+    assert_eq!(
+        h.app.state.rows.get(&40).map(|c| &c.id),
+        Some(&commit(40).id)
+    );
+    // Found: it shows at once under the pointer, at the old top row.
+    let mut found = update(request, 102);
+    found.complete = false;
+    found.anchor_row = Some(42);
+    found.rows = (16..100).map(|row| (row, commit(row - 2))).collect();
+    next.publish(Ok(found))?;
+    h.frame(vec![]);
+    assert_eq!(h.app.state.count, 102);
+    assert_eq!(
+        h.app.state.rows.get(&42).map(|c| &c.id),
+        Some(&commit(40).id)
+    );
+    assert!((h.app.scroll_offset - previous - 2.0 * history_view::ROW_HEIGHT).abs() < 0.1);
+    Ok(())
 }
 
 #[test]
-fn a_command_reload_shows_under_the_pointer_at_its_old_top_row() {
-    // A stash, commit or reset asked for the reload: it shows while the
-    // pointer is over History, once the old top row is found again.
-    let request = stream::Request {
-        anchor_id: Some("f".repeat(40)),
-        ..Default::default()
-    };
-    let mut asked = update(request, 3);
-    asked.complete = false;
-    asked.anchor_row = None;
-    assert!(!accept_history_now(
-        false,
-        true,
-        false,
-        true,
-        false,
-        Some(&asked)
-    ));
-    asked.anchor_row = Some(1);
-    assert!(accept_history_now(
-        false,
-        true,
-        false,
-        true,
-        false,
-        Some(&asked)
-    ));
-    // The same update from the file watcher waits for the pointer.
-    assert!(!accept_history_now(
-        false,
-        true,
-        false,
-        false,
-        false,
-        Some(&asked)
-    ));
+fn a_branch_switch_shows_its_first_page_at_once_under_the_pointer() -> Result {
+    let mut h = Harness::new(100);
+    let point = h.point(5)?;
+    h.frame(vec![egui::Event::PointerMoved(point)]);
+    // A switch clears the rows, so its load has no old top row to keep.
+    let (pending, next) = stream::Worker::controlled();
+    h.app.pending = Some(pending);
+    let mut first = update(stream::Request::default(), 3);
+    first.complete = false;
+    first.rows = (0..3).map(|row| (row, commit(row + 700))).collect();
+    next.publish(Ok(first))?;
+    h.frame(vec![]);
+    assert_eq!(h.app.state.count, 3);
+    assert_eq!(
+        h.app.state.rows.get(&0).map(|c| &c.id),
+        Some(&commit(700).id)
+    );
+    assert_eq!(h.app.scroll_offset, 0.0);
+    Ok(())
 }

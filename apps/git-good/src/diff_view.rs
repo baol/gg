@@ -1,4 +1,4 @@
-//! Virtualized source rows with pinned identity, fixed gutters, and horizontal scrolling.
+//! Virtualized source rows aimed by document line, fixed gutters, and horizontal scrolling.
 use crate::{
     blame_worker, bounded_text,
     diff_worker::{Mode, Update, Worker},
@@ -143,6 +143,92 @@ struct StageConfig {
 /// Readers narrower than this fold Blame and File history into the ⋯ menu.
 const FOLD_TOOLS_BELOW: f32 = 760.0;
 
+/// A reader row's document line, which the target guard keys on: its file,
+/// working area, and line, never its screen slot.
+type Aimed = (String, Option<Area>, Line);
+
+#[derive(Clone, Debug, PartialEq)]
+enum Line {
+    /// A slot whose page has not arrived yet.
+    Unread(usize),
+    Diff(RowKind, Option<usize>, Option<usize>, String),
+    Full(ReadingSide, usize, String),
+}
+
+fn diff_line(rows: &BTreeMap<usize, DiffRow>, index: usize) -> Line {
+    rows.get(&index).map_or(Line::Unread(index), |row| {
+        Line::Diff(row.kind, row.old_line, row.new_line, row.text.clone())
+    })
+}
+
+/// The row under the pointer this frame, through the shared target guard: a
+/// row that changed under a still pointer fades in and refuses clicks.
+#[derive(Default)]
+struct Aim {
+    guard: crate::target_guard::Guard<Aimed>,
+    file: (String, Option<Area>),
+    now: f64,
+    moved: bool,
+    pressed: bool,
+    hit: bool,
+    /// Where the pointer was last frame: re-entering elsewhere is motion too.
+    point: Option<egui::Pos2>,
+}
+
+impl Aim {
+    fn begin(&mut self, ctx: &egui::Context, file: (String, Option<Area>)) {
+        let (now, point, scrolled, pressed) = ctx.input(|i| {
+            (
+                i.time,
+                i.pointer.hover_pos(),
+                i.smooth_scroll_delta != egui::Vec2::ZERO,
+                i.pointer.primary_pressed(),
+            )
+        });
+        self.file = file;
+        self.now = now;
+        // Reading keys may already have marked this frame as the user's
+        // motion; the guard compares pointer positions itself.
+        self.moved |= scrolled;
+        self.point = point;
+        self.pressed = pressed;
+        self.hit = false;
+    }
+
+    /// The guard's verdict for the row drawn in `rect`; still when the
+    /// pointer is elsewhere.
+    fn row(
+        &mut self,
+        ui: &egui::Ui,
+        rect: egui::Rect,
+        line: impl FnOnce() -> Line,
+    ) -> crate::target_guard::Target {
+        let Some(point) = self
+            .point
+            .filter(|_| !self.hit && ui.rect_contains_pointer(rect))
+        else {
+            return crate::target_guard::Target::STILL;
+        };
+        self.hit = true;
+        let key = (self.file.0.clone(), self.file.1, line());
+        self.guard
+            .hover(self.now, &key, point, self.moved, self.pressed)
+    }
+
+    fn end(&mut self, ctx: &egui::Context) {
+        if !self.hit {
+            self.guard.leave();
+        }
+        if ctx.input(|i| i.pointer.primary_released()) {
+            self.guard.release();
+        }
+        if self.guard.animating(self.now) {
+            ctx.request_repaint();
+        }
+        self.moved = false;
+    }
+}
+
 pub struct DiffView {
     worker: Option<Worker>,
     export: crate::export::Export,
@@ -167,9 +253,7 @@ pub struct DiffView {
     sent: Option<(u64, Range<usize>, Mode, ReadingSide)>,
     rect: egui::Rect,
     bounds: egui::Rect,
-    last_scroll: f64,
-    staged: Option<Update>,
-    reveal: bool,
+    aim: Aim,
     attribution: bool,
     blame_revision: Option<String>,
     blame_before: Option<String>,
@@ -271,9 +355,7 @@ impl Default for DiffView {
             sent: None,
             rect: egui::Rect::NOTHING,
             bounds: egui::Rect::NOTHING,
-            last_scroll: f64::NEG_INFINITY,
-            staged: None,
-            reveal: false,
+            aim: Aim::default(),
             attribution: false,
             blame_revision: None,
             blame_before: None,
@@ -356,9 +438,6 @@ impl DiffView {
     pub fn binary(&self) -> bool {
         self.preview.is_some()
     }
-    pub fn hovered(&self, point: Option<egui::Pos2>) -> bool {
-        point.is_some_and(|p| self.bounds.contains(p))
-    }
     pub fn select(&mut self, path: PathBuf, change: Option<FileChange>, ctx: &egui::Context) {
         let same = self.path == path
             && self
@@ -380,8 +459,6 @@ impl DiffView {
         self.working = None;
         self.generation += 1;
         self.error = None;
-        self.staged = None;
-        self.reveal = true;
         self.blame = None;
         self.blame_error = None;
         self.blame_loading = false;
@@ -790,8 +867,6 @@ impl DiffView {
         self.working = Some(WorkingRequest { repository, entry });
         self.generation += 1;
         self.error = None;
-        self.staged = None;
-        self.reveal = true;
         self.blame = None;
         self.blame_error = None;
         self.blame_loading = false;
@@ -1262,7 +1337,7 @@ impl DiffView {
         }
     }
 
-    pub fn accept(&mut self, update: Update, pinned: Option<usize>) {
+    pub fn accept(&mut self, update: Update) {
         if update.generation != self.generation
             || update.mode != self.mode
             || update.side != self.side
@@ -1350,10 +1425,7 @@ impl DiffView {
                 self.count = update.count;
                 self.columns = update.columns;
                 for (index, row) in info.rows.drain(..).enumerate() {
-                    let index = update.page_start + index;
-                    if pinned != Some(index) || self.rows.contains_key(&index) {
-                        self.rows.insert(index, row);
-                    }
+                    self.rows.insert(update.page_start + index, row);
                 }
                 self.info = Some(info);
                 self.error = None;
@@ -1362,7 +1434,7 @@ impl DiffView {
                         .rows
                         .keys()
                         .copied()
-                        .filter(|i| !self.range.contains(i) && Some(*i) != pinned)
+                        .filter(|i| !self.range.contains(i))
                         .max_by_key(|i| i.abs_diff(self.range.start));
                     if let Some(i) = victim {
                         self.rows.remove(&i);
@@ -1788,6 +1860,7 @@ impl DiffView {
         let Some(target) = target else {
             return;
         };
+        self.aim.moved = true;
         if self.mode == Mode::Full {
             self.select_row(target.saturating_sub(1));
             return;
@@ -1838,6 +1911,8 @@ impl DiffView {
         let shift = ctx.input(|input| input.modifiers.shift);
         let step = crate::navigation::step(ctx, page);
         if step != 0 {
+            // The user's own scroll: rows passing under the pointer are not swaps.
+            self.aim.moved = true;
             if self.mode == Mode::Full {
                 self.move_cursor(step, shift);
             } else {
@@ -2272,6 +2347,11 @@ impl DiffView {
     }
 
     fn draw_inner(&mut self, ui: &mut egui::Ui, keyboard: bool) {
+        self.draw_pane(ui, keyboard);
+        self.aim.end(ui.ctx());
+    }
+
+    fn draw_pane(&mut self, ui: &mut egui::Ui, keyboard: bool) {
         self.bounds = ui.max_rect();
         let ctx = ui.ctx().clone();
         if !self.mode_seeded && self.change.is_some() {
@@ -2286,46 +2366,20 @@ impl DiffView {
         self.poll_blame();
         self.sync_blame(&ctx);
         self.export.draw(&ctx);
-        let (point, active, now) = ctx.input(|i| {
-            (
-                i.pointer.hover_pos(),
-                i.pointer.any_down() || i.smooth_scroll_delta != egui::Vec2::ZERO,
-                i.time,
-            )
-        });
-        if active {
-            self.last_scroll = now;
+        if ctx.input(|i| i.pointer.any_down() || i.smooth_scroll_delta != egui::Vec2::ZERO) {
             self.restoring = None;
         }
-        let quiet = !active && now - self.last_scroll > 0.2;
-        if !quiet {
-            ctx.request_repaint_after(std::time::Duration::from_millis(200));
+        // New content shows as soon as it arrives; the row under a still
+        // pointer fades in and refuses an early click (target guard).
+        if let Some(update) = self.worker.as_ref().and_then(Worker::poll) {
+            self.accept(update);
         }
-        let hovering = self.hovered(point);
-        let pinned = point
-            .filter(|p| self.rect.contains(*p))
-            .map(|p| ((p.y - self.rect.top() + self.offset) / HEIGHT).floor() as usize)
-            .map(|display| self.shown_row(display));
-        if let Some(update) = self.worker.as_ref().and_then(Worker::poll)
-            && update.generation == self.generation
-        {
-            self.staged = Some(update);
-        }
-        // Initial rows wait until the reading area's hit targets are clear.
-        // A newly selected file is the exception: at narrow widths the file
-        // list disappears and the resting pointer can already be over the
-        // reader, so the explicit selection must reveal its content.
-        let reveal = self.reveal;
-        if ((quiet && (!hovering || reveal))
-            || (self.info.is_some() && self.displayed_generation == self.generation))
-            && let Some(update) = self.staged.clone()
-        {
-            self.accept(update, pinned);
-            self.reveal = false;
-            if pinned.is_none() {
-                self.staged = None;
-            }
-        }
+        let file = self
+            .displayed
+            .as_ref()
+            .map_or_else(String::new, |f| f.path.clone());
+        let area = self.displayed_working.as_ref().map(|w| w.entry.area);
+        self.aim.begin(&ctx, (file, area));
         let Some(change) = self.displayed.as_ref().or(self.change.as_ref()).cloned() else {
             ui.weak("Select a file to read its diff");
             return;
@@ -2670,10 +2724,13 @@ impl DiffView {
                 (Some(a), None) => (a, a),
                 _ => (usize::MAX, 0),
             };
+            let opacity = ui.opacity();
             for display in rows {
                 let (index, segment) = self.base_row(display);
                 let (rect, response) =
                     ui.allocate_exact_size(egui::vec2(width, HEIGHT), egui::Sense::click());
+                let target = self.aim.row(ui, rect, || diff_line(&self.rows, index));
+                ui.set_opacity(opacity * target.alpha);
                 // A row not read yet keeps its slot, empty.
                 let Some(row) = self.rows.get(&index) else {
                     continue;
@@ -2706,7 +2763,7 @@ impl DiffView {
                 } else {
                     (false, None)
                 };
-                if let Some(discard) = chosen {
+                if let Some(discard) = chosen.filter(|_| target.clickable) {
                     hunk_action = Some((index, discard));
                 }
                 let font = egui::FontId::monospace(crate::density::code_font());
@@ -2765,7 +2822,9 @@ impl DiffView {
                     "Click to set the place · Double-click to copy this line"
                 };
                 let response = response.on_hover_text(hover);
-                if response.clicked() && !response.double_clicked() && !pending {
+                if !target.clickable {
+                    // A row that just changed under the pointer drops the click.
+                } else if response.clicked() && !response.double_clicked() && !pending {
                     if button_clicked {
                         // The inline hunk button owns this click.
                     } else if can_edit && row.kind == RowKind::Hunk {
@@ -2791,7 +2850,7 @@ impl DiffView {
                         });
                     }
                 }
-                if response.double_clicked() && !can_edit {
+                if response.double_clicked() && !can_edit && target.clickable {
                     ctx.copy_text(row.text.clone());
                 }
             }
@@ -2973,11 +3032,26 @@ impl DiffView {
             let selection = crate::colors::selection(ui.visuals());
             let marker = ui.visuals().selection.stroke.color;
             let cursor_fill = ui.visuals().selection.bg_fill;
+            let opacity = ui.opacity();
             for display in rows {
                 let (rect, response) =
                     ui.allocate_exact_size(egui::vec2(width, HEIGHT), egui::Sense::click());
                 let (paired, segment) = self.base_row(display);
                 let pair = split.pair(paired);
+                // The column under the pointer names the aimed line, as for clicks.
+                let left = ui
+                    .ctx()
+                    .pointer_hover_pos()
+                    .is_none_or(|point| pair.shared() || point.x < rect.left() + half);
+                let target = match if left {
+                    pair.left.or(pair.right)
+                } else {
+                    pair.right.or(pair.left)
+                } {
+                    Some(index) => self.aim.row(ui, rect, || diff_line(&self.rows, index)),
+                    None => crate::target_guard::Target::STILL,
+                };
+                ui.set_opacity(opacity * target.alpha);
                 let chars = wrap.map(|columns| segment * columns..(segment + 1) * columns);
                 let clip = ui.clip_rect();
                 // A full-width row: hunk header or no-newline note.
@@ -2999,7 +3073,7 @@ impl DiffView {
                     } else {
                         (false, None)
                     };
-                    if let Some(discard) = chosen {
+                    if let Some(discard) = chosen.filter(|_| target.clickable) {
                         hunk_action = Some((index, discard));
                     }
                     let left = if can_edit && row.kind == RowKind::Hunk {
@@ -3032,7 +3106,7 @@ impl DiffView {
                         "Click to set the place"
                     };
                     let response = response.on_hover_text(hover);
-                    if response.clicked() && !pending && !button_clicked {
+                    if response.clicked() && !pending && !button_clicked && target.clickable {
                         if hunk {
                             hunk_toggle = Some(index);
                         } else {
@@ -3160,7 +3234,7 @@ impl DiffView {
                     "Click to set the place · Double-click to copy this line"
                 };
                 let response = response.on_hover_text(hover);
-                let Some(index) = clicked else {
+                let Some(index) = clicked.filter(|_| target.clickable) else {
                     continue;
                 };
                 if response.clicked() && !response.double_clicked() && !pending {
@@ -3272,6 +3346,7 @@ impl DiffView {
                 (Some(a), None) => (a, a),
                 _ => (usize::MAX, 0),
             };
+            let opacity = ui.opacity();
             for display in rows {
                 let (index, segment) = wrapped.map_or((display, 0), |wrapped| wrapped.row(display));
                 let (rect, response) =
@@ -3279,6 +3354,10 @@ impl DiffView {
                 let Some(line) = full.lines.get(index) else {
                     continue;
                 };
+                let target = self.aim.row(ui, rect, || {
+                    Line::Full(side, line.number, line.text.clone())
+                });
+                ui.set_opacity(opacity * target.alpha);
                 let text = match wrap {
                     Some(columns) => {
                         &line.text
@@ -3365,15 +3444,16 @@ impl DiffView {
                 let response = response.on_hover_text(
                     "Click to set the place · Shift-click to extend · Double-click to copy",
                 );
-                if response.clicked() && !response.double_clicked() {
+                if !target.clickable {
+                    // A line that just changed under the pointer drops the click.
+                } else if response.clicked() && !response.double_clicked() {
                     new_cursor = Some(index);
                     if shift {
                         new_anchor = Some(new_anchor.unwrap_or(index));
                     } else {
                         new_anchor = Some(index);
                     }
-                }
-                if response.double_clicked() {
+                } else if response.double_clicked() {
                     ctx.copy_text(line.text.clone());
                 }
             }
@@ -3656,17 +3736,17 @@ mod tests {
             bytes: b"first".to_vec(),
         });
         let update = diff_update(view.generation, doc);
-        view.accept(update.clone(), None);
+        view.accept(update.clone());
         view.select("/repo".into(), Some(file("b", false, true)), &ctx);
         assert_eq!(view.count, 1);
         assert_eq!(view.rows[&0].text, "first");
         assert_eq!(view.displayed.as_ref().map(|f| f.path.as_str()), Some("a"));
-        view.accept(update.clone(), None); // A late old page cannot adopt the requested identity.
+        view.accept(update.clone()); // A late old page cannot adopt the requested identity.
         assert_eq!(view.displayed.as_ref().map(|f| f.path.as_str()), Some("a"));
         let mut failure = update.clone();
         failure.generation = view.generation;
         failure.result = Err("Unavailable object".into());
-        view.accept(failure, None);
+        view.accept(failure);
         assert_eq!(view.rows[&0].text, "first");
         assert_eq!(view.displayed.as_ref().map(|f| f.path.as_str()), Some("a"));
         let mut replacement = update;
@@ -3674,12 +3754,12 @@ mod tests {
         if let Ok(doc) = &mut replacement.result {
             doc.rows[0].text = "second".into();
         }
-        view.accept(replacement, None);
+        view.accept(replacement);
         assert_eq!(view.rows[&0].text, "second");
     }
 
     #[test]
-    fn reading_keys_scroll_without_changing_file_and_replacement_waits_for_hover() {
+    fn reading_keys_scroll_without_changing_file_and_a_replacement_shows_under_the_pointer() {
         let ctx = egui::Context::default();
         let mut view = DiffView::default();
         let selection = file("a", false, true);
@@ -3696,7 +3776,7 @@ mod tests {
             })
             .collect();
         let update = diff_update(1, doc);
-        view.accept(update.clone(), None);
+        view.accept(update.clone());
         view.change = None; // Isolate rendered input from asynchronous repository reads.
 
         let frame = |view: &mut DiffView, events| {
@@ -3733,56 +3813,17 @@ mod tests {
                 Some(&selection.path)
             );
         }
+        // The pointer rests on the reader: the next file's diff shows as
+        // soon as it arrives, from its first row.
         let pointer = view.rect.center();
+        frame(&mut view, vec![egui::Event::PointerMoved(pointer)]);
         view.generation = 2;
         let mut next = update;
         next.generation = 2;
-        view.staged = Some(next);
-        frame(&mut view, vec![egui::Event::PointerMoved(pointer)]);
-        assert_eq!(view.displayed_generation, 1);
-        frame(&mut view, vec![egui::Event::PointerGone]);
-        assert_eq!(view.displayed_generation, 2);
-    }
-
-    #[test]
-    fn a_new_selection_reveals_while_the_pointer_rests_on_the_reader() {
-        let ctx = egui::Context::default();
-        let mut view = DiffView::default();
-        let selection = file("a", false, true);
-        view.change = Some(selection);
-        view.generation = 1;
-        let mut doc = FileDiff::summary(DiffKind::Text, 0, 100, "");
-        doc.rows = (0..20)
-            .map(|i| DiffRow {
-                kind: RowKind::Added,
-                old_line: None,
-                new_line: Some(i + 1),
-                text: format!("row {i}"),
-                bytes: vec![],
-            })
-            .collect();
-        view.accept(diff_update(1, doc.clone()), None);
-        view.change = None; // Isolate rendered input from asynchronous repository reads.
-
-        let frame = |view: &mut DiffView, events| {
-            let _ = crate::tests::run_ui(
-                &ctx,
-                crate::tests::frame_input(720.0, 480.0, events),
-                |ctx| {
-                    egui::CentralPanel::default().show(ctx, |ui| view.draw_reading(ui));
-                },
-            );
-        };
-        frame(&mut view, vec![]);
-        let pointer = view.rect.center();
-        frame(&mut view, vec![egui::Event::PointerMoved(pointer)]);
-        view.generation = 2;
-        view.last_scroll = f64::NEG_INFINITY;
-        view.reveal = true;
-        view.staged = Some(diff_update(2, doc));
+        view.accept(next);
         frame(&mut view, vec![]);
         assert_eq!(view.displayed_generation, 2);
-        assert!(!view.reveal);
+        assert_eq!(view.offset, 0.0);
     }
 
     #[test]
@@ -4316,7 +4357,7 @@ mod tests {
             b"one\ntwo\nthree\nfour\nfive\n",
             &changed,
         );
-        view.accept(full_update(1, ReadingSide::After, text), None);
+        view.accept(full_update(1, ReadingSide::After, text));
         assert_eq!(view.count, 5);
         assert_eq!(view.mode, Mode::Full);
         assert_eq!(view.cursor, Some(1));
@@ -4480,7 +4521,7 @@ mod tests {
             .into_bytes();
         let text =
             FileText::from_bytes(ReadingSide::After, &body, &BTreeSet::from([4usize, 5, 40]));
-        view.accept(full_update(1, ReadingSide::After, text), None);
+        view.accept(full_update(1, ReadingSide::After, text));
 
         view.cursor = Some(2); // line 3, before the first change.
         assert_eq!(view.change_position(), (1, 2));
@@ -4525,7 +4566,7 @@ mod tests {
                 }
             })
             .collect();
-        view.accept(diff_update(1, doc), None);
+        view.accept(diff_update(1, doc));
         view.change = None; // Isolate rendered input from asynchronous repository reads.
         let frame = |view: &mut DiffView, events| {
             let _ = crate::tests::run_ui(
@@ -4568,7 +4609,7 @@ mod tests {
             ..Default::default()
         };
         let text = FileText::from_bytes(ReadingSide::After, b"one\ntwo\n", &BTreeSet::from([1]));
-        full.accept(full_update(1, ReadingSide::After, text), None);
+        full.accept(full_update(1, ReadingSide::After, text));
         full.cursor = None;
         full.anchor = None;
         assert_eq!(full.change_position(), (1, 1));
@@ -4614,7 +4655,7 @@ mod tests {
         let mut update = diff_update(2, doc);
         update.count = 1000;
         update.page_start = 371;
-        view.accept(update, None);
+        view.accept(update);
         assert_eq!(view.cursor, Some(499));
         assert_eq!(view.anchor, Some(499));
         assert_eq!(view.rows[&499].new_line, Some(500));
@@ -4686,7 +4727,7 @@ mod tests {
         assert_eq!(view.cursor, None);
         let text =
             FileText::from_bytes(ReadingSide::After, b"one\nnew\n", &BTreeSet::from([2usize]));
-        view.accept(full_update(1, ReadingSide::After, text), None);
+        view.accept(full_update(1, ReadingSide::After, text));
         assert_eq!(view.cursor, Some(1));
     }
 
@@ -4701,7 +4742,7 @@ mod tests {
         };
         let changed = BTreeSet::from([3usize]);
         let after = FileText::from_bytes(ReadingSide::After, b"a\nb\nc\nd\n", &changed);
-        view.accept(full_update(1, ReadingSide::After, after.clone()), None);
+        view.accept(full_update(1, ReadingSide::After, after.clone()));
         view.cursor = Some(2);
         view.anchor = Some(2);
         let before = FileText::from_bytes(
@@ -4709,22 +4750,19 @@ mod tests {
             b"a\nb\nold\nc\nd\n",
             &BTreeSet::from([3usize]),
         );
-        view.accept(full_update(1, ReadingSide::Before, before), None);
+        view.accept(full_update(1, ReadingSide::Before, before));
         // The accepted side is stale until the requested side arrives.
         assert_eq!(view.side, ReadingSide::After);
         view.set_side(ReadingSide::Before, &ctx);
-        view.accept(
-            full_update(
-                1,
+        view.accept(full_update(
+            1,
+            ReadingSide::Before,
+            FileText::from_bytes(
                 ReadingSide::Before,
-                FileText::from_bytes(
-                    ReadingSide::Before,
-                    b"a\nb\nold\nc\nd\n",
-                    &BTreeSet::from([3usize]),
-                ),
+                b"a\nb\nold\nc\nd\n",
+                &BTreeSet::from([3usize]),
             ),
-            None,
-        );
+        ));
         assert_eq!(view.side, ReadingSide::Before);
         assert_eq!(view.full_side, ReadingSide::Before);
         assert_eq!(view.cursor, Some(2));
@@ -4740,7 +4778,7 @@ mod tests {
     }
 
     #[test]
-    fn stale_pages_and_hovered_placeholders_preserve_displayed_rows() {
+    fn stale_pages_are_ignored_and_a_page_fills_its_slots_at_once() {
         let mut view = DiffView {
             generation: 2,
             ..Default::default()
@@ -4754,14 +4792,156 @@ mod tests {
             bytes: b"new".to_vec(),
         });
         let mut update = diff_update(1, doc);
-        view.accept(update.clone(), None);
+        view.accept(update.clone());
         assert_eq!(view.count, 0);
         update.generation = 2;
-        view.accept(update.clone(), Some(0));
+        view.accept(update);
         assert_eq!(view.count, 1);
-        assert!(view.rows.is_empty());
-        view.accept(update, None);
         assert_eq!(view.rows[&0].text, "new");
+    }
+
+    fn context_rows(count: usize) -> FileDiff {
+        let mut doc = FileDiff::summary(DiffKind::Text, 0, count as u64, "");
+        doc.rows = (0..count)
+            .map(|i| DiffRow {
+                kind: RowKind::Context,
+                old_line: Some(i + 1),
+                new_line: Some(i + 1),
+                text: format!("row {i}"),
+                bytes: vec![],
+            })
+            .collect();
+        doc
+    }
+
+    /// One reader frame at `time` seconds.
+    fn reader_frame(ctx: &egui::Context, view: &mut DiffView, time: f64, events: Vec<egui::Event>) {
+        let mut input = crate::tests::frame_input(720.0, 480.0, events);
+        input.time = Some(time);
+        let _ = crate::tests::run_ui(ctx, input, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| view.draw_reading(ui));
+        });
+    }
+
+    fn press(pos: egui::Pos2, pressed: bool) -> egui::Event {
+        egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+
+    #[test]
+    fn a_page_arriving_under_the_pointer_fades_in_and_refuses_an_early_click() {
+        let ctx = egui::Context::default();
+        let mut view = DiffView {
+            change: Some(file("a", false, true)),
+            generation: 1,
+            ..Default::default()
+        };
+        let doc = context_rows(100);
+        view.accept(diff_update(1, doc.clone()));
+        view.change = None; // Isolate rendered input from asynchronous repository reads.
+        // Rows past the first page have not arrived: their slots stay empty.
+        view.rows.retain(|index, _| *index < 4);
+        reader_frame(&ctx, &mut view, 0.0, vec![]);
+        let point = egui::pos2(view.rect.left() + 200.0, view.rect.top() + 6.5 * HEIGHT);
+        reader_frame(&ctx, &mut view, 0.1, vec![egui::Event::PointerMoved(point)]);
+        reader_frame(&ctx, &mut view, 0.2, vec![]);
+        assert!(
+            !view.aim.guard.animating(0.2),
+            "pointing at an empty slot is no change"
+        );
+        let offset = view.offset;
+
+        // The next page shows at once, under the still pointer.
+        view.accept(diff_update(1, doc));
+        reader_frame(&ctx, &mut view, 0.25, vec![press(point, true)]);
+        assert_eq!(view.rows[&6].text, "row 6");
+        assert!(view.aim.guard.animating(0.25), "the row fades in");
+        reader_frame(&ctx, &mut view, 0.3, vec![press(point, false)]);
+        assert_eq!(
+            view.cursor, None,
+            "a click within 0.3 s of the change is dropped"
+        );
+        assert_eq!(view.offset, offset);
+
+        reader_frame(&ctx, &mut view, 0.7, vec![press(point, true)]);
+        assert!(!view.aim.guard.animating(0.7));
+        reader_frame(&ctx, &mut view, 0.75, vec![press(point, false)]);
+        assert_eq!(view.cursor, Some(6));
+        assert_eq!(view.offset, offset);
+    }
+
+    #[test]
+    fn a_hunk_that_changes_under_the_pointer_refuses_its_stage_button_briefly() {
+        use gg_engine::status::{Area, Kind, StatusEntry, StatusIdentity, WorkingRequest};
+        let ctx = egui::Context::default();
+        let hunk = |header: &str| {
+            let mut doc = FileDiff::summary(DiffKind::Text, 1, 1, "");
+            let row = |kind, old_line, new_line, text: &str| DiffRow {
+                kind,
+                old_line,
+                new_line,
+                text: text.into(),
+                bytes: vec![],
+            };
+            doc.rows = vec![
+                row(RowKind::Hunk, None, None, header),
+                row(RowKind::Deleted, Some(1), None, "old"),
+                row(RowKind::Added, None, Some(1), "new"),
+            ];
+            doc
+        };
+        let mut view = DiffView {
+            working: Some(WorkingRequest {
+                repository: StatusIdentity {
+                    path: "/repo".into(),
+                    head: None,
+                    index: "index".into(),
+                    base_tree: None,
+                },
+                entry: StatusEntry::new(Area::Unstaged, Kind::Modified, b"a"),
+            }),
+            generation: 1,
+            ..Default::default()
+        };
+        view.set_staging("Stage", true, false);
+        let show = |view: &mut DiffView, generation, header| {
+            view.change = Some(file("a", true, true));
+            view.generation = generation;
+            view.accept(diff_update(generation, hunk(header)));
+            view.change = None;
+        };
+        show(&mut view, 1, "@@ -1 +1 @@");
+        reader_frame(&ctx, &mut view, 0.0, vec![]);
+        let button = view.rect.min + egui::vec2(56.0, HEIGHT / 2.0);
+        reader_frame(
+            &ctx,
+            &mut view,
+            0.1,
+            vec![egui::Event::PointerMoved(button)],
+        );
+        reader_frame(&ctx, &mut view, 0.2, vec![]);
+
+        // A refresh puts another hunk under the resting pointer.
+        show(&mut view, 2, "@@ -9 +9 @@");
+        reader_frame(&ctx, &mut view, 0.25, vec![press(button, true)]);
+        reader_frame(&ctx, &mut view, 0.3, vec![press(button, false)]);
+        assert!(
+            view.take_stage_edit().is_none(),
+            "Stage hunk refuses an early click"
+        );
+
+        reader_frame(&ctx, &mut view, 0.7, vec![press(button, true)]);
+        reader_frame(&ctx, &mut view, 0.75, vec![press(button, false)]);
+        let edit = view.take_stage_edit();
+        assert_eq!(
+            edit.and_then(|edit| edit.header).as_deref(),
+            Some("@@ -9 +9 @@"),
+            "Stage hunk acts once the grace passed"
+        );
     }
 
     #[test]
@@ -4908,7 +5088,7 @@ mod tests {
                         generation: 1,
                         ..Default::default()
                     };
-                    view.accept(diff_update(1, doc.clone()), None);
+                    view.accept(diff_update(1, doc.clone()));
                     view.change = None;
                     let mut output = None;
                     for _ in 0..2 {
@@ -5023,13 +5203,10 @@ mod tests {
                     mode_seeded: true,
                     ..Default::default()
                 };
-                view.accept(
-                    match mode {
-                        Mode::Diff => diff_update(1, doc.clone()),
-                        Mode::Full => full_update(1, ReadingSide::After, text.clone()),
-                    },
-                    None,
-                );
+                view.accept(match mode {
+                    Mode::Diff => diff_update(1, doc.clone()),
+                    Mode::Full => full_update(1, ReadingSide::After, text.clone()),
+                });
                 view.change = None;
                 let mut output = None;
                 for _ in 0..3 {
@@ -5134,7 +5311,7 @@ mod tests {
             mode_seeded: true,
             ..Default::default()
         };
-        view.accept(diff_update(1, doc), None);
+        view.accept(diff_update(1, doc));
         view.change = None;
         let draw = |view: &mut DiffView| {
             for _ in 0..2 {
@@ -5172,7 +5349,7 @@ mod tests {
                 generation: 1,
                 ..Default::default()
             };
-            view.accept(diff_update(1, split_fixture()), None);
+            view.accept(diff_update(1, split_fixture()));
             view.change = None;
             let mut output = None;
             for _ in 0..3 {
@@ -5207,7 +5384,7 @@ mod tests {
                 generation: 1,
                 ..Default::default()
             };
-            view.accept(diff_update(1, split_fixture()), None);
+            view.accept(diff_update(1, split_fixture()));
             view.change = None;
             let _ = crate::tests::run_ui(
                 &ctx,
@@ -5239,7 +5416,7 @@ mod tests {
                 generation: 1,
                 ..Default::default()
             };
-            view.accept(diff_update(1, split_fixture()), None);
+            view.accept(diff_update(1, split_fixture()));
             view.change = None; // Isolate rendered input from asynchronous repository reads.
             let mut output = None;
             for _ in 0..2 {
@@ -5334,7 +5511,7 @@ mod tests {
             generation: 1,
             ..Default::default()
         };
-        view.accept(diff_update(1, doc), None);
+        view.accept(diff_update(1, doc));
         view.change = None;
         let key = |key| egui::Event::Key {
             key,
@@ -5386,7 +5563,7 @@ mod tests {
             b"01\n02\n03\n04\n05\n06\n07\n08\n09\n10\n11\n12\n13\n14\n15\n",
             &BTreeSet::new(),
         );
-        view.accept(full_update(1, ReadingSide::After, text), None);
+        view.accept(full_update(1, ReadingSide::After, text));
         assert_eq!(view.cursor, Some(9));
         assert_eq!(view.anchor, Some(12));
         assert_eq!(view.offset, 240.0);
@@ -5424,7 +5601,7 @@ mod tests {
             &BTreeSet::new(),
         );
         let generation = view.generation;
-        view.accept(full_update(generation, ReadingSide::After, text), None);
+        view.accept(full_update(generation, ReadingSide::After, text));
         assert_eq!(view.change.as_ref().map(|c| c.path.as_str()), Some("b.rs"));
         assert_eq!(view.cursor, Some(40));
         assert_eq!(view.anchor, Some(45));

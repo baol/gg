@@ -88,6 +88,7 @@ mod submodule_worker;
 mod submodules_view;
 mod sync_cli;
 mod tag_cli;
+mod target_guard;
 mod thumbnails;
 mod titlebar;
 mod watcher;
@@ -661,14 +662,6 @@ struct StashPicker {
 
 use recovery_view::RecoveryView;
 
-/// Whether a staged history update may replace the displayed history now.
-///
-/// Background refreshes wait while the pointer is over History (`safe` is
-/// false) and until the old top row is found again, so rows never shift
-/// under the mouse. An explicit jump (a branch switch) asked for the new
-/// history, so it shows as soon as its first page arrives. A reload after
-/// the user's own command (`asked`) shows even under the pointer, still at
-/// its old top row.
 /// The reason Git gave for refusing, from its last `fatal:` or `error:`
 /// line, such as *'feature' is already used by worktree at '/src/x'*.
 fn git_reason(output: &str) -> Option<&str> {
@@ -682,28 +675,6 @@ fn git_reason(output: &str) -> Option<&str> {
         })
         .map(str::trim)
         .filter(|reason| !reason.is_empty())
-}
-
-fn accept_history_now(
-    safe: bool,
-    shown: bool,
-    jump: bool,
-    asked: bool,
-    rewrite_refresh: bool,
-    staged: Option<&stream::Update>,
-) -> bool {
-    let Some(update) = staged else {
-        return false;
-    };
-    if jump {
-        return true;
-    }
-    (safe || !shown || asked)
-        && (rewrite_refresh
-            || update.request.anchor_id.is_none()
-            || update.anchor_row.is_some()
-            || update.complete
-            || update.error.is_some())
 }
 
 /// What switching to a remote branch does.
@@ -1945,13 +1916,6 @@ struct Browser {
     rewrite_dialog: Option<rebase_dialog::Dialog>,
     rewrite_job: Option<RewriteJob>,
     rewrite_refresh: Option<u64>,
-    /// The next history load follows an explicit jump (a branch switch):
-    /// show it at once, without the hover and anchor waits.
-    history_jump: bool,
-    /// The pending history load follows the user's own command (a stash, a
-    /// commit, a reset…): show it even under the pointer. Watcher reloads
-    /// leave it unset and wait for the pointer to leave History.
-    history_asked: bool,
     commit_actions: bool,
     local_summary: Option<LocalSummary>,
     local_summary_job: Option<std::sync::mpsc::Receiver<LocalSummary>>,
@@ -2033,6 +1997,8 @@ struct Browser {
     last_load: Option<std::time::Instant>,
     pending_filter_edit: bool,
     worker: Option<stream::Worker>,
+    /// The last update that arrived during a thumb drag; its count and
+    /// extent apply on release.
     staged: Option<stream::Update>,
     viewport: Range<usize>,
     scroll_offset: f32,
@@ -2045,7 +2011,8 @@ struct Browser {
     avatars: avatars::Avatars,
     history_rect: egui::Rect,
     details_rect: egui::Rect,
-    last_scroll: f64,
+    /// Fades and guards the history row that changes under a still pointer.
+    history_guard: target_guard::Guard<Option<String>>,
     edit_path: bool,
     details_visible: bool,
     narrow_details: bool,
@@ -2152,8 +2119,6 @@ impl Browser {
             pull_rebase: None,
             rewrite_dialog: None,
             rewrite_job: None,
-            history_jump: false,
-            history_asked: false,
             rewrite_refresh: None,
             commit_actions: false,
             local_summary: None,
@@ -2232,7 +2197,7 @@ impl Browser {
             avatars: avatars::Avatars::default(),
             history_rect: egui::Rect::NOTHING,
             details_rect: egui::Rect::NOTHING,
-            last_scroll: f64::NEG_INFINITY,
+            history_guard: Default::default(),
             edit_path: false,
             details_visible: true,
             narrow_details: cfg!(debug_assertions) && std::env::var_os("GG_DETAILS").is_some(),
@@ -4434,7 +4399,7 @@ impl Browser {
         first: std::time::Instant,
     ) {
         if changes.refs && self.last_load.is_none_or(|load| load < first) {
-            self.start_load(ctx, false);
+            self.load(ctx);
             self.refresh_working(ctx);
         } else if changes.any() {
             self.refresh_mutation();
@@ -8523,16 +8488,8 @@ impl Browser {
         })
     }
 
-    /// Reload after the user's own command: the result shows at once.
+    /// Reload history, refs and the frame summary.
     fn load(&mut self, ctx: &egui::Context) {
-        self.start_load(ctx, true);
-    }
-
-    /// Reload history, refs and the frame summary. `asked` marks a reload
-    /// the user's command caused; a watcher reload that replaces one still
-    /// pending keeps its mark.
-    fn start_load(&mut self, ctx: &egui::Context, asked: bool) {
-        self.history_asked = asked || (self.history_asked && self.pending.is_some());
         self.welcome.settled = None;
         self.branch_error = None;
         self.network_error = None;
@@ -8573,16 +8530,13 @@ impl Browser {
             query: self.state.query.clone(),
             selected_id: self.state.selected.clone(),
             selected_row: self.restore_row.take(),
-            // A jump starts at the top on its own selection; the old top row
-            // may not exist on the new branch.
-            anchor_id: (!self.history_jump)
-                .then(|| {
-                    self.state
-                        .rows
-                        .get(&((self.scroll_offset / crate::density::row()) as usize))
-                        .map(|c| c.id.clone())
-                })
-                .flatten(),
+            // A jump cleared the rows, so it starts at the top on its own
+            // selection; a reload keeps its old top row.
+            anchor_id: self
+                .state
+                .rows
+                .get(&((self.scroll_offset / crate::density::row()) as usize))
+                .map(|c| c.id.clone()),
             ..Default::default()
         };
         self.staged = None;
@@ -10211,7 +10165,6 @@ impl Browser {
                         self.state.details = None;
                         self.scroll_offset = 0.0;
                         self.scroll_to_selection = true;
-                        self.history_jump = true;
                         self.load(ctx);
                     }
                 }
@@ -10367,115 +10320,71 @@ impl Browser {
         history_view::set_graph_width(graph::column_width(self.state.graph_lanes));
         if self.working.is_none() && self.review.is_none() {
             self.state.viewport = self.viewport.clone();
-            let (hovering_history, interacting, now) = ctx.input(|i| {
-                (
-                    i.pointer.hover_pos().is_some_and(|p| {
-                        self.history_rect.contains(p) || self.details_rect.contains(p)
-                    }),
-                    i.pointer.any_down() || i.smooth_scroll_delta != egui::Vec2::ZERO,
-                    i.time,
-                )
+            // The thumb keeps its extent and grab offset while dragged, and
+            // on the frame it is released, where egui still places it.
+            let dragging = ctx.input(|i| {
+                i.pointer.any_released()
+                    || i.pointer.primary_down()
+                        && i.pointer.press_origin().is_some_and(|p| {
+                            self.history_rect.contains(p) && p.x >= self.history_rect.right() - 18.0
+                        })
             });
-            if interacting {
-                self.last_scroll = now;
-            }
-            if now - self.last_scroll <= 0.2 {
-                ctx.request_repaint_after(std::time::Duration::from_millis(200));
-            }
-            let safe = !hovering_history && !interacting && now - self.last_scroll > 0.2;
-            let hovering_scrollbar = ctx.input(|i| i.pointer.hover_pos()).is_some_and(|p| {
-                self.history_rect.contains(p) && p.x >= self.history_rect.right() - 18.0
-            });
-            let extent_safe = !interacting && !hovering_scrollbar && now - self.last_scroll > 0.2;
-            let pinned = ctx.input(|i| i.pointer.hover_pos()).and_then(|p| {
-                self.row_rects
-                    .iter()
-                    .find(|(_, rect)| rect.contains(p))
-                    .map(|(row, _)| *row)
-            });
-            if let Some(result) = self.pending.as_ref().and_then(stream::Worker::poll) {
+            // A replacement shows on arrival; a reload keeps the old rows
+            // until its old top row is found, so it opens at that row.
+            if !dragging && let Some(result) = self.pending.as_ref().and_then(stream::Worker::poll)
+            {
                 match result {
                     Ok(update) if self.pending_filter_edit && !self.state.is_current(&update) => {}
-                    Ok(update) => self.staged = Some(update),
+                    Ok(update)
+                        if self.rewrite_refresh.is_none()
+                            && update.request.anchor_id.is_some()
+                            && update.anchor_row.is_none()
+                            && !update.complete
+                            && update.error.is_none() => {}
+                    Ok(update) => {
+                        self.restore_offset = Some(
+                            update
+                                .anchor_row
+                                .map(|row| {
+                                    row as f32 * crate::density::row()
+                                        + self.scroll_offset % crate::density::row()
+                                })
+                                .unwrap_or(0.0),
+                        );
+                        self.state.accept(update, true, true);
+                        self.worker = self.pending.take();
+                        self.pending_filter_edit = false;
+                        self.viewport = 0..64;
+                        self.scroll_to_selection = false;
+                    }
                     Err(error) => {
                         self.state.error = Some(error);
                         self.pending = None;
-                        self.staged = None;
                     }
                 }
             }
-            if self.pending.is_some()
-                && accept_history_now(
-                    safe,
-                    self.state.history.is_some(),
-                    self.history_jump,
-                    self.history_asked,
-                    self.rewrite_refresh.is_some(),
-                    self.staged.as_ref(),
-                )
-                && let Some(update) = self.staged.take()
-            {
-                self.history_jump = false;
-                self.history_asked = false;
-                self.restore_offset = Some(
-                    update
-                        .anchor_row
-                        .map(|row| {
-                            row as f32 * crate::density::row()
-                                + self.scroll_offset % crate::density::row()
-                        })
-                        .unwrap_or(0.0),
-                );
-                self.state.accept(update, true, true, pinned);
-                self.worker = self.pending.take();
-                self.pending_filter_edit = false;
-                self.viewport = 0..64;
-                self.scroll_to_selection = false;
-            }
             if self.pending.is_none() {
+                // The extent held during a drag applies on release.
+                if !dragging && let Some(update) = self.staged.take() {
+                    self.state.accept(update, false, true);
+                }
                 if let Some(result) = self.worker.as_ref().and_then(stream::Worker::poll) {
                     match result {
                         Ok(update) if !self.state.is_current(&update) => {}
                         Ok(update) => {
-                            if safe {
-                                self.staged = None;
-                                if self.state.selected_row.is_none() && update.selection.is_some() {
-                                    self.scroll_to_selection = true;
-                                }
-                                self.state.accept(update, false, true, pinned);
-                            } else if self.state.is_current(&update) {
-                                // Rows can fill off-pointer; counts and selection wait for a safe boundary.
-                                self.staged = Some(update);
+                            if self.state.selected_row.is_none() && update.selection.is_some() {
+                                self.scroll_to_selection = true;
                             }
+                            if dragging {
+                                self.staged = Some(update.clone());
+                            }
+                            self.state.accept(update, false, !dragging);
                         }
                         Err(error) => self.state.error = Some(error),
                     }
                 }
-                if !safe && let Some(update) = &self.staged {
-                    self.state.accept(update.clone(), false, false, pinned);
-                }
-                if extent_safe
-                    && let Some(update) = &self.staged
-                    && self.state.is_current(update)
-                {
-                    self.state.count = update.count;
-                    self.state.scanned = update.scanned;
-                    self.state.finished = update.complete;
-                    if self.state.requested.is_none() {
-                        self.state.error = update.error.clone();
-                    }
-                }
-                if safe && let Some(update) = self.staged.take() {
-                    if self.state.selected_row.is_none() && update.selection.is_some() {
-                        self.scroll_to_selection = true;
-                    }
-                    self.state.accept(update, false, true, pinned);
-                }
             }
-            self.avatars.poll(
-                ctx,
-                !hovering_history && !interacting && now - self.last_scroll > 0.2,
-            );
+            self.avatars.poll(ctx, true);
             if crate::navigation::available(ctx) {
                 if ctx.input_mut(|i| {
                     i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)
@@ -12803,6 +12712,21 @@ impl Browser {
                         if let Some(offset) = self.restore_offset.take() {
                             scroll = scroll.vertical_scroll_offset(offset);
                         }
+                        // Scrolls, drags and keys are the user's own motion; the
+                        // guard compares pointer positions itself.
+                        let (now, moved, pressed, released) = ctx.input(|i| {
+                            (
+                                i.time,
+                                i.smooth_scroll_delta != egui::Vec2::ZERO
+                                    || i.pointer.is_decidedly_dragging()
+                                    || i.events.iter().any(|event| {
+                                        matches!(event, egui::Event::Key { pressed: true, .. })
+                                    }),
+                                i.pointer.primary_pressed(),
+                                i.pointer.primary_released(),
+                            )
+                        });
+                        let mut hovered = false;
                         let previous_spacing = ui.spacing().item_spacing.y;
                         ui.spacing_mut().item_spacing.y = 0.0;
                         let scroll_output = scroll.show_rows(
@@ -12820,6 +12744,22 @@ impl Browser {
                                     .as_ref()
                                     .and_then(|head| head.name.clone());
                                 for row in rows {
+                                    let slot = egui::Rect::from_min_size(
+                                        ui.cursor().min,
+                                        egui::vec2(ui.available_width(), crate::density::row()),
+                                    );
+                                    let mut target = target_guard::Target::STILL;
+                                    if let Some(point) = ui
+                                        .ctx()
+                                        .pointer_hover_pos()
+                                        .filter(|_| ui.rect_contains_pointer(slot))
+                                    {
+                                        hovered = true;
+                                        let key = self.state.rows.get(&row).map(|c| c.id.clone());
+                                        target = self
+                                            .history_guard
+                                            .hover(now, &key, point, moved, pressed);
+                                    }
                                     if let Some(commit) = self.state.rows.get(&row) {
                                         let mut refs = self
                                             .state
@@ -12846,6 +12786,7 @@ impl Browser {
                                                     Some(&commit.id)
                                                         == self.state.selected.as_ref(),
                                                     &mut self.avatars,
+                                                    target,
                                                 )
                                             })
                                             .inner;
@@ -12912,6 +12853,14 @@ impl Browser {
                             .floor()
                             .max(1.0) as usize;
                         ui.spacing_mut().item_spacing.y = previous_spacing;
+                        if !hovered {
+                            self.history_guard.leave();
+                        } else if released {
+                            self.history_guard.release();
+                        }
+                        if self.history_guard.animating(now) {
+                            ctx.request_repaint();
+                        }
                     });
             } else if !self.welcome_shown() {
                 // The status line reports the read; the pane stays empty.
@@ -18086,70 +18035,6 @@ mod tests {
                 }
             }
         }
-    }
-
-    #[test]
-    fn incoming_count_waits_for_wheel_settling_and_preserves_hovered_content_and_offset() {
-        let ctx = egui::Context::default();
-        let mut app = layout_fixture();
-        let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
-            app.draw_ui(ctx)
-        });
-        let pointer = app.row_rects[5].1.center();
-        app.staged = Some(stream::Update {
-            request: stream::Request {
-                selected_id: app.state.selected.clone(),
-                selected_row: app.state.selected_row,
-                ..Default::default()
-            },
-            anchor_row: None,
-            identity: History {
-                path: "repo".into(),
-                head: "main".into(),
-                commits: vec![],
-                truncated: false,
-                shallow: false,
-            },
-            query: String::new(),
-            count: 100_000,
-            scanned: 100_000,
-            complete: true,
-            rows: vec![],
-            graphs: vec![],
-            ref_lanes: Default::default(),
-            refs: Default::default(),
-            selection: None,
-            error: None,
-        });
-        let mut input = frame_input(
-            1120.0,
-            740.0,
-            vec![
-                egui::Event::PointerMoved(pointer),
-                egui::Event::MouseWheel {
-                    unit: egui::MouseWheelUnit::Point,
-                    delta: egui::vec2(0.0, -52.0),
-                    phase: egui::TouchPhase::Move,
-                    source: egui::MouseWheelSource::Unknown,
-                    modifiers: egui::Modifiers::NONE,
-                },
-            ],
-        );
-        input.time = Some(1.0);
-        let _ = crate::tests::run_ui(&ctx, input, |ctx| app.draw_ui(ctx));
-        assert_eq!(app.state.count, 100);
-        for i in 1..20 {
-            let mut input = frame_input(1120.0, 740.0, vec![]);
-            input.time = Some(1.0 + i as f64 * 0.1);
-            let _ = crate::tests::run_ui(&ctx, input, |ctx| app.draw_ui(ctx));
-        }
-        assert_eq!(app.state.count, 100_000);
-        let offset = app.scroll_offset;
-        let mut input = frame_input(1120.0, 740.0, vec![egui::Event::PointerGone]);
-        input.time = Some(4.0);
-        let _ = crate::tests::run_ui(&ctx, input, |ctx| app.draw_ui(ctx));
-        assert_eq!(app.state.count, 100_000);
-        assert!((app.scroll_offset - offset).abs() < 0.1);
     }
 
     #[test]
