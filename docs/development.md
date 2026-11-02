@@ -32,6 +32,7 @@ The native UI uses egui/eframe 0.37 on wgpu 30. wgpu enables Vulkan, Metal, DX12
 | `GG_SEARCH=text` | Debug: open `Ctrl+K` search with the text |
 | `GG_REBASE=COMMIT` | Debug: open the interactive rebase dialog from the commit through HEAD |
 | `GG_DETAILS=1` | Debug narrow-screen details view |
+| `GG_WORKTREES=1` | Debug: open Repository › Worktrees… after history loads |
 | `GG_THEME=light` or `dark` | Debug: override the saved theme without changing it |
 
 Use an isolated display for captures. Avatar cache: `git-good/avatars-v2-128` under the OS cache directory (XDG cache, macOS Library/Caches, or Windows LocalAppData).

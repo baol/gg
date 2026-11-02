@@ -335,6 +335,20 @@ pub fn prune(repo: &Path) -> Result<(), String> {
     run_worktree(repo, &["prune".as_ref()], "prune missing worktrees")
 }
 
+/// Lock one worktree (`git worktree lock`) so prune and remove leave it
+/// alone, as for one on a removable disk; `reason` is shown with it.
+pub fn lock(repo: &Path, destination: &Path, reason: &str) -> Result<(), String> {
+    let reason = reason.trim();
+    let mut args: Vec<&std::ffi::OsStr> = vec!["lock".as_ref()];
+    if !reason.is_empty() {
+        args.push("--reason".as_ref());
+        args.push(reason.as_ref());
+    }
+    args.push("--".as_ref());
+    args.push(destination.as_os_str());
+    run_worktree(repo, &args, "lock the worktree")
+}
+
 /// Unlock one locked worktree (`git worktree unlock`).
 pub fn unlock(repo: &Path, destination: &Path) -> Result<(), String> {
     run_worktree(
