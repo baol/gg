@@ -2156,8 +2156,9 @@ Fixture: `fx-dirty`
 Layer: interaction
 - Given Local Changes open, `c.txt` selected
 - When an external editor appends a line to `c.txt` and creates `z.txt`, and a terminal runs `git add b.txt`/`git reset b.txt`
-- Then within ~300 ms of quiet the lists and the reader update without user action; no Refresh button exists; previous content stays until replaced; selection and offsets retained
-Covered by (interaction): `a_real_repository_reports_a_changed_file` (apps/git-good/src/watcher.rs); `refresh_rereads_working_bytes_when_head_and_index_are_unchanged` (status_view.rs)
+- Then within ~300 ms of quiet the lists and the reader update without user action, even with the pointer over the lists; no Refresh button exists; previous content stays until replaced; selection and offsets retained
+- And a list row that changes under a still pointer fades in and drops a click made within 0.3 s; a click acts only on the row that was pressed (RULE-17)
+Covered by (interaction): `a_real_repository_reports_a_changed_file` (apps/git-good/src/watcher.rs); `refresh_rereads_working_bytes_when_head_and_index_are_unchanged`, `rows_and_refresh_results_show_at_once_under_the_pointer`, `a_row_filling_under_the_pointer_fades_in_and_refuses_an_early_click`, `moving_onto_a_row_or_pressing_one_that_swaps_follows_the_aimed_row` (status_view.rs)
 
 ### CHG-67 Failed scan keeps results and offers Retry
 Fixture: `fx-dirty`, then make the worktree unreadable (e.g. `chmod 000 notes`)
@@ -4375,7 +4376,7 @@ Rules every area relies on, cases that span areas, and the CLI contract. Area ca
 14. **RULE-14 Keyboard completes every workflow.** Each workflow can be finished without a pointer; text fields keep their keys; closing a dialog restores focus to where it was opened (XCT-13 … XCT-18).
 15. **RULE-15 CLI and GUI share state and consequences.** Both read the same operation state, validate with the same rules and report the same consequences and backups (XCT-24 … XCT-28).
 16. **RULE-16 Commands cost what Git costs.** A command run from the GUI takes no more than 1 % longer than the same Git command from the CLI on the same repository. Git Good adds no Git process before or after Git's own on the UI thread, and the refreshes it runs afterwards are background reads that never delay the result being shown (STA-26).
-17. **RULE-17 Targets never swap under a click.** New content shows when it arrives; the scroll position, selection and focus follow identity; a row that changes under a still pointer fades in over 0.25 s and refuses clicks for 0.3 s, and a click acts only on the row that was pressed (HIS-05, HIS-07, REV-06, REV-21).
+17. **RULE-17 Targets never swap under a click.** New content shows when it arrives; the scroll position, selection and focus follow identity; a row that changes under a still pointer fades in over 0.25 s and refuses clicks for 0.3 s, and a click acts only on the row that was pressed (HIS-05, HIS-07, REV-06, REV-21, CHG-66).
 
 ## Cross-cutting scenarios
 
