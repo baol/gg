@@ -173,17 +173,41 @@ pub fn push(
     if !output.status.success() {
         return Err(failure("Stash changes", &output));
     }
-    let entry = list(path)?
-        .entries
-        .into_iter()
-        .next()
-        .ok_or("Stash push succeeded but no stash entry was recorded.")?;
+    let message = match newest_message(path) {
+        Some(message) => message,
+        None => {
+            list(path)?
+                .entries
+                .into_iter()
+                .next()
+                .ok_or("Stash push succeeded but no stash entry was recorded.")?
+                .message
+        }
+    };
     Ok(StashReceipt {
-        reference: Some(entry.reference),
-        message: Some(entry.message),
+        // A push always makes the newest entry.
+        reference: Some("stash@{0}".into()),
+        message: Some(message),
         created: true,
         ..StashReceipt::default()
     })
+}
+
+/// The newest stash entry's message, read from the `refs/stash` reflog file
+/// without starting Git. `None` when the file is not there (reftable) or
+/// cannot be read; callers then ask Git.
+fn newest_message(path: &Path) -> Option<String> {
+    let repo = gix::discover(path).ok()?;
+    let log = std::fs::read(repo.common_dir().join("logs/refs/stash")).ok()?;
+    let line = log
+        .split(|byte| *byte == b'\n')
+        .rfind(|line| !line.is_empty())?;
+    let tab = line.iter().position(|byte| *byte == b'\t')?;
+    Some(
+        String::from_utf8_lossy(&line[tab + 1..])
+            .trim_end()
+            .to_string(),
+    )
 }
 
 pub fn apply(

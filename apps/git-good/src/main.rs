@@ -664,11 +664,14 @@ use recovery_view::RecoveryView;
 /// Background refreshes wait while the pointer is over History (`safe` is
 /// false) and until the old top row is found again, so rows never shift
 /// under the mouse. An explicit jump (a branch switch) asked for the new
-/// history, so it shows as soon as its first page arrives.
+/// history, so it shows as soon as its first page arrives. A reload after
+/// the user's own command (`asked`) shows even under the pointer, still at
+/// its old top row.
 fn accept_history_now(
     safe: bool,
     shown: bool,
     jump: bool,
+    asked: bool,
     rewrite_refresh: bool,
     staged: Option<&stream::Update>,
 ) -> bool {
@@ -678,7 +681,7 @@ fn accept_history_now(
     if jump {
         return true;
     }
-    (safe || !shown)
+    (safe || !shown || asked)
         && (rewrite_refresh
             || update.request.anchor_id.is_none()
             || update.anchor_row.is_some()
@@ -1832,6 +1835,10 @@ struct Browser {
     /// The next history load follows an explicit jump (a branch switch):
     /// show it at once, without the hover and anchor waits.
     history_jump: bool,
+    /// The pending history load follows the user's own command (a stash, a
+    /// commit, a reset…): show it even under the pointer. Watcher reloads
+    /// leave it unset and wait for the pointer to leave History.
+    history_asked: bool,
     commit_actions: bool,
     local_summary: Option<LocalSummary>,
     local_summary_job: Option<std::sync::mpsc::Receiver<LocalSummary>>,
@@ -2032,6 +2039,7 @@ impl Browser {
             rewrite_dialog: None,
             rewrite_job: None,
             history_jump: false,
+            history_asked: false,
             rewrite_refresh: None,
             commit_actions: false,
             local_summary: None,
@@ -4312,7 +4320,7 @@ impl Browser {
         first: std::time::Instant,
     ) {
         if changes.refs && self.last_load.is_none_or(|load| load < first) {
-            self.load(ctx);
+            self.start_load(ctx, false);
             self.refresh_working(ctx);
         } else if changes.any() {
             self.refresh_mutation();
@@ -8401,7 +8409,16 @@ impl Browser {
         })
     }
 
+    /// Reload after the user's own command: the result shows at once.
     fn load(&mut self, ctx: &egui::Context) {
+        self.start_load(ctx, true);
+    }
+
+    /// Reload history, refs and the frame summary. `asked` marks a reload
+    /// the user's command caused; a watcher reload that replaces one still
+    /// pending keeps its mark.
+    fn start_load(&mut self, ctx: &egui::Context, asked: bool) {
+        self.history_asked = asked || (self.history_asked && self.pending.is_some());
         self.welcome.settled = None;
         self.branch_error = None;
         self.network_error = None;
@@ -9983,12 +10000,14 @@ impl Browser {
                     safe,
                     self.state.history.is_some(),
                     self.history_jump,
+                    self.history_asked,
                     self.rewrite_refresh.is_some(),
                     self.staged.as_ref(),
                 )
                 && let Some(update) = self.staged.take()
             {
                 self.history_jump = false;
+                self.history_asked = false;
                 self.restore_offset = Some(
                     update
                         .anchor_row
@@ -13516,6 +13535,74 @@ mod tests {
                     .text
                     .contains("Create the first commit before creating a branch.")
         )));
+    }
+
+    #[test]
+    fn a_stash_shows_its_history_at_once_under_the_pointer()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let git = |path: &std::path::Path, args: &[&str]| -> Result<(), String> {
+            let output = std::process::Command::new("git")
+                .arg("-C")
+                .arg(path)
+                .args(args)
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env(
+                    "GIT_CONFIG_GLOBAL",
+                    if cfg!(windows) { "NUL" } else { "/dev/null" },
+                )
+                .output()
+                .map_err(|error| error.to_string())?;
+            if output.status.success() {
+                Ok(())
+            } else {
+                Err(String::from_utf8_lossy(&output.stderr).into_owned())
+            }
+        };
+        let dir = tempfile::tempdir()?;
+        let path = std::fs::canonicalize(dir.path())?;
+        git(&path, &["init", "-q", "-b", "main"])?;
+        git(&path, &["config", "user.name", "Test"])?;
+        git(&path, &["config", "user.email", "test@example.org"])?;
+        git(&path, &["config", "core.autocrlf", "false"])?;
+        std::fs::write(path.join("a"), b"base\n")?;
+        git(&path, &["add", "a"])?;
+        git(&path, &["commit", "-qm", "base"])?;
+
+        let ctx = egui::Context::default();
+        let mut app = Browser::new(path.clone());
+        // The Stash dialog sits over History, so the pointer stays there.
+        let over_history = egui::pos2(600.0, 300.0);
+        let frame = |app: &mut Browser| {
+            let _ = crate::tests::run_ui(
+                &ctx,
+                frame_input(1120.0, 740.0, vec![egui::Event::PointerMoved(over_history)]),
+                |ui| app.draw_ui(ui),
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        };
+        app.load(&ctx);
+        for _ in 0..400 {
+            frame(&mut app);
+            if app.pending.is_none() && app.state.history.is_some() {
+                break;
+            }
+        }
+        assert!(app.pending.is_none(), "the repository did not open");
+        assert!(app.history_rect.contains(over_history));
+
+        std::fs::write(path.join("a"), b"changed\n")?;
+        app.push_stash(&ctx, "work", false, false)?;
+        for _ in 0..400 {
+            frame(&mut app);
+            if app.pending.is_none() {
+                break;
+            }
+        }
+        assert!(
+            app.pending.is_none(),
+            "the stash's history waited for the pointer to leave History"
+        );
+        Ok(())
     }
 
     #[test]

@@ -8,6 +8,41 @@ use std::{
 };
 
 pub fn state(path: &Path) -> Result<Option<OperationState>, String> {
+    let repo = gix::discover(path).map_err(|e| format!("Read repository: {e}"))?;
+    let dir = repo.path();
+    // Reftable keeps some operation heads inside its tables: ask Git.
+    if dir.join("reftable").is_dir() || repo.common_dir().join("reftable").is_dir() {
+        return state_from_git(path);
+    }
+    // The operation's files in this worktree's Git directory, read the way
+    // Git does, without starting a Git process for the common idle case.
+    let head = |name: &str| -> Option<String> {
+        let text = std::fs::read_to_string(dir.join(name)).ok()?;
+        let id = text.lines().next()?.trim();
+        gix::ObjectId::from_hex(id.as_bytes())
+            .ok()
+            .map(|id| id.to_string())
+    };
+    let operation = if dir.join("rebase-merge").is_dir() || dir.join("rebase-apply").is_dir() {
+        Some((Operation::Rebase, head("REBASE_HEAD")))
+    } else if let Some(commit) = head("CHERRY_PICK_HEAD") {
+        Some((Operation::CherryPick, Some(commit)))
+    } else if let Some(commit) = head("REVERT_HEAD") {
+        Some((Operation::Revert, Some(commit)))
+    } else {
+        head("MERGE_HEAD").map(|commit| (Operation::Merge, Some(commit)))
+    };
+    let Some((operation, commit)) = operation else {
+        return Ok(None);
+    };
+    Ok(Some(OperationState {
+        operation,
+        commit,
+        conflicts: unmerged(path)?,
+    }))
+}
+
+fn state_from_git(path: &Path) -> Result<Option<OperationState>, String> {
     let conflicts = unmerged(path)?;
     if rebase_in_progress(path)? {
         return Ok(Some(OperationState {

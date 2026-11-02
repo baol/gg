@@ -786,6 +786,7 @@ fn a_branch_switch_shows_its_history_at_once_even_under_the_pointer() {
         true,
         false,
         false,
+        false,
         Some(&waiting)
     ));
     assert!(!accept_history_now(
@@ -793,12 +794,20 @@ fn a_branch_switch_shows_its_history_at_once_even_under_the_pointer() {
         true,
         false,
         false,
+        false,
         Some(&waiting)
     ));
     // A switch asked for the new history: shown on its first page.
-    assert!(accept_history_now(false, true, true, false, Some(&waiting)));
+    assert!(accept_history_now(
+        false,
+        true,
+        true,
+        false,
+        false,
+        Some(&waiting)
+    ));
     // Nothing staged yet: nothing to show.
-    assert!(!accept_history_now(true, true, true, false, None));
+    assert!(!accept_history_now(true, true, true, false, false, None));
     // Once found or complete, a refresh shows when the pointer leaves.
     waiting.complete = true;
     assert!(!accept_history_now(
@@ -806,7 +815,54 @@ fn a_branch_switch_shows_its_history_at_once_even_under_the_pointer() {
         true,
         false,
         false,
+        false,
         Some(&waiting)
     ));
-    assert!(accept_history_now(true, true, false, false, Some(&waiting)));
+    assert!(accept_history_now(
+        true,
+        true,
+        false,
+        false,
+        false,
+        Some(&waiting)
+    ));
+}
+
+#[test]
+fn a_command_reload_shows_under_the_pointer_at_its_old_top_row() {
+    // A stash, commit or reset asked for the reload: it shows while the
+    // pointer is over History, once the old top row is found again.
+    let request = stream::Request {
+        anchor_id: Some("f".repeat(40)),
+        ..Default::default()
+    };
+    let mut asked = update(request, 3);
+    asked.complete = false;
+    asked.anchor_row = None;
+    assert!(!accept_history_now(
+        false,
+        true,
+        false,
+        true,
+        false,
+        Some(&asked)
+    ));
+    asked.anchor_row = Some(1);
+    assert!(accept_history_now(
+        false,
+        true,
+        false,
+        true,
+        false,
+        Some(&asked)
+    ));
+    // The same update from the file watcher waits for the pointer.
+    assert!(!accept_history_now(
+        false,
+        true,
+        false,
+        false,
+        false,
+        Some(&asked)
+    ));
 }
