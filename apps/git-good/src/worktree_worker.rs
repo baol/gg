@@ -18,6 +18,8 @@ pub enum Action {
     Prune,
     /// Unlock a locked worktree.
     Unlock(PathBuf),
+    /// Lock a worktree, with an optional reason.
+    Lock(PathBuf, String),
 }
 
 #[derive(Clone)]
@@ -97,6 +99,15 @@ impl Worker {
                             ),
                             Err(error) => (Err(error), None),
                         },
+                        Action::Lock(path, reason) => {
+                            match gg_git::worktree::lock(&request.repo, path, reason) {
+                                Ok(()) => (
+                                    gg_git::worktree::list(&request.repo),
+                                    Some(format!("Locked {}.", path.display())),
+                                ),
+                                Err(error) => (Err(error), None),
+                            }
+                        }
                         Action::Unlock(path) => {
                             match gg_git::worktree::unlock(&request.repo, path) {
                                 Ok(()) => (

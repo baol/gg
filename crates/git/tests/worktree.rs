@@ -207,7 +207,7 @@ fn add_existing_branch_and_list_current_worktree() -> Result {
 }
 
 #[test]
-fn unlock_and_prune_keep_branches() -> Result {
+fn lock_unlock_and_prune_keep_branches() -> Result {
     let dir = repo()?;
     let linked = tempfile::tempdir()?;
     let locked = linked.path().join("locked");
@@ -223,11 +223,15 @@ fn unlock_and_prune_keep_branches() -> Result {
             },
         )?;
     }
-    let locked_path = locked.to_str().ok_or("non-UTF-8 path")?;
-    git(
-        dir.path(),
-        &["worktree", "lock", "--reason", "usb", locked_path],
-    )?;
+    gg_git::worktree::lock(dir.path(), &locked, " usb ")?;
+    let snapshot = gg_git::worktree::list(dir.path())?;
+    assert!(
+        snapshot
+            .worktrees
+            .iter()
+            .any(|worktree| worktree.locked.as_deref() == Some("usb")),
+        "locked with its reason"
+    );
     gg_git::worktree::unlock(dir.path(), &locked)?;
     let snapshot = gg_git::worktree::list(dir.path())?;
     assert!(

@@ -14,7 +14,11 @@ pub struct Request {
 
 /// Show the folder that holds `file` with the system's file manager.
 pub fn reveal(file: &Path) -> Result<(), String> {
-    let folder = file.parent().unwrap_or(file);
+    open_folder(file.parent().unwrap_or(file))
+}
+
+/// Open `folder` itself with the system's file manager.
+pub fn open_folder(folder: &Path) -> Result<(), String> {
     let (program, args) = system_opener(folder);
     Command::new(&program)
         .args(&args)

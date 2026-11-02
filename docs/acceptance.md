@@ -3719,14 +3719,14 @@ Covered by (interaction): `reports_malformed_configuration_as_an_empty_list` (ap
 Fixture: `fx-worktrees`
 Layer: product
 - When **Repository › Worktrees…** is chosen
-- Then a non-modal window shows columns **BRANCH**, **PATH**, **STATUS**, actions; rows: main (`main`, current/main flags), `wt-login` (`feature/login`), `wt-locked` (locked, `on usb disk`), `wt-gone` (prunable/missing); no Refresh button; empty (no loading text) during the first read
-Covered by (backend, interaction): `worktree_window_lists_state_and_fits_the_narrow_viewport` (apps/git-good/src/main.rs), `lists_main_and_linked_worktrees_with_branch_state` (crates/git/tests/worktree.rs)
+- Then a non-modal window headed **Worktrees** with the count shows a 22 px table **BRANCH**, **PATH**, **STATUS**, **HEAD**: main (`main · main worktree`, blue *Current*), `wt-login` (`feature/login`, green *Clean*), `wt-locked` (grey *Locked*), and last `wt-gone` (red *Missing*); each PATH ends with the worktree's own folder (`…/wt-login`); the label grid under it shows the selected PATH with a copy button, HEAD `id · subject · author · date` and STATE; the footer has **⋯**, **New worktree…**, **Remove…** `Del` and the primary **Open** `Enter`; no Refresh button; empty (no loading text) during the first read
+Covered by (backend, interaction): `worktree_window_lists_state_and_fits_the_narrow_viewport`, `worktrees_window_prunes_missing_and_locks_with_a_reason` (apps/git-good/src/main.rs), `lists_main_and_linked_worktrees_with_branch_state` (crates/git/tests/worktree.rs)
 
 ### WTR-02 Window fits the narrow viewport
 Fixture: `fx-worktrees`, window 720×480
 Layer: interaction
 - When Worktrees… opens
-- Then all columns and action buttons are visible without clipping
+- Then all columns, the label grid and the footer buttons are visible without clipping
 Covered by (interaction): `worktree_window_lists_state_and_fits_the_narrow_viewport` (apps/git-good/src/main.rs)
 
 ### WTR-03 Dirty status shown per worktree
@@ -3762,7 +3762,7 @@ Covered by (interaction): `worktree_switch_waits_for_an_active_operation` (apps/
 ### WTR-07 Create worktree: new branch, default folder follows branch
 Fixture: `fx-branchy` at `/tmp/x/fx-branchy`
 Layer: product
-- When **Create worktree…**, new branch `feat/x` from `main`
+- When **New worktree…**, new branch `feat/x` from `main`
 - Then the folder defaults to `/tmp/x/fx-branchy-feat-x` and follows further branch edits until the folder is edited by hand; **Open after create** is on
 - When submitted
 - Then progress shows, the row appears only after Git succeeds, and Git Good switches to the new worktree
@@ -3778,7 +3778,7 @@ Covered by (backend, partial): `add_existing_branch_and_list_current_worktree` (
 ### WTR-09 Create rejects a branch checked out elsewhere
 Fixture: `fx-worktrees`
 Layer: product
-- When Create worktree… with existing `feature/login`
+- When New worktree… with existing `feature/login`
 - Then the dialog stays open with an error naming `wt-login`'s path; no force option
 Covered by (backend, partial): `add_rejects_checked_out_branches_and_nonempty_destinations` (crates/git/tests/worktree.rs); GUI path not automated
 
@@ -3800,23 +3800,32 @@ Covered by (backend, partial): `remove_blocks_main_current_and_dirty_worktrees_t
 ### WTR-12 Remove blocked for main, current, dirty, locked, missing
 Fixture: `fx-worktrees` with `wt-login` dirty
 Layer: product
-- Then main, current, dirty `wt-login`, locked `wt-locked`, and missing `wt-gone` rows show an explicit reason instead of Remove…; no force or delete-files route
+- Then with main, current, dirty `wt-login`, locked `wt-locked`, or missing `wt-gone` selected, **Remove…** is disabled with its reason on hover and `Del` does nothing; no force or delete-files route
 - Given `wt-login` becomes dirty after the confirmation opened, confirming re-checks and refuses
 Covered by (backend, partial): `remove_blocks_main_current_and_dirty_worktrees_then_removes_a_clean_one`, `nested_current_worktree_cannot_be_removed` (crates/git/tests/worktree.rs); GUI path not automated
 
 ### WTR-13 Prune a missing worktree
 Fixture: `fx-worktrees`
 Layer: product
-- When **Prune** on `wt-gone`
-- Then `git worktree prune` runs, the result is reported, the row disappears, its branch remains
-Covered by (backend, partial): `unlock_and_prune_keep_branches` (crates/git/tests/worktree.rs); GUI path not automated
+- When `wt-gone` is selected, whose primary reads **Prune 1 missing** (also **⋯ › Prune 1 missing**)
+- Then `git worktree prune` runs, the result is reported in the footer, the row disappears, its branch remains
+Covered by (backend, interaction): `worktrees_window_prunes_missing_and_locks_with_a_reason` (apps/git-good/src/main.rs), `lock_unlock_and_prune_keep_branches` (crates/git/tests/worktree.rs)
 
-### WTR-14 Unlock a locked worktree
+### WTR-14 Lock and unlock a worktree
 Fixture: `fx-worktrees`
 Layer: product
-- When **Unlock** on `wt-locked`
-- Then the lock reason disappears, the result is reported and Remove… becomes available. (No Lock action is offered.)
-Covered by (backend, partial): `unlock_and_prune_keep_branches` (crates/git/tests/worktree.rs); GUI path not automated
+- When **⋯ › Lock…** on `wt-login` with reason `on a USB disk`, then **Lock**
+- Then the row shows *Locked*, STATE reads *locked: on a USB disk*, the result is reported, and Remove… is disabled
+- When **⋯ › Unlock** on `wt-locked`
+- Then the lock reason disappears, the result is reported and Remove… becomes available
+Covered by (backend, interaction): `worktrees_window_prunes_missing_and_locks_with_a_reason` (apps/git-good/src/main.rs), `lock_unlock_and_prune_keep_branches` (crates/git/tests/worktree.rs)
+
+### WTR-15 Copy path and show in file manager
+Fixture: `fx-worktrees`
+Layer: product
+- When `wt-login` is selected and **⋯ › Copy path**, then **⋯ › Show in file manager**
+- Then the clipboard holds the exact path, and the system file manager opens the `wt-login` folder itself
+Covered by (Not automated)
 
 ### SUB-01 Submodule details from the reader
 Fixture: `fx-submodule`, commit bumping `vendor/lib` open in Review
@@ -4676,7 +4685,7 @@ Contradictions and gaps found while writing these cases. Each needs a decision; 
 6. **Rebase result and stop band.** Count format `6 commits → 4 · 1 dropped` versus with ` · 1 stop`; stop band chips on line 2 (final design) versus line 3 (architecture, code). Which reopened-stop button label wins when both unstaged files and stop commits exist is unspecified.
 7. **Full file layout slot.** M7 keeps Inline | Side by side disabled in Full file; Local Changes puts Before | After there. Action names differ: **Blame**/**Show attribution**, **Compare with current HEAD**/**Compare with HEAD**, ⋯ menu "File history"/button **History**. `ArrowLeft` back to files and `D`/`F` reader keys are undocumented.
 8. **Preferences.** final-design.md calls it a non-blocking window, architecture.md a modal; **Load avatars from the network** is listed under both General and Appearance; theme order differs; the `settings.json` key list misses `zoom`, `code_font`, `editor`, `sign_tags`, `recent_repositories`, `reopen_last`, `backup_days`, `pull_strategy` and more. The Avatars section still reads as Gravatar-on-by-default.
-9. **Worktrees.** One sentence says pruning a missing registration is not offered, the next offers **Prune**; there is **Unlock** but no Lock; the CLI has neither.
+9. **Worktrees.** The window offers Prune, Lock… and Unlock (WTR-13, WTR-14); the CLI has none of them.
 10. **CLI drift.** `tag --sign` versus `--sign|--no-sign`; `switch --stash`, worktree `--branch/--create/--at`, submodule `--recorded/--before` are missing from cli.md; `--help` prints `git-good`; no `-h`; `--help` says `clone` "opens" the clone but the CLI only prints a receipt (CLI-C01).
 11. **Signing defaults.** **Sign tags** preference versus `tag.gpgsign`; Sign commits has three modes but the Signing text says it follows `commit.gpgsign`.
 12. **Stale user flows.** user-flows F07 still describes a Stashes window and Restore…; line 32 lists old toolbar menus; the toolbar now holds only Fetch, Pull and Push (FRM-23).

@@ -1725,6 +1725,8 @@ struct WorktreeWindow {
     notice: Option<String>,
     create: Option<CreateWorktreeDialog>,
     confirm_remove: Option<usize>,
+    /// Lock… asks for an optional reason: the folder and the reason typed.
+    lock: Option<(PathBuf, String)>,
     busy: Option<String>,
     pending: Option<worktree_worker::Action>,
 }
@@ -1740,6 +1742,98 @@ struct CreateWorktreeDialog {
     destination_auto: bool,
     /// Switch to the new worktree once it is created.
     open_after: bool,
+}
+
+/// The Worktrees window's ⋯ menu.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WorktreeMore {
+    CopyPath,
+    Reveal,
+    Lock,
+    Unlock,
+    Prune,
+}
+
+/// A worktree's STATUS pill colour: blue for the one shown, green clean,
+/// amber modified, red missing, grey locked or unreadable.
+fn worktree_tone(worktree: &gg_engine::worktree::Worktree) -> inspect_ui::Tone {
+    use inspect_ui::Tone;
+    match worktree.status_label() {
+        "Current" => Tone::Blue,
+        "Clean" => Tone::Green,
+        "Modified" => Tone::Amber,
+        "Missing" => Tone::Red,
+        _ => Tone::Neutral,
+    }
+}
+
+/// `text` in the 11.5 px monospace font, cut from the start with `…` so
+/// its end (a worktree's own folder) fits `width`.
+fn fit_tail(ui: &egui::Ui, text: &str, width: f32) -> String {
+    let font = egui::FontId::monospace(11.5);
+    let fits = |candidate: &str| {
+        ui.fonts_mut(|fonts| {
+            fonts
+                .layout_no_wrap(candidate.to_owned(), font.clone(), egui::Color32::WHITE)
+                .size()
+                .x
+        }) <= width
+    };
+    if fits(text) {
+        return text.to_owned();
+    }
+    let starts: Vec<usize> = text.char_indices().map(|(at, _)| at).collect();
+    for &start in starts.iter().skip(1) {
+        let candidate = format!("…{}", &text[start..]);
+        if fits(&candidate) {
+            return candidate;
+        }
+    }
+    "…".into()
+}
+
+/// Why Open is unavailable for `worktree`, or `None` when it can open.
+fn worktree_open_reason(
+    worktree: &gg_engine::worktree::Worktree,
+    path: &Path,
+    switch_pending: bool,
+) -> Option<String> {
+    if worktree.current {
+        Some("This is the worktree shown now.".into())
+    } else if worktree.prunable.is_some() || !path.exists() {
+        Some("The worktree folder is missing.".into())
+    } else if worktree.bare {
+        Some("A bare repository has no files to open.".into())
+    } else if switch_pending {
+        Some("Wait for the current operation to finish.".into())
+    } else {
+        None
+    }
+}
+
+/// The details STATE line: what the status means and what blocks removal.
+fn worktree_state_line(worktree: &gg_engine::worktree::Worktree) -> String {
+    let mut parts = Vec::new();
+    if worktree.main {
+        parts.push("Main worktree".to_string());
+    }
+    if worktree.current {
+        parts.push("shown now".into());
+    }
+    match (&worktree.locked, &worktree.prunable, worktree.dirty) {
+        (Some(reason), _, _) if reason.is_empty() => parts.push("locked".into()),
+        (Some(reason), _, _) => parts.push(format!("locked: {reason}")),
+        (_, Some(reason), _) if reason.is_empty() => parts.push("folder missing".into()),
+        (_, Some(reason), _) => parts.push(format!("folder missing: {reason}")),
+        (_, _, Some(true)) => parts.push("has local changes".into()),
+        (_, _, Some(false)) => parts.push("no local changes".into()),
+        _ => parts.push("status unavailable".into()),
+    }
+    let mut line = parts.join(" · ");
+    if let Some(first) = line.get(..1) {
+        line = first.to_uppercase() + &line[1..];
+    }
+    line
 }
 
 /// The default worktree folder for `branch`: a sibling of the repository
@@ -1836,6 +1930,8 @@ struct Browser {
     open_rebase: Option<String>,
     /// Debug: `GG_REVIEW=<commit>` opens that commit in Review.
     open_review: Option<String>,
+    /// Debug: `GG_WORKTREES=1` opens the Worktrees window.
+    open_worktrees: bool,
     /// The reopened commit Local Changes was last opened for.
     reopen_seen: Option<String>,
     operation_worker: Option<std::sync::mpsc::Receiver<Result<OperationOutcome, String>>>,
@@ -2045,6 +2141,7 @@ impl Browser {
             } else {
                 None
             },
+            open_worktrees: cfg!(debug_assertions) && std::env::var_os("GG_WORKTREES").is_some(),
             operation_worker: None,
             operation_repo: None,
             operation_restore_row: None,
@@ -8621,6 +8718,7 @@ impl Browser {
                 notice: None,
                 create: None,
                 confirm_remove: None,
+                lock: None,
                 busy: None,
                 pending: None,
             });
@@ -8659,6 +8757,7 @@ impl Browser {
             worktree_worker::Action::Remove(_) => "Removing worktree…",
             worktree_worker::Action::Prune => "Pruning missing worktrees…",
             worktree_worker::Action::Unlock(_) => "Unlocking worktree…",
+            worktree_worker::Action::Lock(..) => "Locking worktree…",
         };
         if let Some(window) = &mut self.worktree_window {
             window.busy = Some(label.into());
@@ -8787,6 +8886,24 @@ impl Browser {
             .map(|item| item.name.clone())
             .collect::<Vec<_>>();
         let repository_switch_pending = self.repository_switch_pending();
+        // Each worktree's HEAD as `id · subject · author · date` when the
+        // history has it.
+        let summaries: std::collections::HashMap<String, String> = self
+            .worktree_window
+            .as_ref()
+            .and_then(|window| window.snapshot.as_ref())
+            .map(|snapshot| {
+                snapshot
+                    .worktrees
+                    .iter()
+                    .filter_map(|worktree| worktree.head.clone())
+                    .map(|head| {
+                        let summary = self.commit_summary(&head);
+                        (head, summary)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         let Some(window) = &mut self.worktree_window else {
             return;
         };
@@ -8800,326 +8917,569 @@ impl Browser {
         let mut cancel_remove = false;
         let mut prune = false;
         let mut unlock = None;
+        let mut lock = None;
+        let mut cancel_lock = false;
         let repo_path = self
             .state
             .history
             .as_ref()
             .map(|history| history.path.clone());
         let max_width = (ctx.content_rect().width() - 24.0).max(360.0);
+        let id = egui::Id::unique("worktrees");
+        let keys = inspect_ui::owns_keys(ctx, id)
+            && window.create.is_none()
+            && window.confirm_remove.is_none()
+            && window.lock.is_none();
+        let home = std::env::var("HOME").ok();
+        // Missing worktrees last; Git's order otherwise (main first).
+        let order: Vec<usize> = window
+            .snapshot
+            .as_ref()
+            .map(|snapshot| {
+                let mut order: Vec<usize> = (0..snapshot.worktrees.len()).collect();
+                order.sort_by_key(|&index| snapshot.worktrees[index].prunable.is_some());
+                order
+            })
+            .unwrap_or_default();
+        let missing = window.snapshot.as_ref().map_or(0, |snapshot| {
+            snapshot
+                .worktrees
+                .iter()
+                .filter(|worktree| worktree.prunable.is_some())
+                .count()
+        });
+        if window.selected.is_none_or(|index| !order.contains(&index)) {
+            window.selected = order.first().copied();
+        }
+        let mut selected = window.selected;
+        let mut lock_open = None;
+        let mut reveal = None;
+        let list_height = (ctx.content_rect().height() - 300.0)
+            .clamp(3.0 * inspect_ui::ROW, 12.0 * inspect_ui::ROW);
         egui::Window::new("Worktrees")
-            .id(egui::Id::unique("worktrees"))
-            .open(&mut open)
+            .id(id)
+            .title_bar(false)
             .collapsible(false)
             .resizable(true)
-            .default_width(max_width.min(760.0))
+            .default_width(max_width.min(820.0))
             .max_width(max_width)
-            .default_height(420.0)
             .default_pos(ctx.content_rect().center())
             .pivot(egui::Align2::CENTER_CENTER)
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    if ui
-                        .add_enabled(window.busy.is_none(), egui::Button::new("Create worktree…"))
-                        .clicked()
-                    {
-                        create_open = true;
+                let count = order.len().to_string();
+                if inspect_ui::header(ui, "Worktrees", None, |ui| {
+                    if window.snapshot.is_some() {
+                        inspect_ui::pill(ui, &count, inspect_ui::Tone::Neutral);
                     }
-                    if let Some(busy) = window.busy.as_deref().filter(|busy| !busy.is_empty()) {
-                        ui.spinner();
-                        ui.weak(busy);
-                    }
-                });
-                if let Some(error) = &window.error {
-                    ui.colored_label(ui.visuals().error_fg_color, error);
+                }) {
+                    open = false;
                 }
-                if let Some(notice) = &window.notice {
-                    ui.colored_label(ui.visuals().hyperlink_color, notice);
-                }
-                ui.separator();
-                let Some(snapshot) = &window.snapshot else {
-                    // Until the first list arrives the window stays empty.
-                    if window.busy.is_none() {
-                        ui.weak("Worktrees unavailable.");
-                    }
-                    return;
-                };
-                // An aligned table (proposal): branch, path, status, and the
-                // actions that can run. Enter opens the selected row, Del
-                // removes it.
-                let keys = ui.input(|i| {
-                    (
-                        i.key_pressed(egui::Key::Enter),
-                        i.key_pressed(egui::Key::Delete),
-                    )
-                });
-                egui::Grid::new("worktree-table")
-                    .num_columns(4)
-                    .spacing([16.0, 4.0])
-                    .striped(false)
-                    .show(ui, |ui| {
-                        for title in ["BRANCH", "PATH", "STATUS", ""] {
-                            ui.label(egui::RichText::new(title).small().weak());
+                // BRANCH and PATH share what STATUS and HEAD leave.
+                let rest = (ui.available_width() - 16.0 - 104.0 - 74.0 - 30.0).max(160.0);
+                let columns = [rest * 0.38, rest * 0.62, 104.0, 0.0];
+                inspect_ui::table_header(ui, &columns, &["BRANCH", "PATH", "STATUS", "HEAD"]);
+                let width = ui.available_width();
+                ui.allocate_ui_with_layout(
+                    egui::vec2(width, list_height),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        ui.set_min_size(egui::vec2(width, list_height));
+                        if window
+                            .snapshot
+                            .as_ref()
+                            .is_some_and(|snapshot| snapshot.worktrees.is_empty())
+                        {
+                            ui.add_space(list_height / 2.0 - 22.0);
+                            ui.vertical_centered(|ui| {
+                                ui.label("No worktrees registered.");
+                                ui.weak("New worktree… checks a branch out in another folder.");
+                            });
                         }
-                        ui.end_row();
-                        for (index, worktree) in snapshot.worktrees.iter().enumerate() {
-                            let selected = window.selected == Some(index);
-                            let branch = ui.add(
-                                egui::Button::new(worktree.branch_label())
-                                    .fill(if selected {
-                                        colors::selection(ui.visuals())
-                                    } else {
-                                        egui::Color32::TRANSPARENT
-                                    })
-                                    .frame_when_inactive(selected)
-                                    .truncate(),
-                            );
-                            if branch.clicked() {
-                                window.selected = Some(index);
-                            }
-                            ui.add(
-                                egui::Label::new(
-                                    egui::RichText::new(&worktree.path).monospace().size(11.5),
-                                )
-                                .truncate(),
-                            )
-                            .on_hover_text(&worktree.path);
-                            let status = match (&worktree.locked, &worktree.prunable) {
-                                (Some(lock), _) => format!("Locked · {lock}"),
-                                (_, Some(reason)) => format!("Missing · {reason}"),
-                                _ if worktree.main => format!("{} · main", worktree.status_label()),
-                                _ => worktree.status_label().to_string(),
-                            };
-                            ui.add(egui::Label::new(egui::RichText::new(status).weak()).truncate());
-                            ui.horizontal(|ui| {
-                                let path = worktree_path(&worktree.path_bytes);
-                                let can_open = worktree.prunable.is_none() && path.exists();
-                                let open_enabled =
-                                    !worktree.current && can_open && !repository_switch_pending;
-                                if ui
-                                    .add_enabled(open_enabled, egui::Button::new("Open"))
-                                    .on_disabled_hover_text(if worktree.current {
-                                        "This is the current worktree"
-                                    } else if repository_switch_pending {
-                                        "Wait for the current operation to finish"
-                                    } else {
-                                        "The worktree path is missing"
-                                    })
-                                    .clicked()
-                                    || (selected
-                                        && keys.0
-                                        && open_enabled
-                                        && window.create.is_none())
-                                {
-                                    open_path = Some(path.clone());
-                                }
-                                if worktree.prunable.is_some() {
-                                    if ui
-                                        .add_enabled(
-                                            window.busy.is_none(),
-                                            egui::Button::new("Prune"),
-                                        )
-                                        .on_hover_text(
-                                            "Forget missing worktrees; their branches stay",
-                                        )
-                                        .clicked()
-                                    {
-                                        prune = true;
+                        let Some(snapshot) = &window.snapshot else {
+                            // Until the first list arrives the table stays empty.
+                            return;
+                        };
+                        egui::ScrollArea::vertical()
+                            .id_salt("worktree-rows")
+                            .max_height(list_height)
+                            .auto_shrink([false, true])
+                            .show(ui, |ui| {
+                                for &index in &order {
+                                    let worktree = &snapshot.worktrees[index];
+                                    let response = inspect_ui::table_row(
+                                        ui,
+                                        selected == Some(index),
+                                        &columns,
+                                        |cells| {
+                                            let mut branch =
+                                                egui::RichText::new(worktree.branch_label());
+                                            if worktree.branch.is_none() {
+                                                branch = branch.italics().weak();
+                                            }
+                                            cells[0].add(egui::Label::new(branch).truncate());
+                                            if worktree.main {
+                                                cells[0].weak("· main worktree");
+                                            }
+                                            // Worktrees share their parent folders,
+                                            // so the path keeps its end.
+                                            let path = welcome_view::tilde(
+                                                &worktree_path(&worktree.path_bytes),
+                                                home.as_deref(),
+                                            );
+                                            let fitted = fit_tail(
+                                                &cells[1],
+                                                &path,
+                                                cells[1].available_width(),
+                                            );
+                                            cells[1]
+                                                .label(inspect_ui::mono(fitted))
+                                                .on_hover_text(&worktree.path);
+                                            inspect_ui::pill(
+                                                &mut cells[2],
+                                                worktree.status_label(),
+                                                worktree_tone(worktree),
+                                            );
+                                            match worktree.head.as_deref() {
+                                                Some(head) => cells[3].label(inspect_ui::mono(
+                                                    inspect_ui::short(head),
+                                                )),
+                                                None => cells[3].weak("—"),
+                                            };
+                                        },
+                                    );
+                                    if response.clicked() {
+                                        selected = Some(index);
                                     }
-                                } else if worktree.locked.is_some() {
-                                    if ui
-                                        .add_enabled(
-                                            window.busy.is_none(),
-                                            egui::Button::new("Unlock"),
+                                    if response.double_clicked() {
+                                        selected = Some(index);
+                                        let path = worktree_path(&worktree.path_bytes);
+                                        if worktree_open_reason(
+                                            worktree,
+                                            &path,
+                                            repository_switch_pending,
                                         )
-                                        .clicked()
-                                    {
-                                        unlock = Some(path.clone());
-                                    }
-                                } else {
-                                    let removable = worktree.can_remove();
-                                    if ui
-                                        .add_enabled(
-                                            removable.is_ok(),
-                                            egui::Button::new("Remove…"),
-                                        )
-                                        .on_disabled_hover_text(
-                                            removable
-                                                .err()
-                                                .unwrap_or_else(|| "Remove this worktree".into()),
-                                        )
-                                        .clicked()
-                                        || (selected
-                                            && keys.1
-                                            && worktree.can_remove().is_ok()
-                                            && window.confirm_remove.is_none())
-                                    {
-                                        remove_open = Some(index);
+                                        .is_none()
+                                        {
+                                            open_path = Some(path);
+                                        }
                                     }
                                 }
                             });
-                            ui.end_row();
+                    },
+                );
+                let current = window
+                    .snapshot
+                    .as_ref()
+                    .zip(selected)
+                    .and_then(|(snapshot, index)| snapshot.worktrees.get(index));
+                // The selected worktree: its full path, HEAD and state.
+                ui.separator();
+                inspect_ui::grid(ui, "worktree-details", |ui| {
+                    let Some(worktree) = current else {
+                        inspect_ui::row(ui, "PATH", |ui| {
+                            ui.weak("—");
+                        });
+                        return;
+                    };
+                    inspect_ui::row(ui, "PATH", |ui| {
+                        ui.add(egui::Label::new(inspect_ui::mono(&worktree.path)).truncate());
+                        inspect_ui::copy_button(ui, &worktree.path, "path");
+                    });
+                    inspect_ui::row(ui, "HEAD", |ui| {
+                        match worktree.head.as_deref() {
+                            Some(head) => {
+                                let summary = summaries
+                                    .get(head)
+                                    .cloned()
+                                    .unwrap_or_else(|| inspect_ui::short(head).to_string());
+                                ui.add(egui::Label::new(inspect_ui::mono(summary)).truncate());
+                            }
+                            None => {
+                                ui.weak("—");
+                            }
+                        };
+                    });
+                    inspect_ui::row(ui, "STATE", |ui| {
+                        ui.add(egui::Label::new(worktree_state_line(worktree)).truncate());
+                    });
+                });
+                let path = current.map(|worktree| worktree_path(&worktree.path_bytes));
+                let open_reason = current.zip(path.as_ref()).and_then(|(worktree, path)| {
+                    worktree_open_reason(worktree, path, repository_switch_pending)
+                });
+                let remove_reason = current.and_then(|worktree| worktree.can_remove().err());
+                let idle = window.busy.is_none();
+                // The footer's left: progress, the last result, or why the
+                // primary is disabled.
+                let busy_text = window.busy.clone().filter(|busy| !busy.is_empty());
+                let left = if let Some(busy) = &busy_text {
+                    Some((busy.as_str(), ui.visuals().weak_text_color()))
+                } else if let Some(error) = &window.error {
+                    Some((error.as_str(), inspect_ui::Tone::Red.text()))
+                } else if let Some(notice) = &window.notice {
+                    Some((notice.as_str(), inspect_ui::Tone::Green.text()))
+                } else {
+                    open_reason
+                        .as_deref()
+                        .filter(|_| current.is_some_and(|worktree| worktree.prunable.is_none()))
+                        .map(|reason| (reason, ui.visuals().weak_text_color()))
+                };
+                let mut more = None;
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.set_min_height(26.0);
+                    ui.add_enabled_ui(current.is_some() && idle, |ui| {
+                        ui.menu_button(phosphor::icon(phosphor::DOTS_THREE), |ui| {
+                            use menus::item;
+                            let mut list = vec![
+                                item("Copy path", "", WorktreeMore::CopyPath).entry(),
+                                item("Show in file manager", "", WorktreeMore::Reveal).entry(),
+                                menus::Entry::Separator,
+                            ];
+                            if let Some(worktree) = current {
+                                if worktree.locked.is_some() {
+                                    list.push(item("Unlock", "", WorktreeMore::Unlock).entry());
+                                } else if !worktree.main && worktree.prunable.is_none() {
+                                    list.push(item("Lock…", "", WorktreeMore::Lock).entry());
+                                }
+                            }
+                            if missing > 0 {
+                                list.push(
+                                    item(
+                                        format!("Prune {missing} missing"),
+                                        "",
+                                        WorktreeMore::Prune,
+                                    )
+                                    .entry(),
+                                );
+                            }
+                            menus::entries(ui, &list, &mut more);
+                        })
+                        .response
+                        .on_hover_text("More actions");
+                    });
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if current.is_some_and(|worktree| worktree.prunable.is_some()) {
+                            // A missing folder cannot open; forgetting it is
+                            // what it needs.
+                            if ui
+                                .add_enabled(
+                                    idle,
+                                    inspect_ui::primary(format!("Prune {missing} missing"), None),
+                                )
+                                .on_hover_text(
+                                    "Forget worktrees whose folders are gone; their branches stay",
+                                )
+                                .clicked()
+                            {
+                                prune = true;
+                            }
+                        } else {
+                            let enabled = current.is_some() && open_reason.is_none();
+                            let button = if enabled {
+                                inspect_ui::primary("Open", Some("Enter"))
+                            } else {
+                                egui::Button::new("Open")
+                            };
+                            if ui
+                                .add_enabled(enabled, button)
+                                .on_disabled_hover_text(open_reason.clone().unwrap_or_default())
+                                .clicked()
+                            {
+                                open_path = path.clone();
+                            }
+                        }
+                        if ui
+                            .add_enabled(
+                                idle && current.is_some() && remove_reason.is_none(),
+                                inspect_ui::secondary("Remove…", "Del"),
+                            )
+                            .on_disabled_hover_text(remove_reason.clone().unwrap_or_default())
+                            .clicked()
+                        {
+                            remove_open = selected;
+                        }
+                        if ui
+                            .add_enabled(idle, egui::Button::new("New worktree…"))
+                            .clicked()
+                        {
+                            create_open = true;
+                        }
+                        if let Some((text, color)) = left {
+                            ui.with_layout(
+                                egui::Layout::left_to_right(egui::Align::Center),
+                                |ui| {
+                                    if busy_text.is_some() {
+                                        ui.spinner();
+                                    }
+                                    ui.add(
+                                        egui::Label::new(egui::RichText::new(text).color(color))
+                                            .truncate(),
+                                    )
+                                    .on_hover_text(text);
+                                },
+                            );
                         }
                     });
-                if snapshot.worktrees.is_empty() {
-                    ui.weak("No worktrees registered.");
+                });
+                match more {
+                    Some(WorktreeMore::CopyPath) => {
+                        if let Some(worktree) = current {
+                            ui.ctx().copy_text(worktree.path.clone());
+                        }
+                    }
+                    Some(WorktreeMore::Reveal) => reveal = path.clone(),
+                    Some(WorktreeMore::Lock) => lock_open = path.clone(),
+                    Some(WorktreeMore::Unlock) => unlock = path.clone(),
+                    Some(WorktreeMore::Prune) => prune = true,
+                    None => {}
                 }
             });
+        // Keys: Up/Down select, Enter opens, Del removes, Esc closes.
+        if keys && let Some(snapshot) = &window.snapshot {
+            let step = crate::navigation::step(ctx, 8);
+            if step != 0 && !order.is_empty() {
+                let at = selected
+                    .and_then(|index| order.iter().position(|&i| i == index))
+                    .unwrap_or(0) as isize;
+                let at = (at + step).clamp(0, order.len() as isize - 1) as usize;
+                selected = Some(order[at]);
+            }
+            let (enter, delete, escape) = ctx.input_mut(|i| {
+                (
+                    i.consume_key(egui::Modifiers::NONE, egui::Key::Enter),
+                    i.consume_key(egui::Modifiers::NONE, egui::Key::Delete),
+                    i.consume_key(egui::Modifiers::NONE, egui::Key::Escape),
+                )
+            });
+            let current = selected.and_then(|index| snapshot.worktrees.get(index));
+            if let Some(worktree) = current {
+                let path = worktree_path(&worktree.path_bytes);
+                if enter
+                    && worktree_open_reason(worktree, &path, repository_switch_pending).is_none()
+                {
+                    open_path = Some(path);
+                } else if delete && window.busy.is_none() && worktree.can_remove().is_ok() {
+                    remove_open = selected;
+                }
+            }
+            if escape {
+                open = false;
+            }
+        }
+        window.selected = selected;
+        if let Some(path) = lock_open {
+            window.lock = Some((path, String::new()));
+        }
+        if let Some((path, reason)) = &mut window.lock {
+            let shown = path.display().to_string();
+            match inspect_ui::confirm(
+                ctx,
+                "lock-worktree",
+                "Lock worktree",
+                "Lock",
+                None,
+                false,
+                |ui| {
+                    ui.label(format!("Lock {shown}?"));
+                    ui.weak("Git then never prunes or removes it, for example while it is on a removable disk.");
+                    ui.add_space(4.0);
+                    ui.label(inspect_ui::caption("REASON (OPTIONAL)"));
+                    ui.add(
+                        egui::TextEdit::singleline(reason)
+                            .hint_text("on a USB disk")
+                            .desired_width(f32::INFINITY),
+                    );
+                },
+            ) {
+                Some(inspect_ui::Decision::Confirm) => {
+                    lock = Some((path.clone(), reason.clone()));
+                }
+                Some(inspect_ui::Decision::Cancel) => cancel_lock = true,
+                None => {}
+            }
+        }
         if let Some(dialog) = &mut window.create {
-            let mut dialog_open = true;
-            egui::Window::new("Create worktree")
-                .id(egui::Id::unique("create-worktree"))
-                .modal(ctx, egui::Id::unique("create-worktree"))
-                .open(&mut dialog_open)
-                .collapsible(false)
-                .resizable(false)
-                .default_width(460.0)
-                .default_pos(ctx.content_rect().center())
-                .pivot(egui::Align2::CENTER_CENTER)
+            // Branch first, then the folder, which follows the branch until
+            // edited (proposal); the shared header, label grid and footer.
+            let busy = window.busy.is_some();
+            let ready = !dialog.destination.trim().is_empty() && !dialog.branch.trim().is_empty();
+            let reason = if busy {
+                Some("Adding the worktree…")
+            } else if dialog.branch.trim().is_empty() {
+                Some(if dialog.create {
+                    "Name the new branch."
+                } else {
+                    "Choose a branch."
+                })
+            } else if dialog.destination.trim().is_empty() {
+                Some("Choose a folder.")
+            } else {
+                None
+            };
+            let mut decision = None;
+            let modal = egui::Modal::new(egui::Id::unique("create-worktree"))
+                .backdrop_color(egui::Color32::from_black_alpha(140))
                 .show(ctx, |ui| {
-                    // Branch first, then the folder, which follows the branch
-                    // until edited (proposal).
-                    ui.horizontal(|ui| {
-                        ui.radio_value(&mut dialog.create, true, "New branch");
-                        ui.radio_value(&mut dialog.create, false, "Existing branch");
-                    });
-                    let before = dialog.branch.clone();
-                    if dialog.create {
-                        ui.label(egui::RichText::new("BRANCH").small().weak());
-                        ui.add(egui::TextEdit::singleline(&mut dialog.branch).desired_width(260.0));
-                        ui.label(egui::RichText::new("START AT").small().weak());
-                        ui.add(egui::TextEdit::singleline(&mut dialog.at).desired_width(260.0));
-                    } else if branches.is_empty() {
-                        ui.weak("No local branches are available.");
-                    } else {
-                        ui.label(egui::RichText::new("BRANCH").small().weak());
-                        egui::ComboBox::from_id_salt("worktree-branch")
-                            .selected_text(if dialog.branch.is_empty() {
-                                "Choose a branch"
-                            } else {
-                                &dialog.branch
-                            })
-                            .width(260.0)
-                            .show_ui(ui, |ui| {
-                                for branch in &branches {
-                                    crate::menus::choose(
-                                        ui,
-                                        &mut dialog.branch,
-                                        branch.clone(),
-                                        branch,
-                                    );
-                                }
-                            });
+                    ui.set_width(480.0);
+                    if inspect_ui::header(ui, "New worktree", None, |_| {}) {
+                        decision = Some(inspect_ui::Decision::Cancel);
                     }
+                    ui.add_space(4.0);
+                    let before = dialog.branch.clone();
+                    inspect_ui::grid(ui, "create-worktree-grid", |ui| {
+                        inspect_ui::row(ui, "BRANCH", |ui| {
+                            if let Some(create) = inspect_ui::segmented(
+                                ui,
+                                dialog.create,
+                                &[(true, "New".into()), (false, "Existing".into())],
+                            ) {
+                                dialog.create = create;
+                            }
+                        });
+                        inspect_ui::row(ui, "", |ui| {
+                            if dialog.create {
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut dialog.branch)
+                                        .hint_text("feature/name")
+                                        .desired_width(300.0),
+                                );
+                            } else if branches.is_empty() {
+                                ui.weak("No local branches are available.");
+                            } else {
+                                egui::ComboBox::from_id_salt("worktree-branch")
+                                    .selected_text(if dialog.branch.is_empty() {
+                                        "Choose a branch"
+                                    } else {
+                                        &dialog.branch
+                                    })
+                                    .width(300.0)
+                                    .show_ui(ui, |ui| {
+                                        for branch in &branches {
+                                            crate::menus::choose(
+                                                ui,
+                                                &mut dialog.branch,
+                                                branch.clone(),
+                                                branch,
+                                            );
+                                        }
+                                    });
+                            }
+                        });
+                        if dialog.create {
+                            inspect_ui::row(ui, "START AT", |ui| {
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut dialog.at)
+                                        .hint_text("HEAD")
+                                        .desired_width(300.0),
+                                );
+                            });
+                        }
+                        inspect_ui::row(ui, "FOLDER", |ui| {
+                            let field = ui.add(
+                                egui::TextEdit::singleline(&mut dialog.destination)
+                                    .desired_width(222.0),
+                            );
+                            if field.changed() {
+                                dialog.destination_auto = false;
+                            }
+                            if ui
+                                .button("Browse…")
+                                .on_hover_text("Choose a folder with the desktop dialog")
+                                .clicked()
+                                && let Some(path) = folder_picker::pick_folder(
+                                    "Worktree destination",
+                                    Some(Path::new(dialog.destination.trim())),
+                                )
+                            {
+                                dialog.destination = path.to_string_lossy().into_owned();
+                                dialog.destination_auto = false;
+                            }
+                        });
+                        inspect_ui::row(ui, "", |ui| {
+                            ui.checkbox(&mut dialog.open_after, "Open after create");
+                        });
+                    });
                     if dialog.destination_auto
                         && dialog.branch != before
                         && let Some(repo) = &repo_path
                     {
                         dialog.destination = worktree_default_destination(repo, &dialog.branch);
                     }
-                    ui.label(egui::RichText::new("FOLDER").small().weak());
-                    ui.horizontal(|ui| {
-                        let field = ui.add(
-                            egui::TextEdit::singleline(&mut dialog.destination)
-                                .desired_width((ui.available_width() - 84.0).max(160.0)),
-                        );
-                        if field.changed() {
-                            dialog.destination_auto = false;
+                    let left = match &dialog.error {
+                        Some(error) => Some((error.as_str(), inspect_ui::Tone::Red.text())),
+                        None => reason.map(|reason| (reason, inspect_ui::Tone::Amber.text())),
+                    };
+                    inspect_ui::footer(ui, left, |ui| {
+                        let enabled = ready && !busy;
+                        let button = if enabled {
+                            inspect_ui::primary("Create worktree", Some("Enter"))
+                        } else {
+                            egui::Button::new("Create worktree")
+                        };
+                        if ui.add_enabled(enabled, button).clicked() {
+                            decision = Some(inspect_ui::Decision::Confirm);
                         }
-                        if ui
-                            .button("Browse…")
-                            .on_hover_text("Choose a folder with the desktop dialog")
-                            .clicked()
-                            && let Some(path) = folder_picker::pick_folder(
-                                "Worktree destination",
-                                Some(Path::new(dialog.destination.trim())),
-                            )
-                        {
-                            dialog.destination = path.to_string_lossy().into_owned();
-                            dialog.destination_auto = false;
+                        if ui.add(inspect_ui::secondary("Cancel", "Esc")).clicked() {
+                            decision = Some(inspect_ui::Decision::Cancel);
                         }
                     });
-                    ui.checkbox(&mut dialog.open_after, "Open after create");
-                    if let Some(error) = &dialog.error {
-                        ui.colored_label(ui.visuals().error_fg_color, error);
+                    if ready && !busy && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        decision = Some(inspect_ui::Decision::Confirm);
                     }
-                    ui.horizontal(|ui| {
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let ready = !dialog.destination.trim().is_empty()
-                                && !dialog.branch.trim().is_empty()
-                                && window.busy.is_none();
-                            let primary = egui::Button::new((
-                                egui::RichText::new("Create worktree").color(egui::Color32::WHITE),
-                                egui::RichText::new("Enter")
-                                    .small()
-                                    .color(egui::Color32::from_rgb(184, 212, 230)),
-                            ))
-                            .fill(egui::Color32::from_rgb(11, 85, 119));
-                            if ui.add_enabled(ready, primary).clicked() {
-                                submit_create = Some((
-                                    PathBuf::from(dialog.destination.trim()),
-                                    dialog.create,
-                                    dialog.branch.trim().to_string(),
-                                    dialog.at.trim().to_string(),
-                                ));
-                            }
-                            if ui
-                                .button(("Cancel", egui::RichText::new("Esc").small().weak()))
-                                .clicked()
-                            {
-                                cancel_create = true;
-                            }
-                        });
-                    });
                 });
-            if !dialog_open {
-                cancel_create = true;
+            if modal.should_close() && decision.is_none() {
+                decision = Some(inspect_ui::Decision::Cancel);
+            }
+            match decision {
+                Some(inspect_ui::Decision::Confirm) => {
+                    submit_create = Some((
+                        PathBuf::from(dialog.destination.trim()),
+                        dialog.create,
+                        dialog.branch.trim().to_string(),
+                        dialog.at.trim().to_string(),
+                    ));
+                }
+                Some(inspect_ui::Decision::Cancel) => cancel_create = true,
+                None => {}
             }
         }
         if let Some(index) = window.confirm_remove
             && let Some(snapshot) = &window.snapshot
             && let Some(worktree) = snapshot.worktrees.get(index)
         {
-            let mut confirm = true;
-            egui::Window::new("Remove worktree")
-                .id(egui::Id::unique("remove-worktree"))
-                .modal(ctx, egui::Id::unique("remove-worktree"))
-                .open(&mut confirm)
-                .collapsible(false)
-                .resizable(false)
-                .default_pos(ctx.content_rect().center())
-                .pivot(egui::Align2::CENTER_CENTER)
-                .show(ctx, |ui| {
-                    ui.label(format!("Remove worktree {}?", worktree.branch_label()));
-                    ui.weak(format!(
-                        "The folder {} is deleted. The branch stays, with all its commits.",
-                        worktree.path
-                    ));
-                    if let Some(error) = &window.error {
-                        ui.colored_label(ui.visuals().error_fg_color, error);
-                    }
-                    ui.horizontal(|ui| {
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let ready = window.busy.is_none();
-                            if ui
-                                .add_enabled(
-                                    ready,
-                                    consequence::danger_button("Remove worktree", ready),
-                                )
-                                .clicked()
-                            {
-                                submit_remove = Some(worktree_path(&worktree.path_bytes));
-                            }
-                            if ui
-                                .button(("Cancel", egui::RichText::new("Esc").small().weak()))
-                                .clicked()
-                            {
-                                cancel_remove = true;
-                            }
+            let reason = window.busy.is_some().then_some("Removing the worktree…");
+            let error = window.error.as_deref();
+            match inspect_ui::confirm(
+                ctx,
+                "remove-worktree",
+                "Remove worktree",
+                "Remove worktree",
+                reason,
+                true,
+                |ui| {
+                    inspect_ui::grid(ui, "remove-worktree-grid", |ui| {
+                        inspect_ui::row(ui, "BRANCH", |ui| {
+                            ui.label(worktree.branch_label());
+                        });
+                        inspect_ui::row(ui, "FOLDER", |ui| {
+                            let fitted = fit_tail(ui, &worktree.path, ui.available_width());
+                            ui.label(inspect_ui::mono(fitted))
+                                .on_hover_text(&worktree.path);
                         });
                     });
-                });
-            if !confirm {
-                cancel_remove = true;
+                    ui.add_space(4.0);
+                    ui.label("The folder is deleted. The branch stays, with all its commits.");
+                    if let Some(error) = error {
+                        ui.colored_label(inspect_ui::Tone::Red.text(), error);
+                    }
+                },
+            ) {
+                Some(inspect_ui::Decision::Confirm) => {
+                    submit_remove = Some(worktree_path(&worktree.path_bytes));
+                }
+                Some(inspect_ui::Decision::Cancel) => cancel_remove = true,
+                None => {}
             }
         }
         if open_path.is_some() {
@@ -9168,6 +9528,21 @@ impl Browser {
         }
         if let Some(path) = unlock {
             self.request_worktrees(ctx, worktree_worker::Action::Unlock(path));
+        }
+        if let Some((path, reason)) = lock {
+            if let Some(window) = &mut self.worktree_window {
+                window.lock = None;
+            }
+            self.request_worktrees(ctx, worktree_worker::Action::Lock(path, reason));
+        }
+        if cancel_lock && let Some(window) = &mut self.worktree_window {
+            window.lock = None;
+        }
+        if let Some(path) = reveal
+            && let Err(error) = editor::open_folder(&path)
+            && let Some(window) = &mut self.worktree_window
+        {
+            window.error = Some(error);
         }
         if cancel_create && let Some(window) = &mut self.worktree_window {
             window.create = None;
@@ -9750,6 +10125,10 @@ impl Browser {
             && let Some(revision) = self.open_review.take()
         {
             self.open_review_at(ctx, revision, String::new(), None);
+        }
+        #[cfg(debug_assertions)]
+        if self.state.history.is_some() && std::mem::take(&mut self.open_worktrees) {
+            self.open_worktrees(ctx);
         }
         #[cfg(debug_assertions)]
         if self.state.history.is_some()
@@ -12795,6 +13174,7 @@ mod tests {
                 open_after: true,
             }),
             confirm_remove: None,
+            lock: None,
             busy: None,
             pending: None,
         });
@@ -13020,6 +13400,7 @@ mod tests {
             notice: None,
             create: None,
             confirm_remove: None,
+            lock: None,
             busy: None,
             pending: None,
         });
@@ -17213,6 +17594,7 @@ mod tests {
                 notice: None,
                 create: None,
                 confirm_remove: None,
+                lock: None,
                 busy: None,
                 pending: None,
             });
@@ -17999,6 +18381,117 @@ mod tests {
             "Git's output is behind Details…"
         );
         assert_eq!(git_in(path, &["symbolic-ref", "HEAD"])?, "refs/heads/main");
+        Ok(())
+    }
+
+    /// The Worktrees window's row for `branch`.
+    fn worktree_index(app: &Browser, branch: &str) -> Option<usize> {
+        app.worktree_window
+            .as_ref()
+            .and_then(|window| window.snapshot.as_ref())
+            .and_then(|snapshot| {
+                snapshot
+                    .worktrees
+                    .iter()
+                    .position(|worktree| worktree.branch.as_deref() == Some(branch))
+            })
+    }
+
+    #[test]
+    fn worktrees_window_prunes_missing_and_locks_with_a_reason() -> Checked {
+        let ctx = egui::Context::default();
+        let (dir, mut app) = two_commits()?;
+        let path = dir.path();
+        let other = tempfile::tempdir()?;
+        let linked = other.path().join("linked");
+        let gone = other.path().join("gone");
+        for (folder, branch) in [(&linked, "linked"), (&gone, "gone")] {
+            git_in(
+                path,
+                &[
+                    "worktree",
+                    "add",
+                    "-q",
+                    "-b",
+                    branch,
+                    &folder.to_string_lossy(),
+                ],
+            )?;
+        }
+        std::fs::remove_dir_all(&gone)?;
+        app.load(&ctx);
+        frames_until(&ctx, &mut app, vec![], |app, _| app.pending.is_none())?;
+        app.open_worktrees(&ctx);
+        let listed = |app: &mut Browser, _: &[String]| {
+            app.worktree_window
+                .as_ref()
+                .is_some_and(|window| window.snapshot.is_some() && window.busy.is_none())
+        };
+        let text = frames_until(&ctx, &mut app, vec![], listed)?;
+        for pill in ["Current", "Clean", "Missing"] {
+            assert!(text.iter().any(|line| line == pill), "{pill}: {text:?}");
+        }
+        assert!(
+            text.iter().any(|line| line.ends_with("/linked")),
+            "the path keeps its own folder: {text:?}"
+        );
+
+        // A missing worktree's primary is Prune; Git forgets it, the branch stays.
+        let missing = worktree_index(&app, "gone");
+        if let Some(window) = &mut app.worktree_window {
+            window.selected = missing;
+        }
+        frames_until(&ctx, &mut app, vec![], |_, text| {
+            text.iter().any(|line| line == "Prune 1 missing")
+        })?;
+        click_label(&ctx, &mut app, "Prune 1 missing")?;
+        frames_until(&ctx, &mut app, vec![], |app, _| {
+            worktree_index(app, "gone").is_none() && listed(app, &[])
+        })?;
+        git_in(path, &["rev-parse", "--verify", "refs/heads/gone"])?;
+
+        // Lock… asks for a reason, and Del cannot remove a locked worktree.
+        let linked_index = worktree_index(&app, "linked");
+        if let Some(window) = &mut app.worktree_window {
+            window.selected = linked_index;
+            window.lock = Some((linked.clone(), "on a USB disk".into()));
+        }
+        frames_until(&ctx, &mut app, vec![], |_, text| {
+            text.iter().any(|line| line == "Lock worktree")
+        })?;
+        click_label(&ctx, &mut app, "Lock")?;
+        let text = frames_until(&ctx, &mut app, vec![], |app, _| {
+            listed(app, &[])
+                && app
+                    .worktree_window
+                    .as_ref()
+                    .and_then(|window| window.snapshot.as_ref())
+                    .is_some_and(|snapshot| {
+                        snapshot
+                            .worktrees
+                            .iter()
+                            .any(|worktree| worktree.locked.as_deref() == Some("on a USB disk"))
+                    })
+        })?;
+        assert!(text.iter().any(|line| line == "Locked"), "{text:?}");
+        let _ = frames_until(
+            &ctx,
+            &mut app,
+            vec![egui::Event::Key {
+                key: egui::Key::Delete,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            |_, _| true,
+        )?;
+        assert!(
+            app.worktree_window
+                .as_ref()
+                .is_some_and(|window| window.confirm_remove.is_none()),
+            "a locked worktree is not offered for removal"
+        );
         Ok(())
     }
 
