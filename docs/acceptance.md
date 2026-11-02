@@ -3827,6 +3827,13 @@ Layer: product
 - Then the clipboard holds the exact path, and the system file manager opens the `wt-login` folder itself
 Covered by (Not automated)
 
+### WTR-16 The whole row takes the pointer
+Fixture: `fx-worktrees`
+Layer: interaction
+- When the pointer rests on, then clicks, a row's branch text, its path text (which has a tooltip), or its status pill
+- Then the row lights under the pointer and the click selects it, as over the gaps between cells; the same holds for every 22 px inspect table (Recovery, Submodules, LFS)
+Covered by (interaction): `a_click_on_a_worktree_rows_text_selects_the_row` (apps/git-good/src/main.rs)
+
 ### SUB-01 Submodule details from the reader
 Fixture: `fx-submodule`, commit bumping `vendor/lib` open in Review
 Layer: product

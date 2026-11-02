@@ -18398,6 +18398,107 @@ mod tests {
     }
 
     #[test]
+    fn a_click_on_a_worktree_rows_text_selects_the_row() -> Checked {
+        let ctx = egui::Context::default();
+        let (dir, mut app) = two_commits()?;
+        let path = dir.path();
+        let other = tempfile::tempdir()?;
+        let linked = other.path().join("linked");
+        git_in(
+            path,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "linked",
+                &linked.to_string_lossy(),
+            ],
+        )?;
+        app.load(&ctx);
+        frames_until(&ctx, &mut app, vec![], |app, _| app.pending.is_none())?;
+        app.open_worktrees(&ctx);
+        frames_until(&ctx, &mut app, vec![], |app, _| {
+            app.worktree_window
+                .as_ref()
+                .is_some_and(|window| window.snapshot.is_some() && window.busy.is_none())
+        })?;
+        let target = worktree_index(&app, "linked");
+        assert_ne!(
+            app.worktree_window
+                .as_ref()
+                .and_then(|window| window.selected),
+            target,
+            "another row starts selected"
+        );
+        // Click right on the row's path and branch text, not the gaps.
+        let main_index = app
+            .worktree_window
+            .as_ref()
+            .and_then(|window| window.snapshot.as_ref())
+            .and_then(|snapshot| snapshot.worktrees.iter().position(|worktree| worktree.main));
+        // The path cell, the branch cell and the status pill, each once (a
+        // second click on one spot would be a double click, which opens).
+        for ends in ["/linked", "linked", "Clean"] {
+            if let Some(window) = &mut app.worktree_window {
+                window.selected = main_index;
+            }
+            let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            // The window draws over the refs sidebar, which also lists
+            // `linked`: take the last match.
+            let pos = output
+                .shapes
+                .iter()
+                .rev()
+                .find_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text)
+                        if (ends.starts_with('/') && text.galley.job.text.ends_with(ends))
+                            || text.galley.job.text == ends =>
+                    {
+                        Some(text.visual_bounding_rect().center())
+                    }
+                    _ => None,
+                })
+                .ok_or(format!("{ends} not shown"))?;
+            // Resting on the text lights the row.
+            let hover = vec![egui::Event::PointerMoved(pos)];
+            let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, hover), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            // A filled 22 px row under the pointer (the window may still be
+            // fading in, so the colour is not compared).
+            let lit = output.shapes.iter().any(|shape| match &shape.shape {
+                egui::epaint::Shape::Rect(rect) => {
+                    rect.fill.a() > 0
+                        && rect.rect.contains(pos)
+                        && (rect.rect.height() - inspect_ui::ROW).abs() < 0.5
+                }
+                _ => false,
+            });
+            assert!(lit, "resting on {ends:?} lights its row");
+            let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, click_at(pos)), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            assert_eq!(
+                app.worktree_window
+                    .as_ref()
+                    .and_then(|window| window.selected),
+                target,
+                "a click on {ends:?} selects its row"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn worktrees_window_prunes_missing_and_locks_with_a_reason() -> Checked {
         let ctx = egui::Context::default();
         let (dir, mut app) = two_commits()?;
