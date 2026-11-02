@@ -3713,6 +3713,16 @@ Layer: product
 - When Git Good launches and Clone folders is opened
 - Then defaults apply and Clone folders is an empty list; launch is not blocked
 Covered by (interaction): `reports_malformed_configuration_as_an_empty_list` (apps/git-good/src/folders.rs)
+- And the first save keeps the unreadable file as `settings.json.unreadable` beside the new one, and leaves no temporary file
+Covered by (interaction): `an_unreadable_file_is_set_aside_not_overwritten` (apps/git-good/src/settings.rs)
+
+### PRF-38 Two windows keep each other's preferences
+Fixture: `fx-linear` opened in two Git Good windows on one `XDG_CONFIG_HOME`
+Layer: product
+- When the first window sets Theme to Light and the second, opened before that, sets Density to Comfortable
+- Then the settings file holds both, and the next launch shows Light and Comfortable
+- And a repository opened in each window is kept in Recent, newest first; a repository removed from Recent in one window stays removed
+Covered by (interaction): `two_windows_keep_each_others_preferences`, `two_windows_merge_their_recent_repositories` (apps/git-good/src/settings.rs)
 
 ## Worktrees, submodules and LFS
 

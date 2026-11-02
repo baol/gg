@@ -1861,6 +1861,9 @@ struct Browser {
     ctx_width: f32,
     /// Repositories opened before, newest first.
     recent: Vec<settings::Recent>,
+    /// The recent list as last read or saved, so a save keeps what other
+    /// windows changed since.
+    recent_base: Vec<settings::Recent>,
     /// The welcome view's selection, filter, and background reads.
     welcome: welcome_view::Welcome,
     new_repository: Option<new_repository::Dialog>,
@@ -2020,7 +2023,7 @@ struct Browser {
 
 impl Browser {
     fn new(path: PathBuf) -> Self {
-        Self {
+        let mut app = Self {
             welcome_logo: None,
             path: path.to_string_lossy().into_owned(),
             review: None,
@@ -2046,11 +2049,8 @@ impl Browser {
             // Tests keep the defaults instead of reading the user's settings.
             search_text: String::new(),
             ctx_width: 1120.0,
-            recent: if cfg!(test) {
-                Vec::new()
-            } else {
-                settings::recent()
-            },
+            recent: Vec::new(),
+            recent_base: Vec::new(),
             welcome: welcome_view::Welcome::default(),
             new_repository: None,
             open_changes_after_load: false,
@@ -2201,7 +2201,13 @@ impl Browser {
             edit_path: false,
             details_visible: true,
             narrow_details: cfg!(debug_assertions) && std::env::var_os("GG_DETAILS").is_some(),
+        };
+        // Tests keep the defaults instead of reading the user's settings.
+        if !cfg!(test) {
+            app.recent = settings::recent();
+            app.recent_base = app.recent.clone();
         }
+        app
     }
 
     fn start_branch(&mut self, ctx: &egui::Context, name: String, create: bool) {
@@ -3924,7 +3930,7 @@ impl Browser {
             FrameCommand::OpenFile(file) => self.open_file(ctx, file),
             FrameCommand::ClearRecent => {
                 self.recent.clear();
-                if let Err(error) = settings::save_recent(&self.recent) {
+                if let Err(error) = settings::save_recent(&mut self.recent, &mut self.recent_base) {
                     self.set_outcome(OutcomeSeverity::Warning, error, None, None);
                 }
             }
@@ -6361,7 +6367,7 @@ impl Browser {
             self.welcome.opening = None;
             self.welcome.failed = None;
             settings::push_recent(&mut self.recent, path.clone(), settings::now());
-            if let Err(error) = settings::save_recent(&self.recent) {
+            if let Err(error) = settings::save_recent(&mut self.recent, &mut self.recent_base) {
                 self.mutation_error = Some(error);
             }
         }
@@ -6532,7 +6538,7 @@ impl Browser {
     }
 
     fn save_recent(&mut self) {
-        if let Err(error) = settings::save_recent(&self.recent) {
+        if let Err(error) = settings::save_recent(&mut self.recent, &mut self.recent_base) {
             self.set_outcome(OutcomeSeverity::Warning, error, None, None);
         }
     }
@@ -13657,6 +13663,8 @@ mod tests {
         app.prefs.stash_keep_index = true;
         app.prefs.merge_no_ff = true;
         app.prefs.branch_switch = false;
+        // Remembered from an earlier run.
+        app.prefs.save()?;
 
         app.open_stash_dialog();
         let stash = app.stash_dialog.as_ref().ok_or("stash dialog missing")?;
@@ -13679,7 +13687,10 @@ mod tests {
             })
         };
         let _ = frame(&mut app, vec![]);
-        assert_eq!(settings::read::<bool>(&settings_file, "merge_no_ff"), None);
+        assert_eq!(
+            settings::read::<bool>(&settings_file, "merge_no_ff"),
+            Some(true)
+        );
         if let Some(dialog) = &mut app.merge_dialog {
             dialog.reference = "main".into();
             dialog.no_ff = false;
