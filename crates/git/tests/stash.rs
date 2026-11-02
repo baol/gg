@@ -254,3 +254,20 @@ fn entries_name_their_branch_age_and_file_count() -> Result {
     assert_eq!(plain.entries[1].files, None);
     Ok(())
 }
+
+#[test]
+fn push_receipt_names_the_newest_entry_as_git_lists_it() -> Result {
+    let dir = repo()?;
+    let p = dir.path();
+    for (round, message) in [None, Some("second")].into_iter().enumerate() {
+        std::fs::write(p.join("a"), format!("change {round}\n"))?;
+        let receipt = gg_git::stash::push(p, message, false, false)?;
+        let newest = gg_git::stash::list(p)?.entries.remove(0);
+        assert_eq!(
+            receipt.reference.as_deref(),
+            Some(newest.reference.as_str())
+        );
+        assert_eq!(receipt.message.as_deref(), Some(newest.message.as_str()));
+    }
+    Ok(())
+}

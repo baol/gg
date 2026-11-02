@@ -2649,6 +2649,14 @@ Layer: product
 - Gap: the drop confirmation does not revalidate yet (see [open questions](#open-spec-questions))
 Covered by (Not automated)
 
+### STA-26 A stash shows its result at once, at CLI speed
+Fixture: `fx-dirty`
+Layer: interaction
+- Given the pointer resting over History, where the Stash dialog sat
+- When the user stashes
+- Then the stash runs one Git process, as `git stash push` does, and the history, refs and sidebar show the result as soon as Git returns, without waiting for the pointer to leave; the top row and scroll position hold (RULE-16)
+Covered by (interaction): `a_stash_shows_its_history_at_once_under_the_pointer` (main.rs), `a_command_reload_shows_under_the_pointer_at_its_old_top_row` (interaction_tests.rs), `push_receipt_names_the_newest_entry_as_git_lists_it` (stash.rs)
+
 ## Merge, cherry-pick, revert and conflicts
 
 ### INT-01 Merge into current creates a merge commit for diverged branches
@@ -4343,6 +4351,7 @@ Rules every area relies on, cases that span areas, and the CLI contract. Area ca
 13. **RULE-13 Status is not conveyed by color alone.** Every state shown in color also has a marker, glyph or text (XCT-21).
 14. **RULE-14 Keyboard completes every workflow.** Each workflow can be finished without a pointer; text fields keep their keys; closing a dialog restores focus to where it was opened (XCT-13 … XCT-18).
 15. **RULE-15 CLI and GUI share state and consequences.** Both read the same operation state, validate with the same rules and report the same consequences and backups (XCT-24 … XCT-28).
+16. **RULE-16 Commands cost what Git costs.** A command run from the GUI takes no more than 1 % longer than the same Git command from the CLI on the same repository. gg adds no Git process before or after Git's own on the UI thread, and the refreshes it runs afterwards are background reads that never delay the result being shown (STA-26).
 
 ## Cross-cutting scenarios
 
