@@ -620,6 +620,33 @@ struct StashPicker {
 
 use recovery_view::RecoveryView;
 
+/// Whether a staged history update may replace the displayed history now.
+///
+/// Background refreshes wait while the pointer is over History (`safe` is
+/// false) and until the old top row is found again, so rows never shift
+/// under the mouse. An explicit jump (a branch switch) asked for the new
+/// history, so it shows as soon as its first page arrives.
+fn accept_history_now(
+    safe: bool,
+    shown: bool,
+    jump: bool,
+    rewrite_refresh: bool,
+    staged: Option<&stream::Update>,
+) -> bool {
+    let Some(update) = staged else {
+        return false;
+    };
+    if jump {
+        return true;
+    }
+    (safe || !shown)
+        && (rewrite_refresh
+            || update.request.anchor_id.is_none()
+            || update.anchor_row.is_some()
+            || update.complete
+            || update.error.is_some())
+}
+
 /// What switching to a remote branch does.
 #[derive(Debug, PartialEq, Eq)]
 enum RemoteSwitch {
@@ -1747,6 +1774,9 @@ struct Browser {
     rewrite_dialog: Option<rebase_dialog::Dialog>,
     rewrite_job: Option<RewriteJob>,
     rewrite_refresh: Option<u64>,
+    /// The next history load follows an explicit jump (a branch switch):
+    /// show it at once, without the hover and anchor waits.
+    history_jump: bool,
     commit_actions: bool,
     local_summary: Option<LocalSummary>,
     local_summary_job: Option<std::sync::mpsc::Receiver<LocalSummary>>,
@@ -1943,6 +1973,7 @@ impl Browser {
             pull_rebase: None,
             rewrite_dialog: None,
             rewrite_job: None,
+            history_jump: false,
             rewrite_refresh: None,
             commit_actions: false,
             local_summary: None,
@@ -8336,11 +8367,16 @@ impl Browser {
             query: self.state.query.clone(),
             selected_id: self.state.selected.clone(),
             selected_row: self.restore_row.take(),
-            anchor_id: self
-                .state
-                .rows
-                .get(&((self.scroll_offset / crate::density::row()) as usize))
-                .map(|c| c.id.clone()),
+            // A jump starts at the top on its own selection; the old top row
+            // may not exist on the new branch.
+            anchor_id: (!self.history_jump)
+                .then(|| {
+                    self.state
+                        .rows
+                        .get(&((self.scroll_offset / crate::density::row()) as usize))
+                        .map(|c| c.id.clone())
+                })
+                .flatten(),
             ..Default::default()
         };
         self.staged = None;
@@ -9630,14 +9666,42 @@ impl Browser {
                             pull.is_some().then_some(RecoveryAction::PullRebase),
                         );
                     }
-                    self.state.query.clear();
-                    self.state.start_filter();
-                    self.state.selected = Some(receipt.head);
-                    self.state.selected_row = None;
-                    self.state.details = None;
-                    self.scroll_offset = 0.0;
-                    self.scroll_to_selection = true;
-                    self.load(ctx);
+                    // History holds HEAD and every ref, so switching from
+                    // one branch to another existing one changes no row:
+                    // move HEAD and select its tip in the list already
+                    // shown. A new branch, or leaving a detached HEAD (whose
+                    // commits may drop out), reads the history again.
+                    let from_branch = self
+                        .state
+                        .refs
+                        .head
+                        .as_ref()
+                        .is_some_and(|head| !head.detached && head.commit.is_some());
+                    if from_branch && !receipt.created {
+                        self.state.refs.head = Some(gg_engine::refs::Head {
+                            name: Some(format!("refs/heads/{}", receipt.branch)),
+                            detached: false,
+                            commit: Some(receipt.head.clone()),
+                        });
+                        self.jump_to_ref(receipt.head);
+                        self.scroll_to_selection = true;
+                        // The switch's own HEAD change must not make the
+                        // watcher read the unchanged history again.
+                        self.last_load = Some(std::time::Instant::now());
+                        self.refresh_mutation();
+                        self.refresh_local_summary(ctx);
+                        self.refresh_working(ctx);
+                    } else {
+                        self.state.query.clear();
+                        self.state.start_filter();
+                        self.state.selected = Some(receipt.head);
+                        self.state.selected_row = None;
+                        self.state.details = None;
+                        self.scroll_offset = 0.0;
+                        self.scroll_to_selection = true;
+                        self.history_jump = true;
+                        self.load(ctx);
+                    }
                 }
                 Err(error) => {
                     self.branch_warning = None;
@@ -9816,16 +9880,16 @@ impl Browser {
                 }
             }
             if self.pending.is_some()
-                && (safe || self.state.history.is_none())
-                && (self.rewrite_refresh.is_some()
-                    || self.staged.as_ref().is_some_and(|u| {
-                        u.request.anchor_id.is_none()
-                            || u.anchor_row.is_some()
-                            || u.complete
-                            || u.error.is_some()
-                    }))
+                && accept_history_now(
+                    safe,
+                    self.state.history.is_some(),
+                    self.history_jump,
+                    self.rewrite_refresh.is_some(),
+                    self.staged.as_ref(),
+                )
                 && let Some(update) = self.staged.take()
             {
+                self.history_jump = false;
                 self.restore_offset = Some(
                     update
                         .anchor_row
@@ -17163,6 +17227,45 @@ mod tests {
             events,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn switching_between_branches_moves_head_without_rereading_history() {
+        // History holds HEAD and every ref, so a switch between branches
+        // changes no row: HEAD moves, the new tip is selected, and the list
+        // is not read again.
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        let tip = format!("{:040x}", 7);
+        app.state.refs.head = Some(gg_engine::refs::Head {
+            name: Some("refs/heads/main".into()),
+            detached: false,
+            commit: Some(format!("{:040x}", 0)),
+        });
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        let _ = tx.send(Ok(gg_git::branch::Receipt {
+            branch: "feature/login".into(),
+            head: tip.clone(),
+            created: false,
+            warnings: Vec::new(),
+            stash: None,
+        }));
+        app.branch = Some(rx);
+        let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        assert!(app.pending.is_none(), "no history re-read");
+        assert!(app.last_load.is_some(), "the watcher sees it as read");
+        assert_eq!(
+            app.state.refs.head,
+            Some(gg_engine::refs::Head {
+                name: Some("refs/heads/feature/login".into()),
+                detached: false,
+                commit: Some(tip.clone()),
+            })
+        );
+        assert_eq!(app.state.selected.as_deref(), Some(tip.as_str()));
+        assert_eq!(app.current_branch().as_deref(), Some("feature/login"));
     }
 
     #[test]
