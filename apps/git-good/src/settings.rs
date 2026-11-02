@@ -108,15 +108,54 @@ pub fn config_dir() -> Option<PathBuf> {
     std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config").join("gg"))
 }
 
-fn object(path: &Path) -> serde_json::Map<String, serde_json::Value> {
+type Map = serde_json::Map<String, serde_json::Value>;
+
+fn parse(bytes: &[u8]) -> Option<Map> {
+    match serde_json::from_slice::<serde_json::Value>(bytes).ok()? {
+        serde_json::Value::Object(map) => Some(map),
+        _ => None,
+    }
+}
+
+fn object(path: &Path) -> Map {
     std::fs::read(path)
         .ok()
-        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
-        .and_then(|value| match value {
-            serde_json::Value::Object(map) => Some(map),
-            _ => None,
-        })
+        .and_then(|bytes| parse(&bytes))
         .unwrap_or_default()
+}
+
+/// Change the settings file as it is on disk now, keeping every key `change`
+/// leaves alone, and replace it in one step: written to a temporary file in
+/// the same folder, then renamed over it, so another gg window or a crash
+/// never sees half a file. A file that cannot be read is kept beside it as
+/// `settings.json.unreadable` instead of being overwritten.
+fn update(path: &Path, change: impl FnOnce(&mut Map)) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("Create {}: {error}", parent.display()))?;
+    }
+    let mut map = match std::fs::read(path) {
+        Ok(bytes) => match parse(&bytes) {
+            Some(map) => map,
+            None => {
+                let aside = path.with_extension("json.unreadable");
+                std::fs::write(&aside, &bytes)
+                    .map_err(|error| format!("Keep {}: {error}", aside.display()))?;
+                Map::new()
+            }
+        },
+        Err(_) => Map::new(),
+    };
+    change(&mut map);
+    let bytes = serde_json::to_vec_pretty(&serde_json::Value::Object(map))
+        .map_err(|error| format!("Encode settings: {error}"))?;
+    let temporary = path.with_extension(format!("json.{}.tmp", std::process::id()));
+    std::fs::write(&temporary, bytes)
+        .and_then(|()| std::fs::rename(&temporary, path))
+        .map_err(|error| {
+            let _ = std::fs::remove_file(&temporary);
+            format!("Write settings to {}: {error}", path.display())
+        })
 }
 
 /// One key of the settings file, or `None` when it is absent or malformed.
@@ -128,19 +167,10 @@ pub fn read<T: DeserializeOwned>(path: &Path, key: &str) -> Option<T> {
 
 /// Replace one key of the settings file, keeping the others.
 pub fn write<T: Serialize>(path: &Path, key: &str, value: &T) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|error| format!("Create {}: {error}", parent.display()))?;
-    }
-    let mut map = object(path);
-    map.insert(
-        key.to_string(),
-        serde_json::to_value(value).map_err(|error| format!("Encode {key}: {error}"))?,
-    );
-    let bytes = serde_json::to_vec_pretty(&serde_json::Value::Object(map))
-        .map_err(|error| format!("Encode settings: {error}"))?;
-    std::fs::write(path, bytes)
-        .map_err(|error| format!("Write settings to {}: {error}", path.display()))
+    let value = serde_json::to_value(value).map_err(|error| format!("Encode {key}: {error}"))?;
+    update(path, |map| {
+        map.insert(key.to_string(), value);
+    })
 }
 
 /// Most recent repositories kept: the welcome list, Repository › Open
@@ -215,12 +245,75 @@ pub fn push_recent(list: &mut Vec<Recent>, repository: PathBuf, opened: u64) {
 }
 
 /// Save the recent list; tests never write the user's file.
-pub fn save_recent(list: &[Recent]) -> Result<(), String> {
+/// Save this window's recent list over the one on disk, which other gg
+/// windows may have changed since `base` was read: their additions and
+/// removals are kept along with this window's. `list` and `base` both
+/// become the merged list.
+pub fn save_recent(list: &mut Vec<Recent>, base: &mut Vec<Recent>) -> Result<(), String> {
     if cfg!(test) {
+        *base = list.clone();
         return Ok(());
     }
     let path = path().ok_or("No configuration folder is available for preferences.")?;
-    write(&path, "recent_repositories", &list)
+    save_recent_to(&path, list, base)
+}
+
+pub fn save_recent_to(
+    path: &Path,
+    list: &mut Vec<Recent>,
+    base: &mut Vec<Recent>,
+) -> Result<(), String> {
+    let mut merged = Vec::new();
+    update(path, |map| {
+        let disk: Vec<Recent> = map
+            .get("recent_repositories")
+            .and_then(|value| serde_json::from_value(value.clone()).ok())
+            .unwrap_or_default();
+        merged = merge_recent(&disk, base, list);
+        if let Ok(value) = serde_json::to_value(&merged) {
+            map.insert("recent_repositories".into(), value);
+        }
+    })?;
+    *list = merged.clone();
+    *base = merged;
+    Ok(())
+}
+
+/// Three-way merge of recent lists by path: an entry this window removed
+/// stays removed unless another window opened it since; one another window
+/// removed stays removed unless this window opened it since. Newest first.
+fn merge_recent(disk: &[Recent], base: &[Recent], ours: &[Recent]) -> Vec<Recent> {
+    let find = |list: &[Recent], path: &Path| list.iter().find(|entry| entry.path == path).cloned();
+    let mut merged: Vec<Recent> = Vec::new();
+    for entry in ours.iter().chain(disk) {
+        if merged.iter().any(|kept| kept.path == entry.path) {
+            continue;
+        }
+        let (mine, theirs, was) = (
+            find(ours, &entry.path),
+            find(disk, &entry.path),
+            find(base, &entry.path),
+        );
+        let keep = match (mine, theirs) {
+            (Some(mine), None) if was.as_ref() == Some(&mine) => None,
+            (Some(mine), Some(theirs)) => Some(if theirs.opened > mine.opened {
+                theirs
+            } else {
+                mine
+            }),
+            (Some(mine), None) => Some(mine),
+            (None, Some(theirs)) => match was {
+                Some(was) if theirs.opened <= was.opened => None,
+                _ => Some(theirs),
+            },
+            (None, None) => None,
+        };
+        merged.extend(keep);
+    }
+    // Stable: entries without a time keep their order at the end.
+    merged.sort_by_key(|entry| std::cmp::Reverse(entry.opened));
+    merged.truncate(RECENT_LIMIT);
+    merged
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -546,7 +639,22 @@ pub struct Prefs {
     /// bar being the title bar; read at launch.
     pub system_title_bar: bool,
     path: Option<PathBuf>,
+    /// The values as last loaded or saved, to tell this window's changes
+    /// from another window's.
+    saved: Saved,
 }
+
+/// Compares equal to any other, so it never makes two `Prefs` differ.
+#[derive(Clone, Debug, Default)]
+struct Saved(Map);
+
+impl PartialEq for Saved {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for Saved {}
 
 impl Default for Prefs {
     fn default() -> Self {
@@ -589,6 +697,7 @@ impl Default for Prefs {
             wrap_lines: false,
             system_title_bar: false,
             path: None,
+            saved: Saved::default(),
         }
     }
 }
@@ -602,7 +711,7 @@ impl Prefs {
 
     pub fn load_from(path: &Path) -> Self {
         let defaults = Self::default();
-        Self {
+        let mut prefs = Self {
             theme: read(path, "theme").unwrap_or(defaults.theme),
             density: read(path, "density").unwrap_or(defaults.density),
             network_avatars: read(path, "network_avatars").unwrap_or(defaults.network_avatars),
@@ -653,53 +762,79 @@ impl Prefs {
             wrap_lines: read(path, "wrap_lines").unwrap_or(defaults.wrap_lines),
             system_title_bar: read(path, "system_title_bar").unwrap_or(defaults.system_title_bar),
             path: Some(path.to_path_buf()),
-        }
+            saved: Saved::default(),
+        };
+        prefs.saved = Saved(prefs.entries());
+        prefs
     }
 
-    /// Save every preference to the file it was loaded from.
-    pub fn save(&self) -> Result<(), String> {
+    /// Every preference as stored in the settings file: one key per field.
+    fn entries(&self) -> Map {
+        macro_rules! entries {
+            ($($field:ident),* $(,)?) => {
+                [$((stringify!($field), serde_json::to_value(&self.$field).ok())),*]
+            };
+        }
+        entries!(
+            theme,
+            density,
+            network_avatars,
+            rebase_autostash,
+            reader_mode,
+            diff_layout,
+            image_layout,
+            sign_commits,
+            details_visible,
+            stash_include_untracked,
+            stash_keep_index,
+            merge_no_ff,
+            branch_switch,
+            fetch_prune,
+            editor,
+            zoom,
+            code_font,
+            sign_tags,
+            run_hooks,
+            subject_guide,
+            pull_strategy,
+            clone_named_after_repo,
+            reopen_last,
+            offer_force_lease,
+            backup_days,
+            confirm_destructive,
+            avatar_sources,
+            history_avatars,
+            history_tags,
+            relative_dates,
+            diff_context,
+            diff_whitespace,
+            show_invisibles,
+            wrap_lines,
+            system_title_bar
+        )
+        .into_iter()
+        .filter_map(|(key, value)| Some((key.to_string(), value?)))
+        .collect()
+    }
+
+    /// Save the preferences this window changed since it loaded or last
+    /// saved them, over the file as it is now: another gg window's changes
+    /// to other keys are kept.
+    pub fn save(&mut self) -> Result<(), String> {
         let Some(path) = self.path.as_deref() else {
             return Err("No configuration folder is available for preferences.".into());
         };
-        write(path, "theme", &self.theme)?;
-        write(path, "density", &self.density)?;
-        write(path, "network_avatars", &self.network_avatars)?;
-        write(path, "rebase_autostash", &self.rebase_autostash)?;
-        write(path, "reader_mode", &self.reader_mode)?;
-        write(path, "diff_layout", &self.diff_layout)?;
-        write(path, "image_layout", &self.image_layout)?;
-        write(path, "sign_commits", &self.sign_commits)?;
-        write(path, "details_visible", &self.details_visible)?;
-        write(
-            path,
-            "stash_include_untracked",
-            &self.stash_include_untracked,
-        )?;
-        write(path, "stash_keep_index", &self.stash_keep_index)?;
-        write(path, "merge_no_ff", &self.merge_no_ff)?;
-        write(path, "branch_switch", &self.branch_switch)?;
-        write(path, "fetch_prune", &self.fetch_prune)?;
-        write(path, "editor", &self.editor)?;
-        write(path, "zoom", &self.zoom)?;
-        write(path, "code_font", &self.code_font)?;
-        write(path, "sign_tags", &self.sign_tags)?;
-        write(path, "run_hooks", &self.run_hooks)?;
-        write(path, "subject_guide", &self.subject_guide)?;
-        write(path, "pull_strategy", &self.pull_strategy)?;
-        write(path, "clone_named_after_repo", &self.clone_named_after_repo)?;
-        write(path, "reopen_last", &self.reopen_last)?;
-        write(path, "offer_force_lease", &self.offer_force_lease)?;
-        write(path, "backup_days", &self.backup_days)?;
-        write(path, "confirm_destructive", &self.confirm_destructive)?;
-        write(path, "avatar_sources", &self.avatar_sources)?;
-        write(path, "history_avatars", &self.history_avatars)?;
-        write(path, "history_tags", &self.history_tags)?;
-        write(path, "relative_dates", &self.relative_dates)?;
-        write(path, "diff_context", &self.diff_context)?;
-        write(path, "diff_whitespace", &self.diff_whitespace)?;
-        write(path, "show_invisibles", &self.show_invisibles)?;
-        write(path, "wrap_lines", &self.wrap_lines)?;
-        write(path, "system_title_bar", &self.system_title_bar)
+        let current = self.entries();
+        let saved = &self.saved.0;
+        update(path, |map| {
+            for (key, value) in &current {
+                if saved.get(key) != Some(value) {
+                    map.insert(key.clone(), value.clone());
+                }
+            }
+        })?;
+        self.saved.0 = current;
+        Ok(())
     }
 
     /// The comparison options Diff mode reads with.
@@ -866,6 +1001,77 @@ mod tests {
         );
         std::fs::write(&path, b"{not json")?;
         assert_eq!(Prefs::load_from(&path).density, Density::Compact);
+        Ok(())
+    }
+
+    #[test]
+    fn two_windows_keep_each_others_preferences() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("gg/settings.json");
+        // Each window is its own process and loads the file once.
+        let mut first = Prefs::load_from(&path);
+        let mut second = Prefs::load_from(&path);
+        first.theme = Theme::Light;
+        first.save()?;
+        second.density = Density::Comfortable;
+        second.save()?;
+        let reopened = Prefs::load_from(&path);
+        assert_eq!(reopened.theme, Theme::Light);
+        assert_eq!(reopened.density, Density::Comfortable);
+        // A window that changes a key back still writes it.
+        first.theme = Theme::System;
+        first.save()?;
+        assert_eq!(Prefs::load_from(&path).theme, Theme::System);
+        assert_eq!(Prefs::load_from(&path).density, Density::Comfortable);
+        Ok(())
+    }
+
+    #[test]
+    fn an_unreadable_file_is_set_aside_not_overwritten() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("gg/settings.json");
+        std::fs::create_dir_all(dir.path().join("gg"))?;
+        std::fs::write(&path, br#"{"theme": "light", "future_op"#)?;
+        let mut prefs = Prefs::load_from(&path);
+        prefs.density = Density::Comfortable;
+        prefs.save()?;
+        assert_eq!(Prefs::load_from(&path).density, Density::Comfortable);
+        assert_eq!(
+            std::fs::read(dir.path().join("gg/settings.json.unreadable"))?,
+            br#"{"theme": "light", "future_op"#
+        );
+        // No temporary file is left behind.
+        let names: Vec<_> = std::fs::read_dir(dir.path().join("gg"))?
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name())
+            .collect();
+        assert_eq!(names.len(), 2, "{names:?}");
+        Ok(())
+    }
+
+    #[test]
+    fn two_windows_merge_their_recent_repositories() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("gg/settings.json");
+        let entry = |name: &str, opened| Recent {
+            path: name.into(),
+            opened: Some(opened),
+        };
+        let mut first = vec![entry("/old", 1), entry("/gone", 0)];
+        let mut first_base = Vec::new();
+        save_recent_to(&path, &mut first, &mut first_base)?;
+        let mut second = recent_from(&path);
+        let mut second_base = second.clone();
+        // The first window opens a repository and forgets another.
+        push_recent(&mut first, "/one".into(), 5);
+        first.retain(|recent| recent.path != Path::new("/gone"));
+        save_recent_to(&path, &mut first, &mut first_base)?;
+        // The second, loaded earlier, opens a different one.
+        push_recent(&mut second, "/two".into(), 6);
+        save_recent_to(&path, &mut second, &mut second_base)?;
+        let expected = vec![entry("/two", 6), entry("/one", 5), entry("/old", 1)];
+        assert_eq!(recent_from(&path), expected);
+        assert_eq!(second, expected);
         Ok(())
     }
 }
