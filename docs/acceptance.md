@@ -1315,7 +1315,7 @@ Layer: interaction
 - Given Review on a multi-file commit, reader showing file A scrolled down, pointer on the reader
 - When the user selects file B with the keyboard in the list
 - Then A's rows and offset stay until B's identity, metadata, and rows arrive together; an explicit selection publishes even with the pointer resting on the reader; B starts at its first row
-Covered by (interaction): `selection_keeps_displayed_diff_until_replacement_arrives` (diff_view.rs), `a_new_selection_reveals_while_the_pointer_rests_on_the_reader` (diff_view.rs)
+Covered by (interaction): `selection_keeps_displayed_diff_until_replacement_arrives` (diff_view.rs), `reading_keys_scroll_without_changing_file_and_a_replacement_shows_under_the_pointer` (diff_view.rs)
 
 ### REV-20 Rapid selection never shows a stale file
 Fixture: `fx-large`
@@ -1329,7 +1329,7 @@ Fixture: `fx-file-history` (`long.txt` change)
 Layer: interaction
 - Given the pointer resting over the reader while a later page of rows arrives
 - Then rows show as they arrive; the row under the pointer fades in and ignores a click within 0.3 s of changing; the scroll position holds
-Covered by (interaction): `stale_pages_and_hovered_placeholders_preserve_displayed_rows` (diff_view.rs), `reading_keys_scroll_without_changing_file_and_replacement_waits_for_hover` (diff_view.rs)
+Covered by (interaction): `a_page_arriving_under_the_pointer_fades_in_and_refuses_an_early_click`, `a_hunk_that_changes_under_the_pointer_refuses_its_stage_button_briefly`, `stale_pages_are_ignored_and_a_page_fills_its_slots_at_once` (diff_view.rs)
 
 ### REV-22 Retry keeps selection, anchor, and diff
 Fixture: `fx-linear`
