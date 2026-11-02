@@ -4,6 +4,7 @@ pub const READING_HINT: &str = "Up/Down / j k: line · Shift+Up/Down: range · [
 pub const HISTORY_HINT: &str = "Alt+Left/Right: version · [ ]: change · Up/Down: line · Shift+Up/Down: range · B: blame · Esc: close history";
 pub fn available(ctx: &egui::Context) -> bool {
     !egui::Popup::is_any_open(ctx)
+        && !crate::menu_keys::is_focused(ctx)
         && ctx.memory(|m| m.top_modal_layer()).is_none()
         && ctx
             .memory(|m| m.focused())

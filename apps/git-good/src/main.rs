@@ -6,6 +6,7 @@ mod blame_worker;
 mod bounded_text;
 mod branch_cli;
 mod branding;
+mod caption_style;
 mod clipboard;
 mod colors;
 mod commit_cli;
@@ -36,9 +37,16 @@ mod lfs_cli;
 mod lfs_view;
 mod lfs_worker;
 mod line_map_worker;
+#[cfg(target_os = "macos")]
+mod mac_menu;
+mod menu_keys;
+mod menu_nav;
+#[cfg(test)]
+mod menu_tests;
 mod menus;
 mod merge_cli;
 mod mutation_cli;
+mod native_menu;
 mod navigation;
 mod network;
 mod new_repository;
@@ -81,6 +89,7 @@ mod submodules_view;
 mod sync_cli;
 mod tag_cli;
 mod thumbnails;
+mod titlebar;
 mod watcher;
 mod welcome_view;
 mod worktree_cli;
@@ -258,18 +267,23 @@ git-good tag --create TAG --at REF -m MESSAGE [--sign] [--repo PATH]   Create an
     {
         window_size = egui::vec2(width.clamp(720.0, 3840.0), height.clamp(480.0, 2160.0));
     }
+    let custom_titlebar = custom_titlebar(&settings::Prefs::load());
     eframe::run_native(
         "gg · good git",
-        eframe::NativeOptions {
-            viewport: egui::ViewportBuilder::default()
-                .with_icon(branding::icon()?.clone())
-                .with_inner_size(window_size)
-                .with_min_inner_size([720.0, 480.0]),
-            ..Default::default()
-        },
+        native_options(custom_titlebar, window_size, branding::icon()?.clone()),
         Box::new(move |cc| {
             phosphor::install(&cc.egui_ctx);
             let mut app = Browser::new(path);
+            app.chrome.custom = custom_titlebar;
+            // Linux: the desktop's caption buttons on the side its layout puts them.
+            if custom_titlebar {
+                app.caption_style = caption_style::service();
+            }
+            // The macOS menu bar, installed now so winit's default menu doesn't stay up.
+            #[cfg(target_os = "macos")]
+            {
+                app.native_menu = mac_menu::install(&cc.egui_ctx);
+            }
             app.apply_prefs(&cc.egui_ctx);
             app.details_visible = app.prefs.details_visible;
             app.load(&cc.egui_ctx);
@@ -277,6 +291,31 @@ git-good tag --create TAG --at REF -m MESSAGE [--sign] [--repo PATH]   Create an
         }),
     )?;
     Ok(())
+}
+
+/// Windows and Linux: the menu bar is the window's title bar (no OS
+/// decorations), unless Preferences › Appearance › Use the system title bar
+/// is on. macOS keeps its own title bar; its menus are in the menu bar at
+/// the top of the screen.
+fn custom_titlebar(prefs: &settings::Prefs) -> bool {
+    !cfg!(target_os = "macos") && !prefs.system_title_bar
+}
+
+/// The main window: `size`, at least 720 × 480, decorated unless gg draws
+/// the title bar.
+fn native_options(
+    custom_titlebar: bool,
+    size: egui::Vec2,
+    icon: egui::IconData,
+) -> eframe::NativeOptions {
+    eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_icon(icon)
+            .with_inner_size(size)
+            .with_min_inner_size([720.0, 480.0])
+            .with_decorations(!custom_titlebar),
+        ..Default::default()
+    }
 }
 
 fn write_history_json(
@@ -376,7 +415,7 @@ impl PrefSection {
                 "general clone folders avatars network fetch prune editor open dialog defaults stash merge branch"
             }
             Self::Appearance => {
-                "appearance theme dark light system density compact comfortable zoom font size code"
+                "appearance theme dark light system density compact comfortable zoom font size code title bar window frame decorations caption buttons"
             }
             Self::Diff => {
                 "diff open files full file layout inline side by side images compare context lines whitespace ignore line end display wrap long lines invisible characters tabs trailing spaces"
@@ -760,6 +799,16 @@ enum FrameCommand {
     About,
     /// A menu item that is shown but cannot run yet.
     Unavailable,
+}
+
+/// The commands the macOS menu bar moves to its app menu.
+fn native_menu_role(command: &FrameCommand) -> Option<native_menu::ItemRole> {
+    match command {
+        FrameCommand::About => Some(native_menu::ItemRole::About),
+        FrameCommand::Preferences => Some(native_menu::ItemRole::Settings),
+        FrameCommand::Quit => Some(native_menu::ItemRole::Quit),
+        _ => None,
+    }
 }
 
 /// Branch › Rename… for the current branch.
@@ -1733,6 +1782,12 @@ struct Browser {
     /// Open Local Changes once the requested repository has loaded.
     open_changes_after_load: bool,
     about_open: bool,
+    /// The window's top row: whether it is the title bar, and its caption
+    /// buttons' style (`titlebar`, `caption_style`).
+    chrome: titlebar::Chrome,
+    caption_style: Option<titlebar::CaptionStyleFn>,
+    /// macOS: the native menu bar, which hides the in-window menus.
+    native_menu: Option<native_menu::NativeMenu<FrameCommand>>,
     /// The larger logo drawn in About gg.
     about_logo: Option<egui::TextureHandle>,
     discard_confirm: bool,
@@ -1914,6 +1969,9 @@ impl Browser {
             open_changes_after_load: false,
             // Debug builds open About gg with `GG_ABOUT=1` for native review.
             about_open: cfg!(debug_assertions) && std::env::var_os("GG_ABOUT").is_some(),
+            chrome: titlebar::Chrome::default(),
+            caption_style: None,
+            native_menu: None,
             about_logo: None,
             discard_confirm: false,
             rename_dialog: None,
@@ -2997,6 +3055,21 @@ impl Browser {
                                             }
                                         });
                                     ui.end_row();
+                                    // macOS always has its own title bar.
+                                    if !cfg!(target_os = "macos") {
+                                        ui.label("Title bar");
+                                        ui.vertical(|ui| {
+                                            ui.checkbox(
+                                                &mut prefs.system_title_bar,
+                                                "Use the system title bar",
+                                            )
+                                            .on_hover_text(
+                                                "Off: gg's menu bar is the title bar, with its own window buttons.",
+                                            );
+                                            ui.weak("Takes effect when gg restarts.");
+                                        });
+                                        ui.end_row();
+                                    }
                                 });
                         }
                         PrefSection::Diff => {
@@ -4561,7 +4634,7 @@ impl Browser {
         let body = egui::Rect::from_min_max(
             egui::pos2(
                 screen.left(),
-                screen.top() + MENU_BAR_HEIGHT + TOOLBAR_HEIGHT,
+                screen.top() + self.menu_bar_height() + TOOLBAR_HEIGHT,
             ),
             egui::pos2(screen.right(), screen.bottom() - FOOTER_HEIGHT),
         );
@@ -5292,6 +5365,7 @@ impl Browser {
             search::results(&query, &base, FrameCommand::Filter(query.trim().to_owned()))
         };
         items.extend(file_items);
+        let menu_bar_height = self.menu_bar_height();
         let palette = self.search.as_mut()?;
         if palette.selected >= items.len() {
             palette.selected = items.len().saturating_sub(1);
@@ -5396,7 +5470,7 @@ impl Browser {
             let id = egui::Id::unique("frame-search");
             let area = egui::Modal::default_area(id).anchor(
                 egui::Align2::RIGHT_TOP,
-                egui::vec2(-8.0, MENU_BAR_HEIGHT + 34.0),
+                egui::vec2(-8.0, menu_bar_height + 34.0),
             );
             let modal = egui::Modal::new(id)
                 .area(area)
@@ -5768,6 +5842,7 @@ impl Browser {
             .as_ref()
             .map(|summary| summary.stashes.clone())
             .unwrap_or_default();
+        let menu_bar_height = self.menu_bar_height();
         let picker = &mut self.stash_picker;
         let mut pick = None;
         // Under the toolbar's Stashes button when it opened the picker,
@@ -5777,7 +5852,7 @@ impl Browser {
             None => (
                 egui::pos2(
                     ctx.content_rect().center().x,
-                    MENU_BAR_HEIGHT + TOOLBAR_HEIGHT + 4.0,
+                    menu_bar_height + TOOLBAR_HEIGHT + 4.0,
                 ),
                 egui::RectAlign::BOTTOM,
             ),
@@ -9492,6 +9567,27 @@ impl Browser {
         }
     }
 
+    /// Input the window frame adds before egui sees it: the release an OS
+    /// move or resize kept (`titlebar`), and the native menu's key
+    /// equivalents as the key presses they were (`native_menu`).
+    fn window_input(&mut self, ctx: &egui::Context, input: &mut egui::RawInput) {
+        if self.chrome.custom {
+            titlebar::release_after_os_resize(ctx, input);
+        }
+        if let Some(menu) = self.native_menu.as_mut() {
+            menu.raw_input(input);
+        }
+    }
+
+    /// The menu bar's height: none while the macOS menu bar holds the menus.
+    fn menu_bar_height(&self) -> f32 {
+        if self.native_menu.is_some() {
+            0.0
+        } else {
+            MENU_BAR_HEIGHT
+        }
+    }
+
     fn prepare_input(&mut self, input: &mut egui::RawInput) {
         // egui uses the frame's final pointer position for scrollbar release.
         // Keep later motion in the following frame, preserving event order.
@@ -9513,6 +9609,9 @@ impl Browser {
     }
 
     fn draw_ui(&mut self, ui: &mut egui::Ui) {
+        // A shortcut pressed with the keyboard on the menu bar leaves the bar
+        // and runs, so this comes before any shortcut is read.
+        crate::menu_keys::leave_for_shortcut(ui.ctx());
         // The open repository's absolute path, else the requested one.
         let shown_path = self
             .state
@@ -10075,37 +10174,33 @@ impl Browser {
             self.toggle_refs_or_drawer(ctx);
         }
         let table = self.menu_table(&ready);
-        let mut menu_command = None;
-        // egui's in-window menu bar: frameless titles, hover moves between open menus.
-        egui::Panel::top("menu-bar")
-            .exact_size(MENU_BAR_HEIGHT)
-            .show(ui, |ui| {
-                egui::MenuBar::new().ui(ui, |ui| {
-                    // No logo beside the menus (owner): the titles start the bar.
-                    menu_command = menus::show(ui, &table);
-                    // The window identity: repository and path, plus the
-                    // operation while one runs. The branch lives on the
-                    // toolbar's branch button only.
-                    let identity = match &self.state.history {
-                        Some(history) if history.shallow => {
-                            format!("{}  ·  shallow", self.window_title)
-                        }
-                        Some(_) => self.window_title.clone(),
-                        None => "gg — open a repository".into(),
-                    };
-                    let width = ui.available_width();
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(width, ui.available_height()),
-                        egui::Layout::right_to_left(egui::Align::Center),
-                        |ui| {
-                            ui.add_space(6.0);
-                            ui.add(
-                                egui::Label::new(egui::RichText::new(identity).weak()).truncate(),
-                            );
-                        },
-                    );
-                });
-            });
+        let menu_command;
+        if let Some(native) = self.native_menu.as_mut() {
+            // macOS: the menus are in the menu bar at the top of the screen.
+            native.sync(&table, native_menu_role);
+            menu_command = native.chosen(ctx).into_iter().next();
+        } else {
+            // The window identity: repository and path, plus the operation
+            // while one runs. The branch lives on the toolbar's branch button only.
+            let identity = match &self.state.history {
+                Some(history) if history.shallow => {
+                    format!("{}  ·  shallow", self.window_title)
+                }
+                Some(_) => self.window_title.clone(),
+                None => "gg — open a repository".into(),
+            };
+            if let Some(read) = &self.caption_style {
+                self.chrome.style = read(ctx);
+            }
+            menu_command = titlebar::show(
+                ui,
+                &self.chrome,
+                MENU_BAR_HEIGHT,
+                &table,
+                &identity,
+                FrameCommand::Quit,
+            );
+        }
         let mut tool = menu_command;
         let mut open_search = false;
         let mut search_field: Option<(egui::Rect, bool)> = None;
@@ -12446,6 +12541,10 @@ impl Browser {
             ctx.request_repaint();
         }
         bounded_text::show_disclosure(ctx);
+        // gg's own title bar: the window's edges resize it, above everything.
+        if self.chrome.custom {
+            titlebar::resize_zones(ui);
+        }
         if !self.deferred_input.is_empty() {
             ctx.request_repaint();
         }
@@ -12457,7 +12556,8 @@ impl Browser {
 }
 
 impl eframe::App for Browser {
-    fn raw_input_hook(&mut self, _: &egui::Context, input: &mut egui::RawInput) {
+    fn raw_input_hook(&mut self, ctx: &egui::Context, input: &mut egui::RawInput) {
+        self.window_input(ctx, input);
         self.prepare_input(input);
     }
 
@@ -17854,6 +17954,7 @@ mod tests {
         };
         assert_eq!(shown(""), PrefSection::ALL.to_vec());
         assert_eq!(shown("zoom"), [PrefSection::Appearance]);
+        assert_eq!(shown("title bar"), [PrefSection::Appearance]);
         assert_eq!(shown("SIGN"), [PrefSection::Commit]);
         assert_eq!(shown("side by"), [PrefSection::Diff]);
         assert!(shown("nothing like this").is_empty());
@@ -18486,6 +18587,265 @@ mod tests {
         assert_eq!(switch, None, "Switch to… is enabled");
         assert!(egui::Popup::is_id_open(&ctx, branch_switcher_popup_id()));
         assert!(app.create_branch.is_none(), "Ctrl+Shift+B is not Ctrl+B");
+    }
+
+    #[test]
+    fn the_system_title_bar_preference_keeps_the_window_decorations() -> Result<(), String> {
+        let mut prefs = settings::Prefs::default();
+        assert_eq!(custom_titlebar(&prefs), !cfg!(target_os = "macos"));
+        prefs.system_title_bar = true;
+        assert!(!custom_titlebar(&prefs));
+        let icon = branding::icon()?.clone();
+        let size = egui::vec2(1120.0, 740.0);
+        assert_eq!(
+            native_options(false, size, icon.clone())
+                .viewport
+                .decorations,
+            Some(true)
+        );
+        let custom = native_options(true, size, icon).viewport;
+        assert_eq!(custom.decorations, Some(false));
+        assert_eq!(custom.min_inner_size, Some(egui::vec2(720.0, 480.0)));
+        Ok(())
+    }
+
+    /// The macOS menu bar is gg's own table laid out the Mac way; built and
+    /// checked on every platform.
+    #[test]
+    fn the_mac_menu_bar_comes_from_the_command_table() {
+        let app = layout_fixture();
+        let table = app.menu_table(&app.frame_readiness());
+        let (bar, commands) = native_menu::from_table(&table, native_menu_role);
+        let layout = native_menu::mac_layout(&bar);
+        assert!(layout.clashes.is_empty(), "{:?}", layout.clashes);
+        let titles: Vec<&str> = layout.bar.menus.iter().map(|m| m.title.as_str()).collect();
+        assert_eq!(
+            titles,
+            [
+                "gg",
+                "Repository",
+                "Branch",
+                "Commit",
+                "Changes",
+                "View",
+                "Window",
+                "Help"
+            ]
+        );
+        let app_menu: Vec<(String, Option<String>)> = layout.bar.menus[0]
+            .children
+            .iter()
+            .filter_map(|node| match node {
+                native_menu::Node::Item(item) => Some((item.label.clone(), item.shortcut.clone())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            app_menu,
+            [
+                ("About gg".to_string(), None),
+                ("Settings…".to_string(), Some("Cmd+,".to_string())),
+                ("Hide gg".to_string(), Some("Cmd+H".to_string())),
+                ("Quit gg".to_string(), Some("Cmd+Q".to_string())),
+            ]
+        );
+        let command = |label: &str| {
+            layout
+                .bar
+                .items()
+                .into_iter()
+                .find(|item| item.label == label)
+                .and_then(|item| commands.get(&item.id))
+                .cloned()
+        };
+        assert_eq!(command("Settings…"), Some(FrameCommand::Preferences));
+        assert_eq!(
+            command("Quit gg"),
+            Some(FrameCommand::Quit),
+            "gg's own Quit"
+        );
+        assert_eq!(command("About gg"), Some(FrameCommand::About));
+        // Every in-window item is there with its label, enablement and check.
+        let native = layout.bar.items();
+        for (_, item) in menus::flatten(&table) {
+            if native_menu_role(&item.command).is_some() {
+                continue;
+            }
+            let found = native.iter().find(|n| n.label == item.label);
+            assert!(
+                found.is_some_and(|n| n.enabled == item.disabled.is_none()
+                    && n.checked == item.checked
+                    && n.shortcut.as_deref() == (!item.key.is_empty()).then_some(item.key)),
+                "{} differs: {found:?}",
+                item.label
+            );
+        }
+        // Every shortcut is the key press gg's handling already reads.
+        for item in &native {
+            let Some(shortcut) = item.shortcut.as_deref() else {
+                continue;
+            };
+            let chord = native_menu::Chord::parse(shortcut);
+            assert!(
+                chord.and_then(|c| c.key_event(true)).is_some(),
+                "{shortcut} on {}",
+                item.label
+            );
+        }
+        let copy = native_menu::Chord::parse("Ctrl+C");
+        assert!(
+            copy.is_some_and(|c| !c.native_ok()),
+            "⌘C stays the window's, for text fields"
+        );
+    }
+
+    #[test]
+    fn selection_changes_update_the_mac_menu_in_place() {
+        let mut app = layout_fixture();
+        let key = |app: &Browser| {
+            let table = app.menu_table(&app.frame_readiness());
+            native_menu::structure_key(
+                &native_menu::mac_layout(&native_menu::from_table(&table, native_menu_role).0).bar,
+            )
+        };
+        let selected = key(&app);
+        app.state.selected = None;
+        assert_eq!(key(&app), selected, "enablement changes in place");
+        app.recent = vec![settings::Recent {
+            path: "/projects/other".into(),
+            opened: None,
+        }];
+        assert_ne!(key(&app), selected, "a new Open recent entry rebuilds");
+    }
+
+    /// Windows and Linux: the menu bar is the title bar.
+    #[test]
+    fn gg_draws_the_title_bar_with_menus_identity_and_caption_buttons() -> Result<(), String> {
+        let ctx = egui::Context::default();
+        crate::phosphor::install(&ctx);
+        let mut app = layout_fixture();
+        app.chrome.custom = true;
+        let frame = |app: &mut Browser, events| {
+            crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, events), |ui| {
+                app.draw_ui(ui)
+            })
+        };
+        let _ = frame(&mut app, vec![]);
+        let output = frame(&mut app, vec![]);
+        let close = ctx
+            .read_response(titlebar::caption_id(titlebar::Caption::Close))
+            .map(|r| r.rect)
+            .ok_or("no Close button")?;
+        let minimize = ctx
+            .read_response(titlebar::caption_id(titlebar::Caption::Minimize))
+            .map(|r| r.rect)
+            .ok_or("no Minimize button")?;
+        assert_eq!((close.right(), close.top()), (1120.0, 0.0));
+        assert!(close.bottom() <= MENU_BAR_HEIGHT);
+        let text = |name: &str| {
+            output.shapes.iter().find_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) if text.galley.job.text == name => {
+                    Some(text.visual_bounding_rect())
+                }
+                _ => None,
+            })
+        };
+        let help = text("Help").ok_or("no Help menu")?;
+        let identity = text(&app.window_title).ok_or("no identity")?;
+        assert!(identity.left() > help.right() && identity.right() < minimize.left());
+        assert!(
+            (identity.center().x - 560.0).abs() < 2.0,
+            "centred: {identity:?}"
+        );
+        // Close runs gg's Quit, which closes the window.
+        let mut commands = vec![];
+        for events in [
+            vec![egui::Event::PointerMoved(close.center())],
+            vec![egui::Event::PointerButton {
+                pos: close.center(),
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            vec![egui::Event::PointerButton {
+                pos: close.center(),
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        ] {
+            let mut out = frame(&mut app, events);
+            commands.extend(
+                out.viewport_output
+                    .remove(&egui::ViewportId::ROOT)
+                    .map(|v| v.commands)
+                    .unwrap_or_default(),
+            );
+        }
+        assert!(
+            commands.contains(&egui::ViewportCommand::Close),
+            "{commands:?}"
+        );
+        Ok(())
+    }
+
+    /// macOS: with the native menu bar the in-window menus are hidden, the
+    /// toolbar takes the top row, and native clicks run gg's commands.
+    #[test]
+    fn the_native_menu_bar_replaces_the_in_window_menus() -> Result<(), String> {
+        use std::cell::RefCell;
+        use std::rc::Rc;
+        #[derive(Default)]
+        struct Fake {
+            bars: Vec<native_menu::MenuBar>,
+            events: Vec<native_menu::Event>,
+        }
+        struct Shared(Rc<RefCell<Fake>>);
+        impl native_menu::Backend for Shared {
+            fn sync(&mut self, bar: &native_menu::MenuBar) {
+                self.0.borrow_mut().bars.push(bar.clone());
+            }
+            fn drain(&mut self) -> Vec<native_menu::Event> {
+                std::mem::take(&mut self.0.borrow_mut().events)
+            }
+        }
+        let ctx = egui::Context::default();
+        crate::phosphor::install(&ctx);
+        let fake = Rc::new(RefCell::new(Fake::default()));
+        let mut app = layout_fixture();
+        app.native_menu = Some(native_menu::NativeMenu::new(Box::new(Shared(Rc::clone(
+            &fake,
+        )))));
+        let frame = |app: &mut Browser| {
+            let mut input = frame_input(1120.0, 740.0, vec![]);
+            app.window_input(&ctx, &mut input);
+            crate::tests::run_ui(&ctx, input, |ui| app.draw_ui(ui))
+        };
+        let _ = frame(&mut app);
+        let output = frame(&mut app);
+        assert!(
+            !fake.borrow().bars.is_empty(),
+            "the menus went to the backend"
+        );
+        let in_window = output.shapes.iter().any(|shape| {
+            matches!(&shape.shape, egui::epaint::Shape::Text(text) if text.galley.job.text == "Repository")
+        });
+        assert!(!in_window, "no in-window menu bar");
+        let about = fake
+            .borrow()
+            .bars
+            .last()
+            .and_then(|bar| {
+                bar.items()
+                    .into_iter()
+                    .find(|i| i.label == "About gg")
+                    .map(|i| i.id.clone())
+            })
+            .ok_or("no About gg")?;
+        fake.borrow_mut().events = vec![native_menu::Event::Click(about)];
+        let _ = frame(&mut app);
+        assert!(app.about_open, "the click ran Help › About gg");
+        Ok(())
     }
 
     #[test]

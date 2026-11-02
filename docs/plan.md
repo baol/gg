@@ -141,13 +141,13 @@ Still to build (medium):
 5. Preferences: done (modal, footer, search, keyboard list, zoom, code font, History display options, pull strategy, force-with-lease offer, clone naming, reopen last repository, commit hooks, backup retention, confirm before Drop and Reset, identity, subject guide, sign tags, and Diff context lines, whitespace, wrap, and invisibles).
 6. Refs sidebar: done (Worktrees group and branch tracking counts).
 
-Small differences left for the review: none beyond F10 menu focus, which egui does not offer. The reader's one-row header, indented combined rebase rows, the short stop explanation, and the backup named on Abort are done.
+Small differences left for the review: none. F10 (and an Alt tap) puts the keyboard on the menu bar, as the architecture specifies. The reader's one-row header, indented combined rebase rows, the short stop explanation, and the backup named on Abort are done.
 
 Decisions for the review (see the canvas page **Review · as built**):
 
 - Side-by-side diff, the bottom commit inspector, and the Unstaged/Staged reader toggle (all done).
 - History: the filter row is gone; `Commit · N` and the active filter sit in the column header (done).
-- Decided: follow the mockups. Refresh is automatic (file watcher and before commands), `Ctrl+R` is Reword, `Del` deletes, Preferences is modal, Open in editor uses an editor-command setting. F10 menu focus is not available in egui.
+- Decided: follow the mockups. Refresh is automatic (file watcher and before commands), `Ctrl+R` is Reword, `Del` deletes, Preferences is modal, Open in editor uses an editor-command setting. F10 or an Alt tap puts the keyboard on the menu bar; open menus take arrows, Enter, Esc and mnemonics.
 
 ## Accepted design proposals · 2026-11-01
 
