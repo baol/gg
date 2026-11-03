@@ -167,6 +167,30 @@ fn working(path: &Path, area: Area, kind: Kind, file: &str) -> Result<WorkingReq
     })
 }
 
+/// A staged pointer at `a*.bin` is read from that index entry, not from
+/// `a!.bin`, which the name matches as a glob and which sorts first.
+#[cfg(unix)]
+#[test]
+fn working_pointers_are_read_from_the_literal_path() -> Result {
+    let dir = repo()?;
+    let other = "1111111111111111111111111111111111111111111111111111111111111111";
+    let before = "2222222222222222222222222222222222222222222222222222222222222222";
+    let after = "3333333333333333333333333333333333333333333333333333333333333333";
+    std::fs::write(dir.path().join("a!.bin"), pointer(other, 10))?;
+    std::fs::write(dir.path().join("a*.bin"), pointer(before, 20))?;
+    git(dir.path(), &["add", "-A"])?;
+    git(dir.path(), &["commit", "-qm", "pointers"])?;
+    std::fs::write(dir.path().join("a*.bin"), pointer(after, 30))?;
+    git(dir.path(), &["add", "-A"])?;
+    let staged = gg_git::lfs::read_working(
+        dir.path(),
+        &working(dir.path(), Area::Staged, Kind::Modified, "a*.bin")?,
+    )?;
+    assert_eq!(staged.before.as_ref().map(|p| p.oid.as_str()), Some(before));
+    assert_eq!(staged.after.as_ref().map(|p| p.oid.as_str()), Some(after));
+    Ok(())
+}
+
 #[test]
 fn working_staged_unstaged_and_untracked_pointers_use_their_own_sides() -> Result {
     let dir = repo()?;

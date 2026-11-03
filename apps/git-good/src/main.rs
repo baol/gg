@@ -1234,9 +1234,9 @@ enum ConflictUpdate {
     /// The unmerged paths, the other staged paths, and the blocks left in
     /// each unmerged path.
     Paths {
-        paths: Vec<String>,
-        also: Vec<String>,
-        counts: std::collections::HashMap<String, usize>,
+        paths: Vec<Vec<u8>>,
+        also: Vec<Vec<u8>>,
+        counts: std::collections::HashMap<Vec<u8>, usize>,
     },
     Content {
         content: Box<gg_engine::conflict::Content>,
@@ -1248,11 +1248,13 @@ enum ConflictUpdate {
     },
 }
 
+/// Every path here is the exact bytes Git reports; it is escaped with
+/// `display_path` only where it is shown.
 struct ConflictView {
-    paths: Vec<String>,
+    paths: Vec<Vec<u8>>,
     selected: usize,
     previous_selected: usize,
-    keep: Option<String>,
+    keep: Option<Vec<u8>>,
     content: Option<gg_engine::conflict::Content>,
     error: Option<String>,
     loading: bool,
@@ -1266,7 +1268,7 @@ struct ConflictView {
     /// Resolve the whole file from one source instead of block by block.
     whole_file: bool,
     /// Files resolved and staged while the workspace was open.
-    resolved: Vec<String>,
+    resolved: Vec<Vec<u8>>,
     /// The working file no longer holds what Git wrote at conflict time, so
     /// staging the blocks would overwrite edits made outside them.
     edited: bool,
@@ -1275,9 +1277,9 @@ struct ConflictView {
     /// Who Ours and Theirs are for the operation in progress.
     names: Option<gg_engine::conflict::SideNames>,
     /// Staged paths that are not conflicted: what the operation changed.
-    also: Vec<String>,
+    also: Vec<Vec<u8>>,
     /// Conflict blocks left in each unmerged path.
-    counts: std::collections::HashMap<String, usize>,
+    counts: std::collections::HashMap<Vec<u8>, usize>,
     /// An option chosen for a block edited by hand, asking first.
     confirm_block: Option<(usize, gg_engine::conflict::BlockChoice)>,
 }
@@ -1318,7 +1320,7 @@ enum ConflictStage {
     WorkingFile,
 }
 
-fn next_conflict_selection(paths: &[String], keep: Option<&str>, previous: usize) -> usize {
+fn next_conflict_selection(paths: &[Vec<u8>], keep: Option<&[u8]>, previous: usize) -> usize {
     keep.and_then(|path| paths.iter().position(|candidate| candidate == path))
         .unwrap_or(previous)
         .min(paths.len().saturating_sub(1))
@@ -1423,15 +1425,11 @@ enum OperationOutcome {
         action: MutationAction,
         receipt: gg_engine::mutation::MutationReceipt,
     },
-    Conflict {
-        file: String,
-    },
+    /// `file` is the exact path bytes.
+    Conflict { file: Vec<u8> },
     /// A staged resolution was undone; `conflicted` when Git recreated the
     /// conflict.
-    Reopened {
-        file: String,
-        conflicted: bool,
-    },
+    Reopened { file: Vec<u8>, conflicted: bool },
 }
 
 #[derive(Clone, Copy)]
@@ -1994,6 +1992,8 @@ struct Browser {
     /// The Continue, Skip, or Abort the operation worker is running.
     mutation_busy: Option<operation_band::Command>,
     /// Conflict blocks per unmerged path, as the workspace last read them.
+    /// Conflict blocks left per unmerged path, keyed by the escaped path
+    /// the operation state lists.
     conflict_counts: std::collections::HashMap<String, usize>,
     /// Watches the open repository; settled changes refresh what they touch.
     watcher: Option<watcher::Watcher>,
@@ -6843,13 +6843,12 @@ impl Browser {
             .map(|path| {
                 self.conflict_view
                     .as_ref()
-                    .filter(|view| view.paths.get(view.selected) == Some(path))
-                    .and_then(|view| view.blocks.as_ref().map(conflict_blocks::Blocks::left))
-                    .or_else(|| {
-                        self.conflict_view
-                            .as_ref()
-                            .and_then(|view| view.counts.get(path).copied())
+                    .filter(|view| {
+                        view.paths.get(view.selected).is_some_and(|selected| {
+                            gg_engine::review::display_path(selected) == *path
+                        })
                     })
+                    .and_then(|view| view.blocks.as_ref().map(conflict_blocks::Blocks::left))
                     .or_else(|| self.conflict_counts.get(path).copied())
                     .unwrap_or(1)
             })
@@ -7395,7 +7394,7 @@ impl Browser {
                 self.refresh_working(ctx);
             }
             OperationOutcome::Conflict { file } => {
-                let summary = format!("Resolved {file}");
+                let summary = format!("Resolved {}", gg_engine::review::display_path(&file));
                 self.mutation_notice = Some(summary.clone());
                 self.set_outcome(OutcomeSeverity::Info, summary, None, None);
                 self.refresh_mutation();
@@ -7409,17 +7408,18 @@ impl Browser {
                 self.refresh_working(ctx);
             }
             OperationOutcome::Reopened { file, conflicted } => {
+                let shown = gg_engine::review::display_path(&file);
                 let summary = if conflicted {
-                    format!("Reopened the conflict in {file}")
+                    format!("Reopened the conflict in {shown}")
                 } else {
-                    format!("Unstaged {file}")
+                    format!("Unstaged {shown}")
                 };
                 self.set_outcome(OutcomeSeverity::Info, summary, None, None);
                 self.refresh_mutation();
                 if let Some(view) = &mut self.conflict_view {
                     view.resolved.retain(|path| path != &file);
                 }
-                self.refresh_conflict_view(ctx, conflicted.then_some(file.as_str()));
+                self.refresh_conflict_view(ctx, conflicted.then_some(file.as_slice()));
                 self.load(ctx);
                 self.refresh_working(ctx);
             }
@@ -8184,7 +8184,7 @@ impl Browser {
                                 .as_ref()
                                 .and_then(|view| view.paths.get(view.selected).cloned()),
                         )
-                        .map(|(workdir, path)| workdir.join(path));
+                        .map(|(workdir, path)| workdir.join(worktree_path(&path)));
                     if let Some(file) = file
                         && let Some(view) = &mut self.conflict_view
                     {
@@ -8221,7 +8221,11 @@ impl Browser {
         let Some(view) = &mut self.conflict_view else {
             return;
         };
-        let file = view.paths.get(view.selected).cloned().unwrap_or_default();
+        let file = view
+            .paths
+            .get(view.selected)
+            .map(|file| gg_engine::review::display_path(file))
+            .unwrap_or_default();
         let question = if view.confirm_replace {
             Some((
                 "Replace edited file",
@@ -8295,11 +8299,11 @@ impl Browser {
     }
 
     /// − on a resolved file: Git recreates its conflict (or unstages it).
-    fn reopen_conflict(&mut self, ctx: &egui::Context, file: String) -> Result<(), String> {
+    fn reopen_conflict(&mut self, ctx: &egui::Context, file: Vec<u8>) -> Result<(), String> {
         let path = self
             .stash_path()
             .ok_or("Open a repository before resolving conflicts.")?;
-        let label = format!("Unstaging {file}…");
+        let label = format!("Unstaging {}…", gg_engine::review::display_path(&file));
         self.start_operation(ctx, label, move || {
             let conflicted = gg_git::conflict::reopen(&path, &file)?;
             Ok(OperationOutcome::Reopened { file, conflicted })
@@ -8312,12 +8316,12 @@ impl Browser {
         self.refresh_conflict_view(ctx, None);
     }
 
-    fn refresh_conflict_view(&mut self, ctx: &egui::Context, keep: Option<&str>) {
+    fn refresh_conflict_view(&mut self, ctx: &egui::Context, keep: Option<&[u8]>) {
         let Some(path) = self.stash_path() else {
             return;
         };
         let view = self.conflict_view.get_or_insert_with(ConflictView::default);
-        view.keep = keep.map(str::to_string);
+        view.keep = keep.map(<[u8]>::to_vec);
         view.previous_selected = view.selected;
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         let repaint = ctx.clone();
@@ -8382,7 +8386,10 @@ impl Browser {
                 }) => {
                     let keep = view.keep.take();
                     view.also = also;
-                    self.conflict_counts = counts.clone();
+                    self.conflict_counts = counts
+                        .iter()
+                        .map(|(file, left)| (gg_engine::review::display_path(file), *left))
+                        .collect();
                     view.counts = counts;
                     view.selected =
                         next_conflict_selection(&paths, keep.as_deref(), view.previous_selected);
@@ -8527,7 +8534,7 @@ impl Browser {
             },
             _ => None,
         };
-        let label = format!("Staging {file}…");
+        let label = format!("Staging {}…", gg_engine::review::display_path(&file));
         self.start_operation(ctx, label, move || {
             match composed {
                 Some(text) => gg_git::conflict::publish_text(&path, &file, &snapshot, &text)?,
@@ -14454,6 +14461,7 @@ mod tests {
                 keep: None,
                 content: Some(gg_engine::conflict::Content {
                     path: "a".into(),
+                    path_bytes: b"a".to_vec(),
                     base: Some("base\n".into()),
                     ours: Some("ours\n".into()),
                     theirs: Some("theirs\n".into()),
@@ -15481,9 +15489,9 @@ mod tests {
 
     #[test]
     fn conflict_selection_prefers_the_next_path() {
-        let paths = vec!["a".to_string(), "b".to_string(), "c".to_string()];
-        assert_eq!(next_conflict_selection(&paths, Some("b"), 0), 1);
-        assert_eq!(next_conflict_selection(&paths, Some("missing"), 2), 2);
+        let paths = vec![b"a".to_vec(), b"b".to_vec(), b"c".to_vec()];
+        assert_eq!(next_conflict_selection(&paths, Some(b"b"), 0), 1);
+        assert_eq!(next_conflict_selection(&paths, Some(b"missing"), 2), 2);
         assert_eq!(next_conflict_selection(&[], None, 5), 0);
     }
 
@@ -15520,6 +15528,7 @@ mod tests {
             tx.send(Ok(ConflictUpdate::Content {
                 content: Box::new(gg_engine::conflict::Content {
                     path: "a".into(),
+                    path_bytes: b"a".to_vec(),
                     base: Some("base\n".into()),
                     ours: Some("ours\n".into()),
                     theirs: Some("theirs\n".into()),
@@ -15731,6 +15740,7 @@ mod tests {
             keep: None,
             content: Some(gg_engine::conflict::Content {
                 path: "a".into(),
+                path_bytes: b"a".to_vec(),
                 base: Some("base\n".into()),
                 ours: Some("ours\n".into()),
                 theirs: Some("theirs\n".into()),
@@ -15896,6 +15906,7 @@ mod tests {
             keep: None,
             content: Some(gg_engine::conflict::Content {
                 path: "a".into(),
+                path_bytes: b"a".to_vec(),
                 base: Some("base\n".into()),
                 ours: Some("ours\n".into()),
                 theirs: Some("theirs\n".into()),
@@ -15964,6 +15975,7 @@ mod tests {
             keep: None,
             content: Some(gg_engine::conflict::Content {
                 path: "a".into(),
+                path_bytes: b"a".to_vec(),
                 base: Some("base\n".into()),
                 ours: ours.map(str::to_string),
                 theirs: theirs.map(str::to_string),
@@ -16254,16 +16266,16 @@ mod tests {
         settle(&mut app, &|app| {
             app.conflict_view
                 .as_ref()
-                .is_some_and(|view| !view.loading && view.resolved == ["a"])
+                .is_some_and(|view| !view.loading && view.resolved == [b"a"])
         });
         // − reopens the file as conflicted.
         app.reopen_conflict(&ctx, "a".into())?;
         settle(&mut app, &|app| !app.operation_busy());
-        assert_eq!(gg_git::conflict::unmerged(path)?, vec!["a".to_string()]);
+        assert_eq!(gg_git::conflict::unmerged(path)?, vec![b"a".to_vec()]);
         settle(&mut app, &|app| {
             app.conflict_view
                 .as_ref()
-                .is_some_and(|view| !view.loading && view.paths == ["a"])
+                .is_some_and(|view| !view.loading && view.paths == [b"a"])
         });
         let view = app.conflict_view.as_ref().ok_or("missing conflict view")?;
         assert!(view.resolved.is_empty(), "back under CONFLICTED");

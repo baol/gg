@@ -56,20 +56,23 @@ pub fn discard_all(path: &Path) -> Result<(), String> {
     if !added.status.success() {
         return check(added, "List newly added files");
     }
-    // Names stay the bytes Git printed, so one that is not UTF-8 still
-    // matches its index entry.
-    let added = added
-        .stdout
-        .split(|byte| *byte == 0)
-        .filter(|field| !field.is_empty())
-        .map(|field| crate::raw_path::os_string(&[b":(top,literal)", field].concat()))
-        .collect::<Vec<_>>();
-    if !added.is_empty() {
-        let root = run(path, &["rev-parse", "--show-toplevel"])?;
-        let root = crate::raw_path::line(&root.stdout);
-        let mut args = ["rm", "-q", "--cached", "--"].map(OsString::from).to_vec();
-        args.extend(added);
-        check(run(&root, &args)?, "Keep newly added files")?;
+    // Each name is the exact bytes Git listed, from the top, matched literally.
+    let mut args: Vec<OsString> = ["rm", "-q", "--cached", "--"]
+        .into_iter()
+        .map(OsString::from)
+        .collect();
+    for file in added.stdout.split(|byte| *byte == 0) {
+        if file.is_empty() {
+            continue;
+        }
+        let file = gix::path::from_bstr(gix::bstr::BStr::new(file))
+            .map_err(|_| "A newly added file's name is not a path on this platform.".to_string())?;
+        let mut spec = OsString::from(":(top,literal)");
+        spec.push(file.as_os_str());
+        args.push(spec);
+    }
+    if args.len() > 4 {
+        check(run(path, &args)?, "Keep newly added files")?;
     }
     check(
         run(

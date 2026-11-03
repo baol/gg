@@ -74,6 +74,8 @@ git good conflicts [--repo PATH]
 git good conflict --file PATH [--use ours|theirs|deletion|--stage] [--repo PATH]
 ```
 
+`conflicts` lists each path escaped in `paths` and as its exact bytes in the matching entry of `path_bytes`. `--file` takes the exact path bytes (raw on Unix) and treats them as a literal path, never a pattern: `--file '*.txt'` resolves only the file named `*.txt`. Receipts report `path` escaped and `path_bytes` exact.
+
 `--use deletion` resolves a delete/modify conflict by keeping the deletion: it removes the path from the index and the working tree (`git rm` for that path) and fails when neither side deleted the file. `--use ours|theirs` naming the side that deleted the file fails and points to `--use deletion`.
 
 ## Worktrees, submodules, and LFS

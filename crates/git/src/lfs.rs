@@ -123,7 +123,7 @@ fn parse_ls_tree(bytes: &[u8]) -> Option<FileSide> {
 
 fn index_side(repo: &Path, path_bytes: &[u8]) -> Option<FileSide> {
     let output = command(repo)
-        .args(["ls-files", "-s", "-z", "--"])
+        .args(["--literal-pathspecs", "ls-files", "-s", "-z", "--"])
         .arg(path_arg(path_bytes))
         .output()
         .ok()

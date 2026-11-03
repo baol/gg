@@ -1814,7 +1814,8 @@ Fixture: `fx-dirty`
 Layer: product
 - When the user unstages `b.txt` by any of the three gestures
 - Then `b.txt` returns to Unstaged, the index entry equals HEAD, the working file is unchanged, other index entries are untouched
-Covered by (backend, interaction): `row_buttons_stage_and_unstage_one_file` (status_view.rs); `unstage_matches_head_and_preserves_working_edits_and_other_entries` (crates/git/tests/status.rs)
+- And staging, unstaging, or discarding a file named `*.txt` leaves `a.txt` as it was
+Covered by (backend, interaction): `row_buttons_stage_and_unstage_one_file` (status_view.rs); `unstage_matches_head_and_preserves_working_edits_and_other_entries`, `stage_unstage_and_discard_treat_a_glob_name_literally` (crates/git/tests/status.rs)
 
 ### CHG-16 Whole-file staging of deletion, untracked, mode change, binary
 Fixture: `fx-dirty`
@@ -1983,8 +1984,9 @@ Fixture: `fx-dirty`
 Layer: product
 - When the user chooses **Changes › Discard all tracked changes…**
 - Then a modal **Discard all tracked changes** reads *Restore every tracked file to HEAD? Staged and unstaged changes are both lost.*, lists `WILL BE RESTORED TO HEAD` (empty slot until read), states *This cannot be undone. Untracked files are kept; files only added to the index become untracked.*, and offers **Cancel** (`Esc`) and a filled red **Discard 9 files, staged and unstaged** (`Discard tracked changes`, disabled, until the list arrives)
-- When confirmed: every tracked file and the index equal HEAD (the staged `b.txt` change is lost too); `new.txt`, `notes/*` remain untouched; `e2.txt` becomes untracked; a newly added file whose name is not UTF-8, in a repository whose folder name ends with a space, also becomes untracked with its bytes kept
-Covered by (backend, interaction): `discard_all_names_staged_changes_and_keeps_untracked_files`, `discard_all_rereads_and_asks_again_after_an_outside_change` (apps/git-good/src/main.rs); `discard_all_restores_tracked_files_and_keeps_untracked`, `discard_all_keeps_a_newly_added_file_whose_name_is_not_utf8` (crates/git/tests/worktree_changes.rs)
+- When confirmed: every tracked file and the index equal HEAD (the staged `b.txt` change is lost too); `new.txt`, `notes/*` remain untouched; `e2.txt` becomes untracked
+- And files only added to the index whose names are `*.txt` or not UTF-8 also become untracked with their bytes kept, also in a repository whose folder name ends with a space
+Covered by (backend, interaction): `discard_all_names_staged_changes_and_keeps_untracked_files`, `discard_all_rereads_and_asks_again_after_an_outside_change` (apps/git-good/src/main.rs); `discard_all_restores_tracked_files_and_keeps_untracked`, `discard_all_keeps_a_newly_added_file_whose_name_is_not_utf8`, `discard_all_keeps_newly_added_files_by_their_exact_names` (crates/git/tests/worktree_changes.rs)
 
 ### CHG-39 Discard all refused during an operation
 Fixture: `fx-rebase-conflict` (also `fx-merge-conflict`)
@@ -3884,8 +3886,9 @@ Layer: product
 - When **Initialize and update…** on `vendor/uninit`
 - Then the confirmation *Update submodule* asks *Initialize and check out <id> in vendor/uninit?*, says *Git may fetch from <url>. The parent index is not changed.*, and has Cancel `Esc` and the filled **Update** `Enter` side by side
 - When confirmed
-- Then `git submodule update --init -- vendor/uninit` runs on the worker, status rescans to initialized, the footer's left reads *Updated vendor/uninit to <id>.*; the parent index is unchanged
-Covered by (backend, interaction, partial): `a_disabled_update_says_why_at_the_footer_left_and_the_confirm_sits_side_by_side` (apps/git-good/src/submodules_view.rs) (confirmation and Enter); `dirty_and_index_mismatch_block_update_and_update_restores_the_index_commit` (crates/git/tests/submodule.rs); the GUI run not automated
+- Then `git --literal-pathspecs submodule update --init -- vendor/uninit` runs on the worker, status rescans to initialized, the footer's left reads *Updated vendor/uninit to <id>.*; the parent index is unchanged
+- And a submodule at `s*` is read and updated by that path only: `s!` and `sub` keep their index IDs and checkouts
+Covered by (backend, interaction, partial): `a_disabled_update_says_why_at_the_footer_left_and_the_confirm_sits_side_by_side` (apps/git-good/src/submodules_view.rs) (confirmation and Enter); `dirty_and_index_mismatch_block_update_and_update_restores_the_index_commit`, `a_glob_named_submodule_path_is_literal` (crates/git/tests/submodule.rs); the GUI run not automated
 
 ### SUB-04 Update blocked: dirty nested tree / recorded commit differs from index / object missing
 Fixture: `fx-submodule` with an edit inside `vendor/lib`
@@ -3944,8 +3947,8 @@ Covered by (backend, partial): `malformed_pointer_is_reported_without_treating_t
 ### LFS-05 Local Changes areas use their own sides; conflicts refused
 Fixture: `fx-lfs` with `art.psd` pointer edited and staged, then edited again
 Layer: product
-- Then Staged details compare HEAD→index, Unstaged index→working file (read ≤4 KiB, no smudge), Untracked absent→working; an unmerged pointer says the conflict must be resolved
-Covered by (backend, interaction): `working_staged_unstaged_and_untracked_pointers_use_their_own_sides`, `plain_working_text_and_conflicts_do_not_masquerade_as_pointers` (crates/git/tests/lfs.rs), `working_pointer_exposes_a_working_lfs_request`
+- Then Staged details compare HEAD→index, Unstaged index→working file (read ≤4 KiB, no smudge), Untracked absent→working; an unmerged pointer says the conflict must be resolved; a pointer at `a*.bin` is read from its own index entry, never from `a!.bin`
+Covered by (backend, interaction): `working_staged_unstaged_and_untracked_pointers_use_their_own_sides`, `plain_working_text_and_conflicts_do_not_masquerade_as_pointers`, `working_pointers_are_read_from_the_literal_path` (crates/git/tests/lfs.rs), `working_pointer_exposes_a_working_lfs_request`
 
 ### LFS-06 Bounded content preview of a present object
 Fixture: `fx-lfs` with a small PNG tracked as `logo.psd`
@@ -4303,8 +4306,8 @@ Covered by (end-to-end, partial): `revert_cli_inverts_a_commit` (apps/git-good/t
 Fixture: `fx-merge-conflict`
 Layer: product
 - When `git good conflicts`
-- Then receipt `operation: "conflicts"` with `paths` listing `src/app.rs`, `docs.md`, `logo.png`; nothing changes
-Covered by (end-to-end): `conflict_cli_lists_reads_and_resolves` (apps/git-good/tests/cli.rs)
+- Then receipt `operation: "conflicts"` with `paths` listing `src/app.rs`, `docs.md`, `logo.png` and `path_bytes` their exact bytes in the same order; nothing changes
+Covered by (end-to-end): `conflict_cli_lists_reads_and_resolves`, `conflict_cli_round_trips_non_utf8_path_bytes` (apps/git-good/tests/cli.rs)
 
 ### CLI-16j conflict --file reads and resolves one path
 Fixture: `fx-merge-conflict`
@@ -4312,7 +4315,8 @@ Layer: product
 - When `git good conflict --file src/app.rs`, then `--use theirs`, then `git good conflict --file docs.md --stage`
 - Then the first prints `base`, `ours`, `theirs`; the second writes theirs, stages it (`operation: "conflict-resolve"`) and the path is no longer unmerged; the third stages the current working content; an unknown path fails with `No unmerged stages` and empty stdout; `--use base` fails nonzero
 - And on a fresh `fx-merge-conflict`, `git good conflict --file docs.md --use <the side that deleted it>` fails nonzero naming `--use deletion`; `--use deletion` removes `docs.md` from the working tree and the index (receipt `operation: "conflict-resolve"`, `side: "deletion"`); `--use deletion` on a path both sides kept fails with `Keep deletion applies only when one side deleted <path>.`
-Covered by (backend, end-to-end, partial): `conflict_cli_lists_reads_and_resolves`, `conflict_cli_keeps_a_deletion` (apps/git-good/tests/cli.rs); `rejects_unknown_paths_and_base_selection`, `keeping_a_deletion_is_refused_without_a_deleted_side_or_after_an_edit`, `use_side_points_the_deleted_side_to_keep_deletion` (crates/git/tests/conflict.rs) (--stage not checked)
+- And with conflicts on files named `*.txt` and `a.txt`, `--file '*.txt'` with `--use theirs`, `--use deletion`, `--stage`, a GUI **Stage resolution**, or **−** (reopen) acts on `*.txt` only: `a.txt` stays unmerged with its markers on disk
+Covered by (backend, end-to-end, partial): `conflict_cli_lists_reads_and_resolves`, `conflict_cli_keeps_a_deletion`, `conflict_cli_resolves_only_the_literal_glob_named_path` (apps/git-good/tests/cli.rs); `rejects_unknown_paths_and_base_selection`, `keeping_a_deletion_is_refused_without_a_deleted_side_or_after_an_edit`, `use_side_points_the_deleted_side_to_keep_deletion`, `choosing_a_side_for_a_glob_named_file_leaves_other_conflicts`, `staging_and_reopening_a_glob_named_conflict_leaves_other_conflicts`, `publishing_a_glob_named_resolution_leaves_other_conflicts`, `keeping_the_deletion_of_a_glob_named_file_leaves_other_conflicts` (crates/git/tests/conflict.rs) (--stage through the CLI not checked)
 
 ### CLI-17 worktree list
 Fixture: `fx-worktrees`
@@ -4715,9 +4719,9 @@ Covered by (Not automated)
 ### CLI-C13 Non-UTF-8 names
 Fixture: a commit adding a file named with byte `0xFF` and a newline
 Layer: product
-- When `git good show HEAD --file <raw bytes>`, `git good status`, `git good conflicts` on a conflicted such path
-- Then the exact path is accepted as raw bytes; JSON reports `path` escaped (`raw\xff\nname`) and `path_bytes` as the exact byte array; arguments that must be text (URLs) are refused with `must be UTF-8`
-Covered by (end-to-end, partial): `show_file_uses_exact_non_utf8_path_bytes` (apps/git-good/tests/cli.rs) (show only)
+- When `git good show HEAD --file <raw bytes>`, `git good status`, `git good conflicts` on a conflicted such path, then `git good conflict --file <raw bytes>` and `--use theirs`
+- Then the exact path is accepted as raw bytes; JSON reports `path` escaped (`raw\xff\nname`) and `path_bytes` as the exact byte array (`conflicts`: `paths` escaped and `path_bytes` in the same order); the conflict resolves and stages that file; arguments that must be text (URLs) are refused with `must be UTF-8`
+Covered by (backend, end-to-end, partial): `show_file_uses_exact_non_utf8_path_bytes`, `conflict_cli_round_trips_non_utf8_path_bytes` (apps/git-good/tests/cli.rs); `conflict_paths_keep_their_exact_bytes` (crates/git/tests/conflict.rs) (status not checked)
 
 ## Open spec questions
 

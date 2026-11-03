@@ -392,6 +392,7 @@ fn head(path: &Path, name: &str) -> Result<Option<String>, String> {
     }
 }
 
+/// Unmerged paths escaped for display, as `conflicts` lists them.
 fn unmerged(path: &Path) -> Result<Vec<String>, String> {
     let output = run(
         path,
@@ -410,7 +411,7 @@ fn unmerged(path: &Path) -> Result<Vec<String>, String> {
         .stdout
         .split(|byte| *byte == 0)
         .filter(|field| !field.is_empty())
-        .map(|field| String::from_utf8_lossy(field).into_owned())
+        .map(gg_engine::review::display_path)
         .collect())
 }
 

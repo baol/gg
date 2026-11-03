@@ -1,5 +1,5 @@
 //! List and resolve unmerged paths.
-use gg_engine::conflict::Side;
+use gg_engine::{conflict::Side, review::display_path};
 use std::{
     ffi::OsString,
     path::{Path, PathBuf},
@@ -14,10 +14,15 @@ pub fn list(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std:
         }
     }
     let paths = gg_git::conflict::unmerged(&path)?;
+    let shown = paths
+        .iter()
+        .map(|file| display_path(file))
+        .collect::<Vec<_>>();
     write_receipt(serde_json::json!({
         "operation": "conflicts",
         "repository": display_repository(&path),
-        "paths": paths,
+        "paths": shown,
+        "path_bytes": paths,
         "complete": true,
     }))?;
     Ok(())
@@ -32,12 +37,7 @@ pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::
         match arg.to_str() {
             Some("--repo") => path = PathBuf::from(args.next().ok_or("--repo needs a path")?),
             Some("--file") => {
-                file = Some(
-                    args.next()
-                        .ok_or("--file needs a path")?
-                        .into_string()
-                        .map_err(|_| "Conflict path must be UTF-8")?,
-                );
+                file = Some(path_bytes(&args.next().ok_or("--file needs a path")?)?);
             }
             Some("--use") => {
                 side = Some(
@@ -63,7 +63,8 @@ pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::
         write_receipt(serde_json::json!({
             "operation": "conflict-resolve",
             "repository": display_repository(&path),
-            "path": file,
+            "path": display_path(&file),
+            "path_bytes": file,
             "side": "deletion",
             "complete": true,
         }))?;
@@ -79,7 +80,8 @@ pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::
         write_receipt(serde_json::json!({
             "operation": "conflict-resolve",
             "repository": display_repository(&path),
-            "path": file,
+            "path": display_path(&file),
+            "path_bytes": file,
             "side": side,
             "complete": true,
         }))?;
@@ -90,7 +92,8 @@ pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::
         write_receipt(serde_json::json!({
             "operation": "conflict-stage",
             "repository": display_repository(&path),
-            "path": file,
+            "path": display_path(&file),
+            "path_bytes": file,
             "complete": true,
         }))?;
         return Ok(());
@@ -100,6 +103,7 @@ pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::
         "operation": "conflict",
         "repository": display_repository(&path),
         "path": content.path,
+        "path_bytes": content.path_bytes,
         "base": content.base,
         "ours": content.ours,
         "theirs": content.theirs,
@@ -108,6 +112,23 @@ pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::
         "complete": true,
     }))?;
     Ok(())
+}
+
+/// The exact bytes of a path argument: raw on Unix, Unicode elsewhere.
+fn path_bytes(path: &std::ffi::OsStr) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        Ok(path.as_bytes().to_vec())
+    }
+    #[cfg(not(unix))]
+    {
+        Ok(path
+            .to_str()
+            .ok_or("Conflict path must be Unicode on this platform")?
+            .replace('\\', "/")
+            .into_bytes())
+    }
 }
 
 fn write_receipt(receipt: serde_json::Value) -> Result<(), Box<dyn std::error::Error>> {

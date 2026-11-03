@@ -2107,3 +2107,35 @@ fn amend_base_unstages_a_hunk_against_the_parent() -> Result {
     assert!(restored.ends_with(b"eleven\nTWELVE\n"));
     Ok(())
 }
+
+/// Stage, unstage, and discard act on a file literally named `*.txt` only,
+/// never on `a.txt`, which that name matches as a glob.
+#[cfg(unix)]
+#[test]
+fn stage_unstage_and_discard_treat_a_glob_name_literally() -> Result {
+    let dir = tempfile::tempdir()?;
+    let p = dir.path();
+    git(p, &["init", "-b", "main"])?;
+    std::fs::write(p.join("*.txt"), b"star\n")?;
+    std::fs::write(p.join("a.txt"), b"a\n")?;
+    git(p, &["add", "-A"])?;
+    git(p, &["commit", "-qm", "base"])?;
+    std::fs::write(p.join("*.txt"), b"star changed\n")?;
+    std::fs::write(p.join("a.txt"), b"a changed\n")?;
+    let unstaged = |p: &Path| git(p, &["diff", "--name-only", "-z"]);
+    let staged = |p: &Path| git(p, &["diff", "--cached", "--name-only", "-z"]);
+
+    gg_git::stage::file(&request(p, b"*.txt", Area::Unstaged)?)?;
+    assert_eq!(staged(p)?, b"*.txt\0");
+    assert_eq!(unstaged(p)?, b"a.txt\0");
+
+    gg_git::unstage::file(&request(p, b"*.txt", Area::Staged)?)?;
+    assert_eq!(staged(p)?, b"");
+    assert_eq!(unstaged(p)?, b"*.txt\0a.txt\0");
+
+    gg_git::drop::file(&request(p, b"*.txt", Area::Unstaged)?)?;
+    assert_eq!(std::fs::read(p.join("*.txt"))?, b"star\n");
+    assert_eq!(std::fs::read(p.join("a.txt"))?, b"a changed\n");
+    assert_eq!(unstaged(p)?, b"a.txt\0");
+    Ok(())
+}

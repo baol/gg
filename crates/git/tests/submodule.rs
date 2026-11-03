@@ -130,6 +130,53 @@ fn dirty_and_index_mismatch_block_update_and_update_restores_the_index_commit() 
     Ok(())
 }
 
+/// A submodule at `s*` is read and updated by that path only, never through
+/// `s!` or `sub`, which the name matches as a glob (`s!` sorts first).
+#[cfg(unix)]
+#[test]
+fn a_glob_named_submodule_path_is_literal() -> Result {
+    let (parent, nested, first, second) = fixture()?;
+    for name in ["s*", "s!"] {
+        let add = Command::new("git")
+            .arg("-C")
+            .arg(parent.path())
+            .args(["-c", "protocol.file.allow=always", "--literal-pathspecs"])
+            .args(["submodule", "add", "-q"])
+            .arg(nested.path())
+            .arg(name)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .output()?;
+        if !add.status.success() {
+            return Err(String::from_utf8_lossy(&add.stderr).into_owned().into());
+        }
+    }
+    // `s!` records the first commit; `s*` and `sub` record the second.
+    git(&parent.path().join("s!"), &["checkout", "-q", &first])?;
+    git(parent.path(), &["add", "--", "s!"])?;
+    git(
+        parent.path(),
+        &["commit", "-qm", "add glob-named submodules"],
+    )?;
+    git(&parent.path().join("sub"), &["checkout", "-q", &first])?;
+    git(&parent.path().join("s*"), &["checkout", "-q", &first])?;
+
+    let index = output(parent.path(), &["rev-parse", ":s*"])?;
+    assert_eq!(index, second);
+    let details = gg_git::submodule::read(parent.path(), b"s*", None, None)?;
+    assert_eq!(details.index.as_deref(), Some(second.as_str()));
+    assert_eq!(details.status.as_deref(), Some("+"));
+
+    let (updated, _) = gg_git::submodule::update(parent.path(), b"s*")?;
+    assert_eq!(updated.checked_out.as_deref(), Some(second.as_str()));
+    assert_eq!(
+        output(&parent.path().join("sub"), &["rev-parse", "HEAD"])?,
+        first,
+        "sub was updated too"
+    );
+    Ok(())
+}
+
 #[test]
 fn uninitialized_submodule_keeps_the_parent_index_identity() -> Result {
     let (parent, _nested, _first, _second) = fixture()?;
