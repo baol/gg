@@ -36,6 +36,54 @@ impl ModalWindow for egui::Window<'_> {
     }
 }
 
+/// What the keyboard asked of an open dialog this frame.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DialogKeys {
+    pub submit: bool,
+    pub cancel: bool,
+}
+
+/// The keyboard inside an open dialog; call it in the dialog after its
+/// widgets, every frame it shows. On the dialog's first frame `target` takes
+/// focus: the field it asks for, or the button Enter should press (Cancel in
+/// a destructive dialog). Enter submits when `can_submit` and the target or
+/// nothing has focus; another focused button keeps Enter for itself. Esc
+/// cancels unless a dropdown inside the dialog is open.
+pub fn dialog_keys(
+    ui: &egui::Ui,
+    dialog: egui::Id,
+    target: &egui::Response,
+    can_submit: bool,
+) -> DialogKeys {
+    let ctx = ui.ctx();
+    let pass = ctx.cumulative_pass_nr();
+    let shown = dialog.with("dialog-keys-shown");
+    let previous = ctx.data(|data| data.get_temp::<u64>(shown.with("previous")));
+    ctx.data_mut(|data| data.insert_temp(shown.with("previous"), pass));
+    // A pass without the dialog means it closed and opened again; a
+    // discarded pass draws it twice in a row, which is no gap.
+    if previous.is_none_or(|previous| pass.saturating_sub(previous) > 1) {
+        target.request_focus();
+    }
+    if egui::Popup::is_any_open(ctx) {
+        return DialogKeys::default();
+    }
+    let focused = ctx.memory(|m| m.focused());
+    let enter = can_submit
+        && focused.is_none_or(|id| id == target.id)
+        && ui.input(|i| i.key_pressed(egui::Key::Enter));
+    let cancel = ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+    // An answer usually closes the dialog: draw the frame without it, so a
+    // reopening on the next event counts as one.
+    if enter || cancel {
+        ctx.request_repaint();
+    }
+    DialogKeys {
+        submit: enter,
+        cancel,
+    }
+}
+
 pub fn activation_available(ctx: &egui::Context) -> bool {
     available(ctx) && ctx.memory(|m| m.focused()).is_none()
 }
@@ -165,6 +213,72 @@ mod tests {
 #[cfg(test)]
 mod modal_tests {
     use super::*;
+
+    #[test]
+    fn a_dialog_takes_typing_at_once_and_enter_or_esc_answer_it() {
+        let ctx = egui::Context::default();
+        let mut name = String::new();
+        let key = |key| egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let run = |open: bool, events: Vec<egui::Event>, name: &mut String| {
+            let mut keys = DialogKeys::default();
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(800.0, 600.0),
+                )),
+                events,
+                ..Default::default()
+            };
+            let _ = crate::tests::run_ui(&ctx, input, |ui| {
+                if open {
+                    egui::Window::new("New branch")
+                        .id(egui::Id::unique("dialog-keys-test"))
+                        .modal(ui.ctx(), egui::Id::unique("dialog-keys-test"))
+                        .show(ui.ctx(), |ui| {
+                            let field = ui.text_edit_singleline(name);
+                            keys = dialog_keys(
+                                ui,
+                                egui::Id::unique("dialog-keys-test"),
+                                &field,
+                                !name.is_empty(),
+                            );
+                        });
+                }
+            });
+            keys
+        };
+        // The first frame focuses the field; typing goes straight in.
+        run(true, vec![], &mut name);
+        run(true, vec![egui::Event::Text("topic".into())], &mut name);
+        assert_eq!(name, "topic");
+        assert_eq!(
+            run(true, vec![key(egui::Key::Enter)], &mut name),
+            DialogKeys {
+                submit: true,
+                cancel: false
+            }
+        );
+        // Esc cancels; an empty field does not submit.
+        name.clear();
+        let keys = run(
+            true,
+            vec![key(egui::Key::Enter), key(egui::Key::Escape)],
+            &mut name,
+        );
+        assert!(!keys.submit && keys.cancel);
+        // Closed for one frame, then opened again: the field has the
+        // keyboard again.
+        run(false, vec![], &mut name);
+        run(true, vec![], &mut name);
+        run(true, vec![egui::Event::Text("again".into())], &mut name);
+        assert_eq!(name, "again");
+    }
 
     #[test]
     fn a_modal_window_blocks_clicks_and_navigation_behind_it() {

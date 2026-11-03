@@ -153,16 +153,13 @@ impl Dialog {
                 });
                 ui.separator();
                 ui.label(egui::RichText::new("FOLDER").small().weak());
-                ui.horizontal(|ui| {
+                let field = ui.horizontal(|ui| {
                     let field = ui.add_enabled(
                         !busy,
                         egui::TextEdit::singleline(&mut self.folder)
                             .desired_width(420.0)
                             .hint_text("Folder for the new repository"),
                     );
-                    if self.folder.is_empty() && !field.has_focus() {
-                        field.request_focus();
-                    }
                     if ui
                         .add_enabled(!busy, egui::Button::new("Choose…"))
                         .on_hover_text("Choose a folder with the desktop dialog")
@@ -174,7 +171,9 @@ impl Dialog {
                     {
                         self.folder = path.to_string_lossy().into_owned();
                     }
-                });
+                    field
+                })
+                .inner;
                 ui.add_space(6.0);
                 ui.label(egui::RichText::new("FIRST BRANCH").small().weak());
                 ui.add_enabled(
@@ -258,7 +257,12 @@ impl Dialog {
                         }
                     });
                 });
-                create |= ready && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                let keys =
+                    crate::navigation::dialog_keys(ui, egui::Id::unique("new-repository"), &field, ready);
+                create |= keys.submit;
+                if keys.cancel && !busy {
+                    action = Some(Action::Closed);
+                }
             });
         if modal.should_close() && !busy {
             action = Some(Action::Closed);
