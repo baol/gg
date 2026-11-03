@@ -10076,6 +10076,11 @@ impl Browser {
         if let Some((changes, first)) = self.watcher.as_mut().and_then(|watcher| watcher.poll()) {
             self.apply_changes(ctx, changes, first);
         }
+        // Changes still settling: draw again when they settle, or an idle
+        // window would show them only at the next input.
+        if let Some(wait) = self.watcher.as_ref().and_then(watcher::Watcher::settles_in) {
+            ctx.request_repaint_after(wait);
+        }
         if self.welcome_shown() {
             self.settle_welcome();
             let available = crate::navigation::activation_available(ctx)

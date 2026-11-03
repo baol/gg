@@ -108,18 +108,27 @@ impl Batch {
         self.last = None;
         Some((changes, first))
     }
+
+    /// How long until the pending changes settle, measured from `now`;
+    /// `None` when nothing is pending.
+    pub fn settles_in(&self, now: Instant) -> Option<Duration> {
+        let last = self.last?;
+        Some(SETTLE.saturating_sub(now.saturating_duration_since(last)))
+    }
 }
 
 pub struct Watcher {
     _inner: notify::RecommendedWatcher,
-    receiver: Receiver<Changes>,
+    /// Classified events, stamped when the watcher saw them.
+    receiver: Receiver<(Changes, Instant)>,
     batch: Batch,
     pub workdir: PathBuf,
 }
 
 impl Watcher {
     /// Watch the repository at `workdir`; `repaint` wakes the window after
-    /// each event so the batch can settle.
+    /// each event so a frame drains it. That frame asks for another when the
+    /// batch will settle ([`Watcher::settles_in`]).
     pub fn start(workdir: &Path, repaint: impl Fn() + Send + 'static) -> Result<Self, String> {
         use notify::Watcher as _;
         let layout = layout(workdir)?;
@@ -138,7 +147,7 @@ impl Watcher {
                     changes.add(found);
                 }
             }
-            if changes.any() && sender.send(changes).is_ok() {
+            if changes.any() && sender.send((changes, Instant::now())).is_ok() {
                 repaint();
             }
         })
@@ -162,9 +171,8 @@ impl Watcher {
     }
 
     fn drain(&mut self) {
-        let now = Instant::now();
-        while let Ok(changes) = self.receiver.try_recv() {
-            self.batch.push(changes, now);
+        while let Ok((changes, at)) = self.receiver.try_recv() {
+            self.batch.push(changes, at);
         }
     }
 
@@ -172,6 +180,12 @@ impl Watcher {
     pub fn poll(&mut self) -> Option<(Changes, Instant)> {
         self.drain();
         self.batch.take(Some(Instant::now()))
+    }
+
+    /// How long until changes drained by [`Watcher::poll`] settle; `None`
+    /// when nothing is pending, so an idle window schedules no frame.
+    pub fn settles_in(&self) -> Option<Duration> {
+        self.batch.settles_in(Instant::now())
     }
 
     /// Everything seen so far, settled or not: used before a command runs.
@@ -266,10 +280,20 @@ mod tests {
             start + Duration::from_millis(100),
         );
         assert_eq!(batch.take(Some(start + Duration::from_millis(200))), None);
+        assert_eq!(
+            batch.settles_in(start + Duration::from_millis(200)),
+            Some(Duration::from_millis(200)),
+            "settles 300 ms after the last event"
+        );
+        assert_eq!(
+            batch.settles_in(start + Duration::from_millis(900)),
+            Some(Duration::ZERO)
+        );
         let Some((changes, first)) = batch.take(Some(start + Duration::from_millis(500))) else {
             unreachable!("the batch settled");
         };
         assert!(changes.worktree && changes.refs && !changes.index);
+        assert_eq!(batch.settles_in(start), None, "nothing pending");
         assert_eq!(first, start);
         assert!(!batch.changes.any());
         batch.push(file, start);
