@@ -245,17 +245,42 @@ pub fn notice(ui: &mut egui::Ui, text: Option<&str>) {
 }
 
 /// The filled red primary button of a destructive dialog.
+///
+/// It shows no key: a destructive dialog focuses Cancel, so Enter never
+/// presses it.
 pub fn danger_button<'a>(label: impl Into<String>, enabled: bool) -> egui::Button<'a> {
-    let text = egui::RichText::new(label.into()).color(if enabled {
+    egui::Button::new(danger_text(label, enabled)).fill(danger_fill(enabled))
+}
+
+/// [`danger_button`] with a key hint, for the few red buttons a key does
+/// press (the conflict question and the stash drop question, where Enter
+/// accepts).
+pub fn danger_button_with_key<'a>(
+    label: impl Into<String>,
+    enabled: bool,
+    key: &'a str,
+) -> egui::Button<'a> {
+    egui::Button::new((
+        danger_text(label, enabled),
+        egui::RichText::new(key).small().weak(),
+    ))
+    .fill(danger_fill(enabled))
+}
+
+fn danger_text(label: impl Into<String>, enabled: bool) -> egui::RichText {
+    egui::RichText::new(label.into()).color(if enabled {
         egui::Color32::from_rgb(245, 160, 160)
     } else {
         egui::Color32::from_gray(110)
-    });
-    egui::Button::new((text, egui::RichText::new("Enter").small().weak())).fill(if enabled {
+    })
+}
+
+fn danger_fill(enabled: bool) -> egui::Color32 {
+    if enabled {
         egui::Color32::from_rgb(74, 36, 36)
     } else {
         egui::Color32::from_gray(42)
-    })
+    }
 }
 
 #[cfg(test)]

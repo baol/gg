@@ -22,7 +22,7 @@ The frame has two rows above every view. Both rows keep the same order and posit
 
 The toolbar holds navigation, sync, and the owner's everyday actions; New tag, Merge into current, and Interactive rebase of the current branch live in their menus and in search. Every toolbar command also has a menu home and a search entry, so it stays reachable at every width, including 720×480.
 
-Dialogs that ask for a decision or start a change are modal; tool and information windows are not. Toolbar buttons are icon-only Phosphor glyphs with tooltips naming the action and its shortcut. Disabled buttons stay in place with the same disable reason as their menu item.
+Dialogs that ask for a decision or start a change are modal; tool and information windows are not. A dialog's buttons show the key that presses them: **Cancel** shows `Esc`, the primary shows `Enter` when Enter runs it (also while it is disabled), and a destructive primary shows no key, because its dialog opens on Cancel. Toolbar buttons are icon-only Phosphor glyphs with tooltips naming the action and its shortcut. Disabled buttons stay in place with the same disable reason as their menu item.
 
 The old navigation strip is merged into the toolbar; no other row repeats the tabs.
 
@@ -101,7 +101,7 @@ Both stops use the operation band under the toolbar, the template merge, cherry-
 
 ## Inspect and recovery windows
 
-Submodules, LFS, Signature details, and Recovery follow the inspect proposal: non-modal windows with a title header (status pill and ×), label grids of 22 px rows with 8-character IDs and copy buttons, and a footer with the result or the disabled reason at the left and the filled primary rightmost; their confirmations sit in the modal frame with Cancel `Esc` and the primary `Enter` side by side.
+Submodules, LFS, Signature details, and Recovery follow the inspect proposal: non-modal windows with a title header (status pill and ×), label grids of 22 px rows with 8-character IDs and copy buttons, and a footer with the result or the disabled reason at the left and the filled primary rightmost; their confirmations sit in the modal frame with Cancel `Esc` and the primary `Enter` side by side (a destructive red primary, such as Delete backup, shows no key).
 
 - **Repository › Submodules…** lists every gitlink with a status pill (amber differs, red broken, green clean, grey otherwise); `Enter` opens Submodule details.
 - **Repository › LFS…** lists the pointers in HEAD, missing objects first and checked, with one **Fetch <n> objects** that names the count and size.

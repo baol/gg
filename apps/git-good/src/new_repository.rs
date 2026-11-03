@@ -250,7 +250,7 @@ impl Dialog {
                             )
                             .clicked();
                         if ui
-                            .button(("Cancel", egui::RichText::new("Esc").small().weak()))
+                            .add(crate::inspect_ui::secondary("Cancel", "Esc"))
                             .clicked()
                         {
                             action = Some(Action::Closed);
