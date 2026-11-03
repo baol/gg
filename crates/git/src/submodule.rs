@@ -216,7 +216,7 @@ fn parent_config_value(path: &Path, key: &str) -> Option<String> {
 
 fn index_gitlink(path: &Path, relative: &Path) -> Result<Option<String>, String> {
     let output = command(path)
-        .args(["ls-files", "--stage", "--"])
+        .args(["--literal-pathspecs", "ls-files", "--stage", "--"])
         .arg(relative)
         .output()
         .map_err(|error| format!("Could not read the parent index: {error}"))?;
@@ -241,7 +241,7 @@ fn index_gitlink(path: &Path, relative: &Path) -> Result<Option<String>, String>
 
 fn submodule_status(path: &Path, relative: &Path) -> Result<Option<String>, String> {
     let output = command(path)
-        .args(["submodule", "status", "--"])
+        .args(["--literal-pathspecs", "submodule", "status", "--"])
         .arg(relative)
         .output()
         .map_err(|error| format!("Could not read submodule status: {error}"))?;
@@ -269,7 +269,7 @@ pub fn update(path: &Path, path_bytes: &[u8]) -> Result<(Details, Receipt), Stri
     details.can_update()?;
     let relative = path_arg(path_bytes)?;
     let output = command(path)
-        .args(["submodule", "update", "--init", "--"])
+        .args(["--literal-pathspecs", "submodule", "update", "--init", "--"])
         .arg(&relative)
         .output()
         .map_err(|error| format!("Could not update the submodule: {error}"))?;

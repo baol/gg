@@ -11,7 +11,10 @@ pub enum Side {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Content {
+    /// The path escaped for display; never used to find the file.
     pub path: String,
+    /// The exact path bytes, the path's identity.
+    pub path_bytes: Vec<u8>,
     pub base: Option<String>,
     pub ours: Option<String>,
     pub theirs: Option<String>,
@@ -315,6 +318,7 @@ mod tests {
     fn a_deleted_side_is_one_absent_side() {
         let content = |ours: Option<&str>, theirs: Option<&str>| Content {
             path: "a".into(),
+            path_bytes: b"a".to_vec(),
             base: Some("base".into()),
             ours: ours.map(str::to_string),
             theirs: theirs.map(str::to_string),

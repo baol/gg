@@ -13,6 +13,7 @@ use crate::{ConflictStage, ConflictView};
 use eframe::egui;
 use gg_engine::conflict::{Resolution, SideNames};
 use gg_engine::mutation::Operation;
+use gg_engine::review::display_path;
 
 /// Width of the file list, as in the mockup (narrower below 940 px).
 pub const PATHS_WIDTH: f32 = 300.0;
@@ -34,8 +35,8 @@ pub enum Action {
     ConfirmReplace,
     Refresh,
     OpenInEditor,
-    /// Unstage a resolved file: back to conflicted.
-    Unstage(String),
+    /// Unstage a resolved file, by its exact path bytes: back to conflicted.
+    Unstage(Vec<u8>),
 }
 
 /// What the workspace shows about the operation.
@@ -336,7 +337,7 @@ fn left_pane(ui: &mut egui::Ui, view: &ConflictView, info: &Info, actions: &mut 
     let legend = ui.fonts_mut(|fonts| fonts.layout_job(job));
     let legend_height = legend.size().y + 8.0;
     let list = ui.available_height() - legend_height;
-    let left_in = |index: usize, path: &String| {
+    let left_in = |index: usize, path: &Vec<u8>| {
         if index == view.selected
             && let Some(blocks) = view.blocks.as_ref().filter(|_| !view.whole_file)
         {
@@ -362,7 +363,7 @@ fn left_pane(ui: &mut egui::Ui, view: &ConflictView, info: &Info, actions: &mut 
                     ui,
                     "!",
                     palette::MARKER,
-                    path,
+                    &display_path(path),
                     &note,
                     index == view.selected,
                     true,
@@ -392,7 +393,7 @@ fn left_pane(ui: &mut egui::Ui, view: &ConflictView, info: &Info, actions: &mut 
                     ui,
                     "✓",
                     egui::Color32::from_rgb(120, 200, 150),
-                    path,
+                    &display_path(path),
                     "",
                     false,
                     false,
@@ -415,7 +416,7 @@ fn left_pane(ui: &mut egui::Ui, view: &ConflictView, info: &Info, actions: &mut 
                     .clicked()
                     && !info.pending
                 {
-                    actions.push(Action::Unstage(path.to_string()));
+                    actions.push(Action::Unstage(path.clone()));
                 }
             }
             let also: Vec<_> = view
@@ -435,7 +436,7 @@ fn left_pane(ui: &mut egui::Ui, view: &ConflictView, info: &Info, actions: &mut 
                         ui,
                         "~",
                         egui::Color32::from_rgb(220, 195, 125),
-                        path,
+                        &display_path(path),
                         "",
                         false,
                         false,
@@ -461,7 +462,11 @@ fn left_pane(ui: &mut egui::Ui, view: &ConflictView, info: &Info, actions: &mut 
 /// The file header: path and state, then the mode switch and the editor
 /// buttons on the right.
 fn header(ui: &mut egui::Ui, view: &mut ConflictView, info: &Info, actions: &mut Vec<Action>) {
-    let path = view.paths.get(view.selected).cloned().unwrap_or_default();
+    let path = view
+        .paths
+        .get(view.selected)
+        .map(|path| display_path(path))
+        .unwrap_or_default();
     let blocks = view.blocks.is_some();
     let state = if view.paths.is_empty() {
         String::new()

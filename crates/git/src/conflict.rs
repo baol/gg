@@ -1,7 +1,13 @@
 //! Read unmerged stages, preview a resolution, and publish it explicitly.
+//!
+//! A conflict path is the exact bytes Git reports. Every Git command that
+//! takes it treats it as a literal path, never a pathspec pattern, so a file
+//! named `*.txt` never selects `a.txt`.
 use gg_engine::conflict::{Content, Resolution, Segment, Side, SideNames, Snapshot};
 use gg_engine::mutation::Operation;
+use gg_engine::review::display_path;
 use std::{
+    ffi::{OsStr, OsString},
     io::{Read, Write},
     path::{Component, Path, PathBuf},
     process::{Command, Output, Stdio},
@@ -27,7 +33,7 @@ struct Working {
 
 static TEMP: AtomicU64 = AtomicU64::new(0);
 
-pub fn unmerged(path: &Path) -> Result<Vec<String>, String> {
+pub fn unmerged(path: &Path) -> Result<Vec<Vec<u8>>, String> {
     let output = run(
         path,
         &[
@@ -44,14 +50,15 @@ pub fn unmerged(path: &Path) -> Result<Vec<String>, String> {
         .stdout
         .split(|byte| *byte == 0)
         .filter(|field| !field.is_empty())
-        .map(|field| String::from_utf8_lossy(field).into_owned())
+        .map(<[u8]>::to_vec)
         .collect())
 }
 
-pub fn read(path: &Path, file: &str) -> Result<Content, String> {
+pub fn read(path: &Path, file: &[u8]) -> Result<Content, String> {
     validate(file)?;
     let mut content = Content {
-        path: file.to_string(),
+        path: display_path(file),
+        path_bytes: file.to_vec(),
         base: None,
         ours: None,
         theirs: None,
@@ -70,12 +77,15 @@ pub fn read(path: &Path, file: &str) -> Result<Content, String> {
         }
     }
     if content.base.is_none() && content.ours.is_none() && content.theirs.is_none() {
-        return Err(format!("No unmerged stages exist for {file}."));
+        return Err(format!(
+            "No unmerged stages exist for {}.",
+            display_path(file)
+        ));
     }
     Ok(content)
 }
 
-pub fn use_side(path: &Path, file: &str, side: Side) -> Result<(), String> {
+pub fn use_side(path: &Path, file: &[u8], side: Side) -> Result<(), String> {
     validate(file)?;
     let flag = match side {
         Side::Ours => "--ours",
@@ -91,18 +101,11 @@ pub fn use_side(path: &Path, file: &str, side: Side) -> Result<(), String> {
     };
     if absent {
         return Err(format!(
-            "That side deleted {file}. Use --use deletion to stage the removal."
+            "That side deleted {}. Use --use deletion to stage the removal.",
+            display_path(file)
         ));
     }
-    let output = run(
-        path,
-        &[
-            "checkout".into(),
-            flag.into(),
-            "--".into(),
-            file.to_string(),
-        ],
-    )?;
+    let output = run_on(path, &["checkout", flag], file)?;
     if !output.status.success() {
         return Err(failure("Select conflict side", &output));
     }
@@ -111,28 +114,20 @@ pub fn use_side(path: &Path, file: &str, side: Side) -> Result<(), String> {
 
 /// Keep the deletion of a delete/modify conflict: remove the path from the
 /// index and the working tree (`git rm` for that path).
-pub fn keep_deletion(path: &Path, file: &str) -> Result<(), String> {
+pub fn keep_deletion(path: &Path, file: &[u8]) -> Result<(), String> {
     validate(file)?;
     let (_, ours, theirs) = stages(path, file)?;
     remove(path, file, ours.is_some(), theirs.is_some())
 }
 
-fn remove(path: &Path, file: &str, ours: bool, theirs: bool) -> Result<(), String> {
+fn remove(path: &Path, file: &[u8], ours: bool, theirs: bool) -> Result<(), String> {
     if ours == theirs {
         return Err(format!(
-            "Keep deletion applies only when one side deleted {file}."
+            "Keep deletion applies only when one side deleted {}.",
+            display_path(file)
         ));
     }
-    let output = run(
-        path,
-        &[
-            "rm".into(),
-            "-q".into(),
-            "--cached".into(),
-            "--".into(),
-            file.to_string(),
-        ],
-    )?;
+    let output = run_on(path, &["rm", "-q", "--cached"], file)?;
     if !output.status.success() {
         return Err(failure("Stage the deletion", &output));
     }
@@ -158,7 +153,7 @@ fn remove(path: &Path, file: &str, ours: bool, theirs: bool) -> Result<(), Strin
 
 /// Staged paths that are not conflicted: what the operation changed cleanly,
 /// plus the files already resolved and staged.
-pub fn also_changed(path: &Path) -> Result<Vec<String>, String> {
+pub fn also_changed(path: &Path) -> Result<Vec<Vec<u8>>, String> {
     let output = run(
         path,
         &[
@@ -176,7 +171,7 @@ pub fn also_changed(path: &Path) -> Result<Vec<String>, String> {
         .stdout
         .split(|byte| *byte == 0)
         .filter(|field| !field.is_empty())
-        .map(|field| String::from_utf8_lossy(field).into_owned())
+        .map(<[u8]>::to_vec)
         .collect())
 }
 
@@ -184,26 +179,15 @@ pub fn also_changed(path: &Path) -> Result<Vec<String>, String> {
 /// resolve-undo record (`git checkout -m`, which rewrites the working file
 /// with markers) and this returns `true`; when Git cannot recreate it, the
 /// path is unstaged to a plain change and this returns `false`.
-pub fn reopen(path: &Path, file: &str) -> Result<bool, String> {
+pub fn reopen(path: &Path, file: &[u8]) -> Result<bool, String> {
     validate(file)?;
-    let output = run(
-        path,
-        &["checkout".into(), "-m".into(), "--".into(), file.into()],
-    )?;
+    let output = run_on(path, &["checkout", "-m"], file)?;
     if output.status.success() && unmerged(path)?.iter().any(|candidate| candidate == file) {
         return Ok(true);
     }
-    let output = run(
-        path,
-        &[
-            "restore".into(),
-            "--staged".into(),
-            "--".into(),
-            file.into(),
-        ],
-    )?;
+    let output = run_on(path, &["restore", "--staged"], file)?;
     if !output.status.success() {
-        return Err(failure(&format!("Unstage {file}"), &output));
+        return Err(failure(&format!("Unstage {}", display_path(file)), &output));
     }
     Ok(false)
 }
@@ -339,9 +323,9 @@ fn onto(path: &Path) -> Result<Option<String>, String> {
     Ok(None)
 }
 
-pub fn stage(path: &Path, file: &str) -> Result<(), String> {
+pub fn stage(path: &Path, file: &[u8]) -> Result<(), String> {
     validate(file)?;
-    let output = run(path, &["add".into(), "--".into(), file.to_string()])?;
+    let output = run_on(path, &["add"], file)?;
     if !output.status.success() {
         return Err(failure("Stage resolved path", &output));
     }
@@ -349,11 +333,14 @@ pub fn stage(path: &Path, file: &str) -> Result<(), String> {
 }
 
 /// Capture the exact conflict stages and working bytes for a resolution preview.
-pub fn snapshot(path: &Path, file: &str) -> Result<Snapshot, String> {
+pub fn snapshot(path: &Path, file: &[u8]) -> Result<Snapshot, String> {
     validate(file)?;
     let (base, ours, theirs) = stages(path, file)?;
     if base.is_none() && ours.is_none() && theirs.is_none() {
-        return Err(format!("No unmerged stages exist for {file}."));
+        return Err(format!(
+            "No unmerged stages exist for {}.",
+            display_path(file)
+        ));
     }
     let working = read_working(path, file)?;
     Ok(Snapshot {
@@ -369,7 +356,7 @@ pub fn snapshot(path: &Path, file: &str) -> Result<Snapshot, String> {
 /// Publish one previewed resolution after revalidating every conflict input.
 pub fn publish(
     path: &Path,
-    file: &str,
+    file: &[u8],
     snapshot: &Snapshot,
     resolution: Resolution,
 ) -> Result<(), String> {
@@ -403,7 +390,7 @@ pub fn publish(
             Resolution::Theirs => theirs,
             Resolution::Working | Resolution::Deletion => unreachable!(),
         }
-        .ok_or_else(|| format!("The selected side is absent for {file}."))?;
+        .ok_or_else(|| format!("The selected side is absent for {}.", display_path(file)))?;
         if !matches!(entry.mode.as_str(), "100644" | "100755") {
             return Err(
                 "Resolve mode, symlink, or submodule conflicts with Git or an external editor."
@@ -436,7 +423,7 @@ pub fn publish(
 /// The file's conflict as common text and blocks, from a fresh three-way
 /// merge of its stages (`git merge-file --diff3`), so the result does not
 /// depend on the working file or the user's conflict style.
-pub fn blocks(path: &Path, file: &str) -> Result<Vec<Segment>, String> {
+pub fn blocks(path: &Path, file: &[u8]) -> Result<Vec<Segment>, String> {
     validate(file)?;
     let (base, ours, theirs) = stages(path, file)?;
     let (Some(ours), Some(theirs)) = (ours, theirs) else {
@@ -503,7 +490,7 @@ pub fn blocks(path: &Path, file: &str) -> Result<Vec<Segment>, String> {
 /// conflict input, keeping the executable bit of our side.
 pub fn publish_text(
     path: &Path,
-    file: &str,
+    file: &[u8],
     snapshot: &Snapshot,
     text: &str,
 ) -> Result<(), String> {
@@ -555,17 +542,8 @@ fn working_snapshot(snapshot: &Snapshot) -> Working {
     }
 }
 
-fn stages(path: &Path, file: &str) -> Result<Stages, String> {
-    let output = run(
-        path,
-        &[
-            "ls-files".into(),
-            "-u".into(),
-            "-z".into(),
-            "--".into(),
-            file.to_string(),
-        ],
-    )?;
+fn stages(path: &Path, file: &[u8]) -> Result<Stages, String> {
+    let output = run_on(path, &["ls-files", "-u", "-z", "--full-name"], file)?;
     if !output.status.success() {
         return Err(failure("Read conflict stages", &output));
     }
@@ -573,13 +551,14 @@ fn stages(path: &Path, file: &str) -> Result<Stages, String> {
     let mut ours = None;
     let mut theirs = None;
     for field in output.stdout.split(|byte| *byte == 0) {
-        if field.is_empty() {
-            continue;
-        }
-        let text = String::from_utf8_lossy(field);
-        let Some((meta, _)) = text.split_once('\t') else {
+        // Only the path itself: a directory's name also lists its files.
+        let Some(tab) = field.iter().position(|byte| *byte == b'\t') else {
             continue;
         };
+        if &field[tab + 1..] != file {
+            continue;
+        }
+        let meta = String::from_utf8_lossy(&field[..tab]);
         let mut parts = meta.split_whitespace();
         let (Some(mode), Some(oid), Some(stage)) = (parts.next(), parts.next(), parts.next())
         else {
@@ -607,7 +586,7 @@ fn blob(path: &Path, oid: &str) -> Result<Vec<u8>, String> {
     Ok(output.stdout)
 }
 
-fn read_working(path: &Path, file: &str) -> Result<Working, String> {
+fn read_working(path: &Path, file: &[u8]) -> Result<Working, String> {
     let target = worktree_path(path, file)?;
     let metadata = match std::fs::symlink_metadata(&target) {
         Ok(metadata) => metadata,
@@ -670,7 +649,7 @@ fn read_working(path: &Path, file: &str) -> Result<Working, String> {
     })
 }
 
-fn write_working(path: &Path, file: &str, bytes: &[u8], mode: &str) -> Result<(), String> {
+fn write_working(path: &Path, file: &[u8], bytes: &[u8], mode: &str) -> Result<(), String> {
     let target = worktree_path(path, file)?;
     #[cfg(not(unix))]
     let _ = mode;
@@ -701,8 +680,15 @@ fn write_working(path: &Path, file: &str, bytes: &[u8], mode: &str) -> Result<()
     result.map_err(|error| format!("Write working file: {error}"))
 }
 
-fn worktree_path(root: &Path, file: &str) -> Result<PathBuf, String> {
-    let relative = Path::new(file);
+/// The conflict path as a native path, byte for byte.
+fn native(file: &[u8]) -> Result<PathBuf, String> {
+    gix::path::from_bstr(gix::bstr::BStr::new(file))
+        .map(std::borrow::Cow::into_owned)
+        .map_err(|_| format!("{} is not a path on this platform.", display_path(file)))
+}
+
+fn worktree_path(root: &Path, file: &[u8]) -> Result<PathBuf, String> {
+    let relative = native(file)?;
     if relative.is_absolute()
         || relative
             .components()
@@ -713,8 +699,11 @@ fn worktree_path(root: &Path, file: &str) -> Result<PathBuf, String> {
     Ok(root.join(relative))
 }
 
-fn stage_text(path: &Path, stage: u8, file: &str) -> Result<Option<(String, bool, bool)>, String> {
-    let output = run(path, &["show".into(), format!(":{stage}:{file}")])?;
+fn stage_text(path: &Path, stage: u8, file: &[u8]) -> Result<Option<(String, bool, bool)>, String> {
+    // `:<stage>:<path>` names the index entry exactly; it is not a pathspec.
+    let mut entry = OsString::from(format!(":{stage}:"));
+    entry.push(native(file)?);
+    let output = run_os(path, &[OsString::from("show"), entry])?;
     if !output.status.success() {
         return Ok(None);
     }
@@ -733,14 +722,28 @@ fn stage_text(path: &Path, stage: u8, file: &str) -> Result<Option<(String, bool
     Ok(Some((text, binary, truncated)))
 }
 
-fn validate(file: &str) -> Result<(), String> {
-    if file.is_empty() || file.contains('\0') {
+fn validate(file: &[u8]) -> Result<(), String> {
+    if file.is_empty() || file.contains(&0) {
         return Err("Conflict path is empty or invalid.".into());
     }
     Ok(())
 }
 
+/// Run `git <args> -- <file>` with `file` as a literal path: no glob or
+/// other pathspec magic, so `*.txt` never selects `a.txt`.
+fn run_on(path: &Path, args: &[&str], file: &[u8]) -> Result<Output, String> {
+    let mut all = vec![OsString::from("--literal-pathspecs")];
+    all.extend(args.iter().map(OsString::from));
+    all.push("--".into());
+    all.push(native(file)?.into_os_string());
+    run_os(path, &all)
+}
+
 fn run(path: &Path, args: &[String]) -> Result<Output, String> {
+    run_os(path, args)
+}
+
+fn run_os<S: AsRef<OsStr>>(path: &Path, args: &[S]) -> Result<Output, String> {
     let repo = gix::discover(path)
         .map_err(|error| format!("Could not read repository {}: {error}", path.display()))?;
     let root = repo.workdir().unwrap_or_else(|| repo.path());

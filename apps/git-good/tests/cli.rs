@@ -2174,6 +2174,110 @@ fn conflict_cli_lists_reads_and_resolves() -> Result {
     Ok(())
 }
 
+/// A repository mid-merge with every name in `names` conflicted.
+#[cfg(unix)]
+fn conflicted_names(names: &[&std::ffi::OsStr]) -> Result<tempfile::TempDir> {
+    let repo = tempfile::tempdir()?;
+    let p = repo.path();
+    init(p, &["-b", "main"])?;
+    git(p, &["config", "user.name", "Test"])?;
+    git(p, &["config", "user.email", "test@example.org"])?;
+    for (content, branch) in [(&b"base\n"[..], None), (b"feature\n", Some("feature"))] {
+        if let Some(branch) = branch {
+            git(p, &["switch", "-qc", branch])?;
+        }
+        for name in names {
+            std::fs::write(p.join(name), content)?;
+        }
+        git(p, &["add", "-A"])?;
+        git(p, &["commit", "-qm", "change"])?;
+    }
+    git(p, &["switch", "-q", "main"])?;
+    for name in names {
+        std::fs::write(p.join(name), b"main\n")?;
+    }
+    git(p, &["commit", "-qam", "main"])?;
+    let _ = git_output(p, &["merge", "feature"]);
+    Ok(repo)
+}
+
+#[cfg(unix)]
+#[test]
+fn conflict_cli_resolves_only_the_literal_glob_named_path() -> Result {
+    let repo = conflicted_names(&["*.txt".as_ref(), "a.txt".as_ref()])?;
+    let binary = env!("CARGO_BIN_EXE_git-good");
+    let out = Command::new(binary)
+        .args(["conflict", "--file", "*.txt", "--use", "theirs", "--repo"])
+        .arg(repo.path())
+        .output()?;
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(std::fs::read(repo.path().join("*.txt"))?, b"feature\n");
+    let a = std::fs::read_to_string(repo.path().join("a.txt"))?;
+    assert!(a.contains("<<<<<<<"), "a.txt was overwritten: {a}");
+    assert_eq!(
+        git_output(repo.path(), &["diff", "--name-only", "--diff-filter=U"])?,
+        b"a.txt\n"
+    );
+    Ok(())
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+#[test]
+fn conflict_cli_round_trips_non_utf8_path_bytes() -> Result {
+    use std::{ffi::OsString, os::unix::ffi::OsStringExt};
+    let name = OsString::from_vec(b"raw\xff\nname".to_vec());
+    let repo = conflicted_names(&[name.as_os_str()])?;
+    let binary = env!("CARGO_BIN_EXE_git-good");
+    let out = Command::new(binary)
+        .args(["conflicts", "--repo"])
+        .arg(repo.path())
+        .output()?;
+    assert!(out.status.success());
+    let receipt: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(receipt["paths"], serde_json::json!(["raw\\xff\\nname"]));
+    assert_eq!(receipt["path_bytes"], serde_json::json!([b"raw\xff\nname"]));
+
+    let out = Command::new(binary)
+        .args(["conflict", "--file"])
+        .arg(&name)
+        .arg("--repo")
+        .arg(repo.path())
+        .output()?;
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let receipt: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(receipt["path"], "raw\\xff\\nname");
+    assert_eq!(receipt["path_bytes"], serde_json::json!(b"raw\xff\nname"));
+    assert_eq!(receipt["theirs"], "feature\n");
+
+    let out = Command::new(binary)
+        .args(["conflict", "--file"])
+        .arg(&name)
+        .args(["--use", "theirs", "--repo"])
+        .arg(repo.path())
+        .output()?;
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let receipt: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(receipt["path_bytes"], serde_json::json!(b"raw\xff\nname"));
+    assert_eq!(std::fs::read(repo.path().join(&name))?, b"feature\n");
+    assert_eq!(
+        git_output(repo.path(), &["diff", "--name-only", "--diff-filter=U"])?,
+        b""
+    );
+    Ok(())
+}
+
 #[test]
 fn conflict_cli_keeps_a_deletion() -> Result {
     let repo = tempfile::tempdir()?;

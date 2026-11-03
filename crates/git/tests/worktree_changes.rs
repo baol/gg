@@ -129,6 +129,25 @@ fn discard_all_keeps_a_newly_added_file_whose_name_is_not_utf8() -> Result {
     Ok(())
 }
 
+#[cfg(all(unix, not(target_os = "macos")))]
+#[test]
+fn discard_all_keeps_newly_added_files_by_their_exact_names() -> Result {
+    use std::os::unix::ffi::OsStrExt;
+    let dir = repo()?;
+    let p = dir.path();
+    let raw = p.join(std::ffi::OsStr::from_bytes(b"raw\xff.txt"));
+    std::fs::write(&raw, b"raw\n")?;
+    std::fs::write(p.join("*.txt"), b"star\n")?;
+    git(p, &["add", "-A"])?;
+    std::fs::write(p.join("kept"), b"changed\n")?;
+    gg_git::worktree_changes::discard_all(p)?;
+    assert_eq!(std::fs::read(p.join("kept"))?, b"kept\n");
+    assert_eq!(std::fs::read(&raw)?, b"raw\n");
+    assert_eq!(std::fs::read(p.join("*.txt"))?, b"star\n");
+    assert_eq!(git(p, &["diff", "--cached", "--name-only"])?, "");
+    Ok(())
+}
+
 #[test]
 fn discard_all_refuses_during_a_rebase() -> Result {
     let dir = repo()?;

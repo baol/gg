@@ -52,16 +52,16 @@ fn reads_and_selects_conflict_sides() -> Result {
     let dir = repo()?;
     let p = dir.path();
     conflicting(p)?;
-    assert_eq!(gg_git::conflict::unmerged(p)?, vec!["a".to_string()]);
+    assert_eq!(gg_git::conflict::unmerged(p)?, vec![b"a".to_vec()]);
 
-    let content = gg_git::conflict::read(p, "a")?;
+    let content = gg_git::conflict::read(p, b"a")?;
     assert_eq!(content.base.as_deref(), Some("base\n"));
     assert_eq!(content.ours.as_deref(), Some("main\n"));
     assert_eq!(content.theirs.as_deref(), Some("feature\n"));
     assert!(!content.binary);
     assert!(!content.truncated);
 
-    gg_git::conflict::use_side(p, "a", gg_engine::conflict::Side::Theirs)?;
+    gg_git::conflict::use_side(p, b"a", gg_engine::conflict::Side::Theirs)?;
     assert_eq!(std::fs::read(p.join("a"))?, b"feature\n");
     assert!(gg_git::conflict::unmerged(p)?.is_empty());
     Ok(())
@@ -73,7 +73,7 @@ fn stages_manually_resolved_content() -> Result {
     let p = dir.path();
     conflicting(p)?;
     std::fs::write(p.join("a"), b"resolved\n")?;
-    gg_git::conflict::stage(p, "a")?;
+    gg_git::conflict::stage(p, b"a")?;
     assert!(gg_git::conflict::unmerged(p)?.is_empty());
     assert_eq!(std::fs::read(p.join("a"))?, b"resolved\n");
     Ok(())
@@ -89,7 +89,7 @@ fn nested_stage_uses_the_repository_relative_conflict_path() -> Result {
     std::fs::write(nested.join("a"), b"unrelated\n")?;
     std::fs::write(p.join("a"), b"resolved\n")?;
 
-    gg_git::conflict::stage(&nested, "a")?;
+    gg_git::conflict::stage(&nested, b"a")?;
 
     assert!(gg_git::conflict::unmerged(p)?.is_empty());
     assert_eq!(std::fs::read(p.join("a"))?, b"resolved\n");
@@ -112,7 +112,7 @@ fn add_add_conflict_has_no_base() -> Result {
     git(p, &["commit", "-qm", "main new"])?;
     gg_git::merge::merge(p, "feature", false)?;
 
-    let content = gg_git::conflict::read(p, "new")?;
+    let content = gg_git::conflict::read(p, b"new")?;
     assert!(content.base.is_none());
     assert_eq!(content.ours.as_deref(), Some("main\n"));
     assert_eq!(content.theirs.as_deref(), Some("feature\n"));
@@ -124,12 +124,12 @@ fn rejects_unknown_paths_and_base_selection() -> Result {
     let dir = repo()?;
     let p = dir.path();
     conflicting(p)?;
-    let error = match gg_git::conflict::read(p, "missing") {
+    let error = match gg_git::conflict::read(p, b"missing") {
         Ok(_) => return Err("missing conflict unexpectedly read".into()),
         Err(error) => error,
     };
     assert!(error.contains("No unmerged stages"), "{error}");
-    let error = match gg_git::conflict::use_side(p, "a", gg_engine::conflict::Side::Base) {
+    let error = match gg_git::conflict::use_side(p, b"a", gg_engine::conflict::Side::Base) {
         Ok(_) => return Err("base side unexpectedly selected".into()),
         Err(error) => error,
     };
@@ -142,7 +142,7 @@ fn previewed_sides_publish_only_after_validation() -> Result {
     let dir = repo()?;
     let p = dir.path();
     conflicting(p)?;
-    let snapshot = gg_git::conflict::snapshot(p, "a")?;
+    let snapshot = gg_git::conflict::snapshot(p, b"a")?;
     assert!(snapshot.base.is_some());
     assert!(snapshot.ours.is_some());
     let ours = snapshot.ours.clone();
@@ -153,7 +153,7 @@ fn previewed_sides_publish_only_after_validation() -> Result {
         b"<<<<<<< HEAD\nmain\n=======\nfeature\n>>>>>>> feature\n"
     );
 
-    gg_git::conflict::publish(p, "a", &snapshot, gg_engine::conflict::Resolution::Ours)?;
+    gg_git::conflict::publish(p, b"a", &snapshot, gg_engine::conflict::Resolution::Ours)?;
     assert_eq!(std::fs::read(p.join("a"))?, b"main\n");
     assert!(gg_git::conflict::unmerged(p)?.is_empty());
     let staged = git(p, &["ls-files", "-s", "--", "a"])?;
@@ -170,24 +170,24 @@ fn publish_rejects_changed_stages_or_working_bytes() -> Result {
     let dir = repo()?;
     let p = dir.path();
     conflicting(p)?;
-    let stale = gg_git::conflict::snapshot(p, "a")?;
-    gg_git::conflict::use_side(p, "a", gg_engine::conflict::Side::Theirs)?;
+    let stale = gg_git::conflict::snapshot(p, b"a")?;
+    gg_git::conflict::use_side(p, b"a", gg_engine::conflict::Side::Theirs)?;
     assert!(
-        gg_git::conflict::publish(p, "a", &stale, gg_engine::conflict::Resolution::Ours,).is_err()
+        gg_git::conflict::publish(p, b"a", &stale, gg_engine::conflict::Resolution::Ours,).is_err()
     );
     assert_eq!(std::fs::read(p.join("a"))?, b"feature\n");
 
     let dir = repo()?;
     let p = dir.path();
     conflicting(p)?;
-    let stale = gg_git::conflict::snapshot(p, "a")?;
+    let stale = gg_git::conflict::snapshot(p, b"a")?;
     std::fs::write(p.join("a"), b"external\n")?;
     assert!(
-        gg_git::conflict::publish(p, "a", &stale, gg_engine::conflict::Resolution::Working,)
+        gg_git::conflict::publish(p, b"a", &stale, gg_engine::conflict::Resolution::Working,)
             .is_err()
     );
-    let fresh = gg_git::conflict::snapshot(p, "a")?;
-    gg_git::conflict::publish(p, "a", &fresh, gg_engine::conflict::Resolution::Working)?;
+    let fresh = gg_git::conflict::snapshot(p, b"a")?;
+    gg_git::conflict::publish(p, b"a", &fresh, gg_engine::conflict::Resolution::Working)?;
     assert_eq!(std::fs::read(p.join("a"))?, b"external\n");
     assert!(gg_git::conflict::unmerged(p)?.is_empty());
     Ok(())
@@ -198,8 +198,8 @@ fn base_resolution_writes_the_common_ancestor() -> Result {
     let dir = repo()?;
     let p = dir.path();
     conflicting(p)?;
-    let snapshot = gg_git::conflict::snapshot(p, "a")?;
-    gg_git::conflict::publish(p, "a", &snapshot, gg_engine::conflict::Resolution::Base)?;
+    let snapshot = gg_git::conflict::snapshot(p, b"a")?;
+    gg_git::conflict::publish(p, b"a", &snapshot, gg_engine::conflict::Resolution::Base)?;
     assert_eq!(std::fs::read(p.join("a"))?, b"base\n");
     assert!(gg_git::conflict::unmerged(p)?.is_empty());
     Ok(())
@@ -210,7 +210,7 @@ fn snapshot_rejects_paths_outside_the_repository() -> Result {
     let dir = repo()?;
     let p = dir.path();
     conflicting(p)?;
-    assert!(gg_git::conflict::snapshot(p, "../a").is_err());
+    assert!(gg_git::conflict::snapshot(p, b"../a").is_err());
     Ok(())
 }
 
@@ -220,7 +220,7 @@ fn oversized_working_files_validate_without_a_preview() -> Result {
     let p = dir.path();
     conflicting(p)?;
     std::fs::write(p.join("a"), vec![b'a'; 2 * 1024 * 1024 + 1])?;
-    let snapshot = gg_git::conflict::snapshot(p, "a")?;
+    let snapshot = gg_git::conflict::snapshot(p, b"a")?;
     assert!(snapshot.working.is_none());
     assert!(snapshot.working_hash.is_some());
     assert!(
@@ -229,7 +229,7 @@ fn oversized_working_files_validate_without_a_preview() -> Result {
             .as_deref()
             .is_some_and(|note| note.contains("bytes"))
     );
-    gg_git::conflict::publish(p, "a", &snapshot, gg_engine::conflict::Resolution::Working)?;
+    gg_git::conflict::publish(p, b"a", &snapshot, gg_engine::conflict::Resolution::Working)?;
     assert!(gg_git::conflict::unmerged(p)?.is_empty());
     Ok(())
 }
@@ -239,13 +239,17 @@ fn publishing_reports_a_partial_worktree_write() -> Result {
     let dir = repo()?;
     let p = dir.path();
     conflicting(p)?;
-    let snapshot = gg_git::conflict::snapshot(p, "a")?;
+    let snapshot = gg_git::conflict::snapshot(p, b"a")?;
     std::fs::write(p.join(".git/index.lock"), b"locked")?;
-    let error =
-        match gg_git::conflict::publish(p, "a", &snapshot, gg_engine::conflict::Resolution::Ours) {
-            Err(error) => error,
-            Ok(()) => return Err("locked index must fail".into()),
-        };
+    let error = match gg_git::conflict::publish(
+        p,
+        b"a",
+        &snapshot,
+        gg_engine::conflict::Resolution::Ours,
+    ) {
+        Err(error) => error,
+        Ok(()) => return Err("locked index must fail".into()),
+    };
     assert!(error.contains("written but staging failed"), "{error}");
     assert_eq!(std::fs::read(p.join("a"))?, b"main\n");
     std::fs::remove_file(p.join(".git/index.lock"))?;
@@ -260,7 +264,7 @@ fn non_regular_working_paths_keep_the_side_preview_explicit() -> Result {
     conflicting(p)?;
     std::fs::remove_file(p.join("a"))?;
     std::fs::create_dir(p.join("a"))?;
-    let snapshot = gg_git::conflict::snapshot(p, "a")?;
+    let snapshot = gg_git::conflict::snapshot(p, b"a")?;
     assert!(snapshot.working.is_none());
     assert!(
         snapshot
@@ -268,11 +272,15 @@ fn non_regular_working_paths_keep_the_side_preview_explicit() -> Result {
             .as_deref()
             .is_some_and(|note| note.contains("not a regular file"))
     );
-    let error =
-        match gg_git::conflict::publish(p, "a", &snapshot, gg_engine::conflict::Resolution::Ours) {
-            Err(error) => error,
-            Ok(()) => return Err("a directory cannot be replaced by rename".into()),
-        };
+    let error = match gg_git::conflict::publish(
+        p,
+        b"a",
+        &snapshot,
+        gg_engine::conflict::Resolution::Ours,
+    ) {
+        Err(error) => error,
+        Ok(()) => return Err("a directory cannot be replaced by rename".into()),
+    };
     assert!(error.contains("Write working file"), "{error}");
     assert!(p.join("a").is_dir());
     Ok(())
@@ -297,8 +305,8 @@ fn oversized_sides_publish_and_changed_bytes_are_detected() -> Result {
     let _ = gg_git::merge::merge(p, "feature", false);
     assert!(!gg_git::conflict::unmerged(p)?.is_empty());
 
-    let snapshot = gg_git::conflict::snapshot(p, "a")?;
-    gg_git::conflict::publish(p, "a", &snapshot, gg_engine::conflict::Resolution::Ours)?;
+    let snapshot = gg_git::conflict::snapshot(p, b"a")?;
+    gg_git::conflict::publish(p, b"a", &snapshot, gg_engine::conflict::Resolution::Ours)?;
     let resolved = std::fs::read(p.join("a"))?;
     assert_eq!(resolved.len(), 2 * 1024 * 1024 + 1);
     assert!(resolved.iter().all(|byte| *byte == b'm'));
@@ -309,11 +317,11 @@ fn oversized_sides_publish_and_changed_bytes_are_detected() -> Result {
     conflicting(p)?;
     let mut oversized = vec![b'a'; 2 * 1024 * 1024 + 1];
     std::fs::write(p.join("a"), &oversized)?;
-    let snapshot = gg_git::conflict::snapshot(p, "a")?;
+    let snapshot = gg_git::conflict::snapshot(p, b"a")?;
     oversized[100] = b'b';
     std::fs::write(p.join("a"), &oversized)?;
     assert!(
-        gg_git::conflict::publish(p, "a", &snapshot, gg_engine::conflict::Resolution::Working,)
+        gg_git::conflict::publish(p, b"a", &snapshot, gg_engine::conflict::Resolution::Working,)
             .is_err(),
         "a changed byte in a large file must invalidate the preview"
     );
@@ -343,7 +351,7 @@ fn blocks_split_the_conflict_and_compose_a_staged_resolution() -> Result {
     // The user's conflict style does not change the blocks.
     git(p, &["config", "merge.conflictStyle", "merge"])?;
     two_block_conflict(p)?;
-    let segments = gg_git::conflict::blocks(p, "b")?;
+    let segments = gg_git::conflict::blocks(p, b"b")?;
     assert_eq!(block_count(&segments), 2);
     assert_eq!(
         segments[1],
@@ -353,13 +361,13 @@ fn blocks_split_the_conflict_and_compose_a_staged_resolution() -> Result {
             theirs: "x feature\n".into(),
         }
     );
-    let snapshot = gg_git::conflict::snapshot(p, "b")?;
+    let snapshot = gg_git::conflict::snapshot(p, b"b")?;
     let text = compose(
         &segments,
         &[Some(BlockChoice::Theirs), Some(BlockChoice::OursThenTheirs)],
     );
     assert_eq!(text, "top\nx feature\nmiddle\ny main\ny feature\nend\n");
-    gg_git::conflict::publish_text(p, "b", &snapshot, &text)?;
+    gg_git::conflict::publish_text(p, b"b", &snapshot, &text)?;
     assert_eq!(std::fs::read(p.join("b"))?, text.as_bytes());
     assert!(gg_git::conflict::unmerged(p)?.is_empty());
     assert_eq!(
@@ -376,19 +384,19 @@ fn composed_resolution_refuses_a_changed_working_file() -> Result {
     let dir = repo()?;
     let p = dir.path();
     two_block_conflict(p)?;
-    let segments = gg_git::conflict::blocks(p, "b")?;
-    let snapshot = gg_git::conflict::snapshot(p, "b")?;
+    let segments = gg_git::conflict::blocks(p, b"b")?;
+    let snapshot = gg_git::conflict::snapshot(p, b"b")?;
     std::fs::write(p.join("b"), b"edited elsewhere\n")?;
     let text = compose(
         &segments,
         &[Some(BlockChoice::Ours), Some(BlockChoice::Ours)],
     );
-    let error = match gg_git::conflict::publish_text(p, "b", &snapshot, &text) {
+    let error = match gg_git::conflict::publish_text(p, b"b", &snapshot, &text) {
         Ok(()) => return Err("a stale preview was published".into()),
         Err(error) => error,
     };
     assert!(error.contains("working file changed"), "{error}");
-    assert_eq!(gg_git::conflict::unmerged(p)?, vec!["b".to_string()]);
+    assert_eq!(gg_git::conflict::unmerged(p)?, vec![b"b".to_vec()]);
     Ok(())
 }
 
@@ -403,7 +411,7 @@ fn blocks_name_why_a_file_needs_a_whole_side() -> Result {
     std::fs::write(p.join("a"), b"main\n")?;
     git(p, &["commit", "-qam", "main"])?;
     gg_git::merge::merge(p, "feature", false)?;
-    let error = match gg_git::conflict::blocks(p, "a") {
+    let error = match gg_git::conflict::blocks(p, b"a") {
         Ok(_) => return Err("delete/modify produced blocks".into()),
         Err(error) => error,
     };
@@ -430,10 +438,10 @@ fn keeping_a_deletion_stages_the_removal() -> Result {
     let dir = repo()?;
     let p = dir.path();
     delete_modify_conflict(p)?;
-    let content = gg_git::conflict::read(p, "a")?;
+    let content = gg_git::conflict::read(p, b"a")?;
     assert_eq!(content.deleted_side(), Some(Side::Theirs));
-    let snapshot = gg_git::conflict::snapshot(p, "a")?;
-    gg_git::conflict::publish(p, "a", &snapshot, Resolution::Deletion)?;
+    let snapshot = gg_git::conflict::snapshot(p, b"a")?;
+    gg_git::conflict::publish(p, b"a", &snapshot, Resolution::Deletion)?;
     assert!(!p.join("a").exists(), "the working file is removed");
     assert!(gg_git::conflict::unmerged(p)?.is_empty());
     assert!(
@@ -445,8 +453,8 @@ fn keeping_a_deletion_stages_the_removal() -> Result {
     let dir = repo()?;
     let p = dir.path();
     delete_modify_conflict(p)?;
-    let snapshot = gg_git::conflict::snapshot(p, "a")?;
-    gg_git::conflict::publish(p, "a", &snapshot, Resolution::Ours)?;
+    let snapshot = gg_git::conflict::snapshot(p, b"a")?;
+    gg_git::conflict::publish(p, b"a", &snapshot, Resolution::Ours)?;
     assert_eq!(std::fs::read(p.join("a"))?, b"main\n");
     assert!(gg_git::conflict::unmerged(p)?.is_empty());
     Ok(())
@@ -458,15 +466,15 @@ fn keeping_a_deletion_is_refused_without_a_deleted_side_or_after_an_edit() -> Re
     let dir = repo()?;
     let p = dir.path();
     conflicting(p)?;
-    assert_eq!(gg_git::conflict::read(p, "a")?.deleted_side(), None);
-    let snapshot = gg_git::conflict::snapshot(p, "a")?;
-    let error = match gg_git::conflict::publish(p, "a", &snapshot, Resolution::Deletion) {
+    assert_eq!(gg_git::conflict::read(p, b"a")?.deleted_side(), None);
+    let snapshot = gg_git::conflict::snapshot(p, b"a")?;
+    let error = match gg_git::conflict::publish(p, b"a", &snapshot, Resolution::Deletion) {
         Ok(()) => return Err("a modify/modify conflict was deleted".into()),
         Err(error) => error,
     };
     assert!(error.contains("one side deleted"), "{error}");
     assert!(p.join("a").exists());
-    match gg_git::conflict::keep_deletion(p, "a") {
+    match gg_git::conflict::keep_deletion(p, b"a") {
         Ok(()) => return Err("the CLI deleted a modify/modify conflict".into()),
         Err(error) => assert!(error.contains("one side deleted"), "{error}"),
     }
@@ -474,14 +482,14 @@ fn keeping_a_deletion_is_refused_without_a_deleted_side_or_after_an_edit() -> Re
     let dir = repo()?;
     let p = dir.path();
     delete_modify_conflict(p)?;
-    let stale = gg_git::conflict::snapshot(p, "a")?;
+    let stale = gg_git::conflict::snapshot(p, b"a")?;
     std::fs::write(p.join("a"), b"edited after preview\n")?;
-    assert!(gg_git::conflict::publish(p, "a", &stale, Resolution::Deletion).is_err());
+    assert!(gg_git::conflict::publish(p, b"a", &stale, Resolution::Deletion).is_err());
     assert_eq!(std::fs::read(p.join("a"))?, b"edited after preview\n");
-    assert_eq!(gg_git::conflict::unmerged(p)?, vec!["a".to_string()]);
+    assert_eq!(gg_git::conflict::unmerged(p)?, vec![b"a".to_vec()]);
 
     // The CLI keeps the deletion without a preview.
-    gg_git::conflict::keep_deletion(p, "a")?;
+    gg_git::conflict::keep_deletion(p, b"a")?;
     assert!(!p.join("a").exists());
     assert!(gg_git::conflict::unmerged(p)?.is_empty());
     Ok(())
@@ -492,12 +500,12 @@ fn use_side_points_the_deleted_side_to_keep_deletion() -> Result {
     let dir = repo()?;
     let p = dir.path();
     delete_modify_conflict(p)?;
-    let error = match gg_git::conflict::use_side(p, "a", gg_engine::conflict::Side::Theirs) {
+    let error = match gg_git::conflict::use_side(p, b"a", gg_engine::conflict::Side::Theirs) {
         Ok(()) => return Err("the deleted side was checked out".into()),
         Err(error) => error,
     };
     assert!(error.contains("--use deletion"), "{error}");
-    assert_eq!(gg_git::conflict::unmerged(p)?, vec!["a".to_string()]);
+    assert_eq!(gg_git::conflict::unmerged(p)?, vec![b"a".to_vec()]);
     Ok(())
 }
 
@@ -509,7 +517,7 @@ fn a_hand_edited_working_file_is_told_apart_from_what_git_wrote() -> Result {
         let p = dir.path();
         git(p, &["config", "merge.conflictStyle", style])?;
         two_block_conflict(p)?;
-        let segments = gg_git::conflict::blocks(p, "b")?;
+        let segments = gg_git::conflict::blocks(p, b"b")?;
         let written = String::from_utf8(std::fs::read(p.join("b"))?)?;
         assert!(
             !edited_outside(&segments, written.as_bytes()),
@@ -610,27 +618,180 @@ fn a_staged_resolution_reopens_as_a_conflict() -> Result {
     std::fs::write(p.join("a"), b"main\n")?;
     git(p, &["commit", "-qam", "main"])?;
     gg_git::merge::merge(p, "feature", false)?;
-    assert_eq!(gg_git::conflict::also_changed(p)?, vec!["b".to_string()]);
+    assert_eq!(gg_git::conflict::also_changed(p)?, vec![b"b".to_vec()]);
 
     std::fs::write(p.join("a"), b"resolved\n")?;
-    gg_git::conflict::stage(p, "a")?;
+    gg_git::conflict::stage(p, b"a")?;
     assert!(gg_git::conflict::unmerged(p)?.is_empty());
     assert_eq!(
         gg_git::conflict::also_changed(p)?,
-        vec!["a".to_string(), "b".to_string()]
+        vec![b"a".to_vec(), b"b".to_vec()]
     );
 
     assert!(
-        gg_git::conflict::reopen(p, "a")?,
+        gg_git::conflict::reopen(p, b"a")?,
         "Git recreates the conflict"
     );
-    assert_eq!(gg_git::conflict::unmerged(p)?, vec!["a".to_string()]);
+    assert_eq!(gg_git::conflict::unmerged(p)?, vec![b"a".to_vec()]);
     let working = std::fs::read_to_string(p.join("a"))?;
     assert!(working.contains("<<<<<<<"), "markers are back: {working}");
 
     // A path with no conflict to recreate is unstaged to a plain change.
-    assert!(!gg_git::conflict::reopen(p, "b")?);
-    assert!(!gg_git::conflict::also_changed(p)?.contains(&"b".to_string()));
+    assert!(!gg_git::conflict::reopen(p, b"b")?);
+    assert!(!gg_git::conflict::also_changed(p)?.contains(&b"b".to_vec()));
     assert!(p.join("b").exists(), "the working file stays");
+    Ok(())
+}
+
+/// Conflicts on a file literally named `*.txt` and on `a.txt`, which that
+/// name matches as a glob pathspec.
+#[cfg(unix)]
+fn glob_named_conflicts(p: &Path) -> Result {
+    std::fs::write(p.join("*.txt"), b"star base\n")?;
+    std::fs::write(p.join("a.txt"), b"a base\n")?;
+    git(p, &["add", "--", ":(literal)*.txt", "a.txt"])?;
+    git(p, &["commit", "-qm", "glob base"])?;
+    git(p, &["switch", "-qc", "feature"])?;
+    std::fs::write(p.join("*.txt"), b"star feature\n")?;
+    std::fs::write(p.join("a.txt"), b"a feature\n")?;
+    git(p, &["commit", "-qam", "feature"])?;
+    git(p, &["switch", "-q", "main"])?;
+    std::fs::write(p.join("*.txt"), b"star main\n")?;
+    std::fs::write(p.join("a.txt"), b"a main\n")?;
+    git(p, &["commit", "-qam", "main"])?;
+    gg_git::merge::merge(p, "feature", false)?;
+    assert_eq!(
+        gg_git::conflict::unmerged(p)?,
+        vec![b"*.txt".to_vec(), b"a.txt".to_vec()]
+    );
+    Ok(())
+}
+
+/// The conflict on `a.txt` is untouched: still unmerged, markers on disk.
+#[cfg(unix)]
+fn other_conflict_untouched(p: &Path) -> Result {
+    assert_eq!(gg_git::conflict::unmerged(p)?, vec![b"a.txt".to_vec()]);
+    let working = std::fs::read_to_string(p.join("a.txt"))?;
+    assert!(
+        working.contains("<<<<<<<"),
+        "a.txt was overwritten: {working}"
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn choosing_a_side_for_a_glob_named_file_leaves_other_conflicts() -> Result {
+    use gg_engine::conflict::Side;
+    let dir = repo()?;
+    let p = dir.path();
+    glob_named_conflicts(p)?;
+    let content = gg_git::conflict::read(p, b"*.txt")?;
+    assert_eq!(content.theirs.as_deref(), Some("star feature\n"));
+    gg_git::conflict::use_side(p, b"*.txt", Side::Theirs)?;
+    assert_eq!(std::fs::read(p.join("*.txt"))?, b"star feature\n");
+    other_conflict_untouched(p)?;
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn staging_and_reopening_a_glob_named_conflict_leaves_other_conflicts() -> Result {
+    let dir = repo()?;
+    let p = dir.path();
+    glob_named_conflicts(p)?;
+    std::fs::write(p.join("*.txt"), b"star resolved\n")?;
+    gg_git::conflict::stage(p, b"*.txt")?;
+    other_conflict_untouched(p)?;
+    assert_eq!(gg_git::conflict::also_changed(p)?, vec![b"*.txt".to_vec()]);
+
+    assert!(gg_git::conflict::reopen(p, b"*.txt")?);
+    assert_eq!(
+        gg_git::conflict::unmerged(p)?,
+        vec![b"*.txt".to_vec(), b"a.txt".to_vec()]
+    );
+    let working = std::fs::read_to_string(p.join("a.txt"))?;
+    assert!(
+        working.contains("<<<<<<<"),
+        "a.txt was rewritten: {working}"
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn publishing_a_glob_named_resolution_leaves_other_conflicts() -> Result {
+    use gg_engine::conflict::Resolution;
+    let dir = repo()?;
+    let p = dir.path();
+    glob_named_conflicts(p)?;
+    let snapshot = gg_git::conflict::snapshot(p, b"*.txt")?;
+    gg_git::conflict::publish(p, b"*.txt", &snapshot, Resolution::Ours)?;
+    assert_eq!(std::fs::read(p.join("*.txt"))?, b"star main\n");
+    other_conflict_untouched(p)?;
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn keeping_the_deletion_of_a_glob_named_file_leaves_other_conflicts() -> Result {
+    let dir = repo()?;
+    let p = dir.path();
+    std::fs::write(p.join("*.txt"), b"base\n")?;
+    std::fs::write(p.join("a.txt"), b"base\n")?;
+    git(p, &["add", "--", ":(literal)*.txt", "a.txt"])?;
+    git(p, &["commit", "-qm", "glob base"])?;
+    git(p, &["switch", "-qc", "feature"])?;
+    git(p, &["rm", "-q", "--", ":(literal)*.txt", "a.txt"])?;
+    git(p, &["commit", "-qm", "delete"])?;
+    git(p, &["switch", "-q", "main"])?;
+    std::fs::write(p.join("*.txt"), b"main\n")?;
+    std::fs::write(p.join("a.txt"), b"main\n")?;
+    git(p, &["commit", "-qam", "main"])?;
+    gg_git::merge::merge(p, "feature", false)?;
+
+    gg_git::conflict::keep_deletion(p, b"*.txt")?;
+    assert!(!p.join("*.txt").exists());
+    assert_eq!(gg_git::conflict::unmerged(p)?, vec![b"a.txt".to_vec()]);
+    assert_eq!(std::fs::read(p.join("a.txt"))?, b"main\n");
+    assert!(!git(p, &["ls-files", "--", "a.txt"])?.is_empty());
+    Ok(())
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+#[test]
+fn conflict_paths_keep_their_exact_bytes() -> Result {
+    use gg_engine::conflict::Side;
+    use std::os::unix::ffi::OsStrExt;
+    let dir = repo()?;
+    let p = dir.path();
+    let name: &[u8] = b"raw\xff\nname";
+    let file = p.join(std::ffi::OsStr::from_bytes(name));
+    std::fs::write(&file, b"base\n")?;
+    git(p, &["add", "-A"])?;
+    git(p, &["commit", "-qm", "raw base"])?;
+    git(p, &["switch", "-qc", "feature"])?;
+    std::fs::write(&file, b"feature\n")?;
+    git(p, &["commit", "-qam", "feature"])?;
+    git(p, &["switch", "-q", "main"])?;
+    std::fs::write(&file, b"main\n")?;
+    git(p, &["commit", "-qam", "main"])?;
+    gg_git::merge::merge(p, "feature", false)?;
+
+    assert_eq!(gg_git::conflict::unmerged(p)?, vec![name.to_vec()]);
+    let content = gg_git::conflict::read(p, name)?;
+    assert_eq!(content.path, "raw\\xff\\nname");
+    assert_eq!(content.path_bytes, name);
+    assert_eq!(content.theirs.as_deref(), Some("feature\n"));
+    let snapshot = gg_git::conflict::snapshot(p, name)?;
+    assert!(
+        snapshot
+            .working
+            .is_some_and(|bytes| bytes.starts_with(b"<<<<<<<"))
+    );
+    gg_git::conflict::use_side(p, name, Side::Theirs)?;
+    assert_eq!(std::fs::read(&file)?, b"feature\n");
+    assert!(gg_git::conflict::unmerged(p)?.is_empty());
+    assert_eq!(gg_git::conflict::also_changed(p)?, vec![name.to_vec()]);
     Ok(())
 }
