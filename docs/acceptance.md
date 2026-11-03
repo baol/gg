@@ -502,16 +502,16 @@ Covered by (interaction, partial): `menus_follow_the_final_design_mockup` (apps/
 ### FRM-61 External file edit refreshes status after settling
 Fixture: `fx-linear`
 Layer: interaction
-- When `a.txt` is edited by another process
-- Then about 300 ms after the last event the Changes badge shows `1` and Local Changes lists `a.txt`; History is not reloaded; the previous content stays until the new content arrives
-Covered by (interaction): `a_real_repository_reports_a_changed_file`, `a_batch_reports_after_it_settles_or_when_flushed` (apps/git-good/src/watcher.rs)
+- When `a.txt` is edited by another process, with the window idle and no input
+- Then about 300 ms after the last event the Changes badge shows `1` and Local Changes lists `a.txt`, without waiting for the next input; History is not reloaded; the previous content stays until the new content arrives
+Covered by (interaction): `a_real_repository_reports_a_changed_file`, `a_batch_reports_after_it_settles_or_when_flushed` (apps/git-good/src/watcher.rs); `changes_made_outside_show_in_an_idle_window` (apps/git-good/src/idle_tests.rs)
 
 ### FRM-62 External ref change reloads history; objects, logs, locks ignored
 Fixture: `fx-linear`
 Layer: interaction
 - When `git commit --allow-empty -m ext` runs outside Git Good; separately `git gc` runs
-- Then the commit appears in History after settling with selection preserved by ID; `git gc` alone (objects/packs, logs, locks) triggers no history reload
-Covered by (interaction): `paths_are_sorted_into_worktree_index_and_refs` (apps/git-good/src/watcher.rs)
+- Then the commit appears in History after settling with selection preserved by ID, also in an idle window with no input (as does a branch made with `git branch`); `git gc` alone (objects/packs, logs, locks) triggers no history reload
+Covered by (interaction): `paths_are_sorted_into_worktree_index_and_refs` (apps/git-good/src/watcher.rs); `changes_made_outside_show_in_an_idle_window` (apps/git-good/src/idle_tests.rs) — `git branch`
 
 ### FRM-63 Commands flush unsettled changes first
 Fixture: `fx-dirty`
@@ -4369,7 +4369,7 @@ Covered by (Not automated)
 ### CLI-26 --repo pointing outside a repository
 Fixture: `fx-not-repo`
 Layer: product
-- `git good worktree list --repo <fx-not-repo>` (and `refs`, `status`, `signature config`) → nonzero, stderr names the path, empty stdout
+- `git good worktree list --repo <fx-not-repo>` (and `signature config --repo <fx-not-repo>`; `refs` and `status` take it positionally: `git good refs <fx-not-repo>`, `git good status <fx-not-repo>`) → nonzero, stderr names the path, empty stdout
 Covered by (Not automated)
 
 ### CLI-27 Launch with PATH opens the GUI on that repository — see FRM-02
@@ -4620,7 +4620,7 @@ Fixture: a five-commit repository with one unstaged edit
 Layer: interaction
 - Given History, Local Changes, Review and Preferences in turn, each with the pointer resting on it and no text field focused
 - When its reads finish and its animations end
-- Then no frame asks for a repaint sooner than 1 s; a failure names what asked (RULE-16)
+- Then no frame asks for a repaint sooner than 1 s; a failure names what asked (RULE-16). Only a pending watcher batch schedules a frame, for the moment it settles (FRM-61)
 Covered by (interaction): `every_view_is_idle_once_settled` (apps/git-good/src/idle_tests.rs)
 
 ## CLI contract
@@ -4699,7 +4699,7 @@ Covered by (end-to-end, partial): `rebase_cli_rewrites_records_backup_and_recove
 ### CLI-C11 Paths with spaces
 Fixture: `fx-linear` at `/tmp/a b/fx-linear`, with tracked `dir with space/my file.txt` edited
 Layer: product
-- When `git good status --repo "/tmp/a b/fx-linear" --file "dir with space/my file.txt" --area unstaged`, `git good stage --file "dir with space/my file.txt"`, `git good worktree add "../wt with space" --create x`
+- When `git good status "/tmp/a b/fx-linear" --file "dir with space/my file.txt" --area unstaged`, `git good stage --file "dir with space/my file.txt"`, `git good worktree add "../wt with space" --create x`
 - Then each acts on exactly that path and reports it unchanged in `path`
 Covered by (Not automated)
 

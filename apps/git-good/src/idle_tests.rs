@@ -70,6 +70,15 @@ impl Harness {
     /// One frame at the real elapsed time; returns the repaint delay it
     /// asked for.
     fn frame(&mut self) -> Duration {
+        let output = self.frame_output();
+        output
+            .viewport_output
+            .get(&egui::ViewportId::ROOT)
+            .map_or(Duration::MAX, |viewport| viewport.repaint_delay)
+    }
+
+    /// One frame at the real elapsed time, with everything it drew.
+    fn frame_output(&mut self) -> egui::FullOutput {
         let events = self
             .pointer
             .take()
@@ -78,11 +87,7 @@ impl Harness {
         let mut input = tests::frame_input(1120.0, 740.0, events);
         input.time = Some(self.start.elapsed().as_secs_f64());
         let app = &mut self.app;
-        let output = tests::run_ui(&self.ctx, input, |ui| app.draw_ui(ui));
-        output
-            .viewport_output
-            .get(&egui::ViewportId::ROOT)
-            .map_or(Duration::MAX, |viewport| viewport.repaint_delay)
+        tests::run_ui(&self.ctx, input, |ui| app.draw_ui(ui))
     }
 
     /// Draw frames until every frame for [`SETTLED`] of real time asked for
@@ -172,5 +177,114 @@ fn every_view_is_idle_once_settled() -> Result<(), Box<dyn std::error::Error>> {
 
     harness.app.open_preferences(PrefSection::General);
     harness.assert_idle("Preferences", egui::pos2(560.0, 370.0));
+    Ok(())
+}
+
+/// When the window next asked to be drawn, as the integration hears it:
+/// egui's repaint callback, which also carries wakes from other threads,
+/// such as the file watcher's.
+#[derive(Clone, Default)]
+struct Wakes(std::sync::Arc<std::sync::Mutex<Option<Instant>>>);
+
+impl Wakes {
+    fn install(ctx: &egui::Context) -> Self {
+        let wakes = Self::default();
+        let shared = wakes.0.clone();
+        ctx.set_request_repaint_callback(move |info| {
+            let at = Instant::now().checked_add(info.delay);
+            if let (Some(at), Ok(mut next)) = (at, shared.lock()) {
+                *next = Some(next.map_or(at, |next| next.min(at)));
+            }
+        });
+        wakes
+    }
+
+    /// Take the earliest wake if it is due by `now`.
+    fn take_due(&self, now: Instant) -> bool {
+        let Ok(mut next) = self.0.lock() else {
+            return false;
+        };
+        let due = next.is_some_and(|at| at <= now);
+        if due {
+            *next = None;
+        }
+        due
+    }
+
+    fn clear(&self) {
+        if let Ok(mut next) = self.0.lock() {
+            *next = None;
+        }
+    }
+}
+
+/// How soon a change made outside must show in a window nobody touches.
+const PICKUP: Duration = Duration::from_secs(1);
+
+/// Draw frames only when the window asked for one, with no input, until
+/// `shown` holds or [`PICKUP`] has passed since `since`; whether it held.
+fn shown_without_input(
+    harness: &mut Harness,
+    wakes: &Wakes,
+    since: Instant,
+    mut shown: impl FnMut(&Browser, &egui::FullOutput) -> bool,
+) -> bool {
+    while since.elapsed() < PICKUP {
+        std::thread::sleep(Duration::from_millis(5));
+        if !wakes.take_due(Instant::now()) {
+            continue;
+        }
+        let output = harness.frame_output();
+        if shown(&harness.app, &output) {
+            return true;
+        }
+    }
+    false
+}
+
+#[test]
+fn changes_made_outside_show_in_an_idle_window() -> Result<(), Box<dyn std::error::Error>> {
+    let mut harness = Harness::new()?;
+    let wakes = Wakes::install(&harness.ctx);
+    let path = std::fs::canonicalize(harness._dir.path())?;
+    assert!(harness.settle(), "History did not settle");
+
+    harness.app.open_working(&harness.ctx);
+    assert!(harness.app.working.is_some(), "Local Changes did not open");
+    assert!(harness.settle(), "Local Changes did not settle");
+    wakes.clear();
+    let written = Instant::now();
+    std::fs::write(path.join("outside.txt"), "new\n")?;
+    let listed = shown_without_input(&mut harness, &wakes, written, |_, output| {
+        output.shapes.iter().any(|shape| {
+            matches!(&shape.shape, egui::epaint::Shape::Text(text)
+                if text.galley.job.text.contains("outside.txt"))
+        })
+    });
+    assert!(listed, "Local Changes did not list a file written outside");
+
+    harness.app.working = None;
+    assert!(harness.settle(), "History did not settle");
+    wakes.clear();
+    let branched = Instant::now();
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&path)
+        .args(["branch", "outside"])
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env(
+            "GIT_CONFIG_GLOBAL",
+            if cfg!(windows) { "NUL" } else { "/dev/null" },
+        )
+        .output()?;
+    assert!(output.status.success(), "git branch failed");
+    let listed = shown_without_input(&mut harness, &wakes, branched, |app, _| {
+        app.state
+            .refs
+            .items
+            .iter()
+            .any(|item| item.name == "outside")
+    });
+    assert!(listed, "History did not show a branch made outside");
     Ok(())
 }
