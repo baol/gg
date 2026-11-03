@@ -330,7 +330,7 @@ fn onto(path: &Path) -> Result<Option<String>, String> {
             ],
         )?;
         if output.status.success()
-            && let Ok(onto) = std::fs::read_to_string(text(&output))
+            && let Ok(onto) = std::fs::read_to_string(crate::raw_path::line(&output.stdout))
             && !onto.trim().is_empty()
         {
             return Ok(Some(onto.trim().to_string()));

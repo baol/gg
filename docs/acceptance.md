@@ -1983,8 +1983,8 @@ Fixture: `fx-dirty`
 Layer: product
 - When the user chooses **Changes › Discard all tracked changes…**
 - Then a modal **Discard all tracked changes** reads *Restore every tracked file to HEAD? Staged and unstaged changes are both lost.*, lists `WILL BE RESTORED TO HEAD` (empty slot until read), states *This cannot be undone. Untracked files are kept; files only added to the index become untracked.*, and offers **Cancel** (`Esc`) and a filled red **Discard 9 files, staged and unstaged** (`Discard tracked changes`, disabled, until the list arrives)
-- When confirmed: every tracked file and the index equal HEAD (the staged `b.txt` change is lost too); `new.txt`, `notes/*` remain untouched; `e2.txt` becomes untracked
-Covered by (backend, interaction): `discard_all_names_staged_changes_and_keeps_untracked_files`, `discard_all_rereads_and_asks_again_after_an_outside_change` (apps/git-good/src/main.rs); `discard_all_restores_tracked_files_and_keeps_untracked` (crates/git/tests/worktree_changes.rs)
+- When confirmed: every tracked file and the index equal HEAD (the staged `b.txt` change is lost too); `new.txt`, `notes/*` remain untouched; `e2.txt` becomes untracked; a newly added file whose name is not UTF-8, in a repository whose folder name ends with a space, also becomes untracked with its bytes kept
+Covered by (backend, interaction): `discard_all_names_staged_changes_and_keeps_untracked_files`, `discard_all_rereads_and_asks_again_after_an_outside_change` (apps/git-good/src/main.rs); `discard_all_restores_tracked_files_and_keeps_untracked`, `discard_all_keeps_a_newly_added_file_whose_name_is_not_utf8` (crates/git/tests/worktree_changes.rs)
 
 ### CHG-39 Discard all refused during an operation
 Fixture: `fx-rebase-conflict` (also `fx-merge-conflict`)
@@ -3386,7 +3386,9 @@ Layer: product
 - When the user resets to `c27` Soft / Mixed / Hard (separate runs)
 - Then Soft keeps index and working files; Mixed clears the index, keeps working files; Hard discards staged and working tracked changes; untracked files stay in all
 - And `git good reset --hard c05` in `fx-reset-collision` refuses nonzero with empty stdout, stderr saying it would overwrite untracked files and naming `later.txt`; HEAD, index and `later.txt` are unchanged
-Covered by (backend, end-to-end): `soft_reset_keeps_index_and_worktree`, `mixed_reset_clears_the_index_but_keeps_worktree`, `hard_reset_discards_index_and_worktree`, `hard_reset_refuses_to_overwrite_untracked_and_ignored_files` (crates/git/tests/reset.rs); `reset_cli_applies_soft_mixed_and_hard`, `reset_cli_hard_refuses_to_overwrite_untracked_files` (apps/git-good/tests/cli.rs)
+- And the same refusal holds when the untracked file's name is not UTF-8 (`b'raw\xff.txt'`, listed lossily) and when the repository's folder name ends with a space
+- And every mode first saves the tip it leaves as a `reset` backup (`refs/gg/backup/reset/…`), named in the receipt's `backup` and in the GUI's status line (*Reset to <id> <subject> · backup <ref>*); when the backup cannot be written the reset fails and nothing changes
+Covered by (backend, end-to-end): `soft_reset_keeps_index_and_worktree`, `mixed_reset_clears_the_index_but_keeps_worktree`, `hard_reset_discards_index_and_worktree`, `hard_reset_refuses_to_overwrite_untracked_and_ignored_files`, `hard_reset_refuses_to_overwrite_an_untracked_file_whose_name_is_not_utf8`, `hard_reset_refuses_to_overwrite_untracked_files_in_a_folder_ending_with_a_space`, `every_reset_mode_saves_the_previous_tip_as_a_backup`, `reset_fails_without_moving_when_the_backup_cannot_be_written` (crates/git/tests/reset.rs); `reset_cli_applies_soft_mixed_and_hard`, `reset_cli_hard_refuses_to_overwrite_untracked_files` (apps/git-good/tests/cli.rs)
 
 ### RWR-66 Confirm before Drop and Reset off: Soft and Mixed run at once, Hard always confirms
 Fixture: `fx-dirty`, **Preferences › Rebase & recovery › Confirm before Drop and Reset** off
@@ -3395,7 +3397,7 @@ Layer: product
 - Then no dialog appears; the branch is reset with that mode; working files are intact; a backup is still saved
 - When the user chooses Recovery's **Reset branch here › Hard**
 - Then the **Reset here** confirmation with `CHANGES LOST` appears as with the preference on; nothing runs until **Hard reset** is confirmed
-Covered by (interaction, partial): `reset_runs_as_chosen_and_hard_always_asks` (apps/git-good/src/main.rs) (Commit menu route; Recovery's route and the backup not checked)
+Covered by (interaction, partial): `reset_runs_as_chosen_and_hard_always_asks` (apps/git-good/src/main.rs) (Commit menu route, with its `reset` backups and the status line naming them; Recovery's route not checked)
 
 ### RWR-67 Confirm before Drop and Reset off: Drop runs without the plan
 Fixture: `fx-rebase`, preference off, a middle commit selected
@@ -3414,7 +3416,7 @@ Covered by (interaction, partial): `recovery_window_switches_backups_and_reflog_
 ### RWR-69 Backups list and actions
 Fixture: `fx-backups`
 Layer: product
-- Then the backups are listed newest first in 22 px rows under *Saved by Git Good before each rebase, amend or rewrite. Hidden from the refs sidebar.*: SAVED (relative time), BRANCH (pill), BEFORE (rebase, amend, rewrite), TIP, SUBJECT; the selected one is a label grid of TIP (copy button), SAVED (*<date>, <time> · before rebase of <branch>*), BRANCH NOW (tip and *<n> commits differ from the backup*) and REF (copy button); the footer holds **Delete backup…**, **⋯** (Copy commit ID `Ctrl+C`, Copy ref `Ctrl+Shift+C`, Reset branch here ▸ Soft *keep index and files* / Mixed *keep files* / Hard… *discard changes*, Delete backup… `Del`), **Open commit**, **Create branch here…** and the filled **Restore <branch>…** `Enter`; two backups at one commit stay separately selectable
+- Then the backups are listed newest first in 22 px rows under *Saved by Git Good before each rebase, amend, rewrite or reset. Hidden from the refs sidebar.*: SAVED (relative time), BRANCH (pill), BEFORE (rebase, amend, rewrite, reset, restore), TIP, SUBJECT; the selected one is a label grid of TIP (copy button), SAVED (*<date>, <time> · before rebase of <branch>*), BRANCH NOW (tip and *<n> commits differ from the backup*) and REF (copy button); the footer holds **Delete backup…**, **⋯** (Copy commit ID `Ctrl+C`, Copy ref `Ctrl+Shift+C`, Reset branch here ▸ Soft *keep index and files* / Mixed *keep files* / Hard… *discard changes*, Delete backup… `Del`), **Open commit**, **Create branch here…** and the filled **Restore <branch>…** `Enter`; two backups at one commit stay separately selectable
 Covered by (backend, interaction, partial): `backups_show_time_branch_and_a_label_grid_without_refresh` (apps/git-good/src/recovery_view.rs), `backups_record_the_rewritten_branch_and_their_save_time` (crates/git/tests/backup.rs) (the ⋯ menu not opened)
 
 ### RWR-70 Restore from a backup after a rewrite
@@ -3475,7 +3477,7 @@ Layer: product
 - Given a tracked file is edited, when **Restore <branch>…** is chosen
 - Then the confirmation's footer reads *1 file has uncommitted changes. Commit or stash it first.* with **Restore branch** disabled, and `Enter` does nothing; `Esc` cancels
 - When **Delete backup…** (or `Del`) is confirmed
-- Then only that backup ref is removed, HEAD is unchanged, and an empty list reads *No rewrite backups yet. Git Good saves one before every rebase, amend or rewrite.*
+- Then only that backup ref is removed, HEAD is unchanged, and an empty list reads *No rewrite backups yet. Git Good saves one before every rebase, amend, rewrite or reset.*
 Covered by (backend, interaction, partial): `a_dirty_tree_keeps_restore_disabled_and_says_why`, `delete_backup_confirms_then_removes_only_that_ref` (apps/git-good/src/recovery_view.rs), `delete_removes_one_backup_and_refuses_other_references` (crates/git/tests/backup.rs) (the full action sweep not automated)
 
 ### RWR-79 Recovery refreshes itself
@@ -3636,7 +3638,7 @@ Covered by (interaction): `the_sign_checkbox_starts_from_the_commit_preference` 
 ### PRF-21 Rebase & recovery settings exposed and persisted
 Fixture: `fx-rebase`
 Layer: product
-- Then the section shows **Stash working changes first**, **Pull strategy** (Rebase · Merge · Fast-forward only), **Confirm before Drop and Reset** (on), **Keep private backups** (Forever default; 30 days, 90 days), **Offer force-with-lease after a rewrite**, and a note on private backup refs and Recovery
+- Then the section shows **Stash working changes first**, **Pull strategy** (Rebase · Merge · Fast-forward only), **Confirm before Drop and Reset** (on), **Keep private backups** (Forever default; 30 days, 90 days), **Offer force-with-lease after a rewrite**, and a note on private backup refs and Recovery: *Every rewrite and reset creates a private backup ref first.*
 - When each is changed and Git Good restarted
 - Then each value is restored (`rebase_autostash`, `pull_strategy`, `confirm_destructive`, `backup_days`, `offer_force_lease`)
 Covered by (interaction, partial): `reset_runs_as_chosen_and_hard_always_asks` (apps/git-good/src/main.rs) (behavior owned by the rewrite section)
@@ -4146,8 +4148,8 @@ Layer: product
 - When **Create repository**
 - Then the repository is created on `main`, the 11 files are committed as `Initial commit`, and it opens in History and joins the recent list; unchecked, it opens in Local Changes with nothing committed
 - When the folder is `<fx-linear>/docs`
-- Then the line reads `<~fx-linear>/docs is inside the repository <~fx-linear>. Open it instead?` with **Open <~fx-linear>**, and **Create repository** stays disabled
-Covered by (backend, interaction): `init_commits_the_existing_files_except_ignored_ones`, `init_refuses_inside_an_existing_repository`, `init_creates_the_folder_on_the_named_branch_without_committing` (crates/git/tests/init.rs), `the_new_repository_dialog_creates_and_opens_the_repository` (apps/git-good/src/main.rs)
+- Then the line reads `<~fx-linear>/docs is inside the repository <~fx-linear>. Open it instead?` with **Open <~fx-linear>**, and **Create repository** stays disabled, also when the repository's folder name ends with a space
+Covered by (backend, interaction): `init_commits_the_existing_files_except_ignored_ones`, `init_refuses_inside_an_existing_repository`, `enclosing_repository_keeps_a_folder_name_ending_with_a_space`, `init_creates_the_folder_on_the_named_branch_without_committing` (crates/git/tests/init.rs), `the_new_repository_dialog_creates_and_opens_the_repository` (apps/git-good/src/main.rs)
 
 ### DLG-18 Narrow welcome view
 Fixture: `fx-not-repo` (cwd), recent list of 6; window 720×480
@@ -4398,7 +4400,7 @@ Rules every area relies on, cases that span areas, and the CLI contract. Area ca
 9. **RULE-09 One home, one reason.** Every command has one menu home and a search Action; a disabled command shows the same reason in the menu, search and any button (FRM-17, FRM-25, FRM-72).
 10. **RULE-10 Commands act on current state.** Before a command runs, unsettled watcher changes are applied and the operation state is re-read (FRM-63).
 11. **RULE-11 Frames hold still.** Menu bar, toolbar, operation band, footer and reserved slots keep their size when content, counts, progress or errors arrive (FRM-71, RWR-54, REV-14).
-12. **RULE-12 Rewrites are recoverable.** Every rewrite and reset writes a private backup before Git starts; Recovery actions never delete backups or untracked files (RWR-41, RWR-77).
+12. **RULE-12 Rewrites are recoverable.** Every rewrite and reset (Soft, Mixed and Hard) writes a private backup before Git starts, and fails with nothing changed when it cannot; Recovery actions never delete backups or untracked files (RWR-41, RWR-77).
 13. **RULE-13 Status is not conveyed by color alone.** Every state shown in color also has a marker, glyph or text (XCT-21).
 14. **RULE-14 Keyboard completes every workflow.** Each workflow can be finished without a pointer; text fields keep their keys; every dialog opens with its field, or its default button, focused, Enter runs the enabled primary and Esc cancels, and a destructive dialog focuses Cancel (FRM-89); closing a dialog restores focus to where it was opened (XCT-13 … XCT-18).
 15. **RULE-15 CLI and GUI share state and consequences.** Both read the same operation state, validate with the same rules and report the same consequences and backups (XCT-24 … XCT-28).

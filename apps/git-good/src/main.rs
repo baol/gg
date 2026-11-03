@@ -513,7 +513,7 @@ fn read_signing(repo: &Path) -> SigningConfig {
         .output()
         .ok()
         .filter(|output| output.status.success())
-        .map(|output| PathBuf::from(String::from_utf8_lossy(&output.stdout).trim()).join("config"));
+        .map(|output| gg_git::raw_path::line(&output.stdout).join("config"));
     SigningConfig {
         config: gg_git::signature::config(repo),
         file,
@@ -3338,7 +3338,7 @@ impl Browser {
                             ui.separator();
                             ui.strong("Recovery");
                             ui.weak(
-                                "Every rewrite creates a private backup ref first. Repository › Recovery… lists them with the reflog.",
+                                "Every rewrite and reset creates a private backup ref first. Repository › Recovery… lists them with the reflog.",
                             );
                         }
                         PrefSection::Keyboard => {
@@ -6507,13 +6507,18 @@ impl Browser {
         let receipt = gg_git::reset::reset(&path, commit, mode)?;
         self.mutation_error = None;
         self.mutation_notice = Some(format!(
-            "Reset to {}{}",
+            "Reset to {}{}{}",
             self.commit_summary(&receipt.commit),
             if mode == gg_engine::reset::Mode::Hard {
                 " · hard"
             } else {
                 ""
-            }
+            },
+            receipt
+                .backup
+                .as_ref()
+                .map(|backup| format!(" · backup {backup}"))
+                .unwrap_or_default()
         ));
         self.refresh_mutation();
         self.load(ctx);
@@ -18889,6 +18894,16 @@ mod tests {
             std::fs::read(path.join("a"))?,
             b"two\n",
             "working files stay"
+        );
+        // Each reset saved the tip it left, and the notice names the backup.
+        let backups = gg_git::backup::list(path)?;
+        assert_eq!(backups.len(), 2, "one backup per reset");
+        assert!(backups.iter().all(|backup| backup.label == "reset"));
+        assert!(backups.iter().all(|backup| backup.commit == second));
+        let notice = app.mutation_notice.clone().unwrap_or_default();
+        assert!(
+            notice.ends_with(&format!(" · backup {}", backups[0].reference)),
+            "{notice}"
         );
         Ok(())
     }

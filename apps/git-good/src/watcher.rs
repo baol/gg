@@ -212,8 +212,11 @@ fn layout(workdir: &Path) -> Result<Layout, String> {
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
     }
-    let text = String::from_utf8_lossy(&output.stdout);
-    let mut lines = text.lines().map(PathBuf::from);
+    // One path per line, kept as Git's bytes: only the line ending goes.
+    let mut lines = output
+        .stdout
+        .split_inclusive(|byte| *byte == b'\n')
+        .map(gg_git::raw_path::line);
     match (lines.next(), lines.next(), lines.next()) {
         (Some(workdir), Some(git_dir), Some(common_dir)) => Ok(Layout {
             workdir,

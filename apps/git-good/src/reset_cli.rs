@@ -39,6 +39,7 @@ pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::
             "commit": receipt.commit,
             "mode": receipt.mode,
             "applied": receipt.applied,
+            "backup": receipt.backup,
             "complete": true,
         }),
     )?;

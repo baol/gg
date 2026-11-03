@@ -25,16 +25,22 @@ fn git(path: &Path, args: &[&str]) -> Result<Vec<u8>> {
 
 fn repo() -> Result<tempfile::TempDir> {
     let dir = tempfile::tempdir()?;
-    git(dir.path(), &["init", "-b", "main"])?;
-    git(dir.path(), &["config", "user.name", "Test"])?;
-    git(dir.path(), &["config", "user.email", "test@example.org"])?;
-    git(dir.path(), &["config", "core.autocrlf", "false"])?;
-    std::fs::write(dir.path().join("a"), b"one\n")?;
-    git(dir.path(), &["add", "a"])?;
-    git(dir.path(), &["commit", "-qm", "one"])?;
-    std::fs::write(dir.path().join("a"), b"two\n")?;
-    git(dir.path(), &["commit", "-qam", "two"])?;
+    init(dir.path())?;
     Ok(dir)
+}
+
+/// A repository at `path` with two commits that change `a`.
+fn init(path: &Path) -> Result {
+    git(path, &["init", "-b", "main"])?;
+    git(path, &["config", "user.name", "Test"])?;
+    git(path, &["config", "user.email", "test@example.org"])?;
+    git(path, &["config", "core.autocrlf", "false"])?;
+    std::fs::write(path.join("a"), b"one\n")?;
+    git(path, &["add", "a"])?;
+    git(path, &["commit", "-qm", "one"])?;
+    std::fs::write(path.join("a"), b"two\n")?;
+    git(path, &["commit", "-qam", "two"])?;
+    Ok(())
 }
 
 fn head(path: &Path) -> Result<String> {
@@ -138,5 +144,108 @@ fn hard_reset_refuses_to_overwrite_untracked_and_ignored_files() -> Result {
     let receipt = gg_git::reset::reset(p, &target, gg_engine::reset::Mode::Mixed)?;
     assert!(receipt.applied, "soft and mixed leave working files alone");
     assert_eq!(std::fs::read(p.join("b"))?, b"my untracked notes\n");
+    Ok(())
+}
+
+/// Commit `name` in a third commit, then untrack it again, so a hard reset
+/// back to that commit would write `name` from the tree.
+#[cfg(not(windows))]
+fn tracked_then_untracked(p: &Path, name: &std::ffi::OsStr, pattern: &str) -> Result<String> {
+    std::fs::write(p.join(name), b"tracked later\n")?;
+    git(p, &["add", "-A"])?;
+    git(p, &["commit", "-qm", "three"])?;
+    let target = head(p)?;
+    git(p, &["rm", "-q", "--cached", "--", pattern])?;
+    git(p, &["commit", "-qm", "four"])?;
+    std::fs::write(p.join(name), b"my untracked notes\n")?;
+    Ok(target)
+}
+
+// EXP-01: a name that is not UTF-8 is still found on disk.
+#[cfg(all(unix, not(target_os = "macos")))]
+#[test]
+fn hard_reset_refuses_to_overwrite_an_untracked_file_whose_name_is_not_utf8() -> Result {
+    use std::os::unix::ffi::OsStrExt;
+    let dir = repo()?;
+    let p = dir.path();
+    let name = std::ffi::OsStr::from_bytes(b"raw\xff.txt");
+    let target = tracked_then_untracked(p, name, "raw*.txt")?;
+    let before = head(p)?;
+    assert_eq!(
+        gg_git::reset::overwritten_untracked(p, &target)?,
+        vec!["raw\u{fffd}.txt".to_string()],
+        "listed for display"
+    );
+    let error = match gg_git::reset::reset(p, &target, gg_engine::reset::Mode::Hard) {
+        Ok(_) => return Err("hard reset unexpectedly overwrote a non-UTF-8 file".into()),
+        Err(error) => error,
+    };
+    assert!(error.contains("untracked"), "{error}");
+    assert_eq!(head(p)?, before, "nothing changed");
+    assert_eq!(std::fs::read(p.join(name))?, b"my untracked notes\n");
+    Ok(())
+}
+
+// EXP-02: the working tree's own trailing space is kept.
+#[cfg(not(windows))]
+#[test]
+fn hard_reset_refuses_to_overwrite_untracked_files_in_a_folder_ending_with_a_space() -> Result {
+    let parent = tempfile::tempdir()?;
+    let p = parent.path().join("repo ");
+    std::fs::create_dir(&p)?;
+    init(&p)?;
+    let target = tracked_then_untracked(&p, std::ffi::OsStr::new("b"), "b")?;
+    let before = head(&p)?;
+    assert_eq!(
+        gg_git::reset::overwritten_untracked(&p, &target)?,
+        vec!["b".to_string()]
+    );
+    let error = match gg_git::reset::reset(&p, &target, gg_engine::reset::Mode::Hard) {
+        Ok(_) => return Err("hard reset unexpectedly overwrote an untracked file".into()),
+        Err(error) => error,
+    };
+    assert!(error.ends_with("\nb"), "{error}");
+    assert_eq!(head(&p)?, before, "nothing changed");
+    assert_eq!(std::fs::read(p.join("b"))?, b"my untracked notes\n");
+    Ok(())
+}
+
+// EXP-05: every mode saves the tip it moves away from first.
+#[test]
+fn every_reset_mode_saves_the_previous_tip_as_a_backup() -> Result {
+    for mode in [
+        gg_engine::reset::Mode::Soft,
+        gg_engine::reset::Mode::Mixed,
+        gg_engine::reset::Mode::Hard,
+    ] {
+        let dir = repo()?;
+        let p = dir.path();
+        let tip = head(p)?;
+        let receipt = gg_git::reset::reset(p, "HEAD^", mode)?;
+        let backup = receipt.backup.ok_or("the receipt names no backup")?;
+        let backups = gg_git::backup::list(p)?;
+        assert_eq!(backups.len(), 1, "{mode:?}");
+        assert_eq!(backups[0].reference, backup);
+        assert_eq!(backups[0].label, "reset");
+        assert_eq!(backups[0].commit, tip, "{mode:?}");
+        assert_eq!(backups[0].branch.as_deref(), Some("main"));
+    }
+    Ok(())
+}
+
+#[test]
+fn reset_fails_without_moving_when_the_backup_cannot_be_written() -> Result {
+    let dir = repo()?;
+    let p = dir.path();
+    let before = head(p)?;
+    // A file where the backup folder belongs makes `update-ref` fail.
+    std::fs::write(p.join(".git/refs/gg"), b"in the way\n")?;
+    let error = match gg_git::reset::reset(p, "HEAD^", gg_engine::reset::Mode::Hard) {
+        Ok(_) => return Err("reset ran without a backup".into()),
+        Err(error) => error,
+    };
+    assert!(error.contains("backup"), "{error}");
+    assert_eq!(head(p)?, before, "nothing changed");
+    assert_eq!(std::fs::read(p.join("a"))?, b"two\n");
     Ok(())
 }

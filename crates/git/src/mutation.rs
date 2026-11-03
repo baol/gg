@@ -247,7 +247,7 @@ fn git_path(path: &Path, name: &str) -> Result<Option<std::path::PathBuf>, Strin
     if !output.status.success() {
         return Ok(None);
     }
-    let found = std::path::PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+    let found = crate::raw_path::line(&output.stdout);
     Ok(Some(if found.is_absolute() {
         found
     } else {

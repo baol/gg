@@ -2233,6 +2233,7 @@ fn reset_cli_applies_soft_mixed_and_hard() -> Result {
     std::fs::write(repo.path().join("a"), b"two\n")?;
     git(repo.path(), &["commit", "-qam", "two"])?;
     let first = git_output(repo.path(), &["rev-parse", "HEAD^"])?;
+    let second = git_output(repo.path(), &["rev-parse", "HEAD"])?;
 
     let binary = env!("CARGO_BIN_EXE_git-good");
     let out = Command::new(binary)
@@ -2248,6 +2249,15 @@ fn reset_cli_applies_soft_mixed_and_hard() -> Result {
     assert_eq!(receipt["operation"], "reset");
     assert_eq!(receipt["mode"], "soft");
     assert_eq!(receipt["applied"], true);
+    let backup = receipt["backup"]
+        .as_str()
+        .ok_or("the receipt names no backup")?;
+    assert!(backup.starts_with("refs/gg/backup/reset/"), "{backup}");
+    assert_eq!(
+        git_output(repo.path(), &["rev-parse", backup])?,
+        second,
+        "the backup holds the tip the reset left"
+    );
     assert_eq!(git_output(repo.path(), &["rev-parse", "HEAD"])?, first);
     assert_eq!(std::fs::read(repo.path().join("a"))?, b"two\n");
     assert_eq!(

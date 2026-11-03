@@ -6,7 +6,18 @@ use std::{
     process::{Command, Output, Stdio},
 };
 
+/// Reset the current branch to `commit`. The tip it leaves is first saved as
+/// a `reset` backup; when that cannot be written nothing is reset.
 pub fn reset(path: &Path, commit: &str, mode: Mode) -> Result<Receipt, String> {
+    reset_with(path, commit, mode, true)
+}
+
+/// [`reset`] for a caller that has already saved its own backup of the tip.
+pub(crate) fn reset_after_backup(path: &Path, commit: &str, mode: Mode) -> Result<Receipt, String> {
+    reset_with(path, commit, mode, false)
+}
+
+fn reset_with(path: &Path, commit: &str, mode: Mode, save: bool) -> Result<Receipt, String> {
     let commit = commit.trim();
     if commit.is_empty() || commit.starts_with('-') {
         return Err("Reset target must be a revision that does not start with '-'.".into());
@@ -21,6 +32,11 @@ pub fn reset(path: &Path, commit: &str, mode: Mode) -> Result<Receipt, String> {
             ));
         }
     }
+    // An unborn branch has no tip to save.
+    let backup = match save.then(|| resolve(path, "HEAD")) {
+        Some(Ok(previous)) => Some(crate::backup::create(path, "reset", &previous)?),
+        _ => None,
+    };
     let output = run(
         path,
         &[
@@ -36,6 +52,7 @@ pub fn reset(path: &Path, commit: &str, mode: Mode) -> Result<Receipt, String> {
         commit: resolved,
         mode,
         applied: true,
+        backup,
     })
 }
 
@@ -73,38 +90,43 @@ pub fn overwritten_untracked(path: &Path, commit: &str) -> Result<Vec<String>, S
     if !top.status.success() {
         return Err(failure("Finding the working tree", &top));
     }
-    let top = std::path::PathBuf::from(String::from_utf8_lossy(&top.stdout).trim());
+    // Paths stay the bytes Git printed until they are shown, so a name that
+    // is not UTF-8, or a working tree whose name ends with a space, is still
+    // the file on disk.
+    let top = crate::raw_path::line(&top.stdout);
+    let on_disk = |name: &[u8]| std::fs::symlink_metadata(top.join(crate::raw_path::path(name)));
     let indexed = nul_separated(&index.stdout).collect::<BTreeSet<_>>();
     let mut overwritten = BTreeSet::new();
     for entry in nul_separated(&tree.stdout) {
         // `<mode> <type> <object>\t<path>`; submodules (`commit`) are skipped.
-        let Some((meta, name)) = entry.split_once('\t') else {
+        let Some(tab) = entry.iter().position(|byte| *byte == b'\t') else {
             continue;
         };
-        if meta.split(' ').nth(1) != Some("blob") || indexed.contains(name) {
+        let (meta, name) = (&entry[..tab], &entry[tab + 1..]);
+        if meta.split(|byte| *byte == b' ').nth(1) != Some(&b"blob"[..]) || indexed.contains(name) {
             continue;
         }
-        if std::fs::symlink_metadata(top.join(name)).is_ok() {
-            overwritten.insert(name.to_owned());
+        if on_disk(name).is_ok() {
+            overwritten.insert(name);
         }
         let mut parent = name;
-        while let Some((folder, _)) = parent.rsplit_once('/') {
-            parent = folder;
-            if !indexed.contains(folder)
-                && std::fs::symlink_metadata(top.join(folder)).is_ok_and(|meta| !meta.is_dir())
-            {
-                overwritten.insert(folder.to_owned());
+        while let Some(slash) = parent.iter().rposition(|byte| *byte == b'/') {
+            parent = &parent[..slash];
+            if !indexed.contains(parent) && on_disk(parent).is_ok_and(|meta| !meta.is_dir()) {
+                overwritten.insert(parent);
             }
         }
     }
-    Ok(overwritten.into_iter().collect())
+    Ok(overwritten
+        .into_iter()
+        .map(|name| String::from_utf8_lossy(name).into_owned())
+        .collect())
 }
 
-fn nul_separated(bytes: &[u8]) -> impl Iterator<Item = String> + '_ {
+fn nul_separated(bytes: &[u8]) -> impl Iterator<Item = &[u8]> {
     bytes
         .split(|byte| *byte == 0)
         .filter(|entry| !entry.is_empty())
-        .map(|entry| String::from_utf8_lossy(entry).into_owned())
 }
 
 fn resolve(path: &Path, commit: &str) -> Result<String, String> {

@@ -36,8 +36,8 @@ pub fn enclosing_repository(path: &Path) -> Option<PathBuf> {
         let inside = git(existing, &[], &["rev-parse", "--git-dir"]).ok()?;
         return inside.status.success().then(|| canonical(existing));
     }
-    let top = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    (!top.is_empty()).then(|| canonical(Path::new(&top)))
+    let top = crate::raw_path::line(&output.stdout);
+    (!top.as_os_str().is_empty()).then(|| canonical(&top))
 }
 
 /// The canonical form of `path`, as the app spells repository paths (Git

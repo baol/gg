@@ -105,6 +105,30 @@ fn discard_all_restores_tracked_files_and_keeps_untracked() -> Result {
     Ok(())
 }
 
+// A newly added name that is not UTF-8, in a working tree whose folder name
+// ends with a space, is untracked by its own bytes.
+#[cfg(all(unix, not(target_os = "macos")))]
+#[test]
+fn discard_all_keeps_a_newly_added_file_whose_name_is_not_utf8() -> Result {
+    use std::os::unix::ffi::OsStrExt;
+    let parent = tempfile::tempdir()?;
+    let p = parent.path().join("repo ");
+    std::fs::create_dir(&p)?;
+    init(&p)?;
+    std::fs::write(p.join("kept"), b"kept\n")?;
+    git(&p, &["add", "kept"])?;
+    git(&p, &["commit", "-qm", "base"])?;
+    std::fs::write(p.join("kept"), b"changed\n")?;
+    let name = std::ffi::OsStr::from_bytes(b"raw\xff.txt");
+    std::fs::write(p.join(name), b"added\n")?;
+    git(&p, &["add", "-A"])?;
+    gg_git::worktree_changes::discard_all(&p)?;
+    assert_eq!(std::fs::read(p.join("kept"))?, b"kept\n");
+    assert_eq!(status(&p)?, ["?? \"raw\\377.txt\""]);
+    assert_eq!(std::fs::read(p.join(name))?, b"added\n");
+    Ok(())
+}
+
 #[test]
 fn discard_all_refuses_during_a_rebase() -> Result {
     let dir = repo()?;

@@ -24,4 +24,7 @@ pub struct Receipt {
     pub commit: String,
     pub mode: Mode,
     pub applied: bool,
+    /// Private recovery reference for the tip before the reset.
+    #[serde(default)]
+    pub backup: Option<String>,
 }

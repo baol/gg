@@ -276,7 +276,7 @@ pub fn restore(path: &Path, commit: &str, branch: &str) -> Result<Restore, Strin
     }
     let target = String::from_utf8_lossy(&target.stdout).trim().to_string();
     let saved = create(path, "restore", &previous)?;
-    let receipt = crate::reset::reset(path, &target, gg_engine::reset::Mode::Hard)?;
+    let receipt = crate::reset::reset_after_backup(path, &target, gg_engine::reset::Mode::Hard)?;
     Ok(Restore {
         branch: branch.to_string(),
         previous,
