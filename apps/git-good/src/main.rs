@@ -13843,6 +13843,82 @@ mod tests {
     }
 
     #[test]
+    fn ctrl_b_opens_new_branch_ready_to_type_and_esc_closes_it()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let path = std::fs::canonicalize(dir.path())?;
+        for args in [
+            &["init", "-q", "-b", "main"][..],
+            &[
+                "-c",
+                "user.name=T",
+                "-c",
+                "user.email=t@e",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "base",
+            ],
+        ] {
+            let status = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&path)
+                .args(args)
+                .env(
+                    "GIT_CONFIG_GLOBAL",
+                    if cfg!(windows) { "NUL" } else { "/dev/null" },
+                )
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .status()?;
+            assert!(status.success(), "git {args:?}");
+        }
+        let ctx = egui::Context::default();
+        let mut app = Browser::new(path);
+        app.load(&ctx);
+        let event = |key, modifiers| egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        };
+        let run = |app: &mut Browser, events| {
+            let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, events), |ui| {
+                app.draw_ui(ui)
+            });
+        };
+        for _ in 0..300 {
+            run(&mut app, vec![]);
+            if app.state.history.is_some() && app.pending.is_none() && app.local_summary.is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        run(
+            &mut app,
+            vec![event(egui::Key::B, egui::Modifiers::COMMAND)],
+        );
+        assert!(app.create_branch.is_some(), "Ctrl+B opens New branch");
+        run(&mut app, vec![]);
+        run(&mut app, vec![egui::Event::Text("topic".into())]);
+        assert_eq!(
+            app.create_branch
+                .as_ref()
+                .map(|dialog| dialog.name.as_str()),
+            Some("topic"),
+            "typing goes into the name field"
+        );
+        run(
+            &mut app,
+            vec![event(egui::Key::Escape, egui::Modifiers::NONE)],
+        );
+        run(&mut app, vec![]);
+        assert!(app.create_branch.is_none(), "Esc closes New branch");
+        Ok(())
+    }
+
+    #[test]
     fn dialogs_take_typing_at_once_and_answer_enter_and_esc()
     -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempfile::tempdir()?;
