@@ -2571,8 +2571,7 @@ impl Browser {
                                 consequence::danger_button(format!("Delete on {remote}"), ready),
                             )
                             .clicked();
-                        let button =
-                            ui.button(("Cancel", egui::RichText::new("Esc").small().weak()));
+                        let button = ui.add(inspect_ui::secondary("Cancel", "Esc"));
                         cancel |= button.clicked();
                         let id = egui::Id::unique("delete-remote");
                         cancel |= crate::navigation::dialog_keys(ui, id, &button, false).cancel;
@@ -2678,8 +2677,7 @@ impl Browser {
                         {
                             submit = true;
                         }
-                        let button =
-                            ui.button(("Cancel", egui::RichText::new("Esc").small().weak()));
+                        let button = ui.add(inspect_ui::secondary("Cancel", "Esc"));
                         let id = egui::Id::unique("force-push-lease");
                         if button.clicked()
                             || crate::navigation::dialog_keys(ui, id, &button, false).cancel
@@ -3487,11 +3485,11 @@ impl Browser {
                     ui.colored_label(ui.visuals().error_fg_color, error);
                 }
                 ui.horizontal(|ui| {
-                    let primary = ui.button("Stash and switch");
+                    let primary = ui.add(inspect_ui::secondary("Stash and switch", "Enter"));
                     if primary.clicked() {
                         submit = true;
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui.add(inspect_ui::secondary("Cancel", "Esc")).clicked() {
                         cancel = true;
                     }
                     let keys = crate::navigation::dialog_keys(
@@ -4162,10 +4160,10 @@ impl Browser {
                         submit |= ui
                             .add_enabled(
                                 !dialog.new.trim().is_empty() && dialog.new.trim() != dialog.old,
-                                egui::Button::new("Rename"),
+                                inspect_ui::secondary("Rename", "Enter"),
                             )
                             .clicked();
-                        cancel |= ui.button("Cancel").clicked();
+                        cancel |= ui.add(inspect_ui::secondary("Cancel", "Esc")).clicked();
                     });
                     let keys = crate::navigation::dialog_keys(
                         ui,
@@ -4232,9 +4230,9 @@ impl Browser {
                         ui.colored_label(ui.visuals().error_fg_color, error);
                     }
                     ui.horizontal(|ui| {
-                        let primary = ui.button("Set upstream");
+                        let primary = ui.add(inspect_ui::secondary("Set upstream", "Enter"));
                         submit |= primary.clicked();
-                        cancel |= ui.button("Cancel").clicked();
+                        cancel |= ui.add(inspect_ui::secondary("Cancel", "Esc")).clicked();
                         let id = egui::Id::unique("set-upstream");
                         let keys = crate::navigation::dialog_keys(ui, id, &primary, true);
                         submit |= keys.submit;
@@ -4305,7 +4303,7 @@ impl Browser {
                     ui.weak("The current branch cannot be deleted. The next step confirms.");
                     ui.horizontal(|ui| {
                         next |= ui.button("Delete…").clicked();
-                        let button = ui.button("Cancel");
+                        let button = ui.add(inspect_ui::secondary("Cancel", "Esc"));
                         cancel |= button.clicked();
                         let id = egui::Id::unique("delete-branch-pick");
                         cancel |= crate::navigation::dialog_keys(ui, id, &button, false).cancel;
@@ -4385,8 +4383,7 @@ impl Browser {
                             confirm |= ui
                                 .add_enabled(enabled, consequence::danger_button(label, ready))
                                 .clicked();
-                            let button =
-                                ui.button(("Cancel", egui::RichText::new("Esc").small().weak()));
+                            let button = ui.add(inspect_ui::secondary("Cancel", "Esc"));
                             cancel |= button.clicked();
                             let id = egui::Id::unique("discard-all");
                             cancel |= crate::navigation::dialog_keys(ui, id, &button, false).cancel;
@@ -6166,9 +6163,10 @@ fn stash_picker_actions(
         ));
         ui.horizontal(|ui| {
             if ui
-                .add(consequence::danger_button(
+                .add(consequence::danger_button_with_key(
                     format!("Drop {}", entry.reference),
                     true,
+                    "Enter",
                 ))
                 .clicked()
             {
@@ -8000,11 +7998,14 @@ impl Browser {
                     ui.horizontal(|ui| {
                         let response = ui.add_enabled(
                             can_create,
-                            egui::Button::new(if dialog.sign {
-                                "Create signed tag"
-                            } else {
-                                "Create tag"
-                            }),
+                            inspect_ui::secondary(
+                                if dialog.sign {
+                                    "Create signed tag"
+                                } else {
+                                    "Create tag"
+                                },
+                                "Enter",
+                            ),
                         );
                         let response = if can_create {
                             response
@@ -8021,7 +8022,7 @@ impl Browser {
                         if response.clicked() {
                             submit = true;
                         }
-                        if ui.button("Cancel").clicked() {
+                        if ui.add(inspect_ui::secondary("Cancel", "Esc")).clicked() {
                             cancel = true;
                         }
                     });
@@ -8258,7 +8259,10 @@ impl Browser {
                 ui.add(egui::Label::new(body).wrap());
                 ui.horizontal(|ui| {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.add(consequence::danger_button(confirm, true)).clicked() {
+                        if ui
+                            .add(consequence::danger_button_with_key(confirm, true, "Enter"))
+                            .clicked()
+                        {
                             accepted = true;
                         }
                         if ui
@@ -9414,7 +9418,7 @@ impl Browser {
                         let button = if enabled {
                             inspect_ui::primary("Create worktree", Some("Enter"))
                         } else {
-                            egui::Button::new("Create worktree")
+                            inspect_ui::secondary("Create worktree", "Enter")
                         };
                         if ui.add_enabled(enabled, button).clicked() {
                             decision = Some(inspect_ui::Decision::Confirm);
@@ -11112,9 +11116,7 @@ impl Browser {
                             if ui.add_enabled(ready, primary).clicked() {
                                 open = Some(self.path.trim().to_string());
                             }
-                            cancel |= ui
-                                .button(("Cancel", egui::RichText::new("Esc").small().weak()))
-                                .clicked();
+                            cancel |= ui.add(inspect_ui::secondary("Cancel", "Esc")).clicked();
                         });
                     });
                     let ready = open_ready && !self.path.trim().is_empty();
@@ -11327,7 +11329,7 @@ impl Browser {
                         && self.branch.is_none();
                     ui.horizontal(|ui| {
                         if ui
-                            .add_enabled(ready, egui::Button::new("Clone"))
+                            .add_enabled(ready, inspect_ui::secondary("Clone", "Enter"))
                             .on_disabled_hover_text(
                                 "Enter a repository URL, an absolute parent folder, and a single project name",
                             )
@@ -11335,7 +11337,7 @@ impl Browser {
                         {
                             submit = Some((dialog.url.trim().to_string(), destination.clone()));
                         }
-                        if ui.button("Cancel").clicked() {
+                        if ui.add(inspect_ui::secondary("Cancel", "Esc")).clicked() {
                             cancelled = true;
                         }
                     });
@@ -11395,13 +11397,13 @@ impl Browser {
                         if ui
                             .add_enabled(
                                 !busy && !remote_branch.trim().is_empty(),
-                                egui::Button::new("Track branch"),
+                                inspect_ui::secondary("Track branch", "Enter"),
                             )
                             .clicked()
                         {
                             submit = true;
                         }
-                        if ui.button("Cancel").clicked() {
+                        if ui.add(inspect_ui::secondary("Cancel", "Esc")).clicked() {
                             cancelled = true;
                         }
                     });
@@ -11507,14 +11509,14 @@ impl Browser {
                         if ui
                             .add_enabled(
                                 !dialog.name.trim().is_empty(),
-                                egui::Button::new("Create"),
+                                inspect_ui::secondary("Create", "Enter"),
                             )
                             .clicked()
                         {
                             create_branch_submit =
                                 Some((dialog.name.trim().to_string(), dialog.switch));
                         }
-                        if ui.button("Cancel").clicked() {
+                        if ui.add(inspect_ui::secondary("Cancel", "Esc")).clicked() {
                             create_branch_cancel = true;
                         }
                     });
@@ -11685,8 +11687,7 @@ impl Browser {
                             {
                                 branch_delete_confirmed = true;
                             }
-                            let button =
-                                ui.button(("Cancel", egui::RichText::new("Esc").small().weak()));
+                            let button = ui.add(inspect_ui::secondary("Cancel", "Esc"));
                             let id = egui::Id::unique("delete-branch");
                             if button.clicked()
                                 || crate::navigation::dialog_keys(ui, id, &button, false).cancel
@@ -11750,7 +11751,7 @@ impl Browser {
                         if ui.button("Delete").clicked() {
                             tag_delete_action = Some(dialog.name.clone());
                         }
-                        let button = ui.button("Cancel");
+                        let button = ui.add(inspect_ui::secondary("Cancel", "Esc"));
                         let id = egui::Id::unique("delete-tag");
                         if button.clicked()
                             || crate::navigation::dialog_keys(ui, id, &button, false).cancel
@@ -11936,8 +11937,7 @@ impl Browser {
                             if submit.clicked() {
                                 reset_confirmed = true;
                             }
-                            let button =
-                                ui.button(("Cancel", egui::RichText::new("Esc").small().weak()));
+                            let button = ui.add(inspect_ui::secondary("Cancel", "Esc"));
                             if button.clicked() {
                                 reset_cancel = true;
                             }
@@ -12021,13 +12021,13 @@ impl Browser {
                         if ui
                             .add_enabled(
                                 !dialog.reference.trim().is_empty(),
-                                egui::Button::new("Merge"),
+                                inspect_ui::secondary("Merge", "Enter"),
                             )
                             .clicked()
                         {
                             merge_submit = Some((dialog.reference.trim().to_string(), dialog.no_ff));
                         }
-                        if ui.button("Cancel").clicked() {
+                        if ui.add(inspect_ui::secondary("Cancel", "Esc")).clicked() {
                             cancelled = true;
                         }
                     });
@@ -12096,14 +12096,14 @@ impl Browser {
                         if ui
                             .add_enabled(
                                 !dialog.reference.trim().is_empty(),
-                                egui::Button::new("Rebase"),
+                                inspect_ui::secondary("Rebase", "Enter"),
                             )
                             .clicked()
                         {
                             rebase_submit =
                                 Some((dialog.reference.trim().to_string(), dialog.autostash));
                         }
-                        if ui.button("Cancel").clicked() {
+                        if ui.add(inspect_ui::secondary("Cancel", "Esc")).clicked() {
                             cancelled = true;
                         }
                     });
@@ -12317,10 +12317,7 @@ impl Browser {
                                     dialog.keep_index,
                                 ));
                             }
-                            if ui
-                                .button(("Cancel", egui::RichText::new("Esc").small().weak()))
-                                .clicked()
-                            {
+                            if ui.add(inspect_ui::secondary("Cancel", "Esc")).clicked() {
                                 cancelled = true;
                             }
                         });
@@ -13843,6 +13840,82 @@ mod tests {
     }
 
     #[test]
+    fn ctrl_b_opens_new_branch_ready_to_type_and_esc_closes_it()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let path = std::fs::canonicalize(dir.path())?;
+        for args in [
+            &["init", "-q", "-b", "main"][..],
+            &[
+                "-c",
+                "user.name=T",
+                "-c",
+                "user.email=t@e",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "base",
+            ],
+        ] {
+            let status = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&path)
+                .args(args)
+                .env(
+                    "GIT_CONFIG_GLOBAL",
+                    if cfg!(windows) { "NUL" } else { "/dev/null" },
+                )
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .status()?;
+            assert!(status.success(), "git {args:?}");
+        }
+        let ctx = egui::Context::default();
+        let mut app = Browser::new(path);
+        app.load(&ctx);
+        let event = |key, modifiers| egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        };
+        let run = |app: &mut Browser, events| {
+            let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, events), |ui| {
+                app.draw_ui(ui)
+            });
+        };
+        for _ in 0..300 {
+            run(&mut app, vec![]);
+            if app.state.history.is_some() && app.pending.is_none() && app.local_summary.is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        run(
+            &mut app,
+            vec![event(egui::Key::B, egui::Modifiers::COMMAND)],
+        );
+        assert!(app.create_branch.is_some(), "Ctrl+B opens New branch");
+        run(&mut app, vec![]);
+        run(&mut app, vec![egui::Event::Text("topic".into())]);
+        assert_eq!(
+            app.create_branch
+                .as_ref()
+                .map(|dialog| dialog.name.as_str()),
+            Some("topic"),
+            "typing goes into the name field"
+        );
+        run(
+            &mut app,
+            vec![event(egui::Key::Escape, egui::Modifiers::NONE)],
+        );
+        run(&mut app, vec![]);
+        assert!(app.create_branch.is_none(), "Esc closes New branch");
+        Ok(())
+    }
+
+    #[test]
     fn dialogs_take_typing_at_once_and_answer_enter_and_esc()
     -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempfile::tempdir()?;
@@ -14269,6 +14342,66 @@ mod tests {
             assert!(text.iter().any(|line| line.contains("Delete tag")));
             assert!(text.iter().any(|line| line.contains("v1")));
         }
+    }
+
+    #[test]
+    fn dialog_buttons_show_the_keys_that_press_them() {
+        // How many `Enter` and `Esc` hints a frame draws, so the window
+        // behind the dialog counts as a baseline.
+        fn keys(app: &mut Browser) -> (usize, usize) {
+            let ctx = egui::Context::default();
+            let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            let count = |key: &str| {
+                output
+                    .shapes
+                    .iter()
+                    .filter(|shape| match &shape.shape {
+                        egui::epaint::Shape::Text(text) => text.galley.job.text == key,
+                        _ => false,
+                    })
+                    .count()
+            };
+            (count("Enter"), count("Esc"))
+        }
+        let (enter, esc) = keys(&mut layout_fixture());
+
+        let mut app = layout_fixture();
+        app.create_branch = Some(CreateBranchDialog {
+            name: String::new(),
+            commit: "a".repeat(40),
+            selector: "current HEAD".into(),
+            switch: true,
+            recovery_source: None,
+            error: None,
+        });
+        // Shown while Create is still disabled, so nothing jumps.
+        let (new_enter, new_esc) = keys(&mut app);
+        assert!(new_enter > enter, "New branch: Create shows Enter");
+        assert!(new_esc > esc, "New branch: Cancel shows Esc");
+
+        let mut app = layout_fixture();
+        app.branch_delete = Some(BranchDeleteDialog {
+            name: "feature".into(),
+            error: None,
+        });
+        let (delete_enter, delete_esc) = keys(&mut app);
+        assert_eq!(delete_enter, enter, "Delete branch: Enter never deletes");
+        assert!(delete_esc > esc, "Delete branch: Cancel shows Esc");
+
+        let mut app = layout_fixture();
+        app.rename_dialog = Some(RenameDialog {
+            old: "main".into(),
+            new: "topic".into(),
+            error: None,
+        });
+        let (rename_enter, rename_esc) = keys(&mut app);
+        assert!(rename_enter > enter, "Rename branch: Rename shows Enter");
+        assert!(rename_esc > esc, "Rename branch: Cancel shows Esc");
     }
 
     #[test]

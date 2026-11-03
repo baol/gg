@@ -447,7 +447,8 @@ pub enum Decision {
 
 /// A confirmation in the modal frame: title and ×, `body`, then a footer
 /// with `reason` (why the primary is disabled) at the left and Cancel Esc /
-/// the filled primary Enter side by side.
+/// the filled primary Enter side by side. A `danger` primary is red and
+/// shows no key: Cancel has the focus, so Enter never presses it.
 pub fn confirm(
     ctx: &egui::Context,
     id: &str,
@@ -478,7 +479,7 @@ pub fn confirm(
                 } else if enabled {
                     primary(primary_label, Some("Enter"))
                 } else {
-                    egui::Button::new(primary_label)
+                    secondary(primary_label, "Enter")
                 };
                 let confirm = ui.add_enabled(enabled, button);
                 if confirm.clicked() {
