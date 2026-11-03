@@ -44,9 +44,14 @@ pub fn focus_content(ctx: &egui::Context) {
         ctx.memory_mut(|m| m.surrender_focus(id));
     }
 }
-pub fn step(ctx: &egui::Context, page: isize) -> isize {
-    let mut distance = 0;
-    for (mods, key, delta) in [
+/// A step past either end of any list: Home and End go to the first and
+/// last row, and every caller clamps to its rows.
+pub const END: isize = isize::MAX / 4;
+
+/// The list keys and the step each moves the selection: arrows, `j`/`k`,
+/// `Ctrl+P`/`Ctrl+N`, a page, and Home/End with or without Ctrl/Cmd.
+pub fn keys(page: isize) -> [(egui::Modifiers, egui::Key, isize); 13] {
+    [
         (egui::Modifiers::NONE, egui::Key::ArrowUp, -1),
         (egui::Modifiers::NONE, egui::Key::K, -1),
         (egui::Modifiers::CTRL, egui::Key::P, -1),
@@ -56,9 +61,18 @@ pub fn step(ctx: &egui::Context, page: isize) -> isize {
         (egui::Modifiers::NONE, egui::Key::PageUp, -page),
         (egui::Modifiers::ALT, egui::Key::V, -page),
         (egui::Modifiers::NONE, egui::Key::PageDown, page),
-    ] {
+        (egui::Modifiers::NONE, egui::Key::Home, -END),
+        (egui::Modifiers::COMMAND, egui::Key::Home, -END),
+        (egui::Modifiers::NONE, egui::Key::End, END),
+        (egui::Modifiers::COMMAND, egui::Key::End, END),
+    ]
+}
+
+pub fn step(ctx: &egui::Context, page: isize) -> isize {
+    let mut distance: isize = 0;
+    for (mods, key, delta) in keys(page) {
         if ctx.input_mut(|i| i.consume_key(mods, key)) {
-            distance += delta;
+            distance = distance.saturating_add(delta);
         }
     }
     if distance != 0 {
@@ -79,6 +93,31 @@ pub fn scroll(ui: &egui::Ui, page_height: f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn home_and_end_step_past_either_end_and_page_keys_by_a_page() {
+        let ctx = egui::Context::default();
+        let press = |key, modifiers| {
+            let mut input = egui::RawInput::default();
+            input.events.push(egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers,
+            });
+            let mut step = 0;
+            let _ = crate::tests::run_ui(&ctx, input, |ui| step = super::step(ui.ctx(), 9));
+            step
+        };
+        assert_eq!(press(egui::Key::Home, egui::Modifiers::NONE), -END);
+        assert_eq!(press(egui::Key::End, egui::Modifiers::NONE), END);
+        assert_eq!(press(egui::Key::End, egui::Modifiers::COMMAND), END);
+        assert_eq!(press(egui::Key::PageDown, egui::Modifiers::NONE), 9);
+        // Every caller clamps with plain arithmetic: no overflow at the ends.
+        assert_eq!((5isize + END).clamp(0, 41), 41);
+        assert_eq!(5usize.saturating_add_signed(-END), 0);
+    }
     #[test]
     fn navigation_and_change_labels_have_glyphs_in_bundled_fonts() {
         let ctx = egui::Context::default();

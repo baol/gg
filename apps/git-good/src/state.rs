@@ -206,7 +206,7 @@ impl State {
         self.details = self.selected_row.and_then(|i| self.rows.get(&i)).cloned();
     }
 
-    pub fn move_selection(&mut self, direction: i32) {
+    pub fn move_selection(&mut self, direction: isize) {
         let ids: Vec<_> = self
             .history
             .iter()
@@ -223,7 +223,7 @@ impl State {
             .position(|id| Some(*id) == self.selected.as_ref())
             .unwrap_or(0);
         let next = current
-            .saturating_add_signed(direction as isize)
+            .saturating_add_signed(direction)
             .min(ids.len().saturating_sub(1));
         self.selected = ids.get(next).map(|id| (*id).clone());
         self.selected_row = self

@@ -1014,17 +1014,7 @@ impl Review {
                 self.show_diff = true;
             }
             let page = self.page.saturating_sub(1).max(1) as isize;
-            for (modifiers, key, step) in [
-                (egui::Modifiers::NONE, egui::Key::ArrowUp, -1),
-                (egui::Modifiers::NONE, egui::Key::K, -1),
-                (egui::Modifiers::CTRL, egui::Key::P, -1),
-                (egui::Modifiers::NONE, egui::Key::ArrowDown, 1),
-                (egui::Modifiers::NONE, egui::Key::J, 1),
-                (egui::Modifiers::CTRL, egui::Key::N, 1),
-                (egui::Modifiers::NONE, egui::Key::PageUp, -page),
-                (egui::Modifiers::ALT, egui::Key::V, -page),
-                (egui::Modifiers::NONE, egui::Key::PageDown, page),
-            ] {
+            for (modifiers, key, step) in crate::navigation::keys(page) {
                 if !(self.show_diff)
                     && self.history.is_none()
                     && ctx.input_mut(|i| i.consume_key(modifiers, key))

@@ -2752,6 +2752,29 @@ mod tests {
         }
     }
     #[test]
+    fn home_and_end_go_to_the_first_and_last_file_of_the_focused_list() {
+        let ctx = egui::Context::default();
+        let mut view = fixture(1000, 10);
+        view.lists[0].rows.insert(999, entry(0, 999));
+        view.lists[0].selected_row = Some(20);
+        frame(&ctx, &mut view, 1120.0, vec![]);
+        let press = |key| egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame(&ctx, &mut view, 1120.0, vec![press(egui::Key::End)]);
+        assert_eq!(view.lists[0].selected_row, Some(999));
+        frame(&ctx, &mut view, 1120.0, vec![press(egui::Key::Home)]);
+        assert_eq!(view.lists[0].selected_row, Some(0));
+        assert_eq!(
+            view.lists[1].selected_row, None,
+            "the other list is untouched"
+        );
+    }
+    #[test]
     fn keyboard_pages_keep_last_page_stable_at_both_widths() {
         for width in [720.0, 1120.0] {
             let ctx = egui::Context::default();

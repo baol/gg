@@ -852,6 +852,13 @@ Layer: interaction
 - Then each pages by the rendered viewport with one row of overlap, clamps at boundaries, and streams uncached destinations; the last page has stable geometry
 Covered by (interaction): `navigation_bindings_share_page_size_bounds_and_stable_reveal`, `keyboard_last_page_has_stable_geometry_between_frames` (interaction_tests.rs)
 
+### HIS-81 Keyboard: Home and End
+Fixture: `fx-linear`
+Layer: interaction
+- When End, then Home, then Ctrl+End (Command+End on macOS), then Ctrl+Home in History; and End then Home in a focused Local Changes list
+- Then History selects c01, then c30, then c01, then c30 and reveals each; the Local Changes list selects its last file, then its first, and the other list keeps its selection; while counting continues End selects the last row found so far
+Covered by (interaction): `home_and_end_go_to_the_first_and_last_commit` (main.rs), `home_and_end_go_to_the_first_and_last_file_of_the_focused_list` (status_view.rs), `home_and_end_step_past_either_end_and_page_keys_by_a_page` (navigation.rs)
+
 ### HIS-32 Ctrl+V is paste, keys stay with focused editors — see FRM-66
 
 ### HIS-33 Keyboard selection loads an evicted row and late details are rejected
