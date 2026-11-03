@@ -10,6 +10,8 @@ use std::time::{Duration, Instant};
 const IDLE: Duration = Duration::from_secs(1);
 /// How long every frame must stay quiet before a view counts as settled.
 const SETTLED: Duration = Duration::from_millis(1500);
+/// How long a settled view must then stay idle.
+const HOLD: Duration = Duration::from_secs(3);
 
 struct Harness {
     ctx: egui::Context,
@@ -102,25 +104,44 @@ impl Harness {
         false
     }
 
-    /// Rest the pointer at `point`, settle, then stay idle for ten more
-    /// frames spread over half a second.
+    /// Rest the pointer at `point`, settle, then hold idle for [`HOLD`]. One
+    /// late wake from outside (on Windows, an antivirus scan of the files
+    /// the test just wrote reaches the file watcher seconds later) settles
+    /// again and holds again; a second wake fails, as does a refresh that
+    /// keeps starting another, however slowly.
     fn assert_idle(&mut self, what: &str, point: egui::Pos2) {
         self.pointer = Some(point);
-        let settled = self.settle();
-        assert!(
-            settled,
-            "{what}: still asking for frames: {:?}",
-            self.ctx.repaint_causes()
-        );
-        for _ in 0..10 {
-            std::thread::sleep(Duration::from_millis(50));
-            let delay = self.frame();
+        let mut wakes = Vec::new();
+        loop {
+            let settled = self.settle();
             assert!(
-                delay >= IDLE,
-                "{what}: asked for a repaint in {delay:?}: {:?}",
+                settled,
+                "{what}: still asking for frames: {:?}",
                 self.ctx.repaint_causes()
             );
+            match self.hold() {
+                None => return,
+                Some(cause) => wakes.push(cause),
+            }
+            assert!(
+                wakes.len() < 2,
+                "{what}: woke again after settling: {wakes:?}"
+            );
         }
+    }
+
+    /// Frames for [`HOLD`] of real time; the first one that asks for a
+    /// repaint sooner than [`IDLE`], with egui's causes, or `None`.
+    fn hold(&mut self) -> Option<String> {
+        let end = Instant::now() + HOLD;
+        while Instant::now() < end {
+            std::thread::sleep(Duration::from_millis(50));
+            let delay = self.frame();
+            if delay < IDLE {
+                return Some(format!("{delay:?}: {:?}", self.ctx.repaint_causes()));
+            }
+        }
+        None
     }
 }
 
