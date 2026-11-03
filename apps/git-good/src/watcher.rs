@@ -9,6 +9,9 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, channel};
 use std::time::{Duration, Instant};
 
+#[cfg(target_os = "linux")]
+mod linux;
+
 /// Quiet time after the last event before the changes are reported.
 const SETTLE: Duration = Duration::from_millis(300);
 
@@ -125,6 +128,9 @@ impl Batch {
 }
 
 pub struct Watcher {
+    #[cfg(target_os = "linux")]
+    _inner: linux::Backend,
+    #[cfg(not(target_os = "linux"))]
     _inner: notify::RecommendedWatcher,
     /// Classified events, stamped when the watcher saw them.
     receiver: Receiver<(Changes, Instant)>,
@@ -137,38 +143,12 @@ impl Watcher {
     /// each event so a frame drains it. That frame asks for another when the
     /// batch will settle ([`Watcher::settles_in`]).
     pub fn start(workdir: &Path, repaint: impl Fn() + Send + 'static) -> Result<Self, String> {
-        use notify::Watcher as _;
         let layout = layout(workdir)?;
         let (sender, receiver) = channel();
-        let classify_layout = layout.clone();
-        let mut inner = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
-            let Ok(event) = event else {
-                return;
-            };
-            if matches!(event.kind, notify::EventKind::Access(_)) {
-                return;
-            }
-            let mut changes = Changes::default();
-            for path in &event.paths {
-                if let Some(found) = classify(&classify_layout, path) {
-                    changes.add(found);
-                }
-            }
-            if changes.any() && sender.send((changes, Instant::now())).is_ok() {
-                repaint();
-            }
-        })
-        .map_err(|error| format!("Watch the repository: {error}"))?;
-        inner
-            .watch(&layout.workdir, notify::RecursiveMode::Recursive)
-            .map_err(|error| format!("Watch the repository: {error}"))?;
-        for dir in [&layout.git_dir, &layout.common_dir] {
-            if !dir.starts_with(&layout.workdir) {
-                inner
-                    .watch(dir, notify::RecursiveMode::Recursive)
-                    .map_err(|error| format!("Watch the Git directory: {error}"))?;
-            }
-        }
+        #[cfg(target_os = "linux")]
+        let inner = linux::start(layout, sender, repaint)?;
+        #[cfg(not(target_os = "linux"))]
+        let inner = with_notify(layout, sender, repaint)?;
         Ok(Self {
             _inner: inner,
             receiver,
@@ -200,6 +180,46 @@ impl Watcher {
         self.drain();
         self.batch.take(None)
     }
+}
+
+/// macOS and Windows: notify, whose backends there report no file opens.
+#[cfg(not(target_os = "linux"))]
+fn with_notify(
+    layout: Layout,
+    sender: std::sync::mpsc::Sender<(Changes, Instant)>,
+    repaint: impl Fn() + Send + 'static,
+) -> Result<notify::RecommendedWatcher, String> {
+    use notify::Watcher as _;
+    let classify_layout = layout.clone();
+    let mut inner = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+        let Ok(event) = event else {
+            return;
+        };
+        if matches!(event.kind, notify::EventKind::Access(_)) {
+            return;
+        }
+        let mut changes = Changes::default();
+        for path in &event.paths {
+            if let Some(found) = classify(&classify_layout, path) {
+                changes.add(found);
+            }
+        }
+        if changes.any() && sender.send((changes, Instant::now())).is_ok() {
+            repaint();
+        }
+    })
+    .map_err(|error| format!("Watch the repository: {error}"))?;
+    inner
+        .watch(&layout.workdir, notify::RecursiveMode::Recursive)
+        .map_err(|error| format!("Watch the repository: {error}"))?;
+    for dir in [&layout.git_dir, &layout.common_dir] {
+        if !dir.starts_with(&layout.workdir) {
+            inner
+                .watch(dir, notify::RecursiveMode::Recursive)
+                .map_err(|error| format!("Watch the Git directory: {error}"))?;
+        }
+    }
+    Ok(inner)
 }
 
 /// Ask Git where this worktree's Git directories are.

@@ -4302,6 +4302,8 @@ mod tests {
         let ctx = egui::Context::default();
         let mut view = StatusView::new(dir.path().into(), &ctx);
         settle(&ctx, &mut view, 1120.0);
+        // The signing configuration is read off the UI thread.
+        pump(&ctx, &mut view, 1120.0, |view| view.signing.is_some());
         assert!(view.sign_commit, "commit.gpgsign starts the sign choice on");
         assert!(view.signing_error().is_some());
         view.message = "signed UI".into();

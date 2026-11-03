@@ -1116,6 +1116,7 @@ dependencies = [
  "gg-engine",
  "gg-git",
  "image",
+ "inotify",
  "muda",
  "notify",
  "objc2 0.6.5",

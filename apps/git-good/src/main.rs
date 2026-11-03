@@ -14673,7 +14673,12 @@ mod tests {
             }
         }
         assert!(app.operation_worker.is_none(), "the stash never finished");
-        assert!(app.stash_notice.is_some(), "the stash's receipt is shown");
+        assert!(
+            app.stash_notice.is_some(),
+            "the stash's receipt is shown; error {:?}, outcome {:?}",
+            app.mutation_error,
+            app.outcome.as_ref().map(|outcome| &outcome.summary)
+        );
         for _ in 0..400 {
             frame(&mut app);
             if app.pending.is_none() {
