@@ -79,6 +79,23 @@ fn init_with_commit_in_an_empty_folder_makes_no_commit() -> Result {
     Ok(())
 }
 
+// The top level's own trailing space is part of its name.
+#[cfg(not(windows))]
+#[test]
+fn enclosing_repository_keeps_a_folder_name_ending_with_a_space() -> Result {
+    let parent = tempfile::tempdir()?;
+    let top = parent.path().join("repo ");
+    std::fs::create_dir(&top)?;
+    git(&top, &["init", "-q", "-b", "main"])?;
+    let nested = top.join("docs");
+    std::fs::create_dir(&nested)?;
+    assert_eq!(
+        gg_git::init::enclosing_repository(&nested),
+        Some(std::fs::canonicalize(&top)?)
+    );
+    Ok(())
+}
+
 #[test]
 fn init_refuses_inside_an_existing_repository() -> Result {
     let dir = tempfile::tempdir()?;

@@ -157,11 +157,10 @@ fn common_dir(repo: &Path) -> Option<PathBuf> {
         .output()
         .ok()
         .filter(|output| output.status.success())?;
-    let dir = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if dir.is_empty() {
+    let path = crate::raw_path::line(&output.stdout);
+    if path.as_os_str().is_empty() {
         return None;
     }
-    let path = PathBuf::from(dir);
     Some(if path.is_absolute() {
         path
     } else {

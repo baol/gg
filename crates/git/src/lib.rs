@@ -276,6 +276,7 @@ pub mod lfs;
 pub mod merge;
 pub mod mutation;
 pub mod patch;
+pub mod raw_path;
 pub mod rebase;
 pub mod reflog;
 pub mod refs;

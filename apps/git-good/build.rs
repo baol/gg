@@ -35,7 +35,10 @@ fn main() {
             .filter(|output| output.status.success())
             .and_then(|output| String::from_utf8(output.stdout).ok())
         {
-            println!("cargo:rerun-if-changed={}", path.trim());
+            // Only the line ending: a checkout folder may end with a space.
+            let path = path.strip_suffix('\n').unwrap_or(&path);
+            let path = path.strip_suffix('\r').unwrap_or(path);
+            println!("cargo:rerun-if-changed={path}");
         }
     }
     println!("cargo:rerun-if-changed=build.rs");

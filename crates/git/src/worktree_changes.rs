@@ -1,5 +1,6 @@
 //! Whole-worktree index changes: stage all, unstage all, discard all.
 use std::{
+    ffi::{OsStr, OsString},
     path::Path,
     process::{Command, Output, Stdio},
 };
@@ -55,25 +56,20 @@ pub fn discard_all(path: &Path) -> Result<(), String> {
     if !added.status.success() {
         return check(added, "List newly added files");
     }
+    // Names stay the bytes Git printed, so one that is not UTF-8 still
+    // matches its index entry.
     let added = added
         .stdout
         .split(|byte| *byte == 0)
         .filter(|field| !field.is_empty())
-        .map(|field| String::from_utf8_lossy(field).into_owned())
+        .map(|field| crate::raw_path::os_string(&[b":(top,literal)", field].concat()))
         .collect::<Vec<_>>();
     if !added.is_empty() {
         let root = run(path, &["rev-parse", "--show-toplevel"])?;
-        let root = String::from_utf8_lossy(&root.stdout).trim().to_string();
-        let mut args = vec!["rm", "-q", "--cached", "--"];
-        let literal = added
-            .iter()
-            .map(|file| format!(":(top,literal){file}"))
-            .collect::<Vec<_>>();
-        args.extend(literal.iter().map(String::as_str));
-        check(
-            run(std::path::Path::new(&root), &args)?,
-            "Keep newly added files",
-        )?;
+        let root = crate::raw_path::line(&root.stdout);
+        let mut args = ["rm", "-q", "--cached", "--"].map(OsString::from).to_vec();
+        args.extend(added);
+        check(run(&root, &args)?, "Keep newly added files")?;
     }
     check(
         run(
@@ -97,7 +93,7 @@ fn born(path: &Path) -> Result<bool, String> {
         .success())
 }
 
-fn run(path: &Path, args: &[&str]) -> Result<Output, String> {
+fn run(path: &Path, args: &[impl AsRef<OsStr>]) -> Result<Output, String> {
     Command::new("git")
         .current_dir(path)
         .args(args)

@@ -450,7 +450,7 @@ fn git_dir(path: &Path) -> Result<std::path::PathBuf, String> {
     if !output.status.success() {
         return Err(failure("Find the Git directory", &output));
     }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().into())
+    Ok(crate::raw_path::line(&output.stdout))
 }
 
 fn raw_has_parent(path: &Path, commit: &str) -> Result<bool, String> {
