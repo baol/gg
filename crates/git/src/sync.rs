@@ -435,18 +435,32 @@ fn run_git(
         .spawn(move || read_progress(stderr, operation, sender, reader_tail))
         .map_err(|e| format!("Start Git progress reader: {e}"))?;
 
+    // Wake for each progress update, when Git closes stderr (it is exiting),
+    // or every 15 ms to check for cancellation, so the result is seen as
+    // soon as Git exits rather than at the next poll (RULE-16).
     let mut cancelled = false;
+    let mut reading = true;
     let status = loop {
-        while let Ok(update) = receiver.try_recv() {
-            progress(update);
+        if reading {
+            match receiver.recv_timeout(Duration::from_millis(15)) {
+                Ok(update) => {
+                    progress(update);
+                    continue;
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => reading = false,
+            }
+        } else {
+            thread::sleep(Duration::from_millis(1));
         }
         if cancel.load(Ordering::Relaxed) {
             cancelled = true;
             let _ = child.kill();
         }
+        // Once stderr is closed Git is exiting: check every millisecond.
         match child.try_wait() {
             Ok(Some(status)) => break status,
-            Ok(None) => thread::sleep(Duration::from_millis(15)),
+            Ok(None) => {}
             Err(e) => {
                 let _ = child.kill();
                 let _ = child.wait();

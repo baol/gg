@@ -1,0 +1,28 @@
+name: Timing
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: timing
+  cancel-in-progress: false
+
+env:
+  GG_OFFLINE: "1"
+
+jobs:
+  # RULE-16: each mutation's GUI median stays within 1.01 × the CLI's + 2 ms.
+  rule-16:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: timing
+      - run: cargo test -p git-good --release --locked -- --ignored --nocapture gui_mutations_cost_what_the_cli_costs

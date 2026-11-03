@@ -9,113 +9,16 @@
 //! with the paths replaced by `<repo>` and `<remote>`.
 //!
 //! The GUI's records must start with the CLI's records exactly: those are
-//! the mutation's own commands. Whatever follows is a refresh read and must
-//! run off the UI thread. Mutations that still run Git on the UI thread are
-//! listed in [`UI_THREAD`]; the list may shrink, never grow.
+//! the mutation's own commands. Every one runs on a worker, and whatever
+//! follows is a refresh read, also off the UI thread: no GUI mutation runs a
+//! Git process on the UI thread.
 use super::*;
 use gg_git::process::{Record, Recording};
 use std::ffi::OsString;
 
 type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
-/// Git processes each mutation's GUI path starts on the UI thread today,
-/// object IDs shown as `<id>`. [Plan step 6 part 2](../../../docs/plan.md)
-/// moves these mutations to workers and empties this list; until then a
-/// case fails if its UI-thread set grows. Every one is also a command the
-/// CLI runs: the UI thread blocks for exactly Git's time.
-const UI_THREAD: &[(&str, &[&str])] = &[
-    // Stashes picker and Stash changes call gg_git::stash directly.
-    ("stash push", &["[<repo>] stash push -m work"]),
-    (
-        "stash apply",
-        &[
-            "[<repo>] stash apply stash@{0}",
-            "[<repo>] diff --name-only -z --diff-filter=U",
-        ],
-    ),
-    (
-        "stash pop",
-        &[
-            "[<repo>] stash pop stash@{0}",
-            "[<repo>] diff --name-only -z --diff-filter=U",
-        ],
-    ),
-    ("stash drop", &["[<repo>] stash drop stash@{0}"]),
-    // start_commit reads the signing configuration before the worker
-    // starts; the CLI reads it too, to pick --sign's default.
-    ("commit", SIGNING_CONFIG),
-    // New branch's Enter calls gg_git::branch::create_at in the dialog.
-    (
-        "branch create",
-        &[
-            "[<repo>] rev-parse --verify --quiet <id>^{commit}",
-            "[<repo>] branch -- topic <id>",
-        ],
-    ),
-    // Rename's Enter calls gg_git::branch::rename in the dialog.
-    (
-        "branch rename",
-        &[
-            "[<repo>] show-ref --verify --quiet refs/heads/feature",
-            "[<repo>] show-ref --verify --quiet refs/heads/topic",
-            "[<repo>] branch -m -- feature topic",
-        ],
-    ),
-    ("branch delete", &["[<repo>] branch -d merged"]),
-    // New tag reads the signing configuration as it opens; the tag
-    // itself is created on a worker.
-    ("tag create", SIGNING_CONFIG),
-    ("tag delete", &["[<repo>] tag -d v1"]),
-    ("reset soft", RESET),
-    ("reset mixed", RESET),
-    (
-        "reset hard",
-        &[
-            "[<repo>] rev-parse --verify --quiet <id>^{commit}",
-            "[<repo>] ls-tree -r -z --full-tree <id>",
-            "[<repo>] ls-files -z --full-name",
-            "[<repo>] rev-parse --show-toplevel",
-            "[<repo>] rev-parse --verify --quiet HEAD^{commit}",
-            "[<repo>] symbolic-ref --quiet --short HEAD",
-            "[<repo>] update-ref refs/gg/backup/reset/<time>/main <id>",
-            "[<repo>] reset --hard <id>",
-        ],
-    ),
-    (
-        "cherry-pick",
-        &[
-            "[<repo>] rev-parse --verify --quiet <id>^{commit}",
-            "[<repo>] cherry-pick --no-edit <id>",
-            "[<repo>] diff --name-only -z --diff-filter=U",
-        ],
-    ),
-    (
-        "revert",
-        &[
-            "[<repo>] rev-parse --verify --quiet <id>^{commit}",
-            "[<repo>] revert --no-edit <id>",
-            "[<repo>] diff --name-only -z --diff-filter=U",
-        ],
-    ),
-];
-
-const SIGNING_CONFIG: &[&str] = &[
-    "[<repo>] config --get gpg.format",
-    "[<repo>] config --get user.signingkey",
-    "[<repo>] config --get gpg.program",
-    "[<repo>] config --get commit.gpgsign",
-    "[<repo>] config --get tag.gpgsign",
-    "[<repo>] config --get gpg.ssh.allowedSignersFile",
-];
-
-const RESET: &[&str] = &[
-    "[<repo>] rev-parse --verify --quiet <id>^{commit}",
-    "[<repo>] rev-parse --verify --quiet HEAD^{commit}",
-    "[<repo>] symbolic-ref --quiet --short HEAD",
-    "[<repo>] update-ref refs/gg/backup/reset/<time>/main <id>",
-    "[<repo>] reset --soft <id>",
-    "[<repo>] reset --mixed <id>",
-];
+mod timing;
 
 struct Fixture {
     _dir: tempfile::TempDir,
@@ -352,32 +255,8 @@ fn untimed(line: &str) -> String {
     out
 }
 
-/// The line with each full object ID (40 or 64 hex digits) as `<id>`.
-fn shape(line: &str) -> String {
-    let mut out = String::new();
-    let mut run = String::new();
-    let flush = |run: &mut String, out: &mut String| {
-        if run.len() == 40 || run.len() == 64 {
-            out.push_str("<id>");
-        } else {
-            out.push_str(run);
-        }
-        run.clear();
-    };
-    for c in line.chars() {
-        if c.is_ascii_hexdigit() && !c.is_ascii_uppercase() {
-            run.push(c);
-        } else {
-            flush(&mut run, &mut out);
-            out.push(c);
-        }
-    }
-    flush(&mut run, &mut out);
-    out
-}
-
-/// The GUI starts with the CLI's commands, then only background reads; the
-/// UI-thread set stays within [`UI_THREAD`].
+/// The GUI starts with the CLI's commands, then only background reads, and
+/// runs none of them on the UI thread.
 fn assert_parity(case: &str, gui: &[Record], cli: &[Record]) {
     let report = format!(
         "{case}\nCLI:\n  {}\nGUI (* = UI thread):\n  {}",
@@ -396,15 +275,10 @@ fn assert_parity(case: &str, gui: &[Record], cli: &[Record]) {
         gui.len() >= cli.len() && lines(&gui[..cli.len()]) == lines(cli),
         "the GUI's commands differ from the CLI's: {report}"
     );
-    let allowed = UI_THREAD
-        .iter()
-        .find(|(name, _)| *name == case)
-        .map(|(_, lines)| *lines)
-        .unwrap_or_default();
     let (mutation, refresh) = gui.split_at(cli.len());
-    for record in mutation.iter().filter(|record| record.on_recording_thread) {
+    for record in mutation {
         assert!(
-            allowed.contains(&shape(&untimed(&record.line())).as_str()),
+            !record.on_recording_thread,
             "{} runs on the UI thread: {report}",
             record.line()
         );
@@ -591,6 +465,8 @@ fn branch_create_runs_the_cli_commands() -> Result {
     gui.frame(vec![]);
     gui.frame(vec![egui::Event::Text("topic".into())]);
     gui.frame(vec![enter()]);
+    // The dialog stays open until the worker reports back.
+    gui.until(|app| app.operation_worker.is_none())?;
     assert!(gui.app.create_branch.is_none(), "Enter created the branch");
     let gui = gui.finish()?;
     let cli = cli(
@@ -614,6 +490,8 @@ fn branch_rename_runs_the_backend_commands() -> Result {
     });
     gui.frame(vec![]);
     gui.frame(vec![enter()]);
+    // The dialog stays open until the worker reports back.
+    gui.until(|app| app.operation_worker.is_none())?;
     assert!(gui.app.rename_dialog.is_none(), "Enter renamed the branch");
     let gui = gui.finish()?;
     let fixture = fixture(none)?;

@@ -21,17 +21,20 @@ pub struct Changes {
     pub index: bool,
     /// HEAD, a ref, or the state of a merge, rebase, cherry-pick, or revert.
     pub refs: bool,
+    /// The repository's `config` (signing settings live there).
+    pub config: bool,
 }
 
 impl Changes {
     pub fn any(self) -> bool {
-        self.worktree || self.index || self.refs
+        self.worktree || self.index || self.refs || self.config
     }
 
     fn add(&mut self, other: Changes) {
         self.worktree |= other.worktree;
         self.index |= other.index;
         self.refs |= other.refs;
+        self.config |= other.config;
     }
 }
 
@@ -62,6 +65,10 @@ pub fn classify(layout: &Layout, path: &Path) -> Option<Changes> {
         return match first {
             "index" => Some(Changes {
                 index: true,
+                ..Default::default()
+            }),
+            "config" | "config.worktree" => Some(Changes {
+                config: true,
                 ..Default::default()
             }),
             "HEAD" | "ORIG_HEAD" | "packed-refs" | "refs" | "MERGE_HEAD" | "CHERRY_PICK_HEAD"

@@ -93,3 +93,11 @@ env -u WAYLAND_DISPLAY xvfb-run -a -s '-screen 0 1280x900x24' python3 scripts/na
 ```
 
 The probe alternates 80 selections while text/image work runs. It polls one pixel for the first visible selection fill, reports p50/p95/max, and checks p95 below 50 ms. Desktop hardware and monitor scanout remain platform checks.
+
+Time each mutation through the GUI and through `git good <cmd>` (RULE-16, XCT-30):
+
+```sh
+cargo test --release -p git-good --locked -- --ignored --nocapture gui_mutations_cost_what_the_cli_costs
+```
+
+Each of the 19 mutations runs 30 times per side (`GG_TIMING_RUNS`, at least 15) on fresh fixtures, GUI and CLI alternating which goes first. The GUI is timed from the call its button makes until the receipt is applied to the window's state; the background refresh after it is not timed. The test prints CLI and GUI medians, their ratio and the budget, and fails when a GUI median exceeds 1.01 × the CLI median + 2 ms. `GG_TIMING_CASES=stash,reset` keeps the cases whose name contains one of the words. The `Timing` workflow runs it nightly on `ubuntu-24.04` and on demand.
