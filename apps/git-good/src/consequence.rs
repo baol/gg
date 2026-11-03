@@ -40,7 +40,7 @@ impl Lines {
             .collect::<Vec<_>>();
         let key = owned.clone();
         Self::with(key, ctx, move || {
-            let output = std::process::Command::new("git")
+            let output = gg_git::process::git()
                 .env("GIT_OPTIONAL_LOCKS", "0")
                 .arg("-C")
                 .arg(&repo)

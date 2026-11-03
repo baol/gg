@@ -1,8 +1,5 @@
 //! Delete local tags.
-use std::{
-    path::Path,
-    process::{Command, Stdio},
-};
+use std::{path::Path, process::Stdio};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DeleteReceipt {
@@ -14,7 +11,7 @@ pub fn delete(path: &Path, tag: &str) -> Result<DeleteReceipt, String> {
     if tag.is_empty() || tag.starts_with('-') || tag.contains('\0') {
         return Err("Tag name is invalid.".into());
     }
-    let mut command = Command::new("git");
+    let mut command = crate::process::git();
     command
         .current_dir(path)
         .arg("tag")
@@ -73,7 +70,7 @@ pub fn create(
     if message.trim().is_empty() {
         return Err("Tag message is empty. Add a subject before creating the tag.".into());
     }
-    let output = Command::new("git")
+    let output = crate::process::git()
         .current_dir(path)
         .env_remove("GIT_DIR")
         .env_remove("GIT_WORK_TREE")
@@ -101,7 +98,7 @@ pub fn create(
             }
         ));
     }
-    let id = Command::new("git")
+    let id = crate::process::git()
         .current_dir(path)
         .env_remove("GIT_DIR")
         .env_remove("GIT_WORK_TREE")

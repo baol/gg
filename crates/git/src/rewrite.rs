@@ -4,7 +4,7 @@ use gg_engine::rewrite::{Action, RangeCommit, Receipt, Step};
 use std::{
     collections::BTreeSet,
     path::Path,
-    process::{Command, Output, Stdio},
+    process::{Output, Stdio},
 };
 
 struct Range {
@@ -520,7 +520,7 @@ fn unmerged(path: &Path) -> Result<Vec<String>, String> {
 }
 
 fn run(path: &Path, args: &[String], sequence_editor: Option<&str>) -> Result<Output, String> {
-    let mut command = Command::new("git");
+    let mut command = crate::process::git();
     command
         .current_dir(path)
         .args(args)

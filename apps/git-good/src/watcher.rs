@@ -197,7 +197,7 @@ impl Watcher {
 
 /// Ask Git where this worktree's Git directories are.
 fn layout(workdir: &Path) -> Result<Layout, String> {
-    let output = std::process::Command::new("git")
+    let output = gg_git::process::git()
         .arg("-C")
         .arg(workdir)
         .args([

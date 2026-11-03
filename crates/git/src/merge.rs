@@ -2,7 +2,7 @@
 use gg_engine::merge::{Kind, Receipt};
 use std::{
     path::Path,
-    process::{Command, Output, Stdio},
+    process::{Output, Stdio},
 };
 
 pub fn merge(path: &Path, reference: &str, no_ff: bool) -> Result<Receipt, String> {
@@ -17,28 +17,30 @@ pub fn fast_forward(path: &Path, reference: &str) -> Result<Receipt, String> {
 }
 
 /// How many commits `reference` has that HEAD lacks: what a merge of it
-/// brings in.
+/// brings in (`git rev-list --count HEAD..reference`). Counted in-process,
+/// so the GUI's merge starts only the processes `git good merge` starts
+/// (RULE-16).
 pub fn incoming(path: &Path, reference: &str) -> Result<usize, String> {
     let reference = reference.trim();
     if reference.is_empty() || reference.starts_with('-') {
         return Err("Merge reference must not start with '-'.".into());
     }
-    let output = run(
-        path,
-        &[
-            "rev-list".into(),
-            "--count".into(),
-            format!("HEAD..{reference}"),
-            "--".into(),
-        ],
-    )?;
-    if !output.status.success() {
-        return Err(failure("Count incoming commits", &output));
-    }
-    String::from_utf8_lossy(&output.stdout)
-        .trim()
-        .parse()
-        .map_err(|error| format!("Count incoming commits: {error}"))
+    let count = || -> Result<usize, Box<dyn std::error::Error>> {
+        let repo = gix::discover(path)?;
+        let tip = repo
+            .rev_parse_single(reference)?
+            .object()?
+            .peel_to_kind(gix::object::Kind::Commit)?
+            .id;
+        let head = repo.head_id()?.detach();
+        let mut count = 0;
+        for commit in repo.rev_walk([tip]).with_hidden([head]).all()? {
+            commit?;
+            count += 1;
+        }
+        Ok(count)
+    };
+    count().map_err(|error| format!("Count incoming commits: {error}"))
 }
 
 fn merge_with(path: &Path, reference: &str, mode: &str) -> Result<Receipt, String> {
@@ -147,7 +149,7 @@ fn unmerged(path: &Path) -> Result<Vec<String>, String> {
 }
 
 fn run(path: &Path, args: &[String]) -> Result<Output, String> {
-    Command::new("git")
+    crate::process::git()
         .current_dir(path)
         .args(args)
         .stdin(Stdio::null())

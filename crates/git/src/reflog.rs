@@ -1,9 +1,6 @@
 //! Read reflog entries without changing repository state.
 use gg_engine::reflog::{Entry, Snapshot};
-use std::{
-    path::Path,
-    process::{Command, Stdio},
-};
+use std::{path::Path, process::Stdio};
 
 pub fn read(path: &Path, reference: &str) -> Result<Snapshot, String> {
     let reference = reference.trim();
@@ -15,7 +12,7 @@ pub fn read(path: &Path, reference: &str) -> Result<Snapshot, String> {
     if reference.starts_with('-') || reference.contains('\0') {
         return Err("Reflog reference is invalid.".into());
     }
-    let output = Command::new("git")
+    let output = crate::process::git()
         .current_dir(path)
         .args([
             "reflog",

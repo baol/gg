@@ -2,7 +2,7 @@
 use gg_engine::rebase::Receipt;
 use std::{
     path::Path,
-    process::{Command, Output, Stdio},
+    process::{Output, Stdio},
     sync::atomic::{AtomicBool, Ordering},
 };
 
@@ -128,7 +128,7 @@ fn unmerged(path: &Path) -> Result<Vec<String>, String> {
 }
 
 fn run(path: &Path, args: &[String]) -> Result<Output, String> {
-    Command::new("git")
+    crate::process::git()
         .current_dir(path)
         .args(args)
         .stdin(Stdio::null())

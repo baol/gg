@@ -54,6 +54,8 @@ mod network;
 mod new_repository;
 mod operation_band;
 mod outcome_details;
+#[cfg(test)]
+mod parity_tests;
 mod phosphor;
 mod reader;
 mod rebase_cli;
@@ -505,7 +507,7 @@ struct SigningConfig {
 }
 
 fn read_signing(repo: &Path) -> SigningConfig {
-    let file = std::process::Command::new("git")
+    let file = gg_git::process::git()
         .current_dir(repo)
         .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
         .env_remove("GIT_DIR")
@@ -979,7 +981,7 @@ fn launch_folder(
 }
 
 fn is_repository(path: &Path) -> bool {
-    std::process::Command::new("git")
+    gg_git::process::git()
         .arg("-C")
         .arg(path)
         .args(["rev-parse", "--git-dir"])
@@ -1074,10 +1076,7 @@ fn signing_rows(ui: &mut egui::Ui, signing: Option<&SigningConfig>) -> Option<Pa
 /// Commit; `None` when Git has no identity.
 /// `git version 2.x`, for Copy version info.
 fn git_version() -> Option<String> {
-    let output = std::process::Command::new("git")
-        .arg("--version")
-        .output()
-        .ok()?;
+    let output = gg_git::process::git().arg("--version").output().ok()?;
     output
         .status
         .success()
@@ -1086,7 +1085,7 @@ fn git_version() -> Option<String> {
 
 fn git_identity(repo: &Path) -> Option<String> {
     let read = |key: &str| {
-        std::process::Command::new("git")
+        gg_git::process::git()
             .arg("-C")
             .arg(repo)
             .args(["config", "--get", key])

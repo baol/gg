@@ -3,7 +3,7 @@ use gg_engine::{Commit, History, HistoryRequest, HistorySource};
 use std::{
     collections::{BinaryHeap, HashSet},
     io::{BufRead, BufReader, Read, Write},
-    process::{Child, ChildStderr, ChildStdout, Command, Stdio},
+    process::{Child, ChildStderr, ChildStdout, Stdio},
 };
 
 pub struct Git;
@@ -44,7 +44,7 @@ struct GitWalk {
 
 impl GitWalk {
     fn open(path: &std::path::Path, tips: &[gix::ObjectId]) -> Result<Self, String> {
-        let mut child = Command::new("git")
+        let mut child = crate::process::git()
             .arg("-C")
             .arg(path)
             .args(["rev-list", "--topo-order", "--stdin"])
@@ -276,6 +276,7 @@ pub mod lfs;
 pub mod merge;
 pub mod mutation;
 pub mod patch;
+pub mod process;
 pub mod raw_path;
 pub mod rebase;
 pub mod reflog;

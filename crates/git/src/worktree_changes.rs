@@ -2,7 +2,7 @@
 use std::{
     ffi::{OsStr, OsString},
     path::Path,
-    process::{Command, Output, Stdio},
+    process::{Output, Stdio},
 };
 
 /// Stage every change, including untracked and deleted files (`git add -A`).
@@ -97,7 +97,7 @@ fn born(path: &Path) -> Result<bool, String> {
 }
 
 fn run(path: &Path, args: &[impl AsRef<OsStr>]) -> Result<Output, String> {
-    Command::new("git")
+    crate::process::git()
         .current_dir(path)
         .args(args)
         .stdin(Stdio::null())

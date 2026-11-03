@@ -3,10 +3,7 @@ use gg_engine::{
     blame::{Blame, Line, MAX_BYTES, MAX_LINES},
     review::display_path,
 };
-use std::{
-    path::Path,
-    process::{Command, Stdio},
-};
+use std::{path::Path, process::Stdio};
 
 fn check(cancelled: &dyn Fn() -> bool) -> Result<(), String> {
     if cancelled() {
@@ -120,7 +117,7 @@ pub fn read(
     let relative = gix::path::from_bstr(gix::bstr::BStr::new(path_bytes))
         .map_err(|error| format!("Could not use path {display}: {error}"))?;
     check(cancelled)?;
-    let output = Command::new("git")
+    let output = crate::process::git()
         .current_dir(&worktree)
         .args(["blame", "--line-porcelain", "-L"])
         .arg(format!("{start},{end}"))

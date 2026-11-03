@@ -1,7 +1,7 @@
 //! Tracked paths for search and the latest commit that changed a path.
 use std::{
     path::Path,
-    process::{Command, Output, Stdio},
+    process::{Output, Stdio},
 };
 
 /// Tracked paths at HEAD's index, at most `limit` of them.
@@ -36,7 +36,7 @@ pub fn last_change(path: &Path, file: &str) -> Result<Option<(String, String)>, 
 }
 
 fn run(path: &Path, args: &[&str]) -> Result<Output, String> {
-    Command::new("git")
+    crate::process::git()
         .current_dir(path)
         .args(args)
         .stdin(Stdio::null())

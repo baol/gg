@@ -4408,7 +4408,7 @@ Rules every area relies on, cases that span areas, and the CLI contract. Area ca
 13. **RULE-13 Status is not conveyed by color alone.** Every state shown in color also has a marker, glyph or text (XCT-21).
 14. **RULE-14 Keyboard completes every workflow.** Each workflow can be finished without a pointer; text fields keep their keys; every dialog opens with its field, or its default button, focused, Enter runs the enabled primary and Esc cancels, and a destructive dialog focuses Cancel (FRM-89); closing a dialog restores focus to where it was opened (XCT-13 … XCT-18).
 15. **RULE-15 CLI and GUI share state and consequences.** Both read the same operation state, validate with the same rules and report the same consequences and backups (XCT-24 … XCT-28).
-16. **RULE-16 Commands cost what Git costs.** A command run from the GUI takes no more than 1 % longer than the same Git command from the CLI on the same repository. Git Good adds no Git process before or after Git's own on the UI thread, and the refreshes it runs afterwards are background reads that never delay the result being shown (STA-26). An idle window draws no frames (XCT-29).
+16. **RULE-16 Commands cost what Git costs.** A command run from the GUI takes no more than 1 % longer than the same Git command from the CLI on the same repository. Timing cannot resolve 1 % of a 15 ms Git call, so the rule is enforced structurally: for every mutation the GUI starts exactly the Git processes `git good <cmd>` starts, in the same order, and nothing before or around them; the refreshes it runs afterwards are background reads that never delay the result being shown (STA-26, XCT-30). Every Git process starts at one recorded chokepoint ([architecture](architecture.md#git-processes)). An idle window draws no frames (XCT-29).
 17. **RULE-17 Targets never swap under a click.** New content shows when it arrives; the scroll position, selection and focus follow identity; a row that changes under a still pointer fades in over 0.25 s and refuses clicks for 0.3 s, and a click acts only on the row that was pressed (HIS-05, HIS-07, REV-06, REV-21, CHG-66).
 
 ## Cross-cutting scenarios
@@ -4628,6 +4628,16 @@ Layer: interaction
 - When its reads finish and its animations end
 - Then no frame asks for a repaint sooner than 1 s; a failure names what asked (RULE-16). Only a pending watcher batch schedules a frame, for the moment it settles (FRM-61)
 Covered by (interaction): `every_view_is_idle_once_settled` (apps/git-good/src/idle_tests.rs)
+
+### XCT-30 GUI and CLI run the same Git commands
+Fixture: two identical repositories (`main` three commits ahead of base, one unpushed; `feature` and `merged` branches; annotated tag `v1`; a local bare `origin`), fixed commit dates
+Layer: interaction
+- Given one fixture open in a window and the other used by `git good`
+- When each mutation runs through the method its GUI button or menu calls, and through its CLI handler with the same arguments: stash push, apply, pop and drop; commit; branch create, rename (against the backend call, which has no CLI command) and delete; switch; tag create and delete; soft, mixed and hard reset; cherry-pick; revert; merge; fetch; push
+- Then the GUI's Git command lines, with paths as `<repo>` and `<remote>`, begin with exactly the CLI's, in the same order, and every later process is a refresh read off the UI thread (RULE-16)
+- And the mutations that still run Git on the UI thread (stash, commit's and New tag's signing read, branch create, rename and delete, tag delete, reset, cherry-pick, revert) run only the CLI's own commands there; the list in the test may shrink and never grow ([plan](plan.md) step 6 part 2 moves them to workers)
+- And no production code starts Git except through `gg_git::process::git()`
+Covered by (interaction): `stash_push_runs_the_cli_commands`, `stash_apply_runs_the_cli_commands`, `stash_pop_runs_the_cli_commands`, `stash_drop_runs_the_cli_commands`, `commit_runs_the_cli_commands`, `branch_create_runs_the_cli_commands`, `branch_rename_runs_the_backend_commands`, `branch_delete_runs_the_cli_commands`, `switch_runs_the_cli_commands`, `tag_create_runs_the_cli_commands`, `tag_delete_runs_the_cli_commands`, `soft_reset_runs_the_cli_commands`, `mixed_reset_runs_the_cli_commands`, `hard_reset_runs_the_cli_commands`, `cherry_pick_runs_the_cli_commands`, `revert_runs_the_cli_commands`, `merge_runs_the_cli_commands`, `fetch_runs_the_cli_commands`, `push_runs_the_cli_commands` (apps/git-good/src/parity_tests.rs); `a_recording_keeps_only_its_own_roots` (crates/git/src/process.rs); `git_processes_start_at_the_chokepoint` (crates/git/tests/chokepoint.rs)
 
 ## CLI contract
 

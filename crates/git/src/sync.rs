@@ -6,7 +6,7 @@ use gix::remote::Direction;
 use std::{
     io::{BufReader, Read},
     path::{Path, PathBuf},
-    process::{Command, ExitStatus, Stdio},
+    process::{ExitStatus, Stdio},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -397,7 +397,7 @@ fn run_git(
     cancel: &AtomicBool,
     progress: &mut dyn FnMut(Progress),
 ) -> Result<GitOutput, String> {
-    let mut command = Command::new("git");
+    let mut command = crate::process::git();
     command
         .current_dir(cwd)
         .args(args)

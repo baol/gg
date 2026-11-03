@@ -9,13 +9,13 @@ use std::{
     fs,
     io::Read,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::Stdio,
 };
 
 const POINTER_LIMIT: u64 = 4096;
 
-fn command(path: &Path) -> Command {
-    let mut command = Command::new("git");
+fn command(path: &Path) -> crate::process::GitCommand {
+    let mut command = crate::process::git();
     command
         .current_dir(path)
         .stdin(Stdio::null())

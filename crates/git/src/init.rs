@@ -2,7 +2,7 @@
 //! folder already holds.
 use std::{
     path::{Path, PathBuf},
-    process::{Command, Output, Stdio},
+    process::{Output, Stdio},
 };
 
 /// What [`init`] made.
@@ -182,7 +182,7 @@ pub fn count_files(path: &Path) -> Result<Count, String> {
 }
 
 fn git(path: &Path, config: &[(&str, &str)], args: &[&str]) -> Result<Output, String> {
-    let mut command = Command::new("git");
+    let mut command = crate::process::git();
     command.current_dir(path);
     for (key, value) in config {
         command.arg("-c").arg(format!("{key}={value}"));

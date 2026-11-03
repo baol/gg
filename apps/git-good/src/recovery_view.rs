@@ -74,7 +74,7 @@ fn read(path: &Path, reference: &str) -> Snapshot {
         })
         .unwrap_or_default();
     let reflog = gg_git::reflog::read(path, reference).map(|snapshot| snapshot.entries);
-    let head = std::process::Command::new("git")
+    let head = gg_git::process::git()
         .current_dir(path)
         .args(["rev-parse", "--verify", "--quiet", "HEAD"])
         .env_remove("GIT_DIR")
@@ -83,7 +83,7 @@ fn read(path: &Path, reference: &str) -> Snapshot {
         .ok()
         .filter(|output| output.status.success())
         .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string());
-    let offset = std::process::Command::new("git")
+    let offset = gg_git::process::git()
         .current_dir(path)
         .args(["log", "-1", "--format=%cd", "--date=format-local:%z"])
         .env_remove("GIT_DIR")

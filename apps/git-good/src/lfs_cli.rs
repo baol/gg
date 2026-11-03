@@ -3,7 +3,7 @@ use gg_engine::{
     review::{ChangeKind, FileChange, FileSide},
     status::{Area, Kind, StatusEntry, WorkingRequest},
 };
-use std::{ffi::OsString, path::Path, path::PathBuf, process::Command};
+use std::{ffi::OsString, path::Path, path::PathBuf};
 
 enum Target {
     Change(FileChange),
@@ -133,7 +133,7 @@ fn parse(
 }
 
 fn side(repo: &Path, reference: &str) -> Result<Option<FileSide>, Box<dyn std::error::Error>> {
-    let output = Command::new("git")
+    let output = gg_git::process::git()
         .arg("-C")
         .arg(repo)
         .args(["rev-parse", reference])

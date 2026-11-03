@@ -18,6 +18,12 @@ Use safe Rust and propagate errors with operation, path, and retry. Preserve obj
 
 Run Git reads/indexing on workers, publish immutable batches, and repaint for visible changes. Retain displayed results through loading and errors, labeled with their repository identity. Track requested and displayed repositories separately.
 
+### Git processes
+
+Every Git process starts at one chokepoint, `gg_git::process::git()`, which returns a `GitCommand`: a builder over `std::process::Command` with the same `arg`, `env`, `current_dir`, `stdin`/`stdout`/`stderr`, `output`, `status` and `spawn`. Each caller keeps its own arguments and environment (`env_remove("GIT_DIR")`, `--literal-pathspecs`, `--no-optional-locks`, null stdin…). A test, `git_processes_start_at_the_chokepoint` (crates/git/tests/chokepoint.rs), fails on any `Command::new("git")` in production code of `gg-git`, `gg-engine` or `git-good`; test helpers and `build.rs` are exempt.
+
+Spawning checks one relaxed atomic; only while a test holds a `process::Recording` does it take a lock and note the command line. A recording keeps the spawns that name its roots (in an argument or the working directory), with each root replaced by a placeholder such as `<repo>`, and whether the spawn ran on the recording's own thread (the UI thread in GUI tests), so tests running in parallel never see each other's processes. The RULE-16 parity tests (XCT-30) use it to compare the GUI's command lines with the CLI's.
+
 ## Launch
 
 Resolve the repository from cwd, including nested directories, or an explicit path. Interactive launch loads history immediately; the toolbar supports repository changes. Launched outside a repository, Git Good shows the welcome view (see Presentation) with the launch folder's amber line; a launch path inside a repository opens that repository. CLI history streams JSON; failures use stderr and nonzero status. Represent bare repositories, worktrees, unborn branches, detached HEAD, and shallow boundaries explicitly.
