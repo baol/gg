@@ -4392,7 +4392,7 @@ Rules every area relies on, cases that span areas, and the CLI contract. Area ca
 13. **RULE-13 Status is not conveyed by color alone.** Every state shown in color also has a marker, glyph or text (XCT-21).
 14. **RULE-14 Keyboard completes every workflow.** Each workflow can be finished without a pointer; text fields keep their keys; closing a dialog restores focus to where it was opened (XCT-13 … XCT-18).
 15. **RULE-15 CLI and GUI share state and consequences.** Both read the same operation state, validate with the same rules and report the same consequences and backups (XCT-24 … XCT-28).
-16. **RULE-16 Commands cost what Git costs.** A command run from the GUI takes no more than 1 % longer than the same Git command from the CLI on the same repository. Git Good adds no Git process before or after Git's own on the UI thread, and the refreshes it runs afterwards are background reads that never delay the result being shown (STA-26).
+16. **RULE-16 Commands cost what Git costs.** A command run from the GUI takes no more than 1 % longer than the same Git command from the CLI on the same repository. Git Good adds no Git process before or after Git's own on the UI thread, and the refreshes it runs afterwards are background reads that never delay the result being shown (STA-26). An idle window draws no frames (XCT-29).
 17. **RULE-17 Targets never swap under a click.** New content shows when it arrives; the scroll position, selection and focus follow identity; a row that changes under a still pointer fades in over 0.25 s and refuses clicks for 0.3 s, and a click acts only on the row that was pressed (HIS-05, HIS-07, REV-06, REV-21, CHG-66).
 
 ## Cross-cutting scenarios
@@ -4604,6 +4604,14 @@ Layer: product
 - When Hard reset to `c05` is attempted in **Reset here** and with `git good reset --hard c05`; and `feature/login` is deleted in the GUI and with `git good branch --delete feature/login`
 - Then both refuse the reset naming `later.txt`; the GUI lists the 4 unmerged commits and the CLI refuses without `--force` naming them; neither changes anything
 Covered by (Not automated)
+
+### XCT-29 An idle window draws no frames
+Fixture: a five-commit repository with one unstaged edit
+Layer: interaction
+- Given History, Local Changes, Review and Preferences in turn, each with the pointer resting on it and no text field focused
+- When its reads finish and its animations end
+- Then no frame asks for a repaint sooner than 1 s; a failure names what asked (RULE-16)
+Covered by (interaction): `every_view_is_idle_once_settled` (apps/git-good/src/idle_tests.rs)
 
 ## CLI contract
 
