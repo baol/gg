@@ -1393,6 +1393,23 @@ mod tests {
         let _ = frame(&ctx, &mut view, vec![key(egui::Key::Delete)]);
         let (_, text) = frame(&ctx, &mut view, vec![]);
         assert!(has(&text, "Delete the backup of main at"), "{text:?}");
+        // Cancel has the keyboard: Enter keeps the backup.
+        let _ = frame(&ctx, &mut view, vec![key(egui::Key::Enter)]);
+        let (_, text) = frame(&ctx, &mut view, vec![]);
+        assert!(!has(&text, "Delete the backup of main at"), "{text:?}");
+        assert!(!gg_git::backup::list(dir.path())?.is_empty());
+        // Opened again, Cancel has the keyboard again; Shift+Tab reaches
+        // Delete backup, and Enter there deletes.
+        let _ = frame(&ctx, &mut view, vec![key(egui::Key::Delete)]);
+        let _ = frame(&ctx, &mut view, vec![]);
+        let shift_tab = egui::Event::Key {
+            key: egui::Key::Tab,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::SHIFT,
+        };
+        let _ = frame(&ctx, &mut view, vec![shift_tab]);
         let _ = frame(&ctx, &mut view, vec![key(egui::Key::Enter)]);
         view.wait();
         let (_, text) = frame(&ctx, &mut view, vec![]);

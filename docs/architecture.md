@@ -67,6 +67,7 @@ Preserve matching selection; otherwise select the first published match. Clear s
 | First / last row | Home/End, also with Ctrl (Command on macOS), in History, the Local Changes lists, the Review file list, the reader, Recovery, Submodules and Worktrees; End before counting finishes goes to the last row found so far |
 | Open selected commit/file / return | Enter or Right / Escape, Left, or Back |
 | Toggle commit details | Space |
+| Answer a dialog | Type into the field it opens with; Enter runs the enabled primary, Esc cancels; a destructive dialog opens on Cancel (`navigation::dialog_keys`) |
 | Selected commit actions | Alt+A or **Actions** in the commit inspector |
 | Keyboard to the menu bar (Windows, Linux) | Alt (tapped) or F10; Left/Right choose, Down/Enter open, Esc/Space/click leave |
 | Open a menu | Alt+R Repository, Alt+B Branch, Alt+C Commit, Alt+N Changes, Alt+I View, Alt+H Help |

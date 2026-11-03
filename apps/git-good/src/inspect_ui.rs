@@ -459,7 +459,8 @@ pub fn confirm(
 ) -> Option<Decision> {
     let mut decision = None;
     let enabled = reason.is_none();
-    let modal = egui::Modal::new(egui::Id::unique(("inspect-confirm", id)))
+    let modal_id = egui::Id::unique(("inspect-confirm", id));
+    let modal = egui::Modal::new(modal_id)
         .backdrop_color(Color32::from_black_alpha(140))
         .show(ctx, |ui| {
             ui.set_width(440.0);
@@ -470,6 +471,7 @@ pub fn confirm(
             body(ui);
             ui.add_space(4.0);
             let warn = Tone::Amber.text();
+            let mut target = None;
             footer(ui, reason.map(|reason| (reason, warn)), |ui| {
                 let button = if danger {
                     crate::consequence::danger_button(primary_label, enabled)
@@ -478,15 +480,25 @@ pub fn confirm(
                 } else {
                     egui::Button::new(primary_label)
                 };
-                if ui.add_enabled(enabled, button).clicked() {
+                let confirm = ui.add_enabled(enabled, button);
+                if confirm.clicked() {
                     decision = Some(Decision::Confirm);
                 }
-                if ui.add(secondary("Cancel", "Esc")).clicked() {
+                let cancel = ui.add(secondary("Cancel", "Esc"));
+                if cancel.clicked() {
                     decision = Some(Decision::Cancel);
                 }
+                // A destructive confirm focuses Cancel, so Enter never confirms it.
+                target = Some(if danger { cancel } else { confirm });
             });
-            if enabled && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                decision = Some(Decision::Confirm);
+            if let Some(target) = &target {
+                let keys = crate::navigation::dialog_keys(ui, modal_id, target, enabled && !danger);
+                if keys.submit {
+                    decision = Some(Decision::Confirm);
+                }
+                if keys.cancel {
+                    decision = Some(Decision::Cancel);
+                }
             }
         });
     if modal.should_close() && decision.is_none() {

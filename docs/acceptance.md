@@ -625,6 +625,16 @@ Layer: interaction
 - And a key equivalent reaches Git Good as the key press it was (text fields keep ⌘C, ⌘X, ⌘V, ⌘A and ⌘Z, which are not key equivalents); a click runs the command as the in-window menu does; a new Open recent entry rebuilds the menu, other changes update it in place; a system key Git Good binds moves Hide to ⌃⌘H and Minimize to ⌃⌘M
 Covered by (interaction, partial): `the_mac_menu_bar_comes_from_the_command_table`, `selection_changes_update_the_mac_menu_in_place`, `the_native_menu_bar_replaces_the_in_window_menus` (apps/git-good/src/main.rs), `key_equivalents_reach_egui_as_key_presses_and_clicks_run_commands`, `clashes_with_system_keys_are_resolved_in_ggs_favour`, `gg_shortcuts_become_the_key_presses_egui_sees` (apps/git-good/src/native_menu/tests.rs); AppKit itself (muda) is Not automated
 
+### FRM-89 Dialogs take the keyboard
+Fixture: `fx-branchy`
+Layer: interaction
+- When **Branch › New branch…** opens and the user types `topic` without clicking, then presses Enter
+- Then the name field had the keyboard from the first frame and Enter creates the branch, as **Create** does
+- And in **Rename branch…**, Esc closes it as **Cancel** does; in a dialog whose primary is disabled Enter does nothing
+- And a destructive dialog (Delete branch, Delete tag, Delete remote branch, Discard all tracked changes, Reset here with Hard, Force push with lease, Remove worktree, Delete backup) opens with **Cancel** focused: Enter cancels and nothing changes; Tab or Shift+Tab reaches the red primary and Enter there runs it
+- And a dialog closed and opened again on the next frame takes the keyboard again
+Covered by (interaction): `a_dialog_takes_typing_at_once_and_enter_or_esc_answer_it` (apps/git-good/src/navigation.rs), `dialogs_take_typing_at_once_and_answer_enter_and_esc` (apps/git-good/src/main.rs), `delete_backup_confirms_then_removes_only_that_ref` (apps/git-good/src/recovery_view.rs)
+
 ## History and refs
 
 ### HIS-01 First page streams before traversal finishes
@@ -4390,7 +4400,7 @@ Rules every area relies on, cases that span areas, and the CLI contract. Area ca
 11. **RULE-11 Frames hold still.** Menu bar, toolbar, operation band, footer and reserved slots keep their size when content, counts, progress or errors arrive (FRM-71, RWR-54, REV-14).
 12. **RULE-12 Rewrites are recoverable.** Every rewrite and reset writes a private backup before Git starts; Recovery actions never delete backups or untracked files (RWR-41, RWR-77).
 13. **RULE-13 Status is not conveyed by color alone.** Every state shown in color also has a marker, glyph or text (XCT-21).
-14. **RULE-14 Keyboard completes every workflow.** Each workflow can be finished without a pointer; text fields keep their keys; closing a dialog restores focus to where it was opened (XCT-13 … XCT-18).
+14. **RULE-14 Keyboard completes every workflow.** Each workflow can be finished without a pointer; text fields keep their keys; every dialog opens with its field, or its default button, focused, Enter runs the enabled primary and Esc cancels, and a destructive dialog focuses Cancel (FRM-89); closing a dialog restores focus to where it was opened (XCT-13 … XCT-18).
 15. **RULE-15 CLI and GUI share state and consequences.** Both read the same operation state, validate with the same rules and report the same consequences and backups (XCT-24 … XCT-28).
 16. **RULE-16 Commands cost what Git costs.** A command run from the GUI takes no more than 1 % longer than the same Git command from the CLI on the same repository. Git Good adds no Git process before or after Git's own on the UI thread, and the refreshes it runs afterwards are background reads that never delay the result being shown (STA-26). An idle window draws no frames (XCT-29).
 17. **RULE-17 Targets never swap under a click.** New content shows when it arrives; the scroll position, selection and focus follow identity; a row that changes under a still pointer fades in over 0.25 s and refuses clicks for 0.3 s, and a click acts only on the row that was pressed (HIS-05, HIS-07, REV-06, REV-21, CHG-66).

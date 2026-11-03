@@ -2571,9 +2571,11 @@ impl Browser {
                                 consequence::danger_button(format!("Delete on {remote}"), ready),
                             )
                             .clicked();
-                        cancel |= ui
-                            .button(("Cancel", egui::RichText::new("Esc").small().weak()))
-                            .clicked();
+                        let button =
+                            ui.button(("Cancel", egui::RichText::new("Esc").small().weak()));
+                        cancel |= button.clicked();
+                        let id = egui::Id::unique("delete-remote");
+                        cancel |= crate::navigation::dialog_keys(ui, id, &button, false).cancel;
                     });
                 });
             });
@@ -2676,9 +2678,11 @@ impl Browser {
                         {
                             submit = true;
                         }
-                        if ui
-                            .button(("Cancel", egui::RichText::new("Esc").small().weak()))
-                            .clicked()
+                        let button =
+                            ui.button(("Cancel", egui::RichText::new("Esc").small().weak()));
+                        let id = egui::Id::unique("force-push-lease");
+                        if button.clicked()
+                            || crate::navigation::dialog_keys(ui, id, &button, false).cancel
                         {
                             cancel = true;
                         }
@@ -3483,12 +3487,21 @@ impl Browser {
                     ui.colored_label(ui.visuals().error_fg_color, error);
                 }
                 ui.horizontal(|ui| {
-                    if ui.button("Stash and switch").clicked() {
+                    let primary = ui.button("Stash and switch");
+                    if primary.clicked() {
                         submit = true;
                     }
                     if ui.button("Cancel").clicked() {
                         cancel = true;
                     }
+                    let keys = crate::navigation::dialog_keys(
+                        ui,
+                        egui::Id::unique("stash-switch"),
+                        &primary,
+                        true,
+                    );
+                    submit |= keys.submit;
+                    cancel |= keys.cancel;
                 });
             });
         if submit {
@@ -4141,7 +4154,6 @@ impl Browser {
                     ui.label(format!("Rename {} to:", dialog.old));
                     let field =
                         ui.add(egui::TextEdit::singleline(&mut dialog.new).desired_width(320.0));
-                    submit |= field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                     ui.weak("The upstream setting moves with the branch.");
                     if let Some(error) = &dialog.error {
                         ui.colored_label(ui.visuals().error_fg_color, error);
@@ -4155,6 +4167,14 @@ impl Browser {
                             .clicked();
                         cancel |= ui.button("Cancel").clicked();
                     });
+                    let keys = crate::navigation::dialog_keys(
+                        ui,
+                        egui::Id::unique("rename-branch"),
+                        &field,
+                        !dialog.new.trim().is_empty() && dialog.new.trim() != dialog.old,
+                    );
+                    submit |= keys.submit;
+                    cancel |= keys.cancel;
                 });
             if cancel {
                 open = false;
@@ -4212,8 +4232,13 @@ impl Browser {
                         ui.colored_label(ui.visuals().error_fg_color, error);
                     }
                     ui.horizontal(|ui| {
-                        submit |= ui.button("Set upstream").clicked();
+                        let primary = ui.button("Set upstream");
+                        submit |= primary.clicked();
                         cancel |= ui.button("Cancel").clicked();
+                        let id = egui::Id::unique("set-upstream");
+                        let keys = crate::navigation::dialog_keys(ui, id, &primary, true);
+                        submit |= keys.submit;
+                        cancel |= keys.cancel;
                     });
                 });
             if cancel {
@@ -4280,7 +4305,10 @@ impl Browser {
                     ui.weak("The current branch cannot be deleted. The next step confirms.");
                     ui.horizontal(|ui| {
                         next |= ui.button("Delete…").clicked();
-                        cancel |= ui.button("Cancel").clicked();
+                        let button = ui.button("Cancel");
+                        cancel |= button.clicked();
+                        let id = egui::Id::unique("delete-branch-pick");
+                        cancel |= crate::navigation::dialog_keys(ui, id, &button, false).cancel;
                     });
                 });
             if cancel {
@@ -4357,18 +4385,13 @@ impl Browser {
                             confirm |= ui
                                 .add_enabled(enabled, consequence::danger_button(label, ready))
                                 .clicked();
-                            cancel |= ui
-                                .button(("Cancel", egui::RichText::new("Esc").small().weak()))
-                                .clicked();
+                            let button =
+                                ui.button(("Cancel", egui::RichText::new("Esc").small().weak()));
+                            cancel |= button.clicked();
+                            let id = egui::Id::unique("discard-all");
+                            cancel |= crate::navigation::dialog_keys(ui, id, &button, false).cancel;
                         });
                     });
-                    if count.is_some_and(|count| count > 0)
-                        && head_ready
-                        && !busy
-                        && ui.input(|i| i.key_pressed(egui::Key::Enter))
-                    {
-                        confirm = true;
-                    }
                 });
             for (slot, lines) in DISCARD_SLOTS.into_iter().zip([files, head]) {
                 if let Some(lines) = lines {
@@ -7916,12 +7939,12 @@ impl Browser {
                 .default_pos(ctx.content_rect().center())
                 .pivot(egui::Align2::CENTER_CENTER)
                 .show(ctx, |ui| {
-                    egui::Grid::new("create-tag-fields")
+                    let field = egui::Grid::new("create-tag-fields")
                         .num_columns(2)
                         .spacing([10.0, 6.0])
                         .show(ui, |ui| {
                             ui.weak("Name");
-                            ui.add(
+                            let field = ui.add(
                                 egui::TextEdit::singleline(&mut dialog.name)
                                     .hint_text("v1.0.0")
                                     .desired_width(f32::INFINITY),
@@ -7942,7 +7965,9 @@ impl Browser {
                                     .desired_width(f32::INFINITY),
                             );
                             ui.end_row();
-                        });
+                            field
+                        })
+                        .inner;
                     let mut sign = dialog.sign;
                     let ready = dialog.signing_ready;
                     let busy = dialog.pending.is_some();
@@ -7971,9 +7996,8 @@ impl Browser {
                     if let Some(error) = &dialog.error {
                         ui.colored_label(ui.visuals().error_fg_color, error);
                     }
+                    let can_create = !busy && (!dialog.sign || dialog.signing_ready);
                     ui.horizontal(|ui| {
-                        let can_create =
-                            !busy && (!dialog.sign || dialog.signing_ready);
                         let response = ui.add_enabled(
                             can_create,
                             egui::Button::new(if dialog.sign {
@@ -8007,6 +8031,14 @@ impl Browser {
                             ui.weak("Creating tag…");
                         });
                     }
+                    let keys = crate::navigation::dialog_keys(
+                        ui,
+                        egui::Id::unique("create-tag"),
+                        &field,
+                        can_create,
+                    );
+                    submit |= keys.submit;
+                    cancel |= keys.cancel;
                 });
         }
         if submit {
@@ -9289,6 +9321,8 @@ impl Browser {
                     }
                     ui.add_space(4.0);
                     let before = dialog.branch.clone();
+                    // The new branch's name, else the folder.
+                    let mut target = None;
                     inspect_ui::grid(ui, "create-worktree-grid", |ui| {
                         inspect_ui::row(ui, "BRANCH", |ui| {
                             if let Some(create) = inspect_ui::segmented(
@@ -9301,10 +9335,12 @@ impl Browser {
                         });
                         inspect_ui::row(ui, "", |ui| {
                             if dialog.create {
-                                ui.add(
-                                    egui::TextEdit::singleline(&mut dialog.branch)
-                                        .hint_text("feature/name")
-                                        .desired_width(300.0),
+                                target = Some(
+                                    ui.add(
+                                        egui::TextEdit::singleline(&mut dialog.branch)
+                                            .hint_text("feature/name")
+                                            .desired_width(300.0),
+                                    ),
                                 );
                             } else if branches.is_empty() {
                                 ui.weak("No local branches are available.");
@@ -9345,6 +9381,7 @@ impl Browser {
                             if field.changed() {
                                 dialog.destination_auto = false;
                             }
+                            target.get_or_insert(field);
                             if ui
                                 .button("Browse…")
                                 .on_hover_text("Choose a folder with the desktop dialog")
@@ -9386,8 +9423,19 @@ impl Browser {
                             decision = Some(inspect_ui::Decision::Cancel);
                         }
                     });
-                    if ready && !busy && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                        decision = Some(inspect_ui::Decision::Confirm);
+                    if let Some(target) = &target {
+                        let keys = crate::navigation::dialog_keys(
+                            ui,
+                            egui::Id::unique("create-worktree"),
+                            target,
+                            ready && !busy,
+                        );
+                        if keys.submit {
+                            decision = Some(inspect_ui::Decision::Confirm);
+                        }
+                        if keys.cancel {
+                            decision = Some(inspect_ui::Decision::Cancel);
+                        }
                     }
                 });
             if modal.should_close() && decision.is_none() {
@@ -10995,11 +11043,6 @@ impl Browser {
                             response
                         })
                         .inner;
-                    if !response.has_focus() && self.path.is_empty() {
-                        response.request_focus();
-                    }
-                    let enter =
-                        response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                     let typed = self.path.trim().to_lowercase();
                     let matches = recent
                         .iter()
@@ -11066,7 +11109,7 @@ impl Browser {
                             ))
                             .fill(egui::Color32::from_rgb(11, 85, 119));
                             let ready = open_ready && !self.path.trim().is_empty();
-                            if ui.add_enabled(ready, primary).clicked() || (ready && enter) {
+                            if ui.add_enabled(ready, primary).clicked() {
                                 open = Some(self.path.trim().to_string());
                             }
                             cancel |= ui
@@ -11074,6 +11117,17 @@ impl Browser {
                                 .clicked();
                         });
                     });
+                    let ready = open_ready && !self.path.trim().is_empty();
+                    let keys = crate::navigation::dialog_keys(
+                        ui,
+                        egui::Id::unique("open-repository"),
+                        &response,
+                        ready,
+                    );
+                    if keys.submit {
+                        open = Some(self.path.trim().to_string());
+                    }
+                    cancel |= keys.cancel;
                 });
             if modal.should_close() {
                 cancel = true;
@@ -11174,9 +11228,7 @@ impl Browser {
             let mut submit = None;
             let mut cancelled = false;
             let mut open_folders = false;
-            let mut field_lost_focus = false;
-            let mut open =
-                !ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+            let mut open = true;
             let default_folder = self.folders.default_folder();
             let candidates = self.folders.candidates();
             egui::Window::new("Clone repository")
@@ -11246,7 +11298,6 @@ impl Browser {
                             if name.changed() {
                                 dialog.name_from_url = false;
                             }
-                            field_lost_focus |= name.lost_focus();
                         });
                     });
                     if choose_other
@@ -11274,8 +11325,6 @@ impl Browser {
                         && destination.is_some()
                         && self.network.is_none()
                         && self.branch.is_none();
-                    let enter = (url.lost_focus() || field_lost_focus)
-                        && ui.input(|i| i.key_pressed(egui::Key::Enter));
                     ui.horizontal(|ui| {
                         if ui
                             .add_enabled(ready, egui::Button::new("Clone"))
@@ -11283,7 +11332,6 @@ impl Browser {
                                 "Enter a repository URL, an absolute parent folder, and a single project name",
                             )
                             .clicked()
-                            || (enter && ready)
                         {
                             submit = Some((dialog.url.trim().to_string(), destination.clone()));
                         }
@@ -11291,6 +11339,16 @@ impl Browser {
                             cancelled = true;
                         }
                     });
+                    let keys = crate::navigation::dialog_keys(
+                        ui,
+                        egui::Id::unique("clone-repository"),
+                        &url,
+                        ready,
+                    );
+                    if keys.submit {
+                        submit = Some((dialog.url.trim().to_string(), destination.clone()));
+                    }
+                    cancelled |= keys.cancel;
                 });
             if cancelled {
                 open = false;
@@ -11314,8 +11372,7 @@ impl Browser {
         if let Some(remote_branch) = &mut self.track_dialog {
             let mut submit = false;
             let mut cancelled = false;
-            let mut open =
-                !ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+            let mut open = true;
             let busy = track_busy;
             egui::Window::new("Track remote branch")
                 .id(egui::Id::unique("track-remote-branch")).modal(ctx, egui::Id::unique("track-remote-branch"))
@@ -11334,8 +11391,6 @@ impl Browser {
                             .hint_text("origin/main")
                             .desired_width(f32::INFINITY),
                     );
-                    let enter =
-                        response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                     ui.horizontal(|ui| {
                         if ui
                             .add_enabled(
@@ -11343,7 +11398,6 @@ impl Browser {
                                 egui::Button::new("Track branch"),
                             )
                             .clicked()
-                            || (enter && !busy)
                         {
                             submit = true;
                         }
@@ -11351,6 +11405,14 @@ impl Browser {
                             cancelled = true;
                         }
                     });
+                    let keys = crate::navigation::dialog_keys(
+                        ui,
+                        egui::Id::unique("track-remote-branch"),
+                        &response,
+                        !busy && !remote_branch.trim().is_empty(),
+                    );
+                    submit |= keys.submit;
+                    cancelled |= keys.cancel;
                 });
             if cancelled {
                 open = false;
@@ -11432,7 +11494,7 @@ impl Browser {
                         )
                         .on_hover_text(summary);
                     }
-                    ui.add(
+                    let field = ui.add(
                         egui::TextEdit::singleline(&mut dialog.name)
                             .hint_text("Branch name")
                             .desired_width(300.0),
@@ -11456,6 +11518,17 @@ impl Browser {
                             create_branch_cancel = true;
                         }
                     });
+                    let keys = crate::navigation::dialog_keys(
+                        ui,
+                        egui::Id::unique("create-branch-dialog"),
+                        &field,
+                        !dialog.name.trim().is_empty(),
+                    );
+                    if keys.submit {
+                        create_branch_submit =
+                            Some((dialog.name.trim().to_string(), dialog.switch));
+                    }
+                    create_branch_cancel |= keys.cancel;
                 });
         }
         if create_branch_cancel {
@@ -11612,9 +11685,11 @@ impl Browser {
                             {
                                 branch_delete_confirmed = true;
                             }
-                            if ui
-                                .button(("Cancel", egui::RichText::new("Esc").small().weak()))
-                                .clicked()
+                            let button =
+                                ui.button(("Cancel", egui::RichText::new("Esc").small().weak()));
+                            let id = egui::Id::unique("delete-branch");
+                            if button.clicked()
+                                || crate::navigation::dialog_keys(ui, id, &button, false).cancel
                             {
                                 cancelled = true;
                             }
@@ -11675,7 +11750,11 @@ impl Browser {
                         if ui.button("Delete").clicked() {
                             tag_delete_action = Some(dialog.name.clone());
                         }
-                        if ui.button("Cancel").clicked() {
+                        let button = ui.button("Cancel");
+                        let id = egui::Id::unique("delete-tag");
+                        if button.clicked()
+                            || crate::navigation::dialog_keys(ui, id, &button, false).cancel
+                        {
                             cancelled = true;
                         }
                     });
@@ -11829,11 +11908,15 @@ impl Browser {
                     ui.horizontal(|ui| {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             let submit = if hard {
-                                ui.add_enabled(
-                                    enabled,
-                                    // Stays red while a confirmation is checked.
-                                    consequence::danger_button("Hard reset", ready && !blocked),
-                                )
+                                // Its own id: focus on Reset never carries over to it.
+                                ui.push_id("hard-reset", |ui| {
+                                    ui.add_enabled(
+                                        enabled,
+                                        // Stays red while a confirmation is checked.
+                                        consequence::danger_button("Hard reset", ready && !blocked),
+                                    )
+                                })
+                                .inner
                             } else {
                                 ui.add_enabled(
                                     enabled,
@@ -11853,12 +11936,20 @@ impl Browser {
                             if submit.clicked() {
                                 reset_confirmed = true;
                             }
-                            if ui
-                                .button(("Cancel", egui::RichText::new("Esc").small().weak()))
-                                .clicked()
-                            {
+                            let button =
+                                ui.button(("Cancel", egui::RichText::new("Esc").small().weak()));
+                            if button.clicked() {
                                 reset_cancel = true;
                             }
+                            // A hard reset focuses Cancel, so Enter never discards.
+                            let keys = crate::navigation::dialog_keys(
+                                ui,
+                                egui::Id::unique("reset-here"),
+                                if hard { &button } else { &submit },
+                                enabled && !hard,
+                            );
+                            reset_confirmed |= keys.submit;
+                            reset_cancel |= keys.cancel;
                         });
                     });
                 });
@@ -11917,7 +12008,7 @@ impl Browser {
                 .pivot(egui::Align2::CENTER_CENTER)
                 .show(ctx, |ui| {
                     ui.label("Merge a local branch, remote-tracking ref, or tag into the current branch.");
-                    ui.add(
+                    let field = ui.add(
                         egui::TextEdit::singleline(&mut dialog.reference)
                             .hint_text("origin/main or feature")
                             .desired_width(f32::INFINITY),
@@ -11940,6 +12031,16 @@ impl Browser {
                             cancelled = true;
                         }
                     });
+                    let keys = crate::navigation::dialog_keys(
+                        ui,
+                        egui::Id::unique("merge-branch"),
+                        &field,
+                        !dialog.reference.trim().is_empty(),
+                    );
+                    if keys.submit {
+                        merge_submit = Some((dialog.reference.trim().to_string(), dialog.no_ff));
+                    }
+                    cancelled |= keys.cancel;
                 });
             if cancelled {
                 merge_open = false;
@@ -11975,7 +12076,7 @@ impl Browser {
                     ui.label(
                         "Rebase the current branch onto a local branch, remote-tracking ref, or tag.",
                     );
-                    ui.add(
+                    let field = ui.add(
                         egui::TextEdit::singleline(&mut dialog.reference)
                             .hint_text("origin/main, main, or v1.0")
                             .desired_width(f32::INFINITY),
@@ -12006,6 +12107,17 @@ impl Browser {
                             cancelled = true;
                         }
                     });
+                    let keys = crate::navigation::dialog_keys(
+                        ui,
+                        egui::Id::unique("rebase-branch"),
+                        &field,
+                        !dialog.reference.trim().is_empty(),
+                    );
+                    if keys.submit {
+                        rebase_submit =
+                            Some((dialog.reference.trim().to_string(), dialog.autostash));
+                    }
+                    cancelled |= keys.cancel;
                 });
             if cancelled {
                 rebase_open = false;
@@ -12134,7 +12246,7 @@ impl Browser {
                 .pivot(egui::Align2::CENTER_CENTER)
                 .show(ctx, |ui| {
                     ui.label("Record working changes in a new stash entry.");
-                    ui.add(
+                    let field = ui.add(
                         egui::TextEdit::singleline(&mut dialog.message)
                             .hint_text("Message (optional)")
                             .desired_width(f32::INFINITY),
@@ -12180,10 +12292,10 @@ impl Browser {
                     if let Some(error) = &dialog.error {
                         ui.colored_label(ui.visuals().error_fg_color, error);
                     }
+                    let files = stash_summary.map(|(files, ..)| files);
+                    let ready = files != Some(0);
                     ui.horizontal(|ui| {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let files = stash_summary.map(|(files, ..)| files);
-                            let ready = files != Some(0);
                             let label = match files {
                                 Some(files) => format!(
                                     "Stash {}",
@@ -12198,8 +12310,7 @@ impl Browser {
                                     .color(egui::Color32::from_rgb(184, 212, 230)),
                             ))
                             .fill(egui::Color32::from_rgb(11, 85, 119));
-                            let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
-                            if ui.add_enabled(ready, primary).clicked() || (ready && enter) {
+                            if ui.add_enabled(ready, primary).clicked() {
                                 stash_submit = Some((
                                     dialog.message.clone(),
                                     dialog.include_untracked,
@@ -12214,6 +12325,20 @@ impl Browser {
                             }
                         });
                     });
+                    let keys = crate::navigation::dialog_keys(
+                        ui,
+                        egui::Id::unique("stash-changes"),
+                        &field,
+                        ready,
+                    );
+                    if keys.submit {
+                        stash_submit = Some((
+                            dialog.message.clone(),
+                            dialog.include_untracked,
+                            dialog.keep_index,
+                        ));
+                    }
+                    cancelled |= keys.cancel;
                 });
             if cancelled {
                 stash_open = false;
@@ -13714,6 +13839,62 @@ mod tests {
             settings::Prefs::load_from(&settings_file).stash_keep_index,
             "the other remembered values are saved with it"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn dialogs_take_typing_at_once_and_answer_enter_and_esc()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        app.prefs = settings::Prefs::load_from(&dir.path().join("settings.json"));
+        let key = |key| egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let frame = |app: &mut Browser, events| {
+            crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, events), |ctx| {
+                app.draw_ui(ctx)
+            })
+        };
+        // New branch: type the name with no click, then Enter submits. The
+        // fixture is not a repository, so creating it reports an error.
+        app.open_new_branch();
+        let _ = frame(&mut app, vec![]);
+        let _ = frame(&mut app, vec![egui::Event::Text("topic".into())]);
+        let _ = frame(&mut app, vec![key(egui::Key::Enter)]);
+        let dialog = app.create_branch.as_ref().ok_or("branch dialog closed")?;
+        assert_eq!(dialog.name, "topic");
+        assert!(dialog.error.is_some(), "Enter ran the create");
+        app.create_branch = None;
+        let _ = frame(&mut app, vec![]);
+
+        // Rename: Esc cancels.
+        app.rename_dialog = Some(RenameDialog {
+            old: "main".into(),
+            new: "main".into(),
+            error: None,
+        });
+        let _ = frame(&mut app, vec![]);
+        let _ = frame(&mut app, vec![key(egui::Key::Escape)]);
+        assert!(app.rename_dialog.is_none(), "Esc closes the rename");
+
+        // Delete branch: Cancel has the keyboard, so Enter closes it and
+        // deletes nothing.
+        app.branch_delete = Some(BranchDeleteDialog {
+            name: "topic".into(),
+            error: None,
+        });
+        let _ = frame(&mut app, vec![]);
+        let _ = frame(&mut app, vec![]);
+        assert!(app.branch_delete.is_some());
+        let _ = frame(&mut app, vec![key(egui::Key::Enter)]);
+        assert!(app.branch_delete.is_none(), "Enter pressed Cancel");
+        assert!(app.mutation_notice.is_none(), "nothing was deleted");
         Ok(())
     }
 
