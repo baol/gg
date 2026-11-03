@@ -4857,14 +4857,14 @@ impl Browser {
     }
 
     /// Move the History selection `distance` rows (j/k, arrows, paging).
-    fn step_selection(&mut self, ctx: &egui::Context, distance: i32) {
+    fn step_selection(&mut self, ctx: &egui::Context, distance: isize) {
         if self.state.count == 0 {
             return;
         }
         if self.worker.is_some() {
             let row = self.state.selected_row.unwrap_or(0);
             let next = row
-                .saturating_add_signed(distance as isize)
+                .saturating_add_signed(distance)
                 .min(self.state.count - 1);
             self.state.select_row(next);
         } else {
@@ -10444,18 +10444,8 @@ impl Browser {
                         self.rebase_preset(ctx, action);
                     }
                 }
-                let page = self.page_rows.saturating_sub(1).max(1) as i32;
-                for (modifiers, key, distance) in [
-                    (egui::Modifiers::NONE, egui::Key::ArrowUp, -1),
-                    (egui::Modifiers::NONE, egui::Key::ArrowDown, 1),
-                    (egui::Modifiers::NONE, egui::Key::K, -1),
-                    (egui::Modifiers::NONE, egui::Key::J, 1),
-                    (egui::Modifiers::CTRL, egui::Key::P, -1),
-                    (egui::Modifiers::CTRL, egui::Key::N, 1),
-                    (egui::Modifiers::NONE, egui::Key::PageUp, -page),
-                    (egui::Modifiers::NONE, egui::Key::PageDown, page),
-                    (egui::Modifiers::ALT, egui::Key::V, -page),
-                ] {
+                let page = self.page_rows.saturating_sub(1).max(1) as isize;
+                for (modifiers, key, distance) in crate::navigation::keys(page) {
                     // In the narrow details j/k still step commits, while
                     // Up/Down choose a file in the FILES list.
                     let details = narrow && self.narrow_details;
@@ -10465,12 +10455,15 @@ impl Browser {
                         && (file_key
                             || matches!(
                                 key,
-                                egui::Key::PageUp | egui::Key::PageDown | egui::Key::V
+                                egui::Key::PageUp
+                                    | egui::Key::PageDown
+                                    | egui::Key::V
+                                    | egui::Key::Home
+                                    | egui::Key::End
                             ))
                     {
                         if file_key && ctx.input_mut(|i| i.consume_key(modifiers, key)) {
-                            self.details_file =
-                                self.details_file.saturating_add_signed(distance as isize);
+                            self.details_file = self.details_file.saturating_add_signed(distance);
                         }
                         continue;
                     }
@@ -12592,7 +12585,9 @@ impl Browser {
                 let ids = commit.map(|commit| (commit.id.clone(), commit.subject().to_owned()));
                 match action {
                     Some(details_view::PageAction::Back) => self.narrow_details = false,
-                    Some(details_view::PageAction::Step(step)) => self.step_selection(ctx, step),
+                    Some(details_view::PageAction::Step(step)) => {
+                        self.step_selection(ctx, step as isize)
+                    }
                     Some(details_view::PageAction::Review(path)) => {
                         self.review_from_details(ctx, path)
                     }
@@ -17894,6 +17889,31 @@ mod tests {
         assert!(!app.refs_drawer);
         assert_eq!(app.state.selected, Some(format!("{:040x}", 7)));
         Ok(())
+    }
+
+    #[test]
+    fn home_and_end_go_to_the_first_and_last_commit() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        let run = |app: &mut Browser, events| {
+            crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, events), |ui| {
+                app.draw_ui(ui)
+            })
+        };
+        let _ = run(&mut app, vec![]);
+        for (key, modifiers, row) in [
+            (egui::Key::End, egui::Modifiers::NONE, 99),
+            (egui::Key::Home, egui::Modifiers::NONE, 0),
+            (egui::Key::End, egui::Modifiers::COMMAND, 99),
+            (egui::Key::Home, egui::Modifiers::COMMAND, 0),
+        ] {
+            let _ = run(&mut app, vec![self::key(key, modifiers)]);
+            assert_eq!(
+                app.state.selected,
+                Some(format!("{row:040x}")),
+                "{key:?} with {modifiers:?}"
+            );
+        }
     }
 
     #[test]

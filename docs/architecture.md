@@ -64,6 +64,7 @@ Preserve matching selection; otherwise select the first published match. Clear s
 | Filter / reword / copy full ID | Ctrl+F/R/C; Command on macOS |
 | Previous / next commit | Up/Down, k/j, Ctrl+P/N |
 | Previous / next page | Page Up/Down; Alt+V for previous |
+| First / last row | Home/End, also with Ctrl (Command on macOS), in History, the Local Changes lists, the Review file list, the reader, Recovery, Submodules and Worktrees; End before counting finishes goes to the last row found so far |
 | Open selected commit/file / return | Enter or Right / Escape, Left, or Back |
 | Toggle commit details | Space |
 | Selected commit actions | Alt+A or **Actions** in the commit inspector |

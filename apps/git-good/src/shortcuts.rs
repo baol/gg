@@ -25,6 +25,7 @@ const SCOPES: &[(&str, &[(&str, &str)])] = &[
         &[
             ("j k  ↑ ↓", "Move selection"),
             ("PgUp PgDn", "Page"),
+            ("Home End", "First / last commit"),
             ("Ctrl+K", "Search commits, branches, files, actions"),
             ("Ctrl+F", "Filter history"),
             ("Alt+A", "Commit actions"),
