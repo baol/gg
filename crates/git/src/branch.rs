@@ -2,7 +2,7 @@
 use gix::bstr::BStr;
 use std::{
     path::Path,
-    process::{Command, Stdio},
+    process::Stdio,
     sync::atomic::{AtomicBool, Ordering},
 };
 
@@ -47,7 +47,7 @@ pub fn create_at(path: &Path, branch: &str, start: &str) -> Result<CreateReceipt
             "Branch {branch} already exists. Choose another name or switch to it."
         ));
     }
-    let resolved = Command::new("git")
+    let resolved = crate::process::git()
         .current_dir(path)
         .args(["rev-parse", "--verify", "--quiet"])
         .arg(format!("{start}^{{commit}}"))
@@ -62,7 +62,7 @@ pub fn create_at(path: &Path, branch: &str, start: &str) -> Result<CreateReceipt
         return Err(format!("Revision {start} was not found."));
     }
     let commit = String::from_utf8_lossy(&resolved.stdout).trim().to_string();
-    let output = Command::new("git")
+    let output = crate::process::git()
         .current_dir(path)
         .args(["branch", "--"])
         .arg(branch)
@@ -164,7 +164,7 @@ pub fn delete(path: &Path, branch: &str, force: bool) -> Result<DeleteReceipt, S
     {
         return Err(format!("Local branch {branch} does not exist."));
     }
-    let mut command = Command::new("git");
+    let mut command = crate::process::git();
     command
         .current_dir(&session.identity.path)
         .arg("branch")
@@ -242,7 +242,7 @@ pub fn track_remote(path: &Path, remote_branch: &str) -> Result<Receipt, String>
             "Local branch {branch} already exists. Switch to it or choose another remote branch."
         ));
     }
-    let mut command = Command::new("git");
+    let mut command = crate::process::git();
     command
         .current_dir(&session.identity.path)
         .arg("switch")
@@ -286,7 +286,7 @@ fn run(path: &Path, branch: &str, create: bool) -> Result<Receipt, String> {
             "Local branch {branch} does not exist. Refresh refs or create it first."
         ));
     }
-    let mut command = Command::new("git");
+    let mut command = crate::process::git();
     command
         .current_dir(&session.identity.path)
         .arg("switch")
@@ -484,7 +484,7 @@ pub fn unset_upstream(path: &Path, branch: &str) -> Result<(), String> {
 }
 
 fn ref_exists(path: &Path, full: &str) -> Result<bool, String> {
-    Command::new("git")
+    crate::process::git()
         .current_dir(path)
         .args(["show-ref", "--verify", "--quiet", full])
         .stdin(Stdio::null())
@@ -498,7 +498,7 @@ fn ref_exists(path: &Path, full: &str) -> Result<bool, String> {
 }
 
 fn git(path: &Path, args: &[&str], label: &str) -> Result<(), String> {
-    let output = Command::new("git")
+    let output = crate::process::git()
         .current_dir(path)
         .args(args)
         .stdin(Stdio::null())

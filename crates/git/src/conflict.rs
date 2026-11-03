@@ -10,7 +10,7 @@ use std::{
     ffi::{OsStr, OsString},
     io::{Read, Write},
     path::{Component, Path, PathBuf},
-    process::{Command, Output, Stdio},
+    process::{Output, Stdio},
     sync::atomic::{AtomicU64, Ordering},
 };
 
@@ -747,7 +747,7 @@ fn run_os<S: AsRef<OsStr>>(path: &Path, args: &[S]) -> Result<Output, String> {
     let repo = gix::discover(path)
         .map_err(|error| format!("Could not read repository {}: {error}", path.display()))?;
     let root = repo.workdir().unwrap_or_else(|| repo.path());
-    Command::new("git")
+    crate::process::git()
         .current_dir(root)
         .args(args)
         .stdin(Stdio::null())

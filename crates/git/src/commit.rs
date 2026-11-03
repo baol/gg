@@ -8,12 +8,7 @@ use gix::{
         tree::{Entry, EntryMode},
     },
 };
-use std::{
-    collections::BTreeMap,
-    ffi::OsStr,
-    path::Path,
-    process::{Command, Stdio},
-};
+use std::{collections::BTreeMap, ffi::OsStr, path::Path, process::Stdio};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Receipt {
@@ -366,7 +361,7 @@ fn signed_commit_id(
         .workdir()
         .ok_or("Signing requires a working tree")?
         .to_path_buf();
-    let mut command = Command::new("git");
+    let mut command = crate::process::git();
     command
         .current_dir(&worktree)
         .arg("commit-tree")
@@ -408,7 +403,11 @@ fn signed_commit_id(
     Ok(gix::ObjectId::from_hex(id.as_bytes())?)
 }
 
-fn identity_env(command: &mut Command, role: &str, signature: &gix::actor::Signature) {
+fn identity_env(
+    command: &mut crate::process::GitCommand,
+    role: &str,
+    signature: &gix::actor::Signature,
+) {
     let offset = signature.time.offset;
     let sign = if offset < 0 { '-' } else { '+' };
     let offset = offset.abs();
@@ -570,7 +569,7 @@ fn run_hook_input(
     args: &[&OsStr],
     input: Option<&[u8]>,
 ) -> Result<()> {
-    let mut command = Command::new("git");
+    let mut command = crate::process::git();
     command
         .arg("hook")
         .arg("run")

@@ -2,11 +2,11 @@
 use gg_engine::worktree::{AddRequest, Receipt, Snapshot, Worktree};
 use std::{
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::Stdio,
 };
 
-fn command(path: &Path) -> Command {
-    let mut command = Command::new("git");
+fn command(path: &Path) -> crate::process::GitCommand {
+    let mut command = crate::process::git();
     command
         .current_dir(path)
         .stdin(Stdio::null())

@@ -14,7 +14,7 @@ use gix::bstr::ByteSlice;
 use std::{
     collections::{BTreeMap, HashSet, VecDeque},
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::Stdio,
 };
 
 /// Bound for one predecessor search. Reaching it is an explicit boundary.
@@ -422,7 +422,7 @@ impl Session {
         child: gix::ObjectId,
         destination: &[u8],
     ) -> Result<Vec<Vec<u8>>, String> {
-        let output = Command::new("git")
+        let output = crate::process::git()
             .current_dir(&self.repo_path)
             .args([
                 "diff-tree",

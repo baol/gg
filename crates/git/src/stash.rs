@@ -2,7 +2,7 @@
 use gg_engine::stash::{StashEntry, StashList, StashReceipt};
 use std::{
     path::Path,
-    process::{Command, Output, Stdio},
+    process::{Output, Stdio},
 };
 
 const LIST_FORMAT: &str = "%gd%x00%H%x00%gs%x00%cr";
@@ -315,7 +315,7 @@ fn normalize(reference: Option<&str>) -> Result<String, String> {
 }
 
 fn run(path: &Path, args: &[String]) -> Result<Output, String> {
-    Command::new("git")
+    crate::process::git()
         .current_dir(path)
         .args(args)
         .stdin(Stdio::null())

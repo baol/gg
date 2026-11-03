@@ -2,7 +2,7 @@
 use gg_engine::recovery::{Backup, Restore};
 use std::{
     path::Path,
-    process::{Command, Stdio},
+    process::Stdio,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -303,7 +303,7 @@ fn sanitize(label: &str) -> String {
 }
 
 fn run(path: &Path, args: &[String]) -> Result<std::process::Output, String> {
-    Command::new("git")
+    crate::process::git()
         .current_dir(path)
         .args(args)
         .stdin(Stdio::null())

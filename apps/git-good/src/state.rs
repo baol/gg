@@ -195,7 +195,18 @@ impl State {
         let first = matches.next();
         let selected_visible = first.is_some_and(|c| Some(&c.id) == self.selected.as_ref())
             || matches.any(|c| Some(&c.id) == self.selected.as_ref());
-        if !selected_visible {
+        // A streamed history keeps its (already filtered) commits in `rows`
+        // and none in `history`: a selection among them stays.
+        let streamed = self
+            .history
+            .as_ref()
+            .is_some_and(|history| history.commits.is_empty());
+        let selected_loaded = streamed
+            && self
+                .rows
+                .values()
+                .any(|c| Some(&c.id) == self.selected.as_ref());
+        if !selected_visible && !selected_loaded {
             self.selected = first.map(|c| c.id.clone());
         }
         self.selected_row = self
@@ -279,6 +290,27 @@ mod tests {
         s.query.clear();
         s.reconcile_selection();
         assert_eq!(s.selected.as_deref(), Some("one"));
+    }
+    /// Cherry-pick and Revert select their commit, then reconcile: in a
+    /// streamed history (rows only) that selection must stay.
+    #[test]
+    fn a_streamed_selection_survives_reconcile() {
+        let mut s = State {
+            history: Some(history("repo", &[])),
+            ..State::default()
+        };
+        s.rows = history("repo", &["one", "two"])
+            .commits
+            .into_iter()
+            .enumerate()
+            .collect();
+        s.selected = Some("two".into());
+        s.reconcile_selection();
+        assert_eq!(s.selected.as_deref(), Some("two"));
+        assert_eq!(s.selected_row, Some(1));
+        s.selected = Some("gone".into());
+        s.reconcile_selection();
+        assert!(s.selected.is_none());
     }
     #[test]
     fn refresh_failure_retry_and_stale_generation() {

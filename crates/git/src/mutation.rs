@@ -4,7 +4,7 @@ use gg_engine::mutation::{
 };
 use std::{
     path::Path,
-    process::{Command, Output, Stdio},
+    process::{Output, Stdio},
 };
 
 pub fn state(path: &Path) -> Result<Option<OperationState>, String> {
@@ -430,7 +430,7 @@ fn label(operation: Operation) -> &'static str {
 }
 
 fn run(path: &Path, args: &[String], editor: bool) -> Result<Output, String> {
-    let mut command = Command::new("git");
+    let mut command = crate::process::git();
     command
         .current_dir(path)
         .args(args)

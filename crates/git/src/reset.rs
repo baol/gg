@@ -3,7 +3,7 @@ use gg_engine::reset::{Mode, Receipt};
 use std::{
     collections::BTreeSet,
     path::Path,
-    process::{Command, Output, Stdio},
+    process::{Output, Stdio},
 };
 
 /// Reset the current branch to `commit`. The tip it leaves is first saved as
@@ -146,7 +146,7 @@ fn resolve(path: &Path, commit: &str) -> Result<String, String> {
 }
 
 fn run(path: &Path, args: &[String]) -> Result<Output, String> {
-    Command::new("git")
+    crate::process::git()
         .current_dir(path)
         .args(args)
         .stdin(Stdio::null())
