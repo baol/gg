@@ -2,7 +2,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReviewRequest {
     pub path: PathBuf,
     pub revision: String,

@@ -98,6 +98,7 @@ mod tag_cli;
 mod target_guard;
 mod thumbnails;
 mod titlebar;
+mod trail;
 mod watcher;
 mod welcome_view;
 mod worktree_cli;
@@ -801,6 +802,9 @@ enum FrameCommand {
     SetTheme(settings::Theme),
     Documentation,
     About,
+    /// View › Back / Forward: the places the user jumped to (`trail.rs`).
+    Back,
+    Forward,
     /// A menu item that is shown but cannot run yet.
     Unavailable,
 }
@@ -2003,6 +2007,10 @@ struct Browser {
     stash_notice: Option<String>,
     /// What Undo on the last operation's receipt puts back.
     undo: Option<Undo>,
+    /// Back and Forward: the commits and files the user jumped to.
+    trail: trail::Trail,
+    /// The History selection moved by a step (keys), not a jump, this frame.
+    stepped: bool,
     /// A merge's receipt without its commit count, and the count on its way.
     merge_count: Option<(String, std::sync::mpsc::Receiver<usize>)>,
     mutation: Option<gg_engine::mutation::OperationState>,
@@ -2216,6 +2224,8 @@ impl Browser {
             stash_notice: None,
             merge_count: None,
             undo: None,
+            trail: trail::Trail::default(),
+            stepped: false,
             notice_seen: None,
             mutation: None,
             mutation_notice: None,
@@ -4187,6 +4197,8 @@ impl Browser {
                 ctx.open_url(egui::OpenUrl::new_tab("https://github.com/baol/gg#readme"));
             }
             FrameCommand::About => self.about_open = true,
+            FrameCommand::Back => self.go_trail(ctx, -1),
+            FrameCommand::Forward => self.go_trail(ctx, 1),
             FrameCommand::Unavailable => {}
         }
     }
@@ -4230,6 +4242,16 @@ impl Browser {
                 FrameCommand::NewBranch,
             ),
             (egui::Modifiers::COMMAND, egui::Key::Q, FrameCommand::Quit),
+            (
+                egui::Modifiers::COMMAND,
+                egui::Key::OpenBracket,
+                FrameCommand::Back,
+            ),
+            (
+                egui::Modifiers::COMMAND,
+                egui::Key::CloseBracket,
+                FrameCommand::Forward,
+            ),
             (
                 egui::Modifiers::COMMAND,
                 egui::Key::R,
@@ -5067,6 +5089,7 @@ impl Browser {
         if self.state.count == 0 {
             return;
         }
+        self.stepped = true;
         if self.worker.is_some() {
             let row = self.state.selected_row.unwrap_or(0);
             let next = row
@@ -5541,6 +5564,18 @@ impl Browser {
                 item("History", "Ctrl+2", FrameCommand::History)
                     .unless(idle(ready.has_repo))
                     .checked(self.working.is_none() && self.review.is_none())
+                    .entry(),
+                item("Back", "Ctrl+[", FrameCommand::Back)
+                    .unless(
+                        (!ready.has_repo).then_some(no_repo).or_else(|| {
+                            (!self.trail.can_back()).then_some("Nothing to go back to")
+                        }),
+                    )
+                    .entry(),
+                item("Forward", "Ctrl+]", FrameCommand::Forward)
+                    .unless((!ready.has_repo).then_some(no_repo).or_else(|| {
+                        (!self.trail.can_forward()).then_some("Nothing to go forward to")
+                    }))
                     .entry(),
                 Entry::Separator,
                 // Narrower than the docked sidebar, it opens the drawer.
@@ -6589,6 +6624,7 @@ impl Browser {
         self.stash_notice = None;
         self.merge_count = None;
         self.undo = None;
+        self.trail.clear();
         self.branch_warning = None;
         self.operation_worker = None;
         self.operation_owner = OperationOwner::Footer;
@@ -10968,6 +11004,118 @@ impl Browser {
         self.review = Some(review);
     }
 
+    /// Where the user is, for Back and Forward: Review on its comparison
+    /// and file, or History on its selected commit; nothing in Local
+    /// Changes or before a commit is selected.
+    fn current_place(&self) -> Option<trail::Place> {
+        if let Some(review) = &self.review {
+            let (request, subject, file) = review.place();
+            return Some(trail::Place::Review {
+                request,
+                subject,
+                file,
+            });
+        }
+        if self.working.is_some() || self.conflict_view.is_some() || self.state.history.is_none() {
+            return None;
+        }
+        self.state
+            .selected
+            .clone()
+            .map(|selected| trail::Place::History {
+                selected,
+                query: self.state.query.clone(),
+                offset: self.scroll_offset,
+            })
+    }
+
+    /// Note where the user is: a jump adds a place, a step moves the
+    /// current one, and the same place keeps its newest scroll position.
+    fn record_place(&mut self) {
+        let stepped = std::mem::take(&mut self.stepped);
+        if let Some(place) = self.current_place() {
+            if stepped {
+                self.trail.follow(place);
+            } else {
+                self.trail.visit(place);
+            }
+        }
+    }
+
+    /// Back (`direction` -1) or Forward (1), past places whose commit is gone.
+    fn go_trail(&mut self, ctx: &egui::Context, direction: isize) {
+        self.record_place();
+        let path = self
+            .state
+            .history
+            .as_ref()
+            .map(|history| history.path.clone());
+        let gone = |place: &trail::Place| {
+            path.as_ref()
+                .is_some_and(|path| !gg_git::missing_objects(path, [place.commit()]).is_empty())
+        };
+        let place = if direction < 0 {
+            self.trail.back(gone)
+        } else {
+            self.trail.forward(gone)
+        };
+        let Some(place) = place else {
+            return;
+        };
+        if self.working.is_some() {
+            self.close_to_history(ctx);
+        }
+        match place {
+            trail::Place::History {
+                selected,
+                query,
+                offset,
+            } => {
+                self.review = None;
+                // The stream finds the commit by its ID even when no loaded
+                // row holds it, so the selection is not reconciled away.
+                if self.state.query != query {
+                    self.state.query = query;
+                    self.state.start_filter();
+                }
+                self.state.selected_row = self
+                    .state
+                    .rows
+                    .iter()
+                    .find(|(_, commit)| commit.id == selected)
+                    .map(|(row, _)| *row);
+                self.state.details = self
+                    .state
+                    .selected_row
+                    .and_then(|row| self.state.rows.get(&row))
+                    .cloned();
+                self.state.selected = Some(selected);
+                self.scroll_offset = offset;
+                self.restore_offset = Some(offset);
+                self.narrow_details = false;
+            }
+            trail::Place::Review {
+                request,
+                subject,
+                file,
+            } => {
+                // Review's own Back returns where the first review came from.
+                let location = self
+                    .review
+                    .as_mut()
+                    .and_then(|review| review.take_return_location())
+                    .unwrap_or_else(|| self.capture_return_location());
+                let mut review = review_view::Review::new(request, subject, ctx);
+                if let Some(file) = file {
+                    review = review.select_path(file);
+                }
+                review.set_return_location(location);
+                self.review = Some(review);
+            }
+        }
+        ctx.request_repaint();
+    }
+
     fn open_compare(
         &mut self,
         ctx: &egui::Context,
@@ -11055,6 +11203,17 @@ impl Browser {
     }
 
     fn draw_ui(&mut self, ui: &mut egui::Ui) {
+        self.record_place();
+        let (back, forward) = ui.input(|i| {
+            (
+                i.pointer.button_pressed(egui::PointerButton::Extra1),
+                i.pointer.button_pressed(egui::PointerButton::Extra2),
+            )
+        });
+        if back || forward {
+            let ctx = ui.ctx().clone();
+            self.go_trail(&ctx, if back { -1 } else { 1 });
+        }
         if self.working.is_none() {
             // Local Changes closed: what it left waiting is written now.
             self.drafts.flush();
@@ -19649,6 +19808,65 @@ mod tests {
     }
 
     #[test]
+    fn back_and_forward_return_to_commits_and_reviews_jumped_to() -> Checked {
+        let ctx = egui::Context::default();
+        let (dir, mut app) = two_commits()?;
+        let path = dir.path();
+        let second = git_in(path, &["rev-parse", "HEAD"])?.trim().to_string();
+        let first = git_in(path, &["rev-parse", "HEAD~1"])?.trim().to_string();
+        let gone = "0123456789012345678901234567890123456789".to_string();
+        let jump = |app: &mut Browser, id: &str, offset: f32| {
+            app.state.selected = Some(id.to_string());
+            app.scroll_offset = offset;
+            app.record_place();
+        };
+        jump(&mut app, &first, 40.0);
+        jump(&mut app, &gone, 0.0);
+        jump(&mut app, &second, 0.0);
+        assert!(app.trail.can_back() && !app.trail.can_forward());
+
+        // Review on the second commit is a place too.
+        app.open_review(&ctx, app.capture_return_location());
+        app.record_place();
+        app.run_frame_command(&ctx, FrameCommand::Back, &mut false, &mut false);
+        assert!(app.review.is_none(), "Back leaves Review for History");
+        assert_eq!(app.state.selected.as_deref(), Some(second.as_str()));
+
+        // A commit that no longer exists is skipped; the scroll place returns.
+        app.run_frame_command(&ctx, FrameCommand::Back, &mut false, &mut false);
+        assert_eq!(app.state.selected.as_deref(), Some(first.as_str()));
+        assert_eq!(app.restore_offset, Some(40.0));
+        assert!(!app.trail.can_back());
+
+        // Forward goes the other way, past the gone commit, into Review.
+        app.run_frame_command(&ctx, FrameCommand::Forward, &mut false, &mut false);
+        assert_eq!(app.state.selected.as_deref(), Some(second.as_str()));
+        app.run_frame_command(&ctx, FrameCommand::Forward, &mut false, &mut false);
+        assert_eq!(
+            app.review
+                .as_ref()
+                .map(|review| review.request.revision.clone()),
+            Some(second.clone())
+        );
+
+        // A step with the keys moves the current place without adding one.
+        app.review = None;
+        app.record_place();
+        app.stepped = true;
+        app.state.selected = Some(first.clone());
+        app.record_place();
+        app.run_frame_command(&ctx, FrameCommand::Back, &mut false, &mut false);
+        assert_eq!(
+            app.review
+                .as_ref()
+                .map(|review| review.request.revision.clone()),
+            Some(second),
+            "Back skips no step: it returns to the Review before"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn undo_brings_a_deleted_branch_back_at_its_tip() -> Checked {
         let ctx = egui::Context::default();
         let (dir, mut app) = two_commits()?;
@@ -21088,6 +21306,8 @@ mod tests {
             [
                 "Local Changes",
                 "History",
+                "Back",
+                "Forward",
                 "-",
                 "Refs sidebar",
                 "Commit inspector",

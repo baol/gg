@@ -4686,6 +4686,15 @@ Layer: interaction
 - And New tag opens at once, showing the last signing configuration read, and takes the background read when it lands (Sign checked by `tag.gpgsign`, *No signing key is configured.*); Create waits for that read on its worker and refuses to make an unsigned tag. Local Changes reads the configuration the same way; focus and a change to the repository's `config` read it again; the commit worker reads it before committing, as `git good commit` does
 Covered by (interaction): `a_dialog_mutation_runs_on_the_worker_and_its_dialog_waits_for_git`, `new_tag_reads_signing_off_the_ui_thread_and_never_tags_unsigned`, `dialogs_take_typing_at_once_and_answer_enter_and_esc` (apps/git-good/src/main.rs); `a_worker_waits_for_the_read_in_flight_and_views_see_it_once` (apps/git-good/src/signing_cache.rs); `signing_readiness_blocks_the_commit_without_unsigned_fallback` (apps/git-good/src/status_view.rs)
 
+### XCT-34 Back and Forward
+Fixture: `main` with two commits
+Layer: interaction
+- When the user selects the first commit (scrolled 40 px), then a commit that is later gone, then the second commit, and opens it in Review
+- Then View › Back (`Ctrl+[`, or the mouse's back button) leaves Review for History on the second commit; Back again skips the gone commit and selects the first, scrolled as it was; Back is then disabled (*Nothing to go back to*)
+- And View › Forward (`Ctrl+]`) returns to the second commit, then to Review on it
+- And moving the selection with the keys moves the current place without adding one; jumping elsewhere drops the places forward of it; at most 256 places are kept, the oldest going first; without a repository both items say *Open a repository first*
+Covered by (interaction): `back_and_forward_return_to_commits_and_reviews_jumped_to`, `menus_follow_the_final_design_mockup` (apps/git-good/src/main.rs); `back_and_forward_walk_the_places_jumped_to`, `stepping_moves_the_current_place_without_adding_one`, `gone_places_are_skipped_and_dropped`, `at_most_the_limit_is_kept` (apps/git-good/src/trail.rs)
+
 ### XCT-33 Undo the last operation
 Fixture: `main` with two commits; a branch `merged` at the first
 Layer: interaction
