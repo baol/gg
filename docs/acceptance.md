@@ -2104,6 +2104,13 @@ Layer: product
 - Then the exact text and the `c.txt` selection are restored; opening a linked worktree shows an empty draft
 Covered by (interaction): `commit_draft_survives_history_navigation`, `commit_draft_does_not_cross_worktrees` (main.rs); `draft_restores_the_selected_comparison` (status_view.rs)
 
+### CHG-73 Drafts survive quit and crash
+Fixture: `fx-dirty`
+Layer: product
+- When the user types a message in Local Changes, pauses for a second, and Git Good quits or crashes, then reopens the repository
+- Then Local Changes shows the same message; committing it removes the saved draft; a draft saved for another repository is not restored
+Covered by (interaction): `a_commit_draft_survives_reopening_the_window` (main.rs); `a_draft_is_written_after_a_pause_and_read_back`, `a_commit_rewrites_at_once_and_an_empty_draft_has_no_file`, `closing_writes_what_is_still_waiting`, `a_file_for_another_repository_is_not_restored` (drafts.rs)
+
 ### CHG-56 Commit editor expands and collapses
 Fixture: `fx-dirty`
 Layer: interaction
