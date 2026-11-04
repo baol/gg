@@ -79,6 +79,7 @@ mod shortcuts;
 mod signature_cli;
 mod signature_view;
 mod signature_worker;
+mod signing_cache;
 mod split_rows;
 mod stage_view;
 mod stash_cli;
@@ -1203,10 +1204,36 @@ struct TagCreateDialog {
     target: String,
     message: String,
     sign: bool,
+    /// The user chose Sign; otherwise it follows the configuration.
+    sign_touched: bool,
     signing_ready: bool,
     signing_note: Option<String>,
+    /// The signing cache generation shown; 0 before the first read.
+    signing_generation: u64,
     error: Option<String>,
     pending: Option<std::sync::mpsc::Receiver<Result<gg_git::tag::CreateReceipt, String>>>,
+}
+
+impl TagCreateDialog {
+    /// Show a newly read signing configuration.
+    fn take_signing(
+        &mut self,
+        generation: u64,
+        config: &gg_engine::signature::Config,
+        prefer: bool,
+    ) {
+        self.signing_generation = generation;
+        self.signing_ready = config.ready();
+        self.signing_note = (!self.signing_ready).then(|| {
+            config
+                .note
+                .clone()
+                .unwrap_or_else(|| "Signing key or tool is unavailable.".into())
+        });
+        if !self.sign_touched {
+            self.sign = config.tag_signing || prefer;
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -1413,10 +1440,22 @@ enum OperationArea {
     },
 }
 
+/// Whether two paths name the same folder as written, ignoring Windows'
+/// verbatim prefix: a canonicalized path reads `\\?\D:\repo`, the one Git
+/// and gix report `D:\repo`. Separators already compare equal.
+fn same_path(a: &std::path::Path, b: &std::path::Path) -> bool {
+    fn plain(path: &std::path::Path) -> std::borrow::Cow<'_, std::path::Path> {
+        match path.to_str().and_then(|text| text.strip_prefix(r"\\?\")) {
+            Some(rest) if !rest.starts_with("UNC") => std::path::PathBuf::from(rest).into(),
+            _ => path.into(),
+        }
+    }
+    a == b || plain(a) == plain(b)
+}
+
 enum OperationOutcome {
-    /// A merge or fast-forward: the receipt, the branch, and how many
-    /// commits it brought in.
-    Merge(gg_engine::merge::Receipt, String, Option<usize>),
+    /// A merge or fast-forward: the receipt and the branch.
+    Merge(gg_engine::merge::Receipt, String),
     /// A rebase of the named branch.
     Rebase(gg_engine::rebase::Receipt, String),
     Recovery {
@@ -1425,10 +1464,58 @@ enum OperationOutcome {
         receipt: gg_engine::mutation::MutationReceipt,
     },
     /// `file` is the exact path bytes.
-    Conflict { file: Vec<u8> },
+    Conflict {
+        file: Vec<u8>,
+    },
     /// A staged resolution was undone; `conflicted` when Git recreated the
     /// conflict.
-    Reopened { file: Vec<u8>, conflicted: bool },
+    Reopened {
+        file: Vec<u8>,
+        conflicted: bool,
+    },
+    Stashed(gg_engine::stash::StashReceipt),
+    /// A stash applied, or popped when `remove`.
+    StashRestored {
+        reference: String,
+        receipt: gg_engine::stash::StashReceipt,
+    },
+    StashDropped(String),
+    BranchCreated {
+        receipt: gg_git::branch::CreateReceipt,
+        switch: bool,
+        recovery_source: Option<return_location::RecoverySource>,
+    },
+    BranchRenamed,
+    BranchDeleted(String),
+    TagDeleted(String),
+    Reset {
+        receipt: gg_engine::reset::Receipt,
+        mode: gg_engine::reset::Mode,
+    },
+    /// A cherry-pick or revert of `commit`.
+    Picked {
+        operation: gg_engine::mutation::Operation,
+        commit: String,
+        receipt: gg_engine::mutation::MutationReceipt,
+    },
+}
+
+/// Who started the job on the operation worker: where a failure shows, and
+/// which dialog stays open until the job reports (the one it was started
+/// from, as when Git ran on the UI thread).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum OperationOwner {
+    /// The footer's error outcome (merge, rebase, recovery, conflicts).
+    #[default]
+    Footer,
+    /// The footer's mutation error (cherry-pick, revert, reset).
+    MutationError,
+    StashDialog,
+    StashPicker,
+    CreateBranch,
+    Rename,
+    BranchDelete,
+    TagDelete,
 }
 
 #[derive(Clone, Copy)]
@@ -1887,6 +1974,8 @@ struct Browser {
     track_dialog: Option<String>,
     stash_dialog: Option<StashDialog>,
     stash_notice: Option<String>,
+    /// A merge's receipt without its commit count, and the count on its way.
+    merge_count: Option<(String, std::sync::mpsc::Receiver<usize>)>,
     mutation: Option<gg_engine::mutation::OperationState>,
     mutation_notice: Option<String>,
     mutation_error: Option<String>,
@@ -1908,7 +1997,11 @@ struct Browser {
     /// The reopened commit Local Changes was last opened for.
     reopen_seen: Option<String>,
     operation_worker: Option<std::sync::mpsc::Receiver<Result<OperationOutcome, String>>>,
+    operation_owner: OperationOwner,
     operation_repo: Option<PathBuf>,
+    /// The signing configuration for Local Changes and New tag, read off
+    /// the UI thread.
+    signing_cache: signing_cache::Cache,
     operation_restore_row: Option<usize>,
     merge_dialog: Option<MergeDialog>,
     rebase_dialog: Option<RebaseDialog>,
@@ -2087,6 +2180,7 @@ impl Browser {
             track_dialog: None,
             stash_dialog: None,
             stash_notice: None,
+            merge_count: None,
             notice_seen: None,
             mutation: None,
             mutation_notice: None,
@@ -2111,7 +2205,9 @@ impl Browser {
             },
             open_worktrees: cfg!(debug_assertions) && std::env::var_os("GG_WORKTREES").is_some(),
             operation_worker: None,
+            operation_owner: OperationOwner::Footer,
             operation_repo: None,
+            signing_cache: Default::default(),
             operation_restore_row: None,
             merge_dialog: None,
             rebase_dialog: None,
@@ -3748,18 +3844,16 @@ impl Browser {
         let path = self
             .stash_path()
             .ok_or("Open a repository before stashing changes.")?;
-        let message = (!message.trim().is_empty()).then_some(message.trim());
-        let receipt = gg_git::stash::push(&path, message, include_untracked, keep_index)?;
-        self.stash_notice = Some(format!(
-            "Stashed{}",
-            receipt
-                .reference
-                .as_deref()
-                .map(|reference| format!(" {reference}"))
-                .unwrap_or_default()
-        ));
-        self.load(ctx);
-        self.refresh_working(ctx);
+        let message = (!message.trim().is_empty()).then(|| message.trim().to_string());
+        let label = match self.changed_files() {
+            Some(count) => format!("Stashing {}…", operation_band::plural(count, "file")),
+            None => "Stashing changes…".into(),
+        };
+        self.start_operation(ctx, label, move || {
+            gg_git::stash::push(&path, message.as_deref(), include_untracked, keep_index)
+                .map(OperationOutcome::Stashed)
+        })?;
+        self.operation_owner = OperationOwner::StashDialog;
         Ok(())
     }
 
@@ -3773,11 +3867,27 @@ impl Browser {
         let path = self
             .stash_path()
             .ok_or("Open a repository before restoring a stash.")?;
-        let receipt = if remove {
-            gg_git::stash::pop(&path, Some(reference), restore_index)?
-        } else {
-            gg_git::stash::apply(&path, Some(reference), restore_index)?
-        };
+        let reference = reference.to_string();
+        let label = format!("Restoring {reference}…");
+        self.start_operation(ctx, label, move || {
+            let receipt = if remove {
+                gg_git::stash::pop(&path, Some(&reference), restore_index)
+            } else {
+                gg_git::stash::apply(&path, Some(&reference), restore_index)
+            }?;
+            Ok(OperationOutcome::StashRestored { reference, receipt })
+        })?;
+        self.operation_owner = OperationOwner::StashPicker;
+        Ok(())
+    }
+
+    /// The receipt of an applied or popped stash, once Git returns.
+    fn finish_stash_restore(
+        &mut self,
+        ctx: &egui::Context,
+        reference: &str,
+        receipt: gg_engine::stash::StashReceipt,
+    ) {
         let summary = if receipt.conflicts.is_empty() {
             format!("Restored {reference}")
         } else {
@@ -3800,17 +3910,19 @@ impl Browser {
         );
         self.load(ctx);
         self.refresh_working(ctx);
-        Ok(())
     }
 
     fn drop_stash(&mut self, ctx: &egui::Context, reference: &str) -> Result<(), String> {
         let path = self
             .stash_path()
             .ok_or("Open a repository before dropping a stash.")?;
-        gg_git::stash::drop(&path, Some(reference))?;
-        self.stash_notice = Some(format!("Dropped {reference}"));
-        self.load(ctx);
-        self.refresh_working(ctx);
+        let reference = reference.to_string();
+        let label = format!("Dropping {reference}…");
+        self.start_operation(ctx, label, move || {
+            gg_git::stash::drop(&path, Some(&reference))?;
+            Ok(OperationOutcome::StashDropped(reference))
+        })?;
+        self.operation_owner = OperationOwner::StashPicker;
         Ok(())
     }
 
@@ -4135,6 +4247,8 @@ impl Browser {
     fn draw_menu_dialogs(&mut self, ctx: &egui::Context) {
         let path = self.stash_path();
         let mut reload = false;
+        let busy = self.operation_busy();
+        let mut rename_submit = None;
         if let Some(dialog) = &mut self.rename_dialog {
             let mut open = true;
             let mut cancel = false;
@@ -4155,20 +4269,25 @@ impl Browser {
                     if let Some(error) = &dialog.error {
                         ui.colored_label(ui.visuals().error_fg_color, error);
                     }
+                    let enabled =
+                        !dialog.new.trim().is_empty() && dialog.new.trim() != dialog.old && !busy;
                     ui.horizontal(|ui| {
-                        submit |= ui
-                            .add_enabled(
-                                !dialog.new.trim().is_empty() && dialog.new.trim() != dialog.old,
-                                inspect_ui::secondary("Rename", "Enter"),
-                            )
-                            .clicked();
+                        let rename =
+                            ui.add_enabled(enabled, inspect_ui::secondary("Rename", "Enter"));
+                        let rename = if busy {
+                            rename
+                                .on_disabled_hover_text("Wait for the current operation to finish.")
+                        } else {
+                            rename
+                        };
+                        submit |= rename.clicked();
                         cancel |= ui.add(inspect_ui::secondary("Cancel", "Esc")).clicked();
                     });
                     let keys = crate::navigation::dialog_keys(
                         ui,
                         egui::Id::unique("rename-branch"),
                         &field,
-                        !dialog.new.trim().is_empty() && dialog.new.trim() != dialog.old,
+                        enabled,
                     );
                     submit |= keys.submit;
                     cancel |= keys.cancel;
@@ -4176,18 +4295,16 @@ impl Browser {
             if cancel {
                 open = false;
             }
-            if submit && let Some(path) = &path {
-                match gg_git::branch::rename(path, &dialog.old, dialog.new.trim()) {
-                    Ok(_) => {
-                        open = false;
-                        reload = true;
-                    }
-                    Err(error) => dialog.error = Some(error),
-                }
+            if submit && path.is_some() {
+                rename_submit = Some((dialog.old.clone(), dialog.new.trim().to_string()));
             }
             if !open {
                 self.rename_dialog = None;
             }
+        }
+        // Rename stays open until Git returns, and shows a failure.
+        if let Some((old, new)) = rename_submit {
+            self.submit_rename(ctx, old, new);
         }
         if let Some(dialog) = &mut self.upstream_dialog {
             let mut open = true;
@@ -4425,12 +4542,25 @@ impl Browser {
         changes: watcher::Changes,
         first: std::time::Instant,
     ) {
+        if changes.config {
+            self.reread_signing();
+        }
         if changes.refs && self.last_load.is_none_or(|load| load < first) {
             self.load(ctx);
             self.refresh_working(ctx);
-        } else if changes.any() {
+        } else if changes.worktree || changes.index || changes.refs {
             self.refresh_mutation();
             self.refresh_working(ctx);
+        }
+    }
+
+    /// Read the signing configuration again while Local Changes or New tag
+    /// shows it.
+    fn reread_signing(&mut self) {
+        if (self.working.is_some() || self.tag_create.is_some())
+            && let Some(path) = self.stash_path()
+        {
+            self.signing_cache.refresh(&path);
         }
     }
 
@@ -6240,7 +6370,10 @@ impl Browser {
             self.stash_picker.error = Some(error.clone());
             self.set_outcome(OutcomeSeverity::Error, error, None, None);
         }
-        self.refresh_local_summary(ctx);
+        // A started job re-reads the summary when Git returns.
+        if self.operation_owner != OperationOwner::StashPicker || self.operation_worker.is_none() {
+            self.refresh_local_summary(ctx);
+        }
     }
 
     /// Re-read the worktree, stash, and branch facts shown in the window frame.
@@ -6289,7 +6422,11 @@ impl Browser {
             return;
         };
         self.review = None;
-        let mut working = status_view::StatusView::new(history.path.clone(), ctx);
+        let mut working = status_view::StatusView::with_signing(
+            history.path.clone(),
+            ctx,
+            self.signing_cache.clone(),
+        );
         working.apply_sign_default(self.prefs.sign_commits);
         if let Some(draft) = self.working_drafts.get(&working.repository_key()).cloned() {
             working.restore_draft(draft, ctx);
@@ -6349,8 +6486,10 @@ impl Browser {
         self.outcome_details_open = false;
         self.network_notice = None;
         self.stash_notice = None;
+        self.merge_count = None;
         self.branch_warning = None;
         self.operation_worker = None;
+        self.operation_owner = OperationOwner::Footer;
         self.mutation_busy = None;
         self.operation_repo = None;
         self.operation_restore_row = None;
@@ -6370,7 +6509,7 @@ impl Browser {
             self.state
                 .history
                 .as_ref()
-                .is_none_or(|history| &history.path != requested)
+                .is_none_or(|history| !same_path(&history.path, requested))
         }) {
             return;
         }
@@ -6421,12 +6560,11 @@ impl Browser {
             .selected
             .clone()
             .ok_or("Select a commit before cherry-picking or reverting.")?;
-        let restore_row = self.state.selected_row;
-        let receipt = match operation {
+        let label = match operation {
             gg_engine::mutation::Operation::CherryPick => {
-                gg_git::mutation::cherry_pick(&path, &commit)?
+                format!("Cherry-picking {}…", short_id(&commit))
             }
-            gg_engine::mutation::Operation::Revert => gg_git::mutation::revert(&path, &commit)?,
+            gg_engine::mutation::Operation::Revert => format!("Reverting {}…", short_id(&commit)),
             gg_engine::mutation::Operation::Merge => {
                 return Err("Use the Merge action for merge operations.".into());
             }
@@ -6434,6 +6572,31 @@ impl Browser {
                 return Err("Use the Rebase action for rebase operations.".into());
             }
         };
+        // The selected row is restored when the result is shown.
+        self.start_operation(ctx, label, move || {
+            let receipt = match operation {
+                gg_engine::mutation::Operation::Revert => gg_git::mutation::revert(&path, &commit),
+                _ => gg_git::mutation::cherry_pick(&path, &commit),
+            }?;
+            Ok(OperationOutcome::Picked {
+                operation,
+                commit,
+                receipt,
+            })
+        })?;
+        self.operation_owner = OperationOwner::MutationError;
+        Ok(())
+    }
+
+    /// The receipt of a cherry-pick or revert, once Git returns.
+    fn finish_pick(
+        &mut self,
+        ctx: &egui::Context,
+        operation: gg_engine::mutation::Operation,
+        commit: &str,
+        receipt: gg_engine::mutation::MutationReceipt,
+        restore_row: Option<usize>,
+    ) {
         self.mutation_error = None;
         self.mutation_notice = Some(match operation {
             gg_engine::mutation::Operation::CherryPick => format!(
@@ -6464,9 +6627,10 @@ impl Browser {
         self.refresh_reflog();
         self.refresh_backups();
         self.refresh_working(ctx);
-        Ok(())
     }
 
+    /// Delete a local branch on the operation worker; Delete branch stays
+    /// open until Git returns and shows a failure.
     fn delete_branch(
         &mut self,
         ctx: &egui::Context,
@@ -6476,24 +6640,34 @@ impl Browser {
         let path = self
             .stash_path()
             .ok_or("Open a repository before deleting a branch.")?;
-        gg_git::branch::delete(&path, name, force)?;
-        self.mutation_notice = Some(format!("Deleted branch {name}"));
-        self.branch_delete = None;
-        self.load(ctx);
+        let name = name.to_string();
+        let label = format!("Deleting branch {name}…");
+        self.start_operation(ctx, label, move || {
+            gg_git::branch::delete(&path, &name, force)?;
+            Ok(OperationOutcome::BranchDeleted(name))
+        })?;
+        self.operation_owner = OperationOwner::BranchDelete;
         Ok(())
     }
 
+    /// Delete a local tag on the operation worker; Delete tag stays open
+    /// until Git returns and shows a failure.
     fn delete_tag(&mut self, ctx: &egui::Context, name: &str) -> Result<(), String> {
         let path = self
             .stash_path()
             .ok_or("Open a repository before deleting a tag.")?;
-        gg_git::tag::delete(&path, name)?;
-        self.mutation_notice = Some(format!("Deleted tag {name}"));
-        self.tag_delete = None;
-        self.load(ctx);
+        let name = name.to_string();
+        let label = format!("Deleting tag {name}…");
+        self.start_operation(ctx, label, move || {
+            gg_git::tag::delete(&path, &name)?;
+            Ok(OperationOutcome::TagDeleted(name))
+        })?;
+        self.operation_owner = OperationOwner::TagDelete;
         Ok(())
     }
 
+    /// Reset on the operation worker: the collision check, the backup and
+    /// the reset run there, in that order, as `git good reset` runs them.
     fn start_reset(
         &mut self,
         ctx: &egui::Context,
@@ -6503,7 +6677,23 @@ impl Browser {
         let path = self
             .stash_path()
             .ok_or("Open a repository before resetting.")?;
-        let receipt = gg_git::reset::reset(&path, commit, mode)?;
+        let commit = commit.to_string();
+        let label = format!("Resetting to {}…", short_id(&commit));
+        self.start_operation(ctx, label, move || {
+            gg_git::reset::reset(&path, &commit, mode)
+                .map(|receipt| OperationOutcome::Reset { receipt, mode })
+        })?;
+        self.operation_owner = OperationOwner::MutationError;
+        Ok(())
+    }
+
+    /// The receipt of a reset, once Git returns.
+    fn finish_reset(
+        &mut self,
+        ctx: &egui::Context,
+        receipt: gg_engine::reset::Receipt,
+        mode: gg_engine::reset::Mode,
+    ) {
         self.mutation_error = None;
         self.mutation_notice = Some(format!(
             "Reset to {}{}{}",
@@ -6524,7 +6714,6 @@ impl Browser {
         self.refresh_reflog();
         self.refresh_backups();
         self.refresh_working(ctx);
-        Ok(())
     }
 
     /// No repository is open (or one is still being read from the welcome
@@ -7140,6 +7329,71 @@ impl Browser {
         self.outcome_details_open = false;
     }
 
+    /// Count what a merge brought in after its receipt shows, so the merge
+    /// itself does only what `git good merge` does (RULE-16); the count joins
+    /// the receipt when it arrives ([`Browser::poll_merge_count`]).
+    fn count_merged(
+        &mut self,
+        ctx: &egui::Context,
+        receipt: &gg_engine::merge::Receipt,
+        summary: String,
+    ) {
+        let (Some(path), Some(commit), Some(before)) = (
+            self.stash_path(),
+            receipt.commit.clone(),
+            receipt.before.clone(),
+        ) else {
+            return;
+        };
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        let repaint = ctx.clone();
+        let started = std::thread::Builder::new()
+            .name("gg-merge-count".into())
+            .spawn(move || {
+                if let Ok(count) = gg_git::merge::brought_in(&path, &commit, &before) {
+                    let _ = tx.send(count);
+                    repaint.request_repaint();
+                }
+            });
+        self.merge_count = started.ok().map(|_| (summary, rx));
+    }
+
+    /// Add the merged commit count to the receipt it belongs to, if that
+    /// receipt is still the one shown.
+    fn poll_merge_count(&mut self) {
+        let Some((summary, rx)) = &self.merge_count else {
+            return;
+        };
+        let count = match rx.try_recv() {
+            Ok(count) => count,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.merge_count = None;
+                return;
+            }
+        };
+        let summary = summary.clone();
+        self.merge_count = None;
+        if count == 0 {
+            return;
+        }
+        let counted = format!("{summary} · {}", operation_band::plural(count, "commit"));
+        if self.mutation_notice.as_ref() == Some(&summary) {
+            self.mutation_notice = Some(counted.clone());
+            // The same receipt, completed: its fade does not restart.
+            if let Some((seen, _)) = &mut self.notice_seen
+                && *seen == summary
+            {
+                *seen = counted.clone();
+            }
+        }
+        if let Some(outcome) = &mut self.outcome
+            && outcome.summary == summary
+        {
+            outcome.summary = counted;
+        }
+    }
+
     fn set_outcome(
         &mut self,
         severity: OutcomeSeverity,
@@ -7335,6 +7589,7 @@ impl Browser {
             })
             .map_err(|error| format!("Start operation: {error}"))?;
         self.operation_worker = Some(rx);
+        self.operation_owner = OperationOwner::Footer;
         self.clear_failure();
         self.operation_repo = self.stash_path();
         self.operation_restore_row = self.state.selected_row;
@@ -7345,26 +7600,34 @@ impl Browser {
 
     fn finish_operation(&mut self, ctx: &egui::Context, outcome: OperationOutcome) {
         let restore_row = self.operation_restore_row.take();
-        self.refresh_local_summary(ctx);
+        if matches!(
+            outcome,
+            OperationOutcome::Merge(..)
+                | OperationOutcome::Rebase(..)
+                | OperationOutcome::Conflict { .. }
+                | OperationOutcome::Reopened { .. }
+                | OperationOutcome::Recovery { .. }
+        ) {
+            self.refresh_local_summary(ctx);
+        }
         match outcome {
-            OperationOutcome::Merge(receipt, branch, incoming) => {
-                let commits = incoming
-                    .filter(|count| *count > 0)
-                    .map(|count| format!(" · {}", operation_band::plural(count, "commit")))
-                    .unwrap_or_default();
+            OperationOutcome::Merge(receipt, branch) => {
                 let summary = match receipt.kind {
                     Some(gg_engine::merge::Kind::UpToDate) => {
                         format!("{branch} is already up to date with {}", receipt.reference)
                     }
                     Some(gg_engine::merge::Kind::FastForward) => {
-                        format!("Fast-forwarded {branch} to {}{commits}", receipt.reference)
+                        format!("Fast-forwarded {branch} to {}", receipt.reference)
                     }
-                    _ => format!("Merged {} into {branch}{commits}", receipt.reference),
+                    _ => format!("Merged {} into {branch}", receipt.reference),
                 };
                 // A merge Git stopped is the band's to report.
                 if receipt.conflicts.is_empty() && !receipt.in_progress {
                     self.mutation_notice = Some(summary.clone());
-                    self.set_outcome(OutcomeSeverity::Info, summary, None, None);
+                    self.set_outcome(OutcomeSeverity::Info, summary.clone(), None, None);
+                    if receipt.kind != Some(gg_engine::merge::Kind::UpToDate) {
+                        self.count_merged(ctx, &receipt, summary);
+                    }
                 } else {
                     self.mutation_notice = None;
                 }
@@ -7447,7 +7710,469 @@ impl Browser {
                 self.load(ctx);
                 self.refresh_working(ctx);
             }
+            // The mutations below publish what they published when Git ran
+            // on the UI thread; the busy label gives way to the receipt.
+            OperationOutcome::Stashed(receipt) => {
+                self.mutation_notice = None;
+                self.stash_notice = Some(format!(
+                    "Stashed{}",
+                    receipt
+                        .reference
+                        .as_deref()
+                        .map(|reference| format!(" {reference}"))
+                        .unwrap_or_default()
+                ));
+                self.stash_dialog = None;
+                self.load(ctx);
+                self.refresh_working(ctx);
+            }
+            OperationOutcome::StashRestored { reference, receipt } => {
+                self.mutation_notice = None;
+                self.finish_stash_restore(ctx, &reference, receipt);
+                self.refresh_local_summary(ctx);
+            }
+            OperationOutcome::StashDropped(reference) => {
+                self.mutation_notice = None;
+                self.stash_notice = Some(format!("Dropped {reference}"));
+                self.load(ctx);
+                self.refresh_working(ctx);
+                self.refresh_local_summary(ctx);
+            }
+            OperationOutcome::BranchCreated {
+                receipt,
+                switch,
+                recovery_source,
+            } => {
+                self.mutation_notice = None;
+                self.finish_branch_create(ctx, receipt, switch, recovery_source);
+            }
+            OperationOutcome::BranchRenamed => {
+                self.mutation_notice = None;
+                self.rename_dialog = None;
+                self.load(ctx);
+            }
+            OperationOutcome::BranchDeleted(name) => {
+                self.mutation_notice = Some(format!("Deleted branch {name}"));
+                self.branch_delete = None;
+                self.load(ctx);
+            }
+            OperationOutcome::TagDeleted(name) => {
+                self.mutation_notice = Some(format!("Deleted tag {name}"));
+                self.tag_delete = None;
+                self.load(ctx);
+            }
+            OperationOutcome::Reset { receipt, mode } => self.finish_reset(ctx, receipt, mode),
+            OperationOutcome::Picked {
+                operation,
+                commit,
+                receipt,
+            } => self.finish_pick(ctx, operation, &commit, receipt, restore_row),
         }
+    }
+
+    /// Publish what the branch, network, rewrite and operation workers
+    /// reported since the last frame.
+    fn poll_jobs(&mut self, ctx: &egui::Context) {
+        self.poll_merge_count();
+        if let Some(result) = self.branch.as_ref().and_then(|rx| match rx.try_recv() {
+            Ok(result) => Some(result),
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                Some(Err("Branch worker stopped. Refresh refs.".into()))
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => None,
+        }) {
+            self.branch = None;
+            self.branch_label = None;
+            let target = self.branch_target.take();
+            match result {
+                Ok(receipt) => {
+                    self.pending_switch = None;
+                    let created = self.branch_after_create.take().is_some() || receipt.created;
+                    if self.outcome.as_ref().is_some_and(|outcome| {
+                        matches!(
+                            outcome.recovery,
+                            Some(RecoveryAction::RetrySwitch | RecoveryAction::StashAndSwitch)
+                        )
+                    }) {
+                        self.outcome = None;
+                    }
+                    let warnings =
+                        (!receipt.warnings.is_empty()).then(|| receipt.warnings.join(" · "));
+                    self.branch_warning = warnings.clone();
+                    let pull = (!receipt.created)
+                        .then(|| self.pull_rebase_target(&format!("refs/heads/{}", receipt.branch)))
+                        .flatten();
+                    let summary = if receipt.created {
+                        format!("Created {}", receipt.branch)
+                    } else {
+                        format!("Switched to {}", receipt.branch)
+                    };
+                    if warnings.is_some() || pull.is_some() {
+                        self.set_outcome(
+                            OutcomeSeverity::Info,
+                            summary,
+                            warnings,
+                            pull.is_some().then_some(RecoveryAction::PullRebase),
+                        );
+                    }
+                    // History holds HEAD and every ref, so switching from
+                    // one branch to another existing one changes no row:
+                    // move HEAD and select its tip in the list already
+                    // shown. A new branch, or leaving a detached HEAD (whose
+                    // commits may drop out), reads the history again.
+                    let from_branch = self
+                        .state
+                        .refs
+                        .head
+                        .as_ref()
+                        .is_some_and(|head| !head.detached && head.commit.is_some());
+                    if from_branch && !created {
+                        self.state.refs.head = Some(gg_engine::refs::Head {
+                            name: Some(format!("refs/heads/{}", receipt.branch)),
+                            detached: false,
+                            commit: Some(receipt.head.clone()),
+                        });
+                        self.jump_to_ref(receipt.head);
+                        self.scroll_to_selection = true;
+                        // The switch's own HEAD change must not make the
+                        // watcher read the unchanged history again.
+                        self.last_load = Some(std::time::Instant::now());
+                        self.refresh_mutation();
+                        self.refresh_local_summary(ctx);
+                        self.refresh_working(ctx);
+                    } else {
+                        self.state.query.clear();
+                        self.state.start_filter();
+                        self.state.selected = Some(receipt.head);
+                        self.state.selected_row = None;
+                        self.state.details = None;
+                        self.scroll_offset = 0.0;
+                        self.scroll_to_selection = true;
+                        self.load(ctx);
+                    }
+                }
+                Err(error) => {
+                    self.branch_warning = None;
+                    if let Some((name, false)) = target {
+                        self.pending_switch = Some(name.clone());
+                        let created = self.branch_after_create.take();
+                        let dirty = gg_git::dirty_tree_error(&error);
+                        let reason = match self.changed_files() {
+                            Some(count) if dirty => format!(
+                                "{} would be overwritten",
+                                operation_band::plural(count, "changed file")
+                            ),
+                            _ if dirty => "changed files would be overwritten".into(),
+                            _ => git_reason(&error)
+                                .unwrap_or_else(|| error.lines().next().unwrap_or_default())
+                                .to_string(),
+                        };
+                        // Git's full output stays readable behind Details….
+                        let details = error.contains('\n').then(|| error.clone());
+                        let summary = match &created {
+                            Some(branch) => {
+                                format!("Created {branch} but can’t switch to it: {reason}")
+                            }
+                            None => format!("Can’t switch to {name}: {reason}"),
+                        };
+                        let recovery = if dirty {
+                            RecoveryAction::StashAndSwitch
+                        } else {
+                            RecoveryAction::RetrySwitch
+                        };
+                        if created.is_some() {
+                            // The new branch still has to appear.
+                            self.load(ctx);
+                        }
+                        self.set_outcome(
+                            OutcomeSeverity::Warning,
+                            summary,
+                            details,
+                            Some(recovery),
+                        );
+                    } else {
+                        self.branch_error = Some(error);
+                    }
+                }
+            }
+        }
+        let mut network_done = None;
+        let network_operation = self.network.as_ref().map(|worker| worker.operation);
+        if let Some(worker) = self.network.as_ref() {
+            loop {
+                match worker.try_recv() {
+                    Ok(network::Message::Progress(update)) => {
+                        self.network_progress = Some(update);
+                    }
+                    Ok(network::Message::Done(result)) => {
+                        network_done = Some(result);
+                        break;
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        network_done =
+                            Some(Err("Network worker stopped. Git Good re-read the repository; check what changed before retrying.".into()));
+                        break;
+                    }
+                }
+            }
+        }
+        if let Some(result) = network_done {
+            self.finish_network(ctx, result, network_operation);
+        }
+        let rewrite_done = match self.rewrite_job.as_ref().map(|job| job.receiver.try_recv()) {
+            None | Some(Err(std::sync::mpsc::TryRecvError::Empty)) => None,
+            Some(Ok(result)) => Some(result),
+            Some(Err(std::sync::mpsc::TryRecvError::Disconnected)) => {
+                Some(Err("Rewrite worker stopped. Refresh and retry.".into()))
+            }
+        };
+        if let Some(result) = rewrite_done {
+            let restore_row = self.rewrite_job.take().and_then(|job| job.restore_row);
+            let same_repository = self.operation_repo.as_ref() == self.stash_path().as_ref();
+            self.operation_repo = None;
+            if same_repository {
+                match result {
+                    Ok((receipt, relation)) => {
+                        let generation = self.finish_rewrite(ctx, receipt, relation, restore_row);
+                        self.rewrite_refresh = Some(generation);
+                    }
+                    Err(error) => {
+                        self.refresh_mutation();
+                        self.set_outcome(
+                            OutcomeSeverity::Error,
+                            error,
+                            None,
+                            Some(RecoveryAction::Backups),
+                        );
+                    }
+                }
+            } else {
+                self.mutation_notice = None;
+            }
+        }
+        self.poll_operation(ctx);
+    }
+
+    /// Apply the operation worker's result once it reports back.
+    fn poll_operation(&mut self, ctx: &egui::Context) {
+        let operation_done = match self.operation_worker.as_ref().map(|rx| rx.try_recv()) {
+            None | Some(Err(std::sync::mpsc::TryRecvError::Empty)) => None,
+            Some(Ok(result)) => Some(result),
+            Some(Err(std::sync::mpsc::TryRecvError::Disconnected)) => {
+                Some(Err("Operation worker stopped. Refresh and retry.".into()))
+            }
+        };
+        if let Some(result) = operation_done {
+            self.operation_worker = None;
+            self.mutation_busy = None;
+            let owner = std::mem::take(&mut self.operation_owner);
+            let same_repository = self.operation_repo.as_ref() == self.stash_path().as_ref();
+            self.operation_repo = None;
+            if !same_repository {
+                self.operation_restore_row = None;
+                self.mutation_notice = None;
+            } else {
+                match result {
+                    Ok(outcome) => self.finish_operation(ctx, outcome),
+                    Err(error) if self.fail_owned_operation(ctx, owner, &error) => {}
+                    Err(error) => {
+                        self.operation_restore_row = None;
+                        self.mutation_notice = None;
+                        if let Some(target) = self.rebase_target.take()
+                            && gg_git::dirty_tree_error(&error)
+                        {
+                            self.rebase_dialog = Some(RebaseDialog {
+                                reference: target,
+                                autostash: true,
+                                error: Some(
+                                    "Working tree is not clean. Autostash is enabled: submit Rebase to stash the changes and continue."
+                                        .into(),
+                                ),
+                            });
+                        }
+                        self.set_outcome(OutcomeSeverity::Error, error.clone(), None, None);
+                        self.mutation_error = Some(error.clone());
+                        if let Some(view) = &mut self.conflict_view {
+                            view.error = Some(error);
+                        }
+                        self.refresh_mutation();
+                    }
+                }
+            }
+        }
+    }
+
+    /// Tests: block until the operation worker reports, and apply it.
+    #[cfg(test)]
+    fn wait_for_operation(&mut self, ctx: &egui::Context) {
+        for _ in 0..4000 {
+            if self.operation_worker.is_none() {
+                return;
+            }
+            self.poll_operation(ctx);
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert!(
+            self.operation_worker.is_none(),
+            "the operation worker never reported"
+        );
+    }
+
+    /// New branch's Create: start `git branch` on the operation worker; the
+    /// dialog stays open until Git returns.
+    fn submit_create_branch(&mut self, ctx: &egui::Context, name: String, switch: bool) {
+        let Some(dialog) = self.create_branch.clone() else {
+            return;
+        };
+        // Recovery branches always start with switching off; remember
+        // only the ordinary new-branch choice.
+        if dialog.recovery_source.is_none() {
+            self.remember(|prefs| prefs.branch_switch = switch);
+        }
+        match self.stash_path() {
+            Some(path) => {
+                let label = format!("Creating {name}…");
+                let recovery_source = dialog.recovery_source;
+                let commit = dialog.commit.clone();
+                let started = self.start_operation(ctx, label, move || {
+                    gg_git::branch::create_at(&path, &name, &commit).map(|receipt| {
+                        OperationOutcome::BranchCreated {
+                            receipt,
+                            switch,
+                            recovery_source,
+                        }
+                    })
+                });
+                match started {
+                    Ok(()) => {
+                        self.operation_owner = OperationOwner::CreateBranch;
+                        if let Some(dialog) = &mut self.create_branch {
+                            dialog.error = None;
+                        }
+                    }
+                    Err(error) => {
+                        if let Some(dialog) = &mut self.create_branch {
+                            dialog.error = Some(error);
+                        }
+                    }
+                }
+            }
+            None => {
+                if let Some(dialog) = &mut self.create_branch {
+                    dialog.error = Some("Open a repository before creating a branch.".into());
+                }
+            }
+        }
+    }
+
+    /// Rename's Enter: start `git branch -m` on the operation worker; the
+    /// dialog stays open until Git returns.
+    fn submit_rename(&mut self, ctx: &egui::Context, old: String, new: String) {
+        let Some(path) = self.stash_path() else {
+            return;
+        };
+        let label = format!("Renaming {old} to {new}…");
+        let started = self.start_operation(ctx, label, move || {
+            gg_git::branch::rename(&path, &old, &new)?;
+            Ok(OperationOutcome::BranchRenamed)
+        });
+        match (started, &mut self.rename_dialog) {
+            (Ok(()), dialog) => {
+                self.operation_owner = OperationOwner::Rename;
+                if let Some(dialog) = dialog {
+                    dialog.error = None;
+                }
+            }
+            (Err(error), Some(dialog)) => dialog.error = Some(error),
+            (Err(_), None) => {}
+        }
+    }
+
+    /// New branch's receipt, once Git returns: close the dialog, then switch
+    /// to the branch when asked.
+    fn finish_branch_create(
+        &mut self,
+        ctx: &egui::Context,
+        receipt: gg_git::branch::CreateReceipt,
+        switch: bool,
+        source: Option<return_location::RecoverySource>,
+    ) {
+        let notice = format!(
+            "Created {} at {}",
+            receipt.branch,
+            self.commit_summary(&receipt.commit)
+        );
+        self.create_branch = None;
+        if let Some(view) = &mut self.recovery
+            && source.is_some()
+        {
+            view.notice(notice);
+        }
+        if switch {
+            // Reload once the switch ends: a read started
+            // now would land after it with the old HEAD.
+            self.branch_after_create = Some(receipt.branch.clone());
+            self.start_branch(ctx, receipt.branch.clone(), false);
+            if self.branch.is_none() {
+                self.branch_after_create = None;
+                let error = self.branch_error.take();
+                self.load(ctx);
+                if let Some(error) = error {
+                    let summary = format!(
+                        "Created {} but the switch could not start: {error}",
+                        receipt.branch
+                    );
+                    self.set_outcome(OutcomeSeverity::Warning, summary, None, None);
+                }
+            }
+        } else {
+            self.load(ctx);
+        }
+        if !switch && source.is_none() {
+            self.branch_warning = Some(format!("Created {}", receipt.branch));
+        }
+    }
+
+    /// Show a failed job where its owner showed failures when Git ran on the
+    /// UI thread: in the dialog still open, the stash picker, or the
+    /// footer's mutation error. `false` leaves it to the footer's outcome.
+    fn fail_owned_operation(
+        &mut self,
+        ctx: &egui::Context,
+        owner: OperationOwner,
+        error: &str,
+    ) -> bool {
+        if owner == OperationOwner::Footer {
+            return false;
+        }
+        self.operation_restore_row = None;
+        self.mutation_notice = None;
+        let error = error.to_string();
+        let slot = match owner {
+            OperationOwner::Footer => return false,
+            OperationOwner::MutationError => {
+                self.mutation_error = Some(error);
+                return true;
+            }
+            OperationOwner::StashPicker => {
+                self.stash_picker.error = Some(error.clone());
+                self.set_outcome(OutcomeSeverity::Error, error, None, None);
+                self.refresh_local_summary(ctx);
+                return true;
+            }
+            OperationOwner::StashDialog => self.stash_dialog.as_mut().map(|d| &mut d.error),
+            OperationOwner::CreateBranch => self.create_branch.as_mut().map(|d| &mut d.error),
+            OperationOwner::Rename => self.rename_dialog.as_mut().map(|d| &mut d.error),
+            OperationOwner::BranchDelete => self.branch_delete.as_mut().map(|d| &mut d.error),
+            OperationOwner::TagDelete => self.tag_delete.as_mut().map(|d| &mut d.error),
+        };
+        match slot {
+            Some(slot) => *slot = Some(error),
+            // Closed while Git ran: the footer reports it.
+            None => self.set_outcome(OutcomeSeverity::Error, error, None, None),
+        }
+        true
     }
 
     fn recover_mutation(
@@ -7495,9 +8220,8 @@ impl Browser {
         let branch = self.current_branch_name();
         let label = format!("Merging {reference} into {branch}…");
         self.start_operation(ctx, label, move || {
-            let incoming = gg_git::merge::incoming(&path, &reference).ok();
             gg_git::merge::merge(&path, &reference, no_ff)
-                .map(|receipt| OperationOutcome::Merge(receipt, branch, incoming))
+                .map(|receipt| OperationOutcome::Merge(receipt, branch))
         })
     }
 
@@ -7511,9 +8235,8 @@ impl Browser {
         let branch = self.current_branch_name();
         let label = format!("Fast-forwarding {branch} to {reference}…");
         self.start_operation(ctx, label, move || {
-            let incoming = gg_git::merge::incoming(&path, &reference).ok();
             gg_git::merge::fast_forward(&path, &reference)
-                .map(|receipt| OperationOutcome::Merge(receipt, branch, incoming))
+                .map(|receipt| OperationOutcome::Merge(receipt, branch))
         })
     }
 
@@ -7813,32 +8536,33 @@ impl Browser {
             self.mutation_error = Some("Create the first commit before creating a tag.".into());
             return;
         }
-        let config = gg_git::signature::config(&path);
-        let ready = config.ready();
-        self.tag_create = Some(TagCreateDialog {
+        // The last configuration read shows until the fresh read lands;
+        // before any read, signing is offered and checked when Create runs.
+        self.signing_cache.refresh(&path);
+        let mut dialog = TagCreateDialog {
             name: String::new(),
             target,
             message: String::new(),
-            sign: config.tag_signing || self.prefs.sign_tags,
-            signing_ready: ready,
-            signing_note: if ready {
-                None
-            } else {
-                Some(
-                    config
-                        .note
-                        .unwrap_or_else(|| "Signing key or tool is unavailable.".into()),
-                )
-            },
+            sign: self.prefs.sign_tags,
+            sign_touched: false,
+            signing_ready: true,
+            signing_note: None,
+            signing_generation: 0,
             error: None,
             pending: None,
-        });
+        };
+        if let Some((generation, config)) = self.signing_cache.current(&path) {
+            dialog.take_signing(generation, &config, self.prefs.sign_tags);
+        }
+        self.tag_create = Some(dialog);
     }
 
     fn start_tag_create(&mut self, ctx: &egui::Context) {
         let Some(path) = self.stash_path() else {
             return;
         };
+        let signing = self.signing_cache.clone();
+        let prefer = self.prefs.sign_tags;
         let Some(dialog) = &mut self.tag_create else {
             return;
         };
@@ -7860,13 +8584,28 @@ impl Browser {
             dialog.error = Some("Enter an annotated tag message.".into());
             return;
         }
-        let signed = dialog.sign;
+        let chosen = dialog.sign_touched.then_some(dialog.sign);
+        let shown = dialog.sign;
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         let repaint = ctx.clone();
         match std::thread::Builder::new()
             .name("gg-tag-create".into())
             .spawn(move || {
-                let result = gg_git::tag::create(&path, &name, &target, &message, signed);
+                // The read New tag started, as `git good tag` reads it: it
+                // picks Sign unless the user did, and a setup that cannot
+                // sign never creates an unsigned tag.
+                let config = signing.settled(&path);
+                let signed = match (chosen, &config) {
+                    (Some(sign), _) => sign,
+                    (None, Some(config)) => config.tag_signing || prefer,
+                    (None, None) => shown,
+                };
+                let result = match config.filter(|config| signed && !config.ready()) {
+                    Some(config) => Err(config
+                        .note
+                        .unwrap_or_else(|| "Signing key or tool is unavailable.".into())),
+                    None => gg_git::tag::create(&path, &name, &target, &message, signed),
+                };
                 let _ = tx.send(result);
                 repaint.request_repaint();
             }) {
@@ -7894,7 +8633,16 @@ impl Browser {
         }
     }
 
-    fn draw_tag_create(&mut self, ctx: &egui::Context) {
+    /// Show the signing configuration as it lands, and the tag worker's
+    /// receipt once Git returns.
+    fn apply_tag_create(&mut self, ctx: &egui::Context) {
+        if let Some(path) = self.stash_path()
+            && let Some((generation, config)) = self.signing_cache.current(&path)
+            && let Some(dialog) = &mut self.tag_create
+            && dialog.signing_generation != generation
+        {
+            dialog.take_signing(generation, &config, self.prefs.sign_tags);
+        }
         if let Some(result) = self.poll_tag_create() {
             match result {
                 Ok(receipt) => {
@@ -7922,6 +8670,10 @@ impl Browser {
                 }
             }
         }
+    }
+
+    fn draw_tag_create(&mut self, ctx: &egui::Context) {
+        self.apply_tag_create(ctx);
         if self.tag_create.is_none() {
             return;
         }
@@ -7990,6 +8742,7 @@ impl Browser {
                     };
                     if response.changed() {
                         dialog.sign = sign;
+                        dialog.sign_touched = true;
                     }
                     if let Some(note) = &dialog.signing_note {
                         ui.weak(note);
@@ -8553,7 +9306,7 @@ impl Browser {
             .state
             .history
             .as_ref()
-            .is_some_and(|history| history.path != path);
+            .is_some_and(|history| !same_path(&history.path, &path));
         if switching {
             self.clear_operation_state();
             self.mutation_path = None;
@@ -10105,8 +10858,10 @@ impl Browser {
         self.menu_shortcuts(ctx);
         self.poll_local_summary();
         let focused = ctx.input(|i| i.focused);
+        self.signing_cache.attach(ctx);
         if focused && !self.window_focused {
             self.refresh_local_summary(ctx);
+            self.reread_signing();
             // The Worktrees window has no Refresh button: it re-reads when
             // gg gets focus back (accepted proposal).
             if self
@@ -10167,226 +10922,7 @@ impl Browser {
         {
             self.mutation_error = Some(error);
         }
-        if let Some(result) = self.branch.as_ref().and_then(|rx| match rx.try_recv() {
-            Ok(result) => Some(result),
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                Some(Err("Branch worker stopped. Refresh refs.".into()))
-            }
-            Err(std::sync::mpsc::TryRecvError::Empty) => None,
-        }) {
-            self.branch = None;
-            self.branch_label = None;
-            let target = self.branch_target.take();
-            match result {
-                Ok(receipt) => {
-                    self.pending_switch = None;
-                    let created = self.branch_after_create.take().is_some() || receipt.created;
-                    if self.outcome.as_ref().is_some_and(|outcome| {
-                        matches!(
-                            outcome.recovery,
-                            Some(RecoveryAction::RetrySwitch | RecoveryAction::StashAndSwitch)
-                        )
-                    }) {
-                        self.outcome = None;
-                    }
-                    let warnings =
-                        (!receipt.warnings.is_empty()).then(|| receipt.warnings.join(" · "));
-                    self.branch_warning = warnings.clone();
-                    let pull = (!receipt.created)
-                        .then(|| self.pull_rebase_target(&format!("refs/heads/{}", receipt.branch)))
-                        .flatten();
-                    let summary = if receipt.created {
-                        format!("Created {}", receipt.branch)
-                    } else {
-                        format!("Switched to {}", receipt.branch)
-                    };
-                    if warnings.is_some() || pull.is_some() {
-                        self.set_outcome(
-                            OutcomeSeverity::Info,
-                            summary,
-                            warnings,
-                            pull.is_some().then_some(RecoveryAction::PullRebase),
-                        );
-                    }
-                    // History holds HEAD and every ref, so switching from
-                    // one branch to another existing one changes no row:
-                    // move HEAD and select its tip in the list already
-                    // shown. A new branch, or leaving a detached HEAD (whose
-                    // commits may drop out), reads the history again.
-                    let from_branch = self
-                        .state
-                        .refs
-                        .head
-                        .as_ref()
-                        .is_some_and(|head| !head.detached && head.commit.is_some());
-                    if from_branch && !created {
-                        self.state.refs.head = Some(gg_engine::refs::Head {
-                            name: Some(format!("refs/heads/{}", receipt.branch)),
-                            detached: false,
-                            commit: Some(receipt.head.clone()),
-                        });
-                        self.jump_to_ref(receipt.head);
-                        self.scroll_to_selection = true;
-                        // The switch's own HEAD change must not make the
-                        // watcher read the unchanged history again.
-                        self.last_load = Some(std::time::Instant::now());
-                        self.refresh_mutation();
-                        self.refresh_local_summary(ctx);
-                        self.refresh_working(ctx);
-                    } else {
-                        self.state.query.clear();
-                        self.state.start_filter();
-                        self.state.selected = Some(receipt.head);
-                        self.state.selected_row = None;
-                        self.state.details = None;
-                        self.scroll_offset = 0.0;
-                        self.scroll_to_selection = true;
-                        self.load(ctx);
-                    }
-                }
-                Err(error) => {
-                    self.branch_warning = None;
-                    if let Some((name, false)) = target {
-                        self.pending_switch = Some(name.clone());
-                        let created = self.branch_after_create.take();
-                        let dirty = gg_git::dirty_tree_error(&error);
-                        let reason = match self.changed_files() {
-                            Some(count) if dirty => format!(
-                                "{} would be overwritten",
-                                operation_band::plural(count, "changed file")
-                            ),
-                            _ if dirty => "changed files would be overwritten".into(),
-                            _ => git_reason(&error)
-                                .unwrap_or_else(|| error.lines().next().unwrap_or_default())
-                                .to_string(),
-                        };
-                        // Git's full output stays readable behind Details….
-                        let details = error.contains('\n').then(|| error.clone());
-                        let summary = match &created {
-                            Some(branch) => {
-                                format!("Created {branch} but can’t switch to it: {reason}")
-                            }
-                            None => format!("Can’t switch to {name}: {reason}"),
-                        };
-                        let recovery = if dirty {
-                            RecoveryAction::StashAndSwitch
-                        } else {
-                            RecoveryAction::RetrySwitch
-                        };
-                        if created.is_some() {
-                            // The new branch still has to appear.
-                            self.load(ctx);
-                        }
-                        self.set_outcome(
-                            OutcomeSeverity::Warning,
-                            summary,
-                            details,
-                            Some(recovery),
-                        );
-                    } else {
-                        self.branch_error = Some(error);
-                    }
-                }
-            }
-        }
-        let mut network_done = None;
-        let network_operation = self.network.as_ref().map(|worker| worker.operation);
-        if let Some(worker) = self.network.as_ref() {
-            loop {
-                match worker.try_recv() {
-                    Ok(network::Message::Progress(update)) => {
-                        self.network_progress = Some(update);
-                    }
-                    Ok(network::Message::Done(result)) => {
-                        network_done = Some(result);
-                        break;
-                    }
-                    Err(std::sync::mpsc::TryRecvError::Empty) => break,
-                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                        network_done =
-                            Some(Err("Network worker stopped. Git Good re-read the repository; check what changed before retrying.".into()));
-                        break;
-                    }
-                }
-            }
-        }
-        if let Some(result) = network_done {
-            self.finish_network(ctx, result, network_operation);
-        }
-        let rewrite_done = match self.rewrite_job.as_ref().map(|job| job.receiver.try_recv()) {
-            None | Some(Err(std::sync::mpsc::TryRecvError::Empty)) => None,
-            Some(Ok(result)) => Some(result),
-            Some(Err(std::sync::mpsc::TryRecvError::Disconnected)) => {
-                Some(Err("Rewrite worker stopped. Refresh and retry.".into()))
-            }
-        };
-        if let Some(result) = rewrite_done {
-            let restore_row = self.rewrite_job.take().and_then(|job| job.restore_row);
-            let same_repository = self.operation_repo.as_ref() == self.stash_path().as_ref();
-            self.operation_repo = None;
-            if same_repository {
-                match result {
-                    Ok((receipt, relation)) => {
-                        let generation = self.finish_rewrite(ctx, receipt, relation, restore_row);
-                        self.rewrite_refresh = Some(generation);
-                    }
-                    Err(error) => {
-                        self.refresh_mutation();
-                        self.set_outcome(
-                            OutcomeSeverity::Error,
-                            error,
-                            None,
-                            Some(RecoveryAction::Backups),
-                        );
-                    }
-                }
-            } else {
-                self.mutation_notice = None;
-            }
-        }
-        let operation_done = match self.operation_worker.as_ref().map(|rx| rx.try_recv()) {
-            None | Some(Err(std::sync::mpsc::TryRecvError::Empty)) => None,
-            Some(Ok(result)) => Some(result),
-            Some(Err(std::sync::mpsc::TryRecvError::Disconnected)) => {
-                Some(Err("Operation worker stopped. Refresh and retry.".into()))
-            }
-        };
-        if let Some(result) = operation_done {
-            self.operation_worker = None;
-            self.mutation_busy = None;
-            let same_repository = self.operation_repo.as_ref() == self.stash_path().as_ref();
-            self.operation_repo = None;
-            if !same_repository {
-                self.operation_restore_row = None;
-                self.mutation_notice = None;
-            } else {
-                match result {
-                    Ok(outcome) => self.finish_operation(ctx, outcome),
-                    Err(error) => {
-                        self.operation_restore_row = None;
-                        self.mutation_notice = None;
-                        if let Some(target) = self.rebase_target.take()
-                            && gg_git::dirty_tree_error(&error)
-                        {
-                            self.rebase_dialog = Some(RebaseDialog {
-                                reference: target,
-                                autostash: true,
-                                error: Some(
-                                    "Working tree is not clean. Autostash is enabled: submit Rebase to stash the changes and continue."
-                                        .into(),
-                                ),
-                            });
-                        }
-                        self.set_outcome(OutcomeSeverity::Error, error.clone(), None, None);
-                        self.mutation_error = Some(error.clone());
-                        if let Some(view) = &mut self.conflict_view {
-                            view.error = Some(error);
-                        }
-                        self.refresh_mutation();
-                    }
-                }
-            }
-        }
+        self.poll_jobs(ctx);
         self.poll_conflict_view(ctx);
         let narrow = ctx.content_rect().width() < 1040.0;
         let wide_refs = !narrow
@@ -11496,6 +12032,9 @@ impl Browser {
             .create_branch
             .as_ref()
             .map(|dialog| self.commit_summary(&dialog.commit));
+        // Disabled while a job runs, its own included; the dialog stays open
+        // until Git returns.
+        let create_busy = self.operation_busy();
         if let Some(dialog) = &mut self.create_branch {
             egui::Window::new(dialog.title())
                 .id(egui::Id::unique("create-branch-dialog"))
@@ -11521,14 +12060,17 @@ impl Browser {
                     if let Some(error) = &dialog.error {
                         ui.colored_label(ui.visuals().error_fg_color, error);
                     }
+                    let enabled = !dialog.name.trim().is_empty() && !create_busy;
                     ui.horizontal(|ui| {
-                        if ui
-                            .add_enabled(
-                                !dialog.name.trim().is_empty(),
-                                inspect_ui::secondary("Create", "Enter"),
-                            )
-                            .clicked()
-                        {
+                        let create =
+                            ui.add_enabled(enabled, inspect_ui::secondary("Create", "Enter"));
+                        let create = if create_busy {
+                            create
+                                .on_disabled_hover_text("Wait for the current operation to finish.")
+                        } else {
+                            create
+                        };
+                        if create.clicked() {
                             create_branch_submit =
                                 Some((dialog.name.trim().to_string(), dialog.switch));
                         }
@@ -11540,7 +12082,7 @@ impl Browser {
                         ui,
                         egui::Id::unique("create-branch-dialog"),
                         &field,
-                        !dialog.name.trim().is_empty(),
+                        enabled,
                     );
                     if keys.submit {
                         create_branch_submit =
@@ -11552,65 +12094,8 @@ impl Browser {
         if create_branch_cancel {
             self.create_branch = None;
         }
-        if let Some((name, switch)) = create_branch_submit
-            && let Some(dialog) = self.create_branch.clone()
-        {
-            // Recovery branches always start with switching off; remember
-            // only the ordinary new-branch choice.
-            if dialog.recovery_source.is_none() {
-                self.remember(|prefs| prefs.branch_switch = switch);
-            }
-            match self.stash_path() {
-                Some(path) => match gg_git::branch::create_at(&path, &name, &dialog.commit) {
-                    Ok(receipt) => {
-                        let source = dialog.recovery_source;
-                        let notice = format!(
-                            "Created {} at {}",
-                            receipt.branch,
-                            self.commit_summary(&receipt.commit)
-                        );
-                        self.create_branch = None;
-                        if let Some(view) = &mut self.recovery
-                            && source.is_some()
-                        {
-                            view.notice(notice);
-                        }
-                        if switch {
-                            // Reload once the switch ends: a read started
-                            // now would land after it with the old HEAD.
-                            self.branch_after_create = Some(receipt.branch.clone());
-                            self.start_branch(ctx, receipt.branch.clone(), false);
-                            if self.branch.is_none() {
-                                self.branch_after_create = None;
-                                let error = self.branch_error.take();
-                                self.load(ctx);
-                                if let Some(error) = error {
-                                    let summary = format!(
-                                        "Created {} but the switch could not start: {error}",
-                                        receipt.branch
-                                    );
-                                    self.set_outcome(OutcomeSeverity::Warning, summary, None, None);
-                                }
-                            }
-                        } else {
-                            self.load(ctx);
-                        }
-                        if !switch && source.is_none() {
-                            self.branch_warning = Some(format!("Created {}", receipt.branch));
-                        }
-                    }
-                    Err(error) => {
-                        if let Some(dialog) = &mut self.create_branch {
-                            dialog.error = Some(error);
-                        }
-                    }
-                },
-                None => {
-                    if let Some(dialog) = &mut self.create_branch {
-                        dialog.error = Some("Open a repository before creating a branch.".into());
-                    }
-                }
-            }
+        if let Some((name, switch)) = create_branch_submit {
+            self.submit_create_branch(ctx, name, switch);
         }
 
         let mut branch_delete_action = None;
@@ -11649,7 +12134,7 @@ impl Browser {
         let unmerged_count = unmerged.as_mut().and_then(consequence::Lines::count);
         let tips_ready = tips.as_mut().is_none_or(|tips| tips.get().is_some());
         let branch_notice = branch_guard.changed.then_some(consequence::CHANGED);
-        let branch_busy = branch_guard.busy();
+        let branch_busy = branch_guard.busy() || self.operation_busy();
         if let Some(dialog) = &mut self.branch_delete {
             let mut cancelled = false;
             egui::Window::new("Delete branch")
@@ -11748,6 +12233,7 @@ impl Browser {
 
         let mut tag_delete_action = None;
         let mut tag_delete_open = true;
+        let tag_delete_busy = self.operation_busy();
         if let Some(dialog) = &mut self.tag_delete {
             let mut cancelled = false;
             egui::Window::new("Delete tag")
@@ -11764,7 +12250,11 @@ impl Browser {
                         ui.colored_label(ui.visuals().error_fg_color, error);
                     }
                     ui.horizontal(|ui| {
-                        if ui.button("Delete").clicked() {
+                        if ui
+                            .add_enabled(!tag_delete_busy, egui::Button::new("Delete"))
+                            .on_disabled_hover_text("Wait for the current operation to finish.")
+                            .clicked()
+                        {
                             tag_delete_action = Some(dialog.name.clone());
                         }
                         let button = ui.add(inspect_ui::secondary("Cancel", "Esc"));
@@ -11855,7 +12345,7 @@ impl Browser {
             } else {
                 None
             };
-            let enabled = ready && !blocked && !guard.busy();
+            let enabled = ready && !blocked && !guard.busy() && !self.operation_busy();
             egui::Window::new("Reset here")
                 .id(egui::Id::unique("reset-here"))
                 .modal(ctx, egui::Id::unique("reset-here"))
@@ -12249,6 +12739,7 @@ impl Browser {
         if let Some(files) = stash_files.take() {
             self.consequences.insert("stash", files);
         }
+        let stash_busy = self.operation_busy();
         if let Some(dialog) = &mut self.stash_dialog {
             let mut cancelled = false;
             egui::Window::new("Stash changes")
@@ -12309,7 +12800,7 @@ impl Browser {
                         ui.colored_label(ui.visuals().error_fg_color, error);
                     }
                     let files = stash_summary.map(|(files, ..)| files);
-                    let ready = files != Some(0);
+                    let ready = files != Some(0) && !stash_busy;
                     ui.horizontal(|ui| {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             let label = match files {
@@ -12326,7 +12817,15 @@ impl Browser {
                                     .color(egui::Color32::from_rgb(184, 212, 230)),
                             ))
                             .fill(egui::Color32::from_rgb(11, 85, 119));
-                            if ui.add_enabled(ready, primary).clicked() {
+                            let primary = ui.add_enabled(ready, primary);
+                            let primary = if stash_busy {
+                                primary.on_disabled_hover_text(
+                                    "Wait for the current operation to finish.",
+                                )
+                            } else {
+                                primary
+                            };
+                            if primary.clicked() {
                                 stash_submit = Some((
                                     dialog.message.clone(),
                                     dialog.include_untracked,
@@ -12362,8 +12861,13 @@ impl Browser {
                 prefs.stash_include_untracked = include_untracked;
                 prefs.stash_keep_index = keep_index;
             });
+            // Stash changes stays open until Git returns, and shows a failure.
             match self.push_stash(ctx, &message, include_untracked, keep_index) {
-                Ok(()) => self.stash_dialog = None,
+                Ok(()) => {
+                    if let Some(dialog) = &mut self.stash_dialog {
+                        dialog.error = None;
+                    }
+                }
                 Err(error) => {
                     if let Some(dialog) = &mut self.stash_dialog {
                         dialog.error = Some(error);
@@ -13956,6 +14460,8 @@ mod tests {
         let _ = frame(&mut app, vec![]);
         let _ = frame(&mut app, vec![egui::Event::Text("topic".into())]);
         let _ = frame(&mut app, vec![key(egui::Key::Enter)]);
+        // The dialog stays open while Git runs, then shows the failure.
+        app.wait_for_operation(&ctx);
         let dialog = app.create_branch.as_ref().ok_or("branch dialog closed")?;
         assert_eq!(dialog.name, "topic");
         assert!(dialog.error.is_some(), "Enter ran the create");
@@ -14184,6 +14690,58 @@ mod tests {
     }
 
     #[test]
+    fn a_verbatim_path_names_the_same_repository() {
+        use std::path::Path;
+        assert!(same_path(
+            Path::new(r"\\?\D:\a\repo"),
+            Path::new(r"D:\a\repo")
+        ));
+        assert!(same_path(Path::new("/r/repo"), Path::new("/r/repo")));
+        assert!(!same_path(
+            Path::new(r"\\?\D:\a\repo"),
+            Path::new(r"D:\a\other")
+        ));
+        assert!(!same_path(Path::new("/r/repo"), Path::new("/r/other")));
+    }
+
+    #[test]
+    fn a_merge_count_joins_only_the_receipt_it_belongs_to() {
+        let mut app = Browser::new(std::path::PathBuf::from("."));
+        let summary = "Merged feature into main".to_string();
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        app.merge_count = Some((summary.clone(), rx));
+        app.mutation_notice = Some(summary.clone());
+        app.track_notice();
+        let shown = app.notice_seen.as_ref().map(|(_, at)| *at);
+        app.set_outcome(OutcomeSeverity::Info, summary.clone(), None, None);
+        app.poll_merge_count();
+        assert!(app.merge_count.is_some(), "nothing arrived yet");
+        assert!(tx.send(3).is_ok());
+        app.poll_merge_count();
+        let counted = "Merged feature into main · 3 commits";
+        assert_eq!(app.mutation_notice.as_deref(), Some(counted));
+        assert_eq!(
+            app.outcome.as_ref().map(|o| o.summary.as_str()),
+            Some(counted)
+        );
+        app.track_notice();
+        assert_eq!(
+            app.notice_seen.as_ref().map(|(_, at)| *at),
+            shown,
+            "the fade does not restart"
+        );
+        assert!(app.merge_count.is_none());
+
+        // A later receipt keeps its own text.
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        app.merge_count = Some((summary, rx));
+        app.mutation_notice = Some("Created topic".into());
+        assert!(tx.send(2).is_ok());
+        app.poll_merge_count();
+        assert_eq!(app.mutation_notice.as_deref(), Some("Created topic"));
+    }
+
+    #[test]
     fn a_stash_shows_its_history_at_once_under_the_pointer()
     -> Result<(), Box<dyn std::error::Error>> {
         let git = |path: &std::path::Path, args: &[&str]| -> Result<(), String> {
@@ -14238,6 +14796,20 @@ mod tests {
 
         std::fs::write(path.join("a"), b"changed\n")?;
         app.push_stash(&ctx, "work", false, false)?;
+        // The stash runs on the operation worker; its receipt starts the read.
+        for _ in 0..400 {
+            frame(&mut app);
+            if app.operation_worker.is_none() {
+                break;
+            }
+        }
+        assert!(app.operation_worker.is_none(), "the stash never finished");
+        assert!(
+            app.stash_notice.is_some(),
+            "the stash's receipt is shown; error {:?}, outcome {:?}",
+            app.mutation_error,
+            app.outcome.as_ref().map(|outcome| &outcome.summary)
+        );
         for _ in 0..400 {
             frame(&mut app);
             if app.pending.is_none() {
@@ -14298,6 +14870,7 @@ mod tests {
             shallow: false,
         });
         app.restore_stash_inner(&ctx, "stash@{0}", false, false)?;
+        app.wait_for_operation(&ctx);
         let outcome = app.outcome.as_ref().ok_or("missing restore outcome")?;
         assert_eq!(outcome.summary, "Restored stash@{0}");
         assert!(matches!(outcome.severity, OutcomeSeverity::Info));
@@ -18467,6 +19040,120 @@ mod tests {
         Ok((dir, app))
     }
 
+    #[test]
+    fn a_dialog_mutation_runs_on_the_worker_and_its_dialog_waits_for_git() -> Checked {
+        let ctx = egui::Context::default();
+        let (dir, mut app) = two_commits()?;
+        let path = dir.path();
+        git_in(path, &["branch", "merged"])?;
+        app.branch_delete = Some(BranchDeleteDialog {
+            name: "merged".into(),
+            error: None,
+        });
+        app.delete_branch(&ctx, "merged", false)?;
+        // Until the worker reports: the dialog stays open, the footer names
+        // the job, and conflicting commands say why they wait.
+        assert!(app.branch_delete.is_some(), "the dialog waits for Git");
+        let message = app.footer_message(false);
+        assert_eq!(
+            (message.tone, message.text.as_str()),
+            (footer::Tone::Progress, "Deleting branch merged…")
+        );
+        let ready = app.frame_readiness();
+        assert_eq!(
+            ready.stash_reason,
+            Some("Wait for the current operation to finish")
+        );
+        assert!(!ready.branch_idle);
+        assert_eq!(
+            app.mutation_reason(),
+            Some("Wait for the current operation to finish.")
+        );
+        assert_eq!(
+            app.delete_tag(&ctx, "v1"),
+            Err("Wait for the current operation to finish.".into()),
+            "one mutation at a time"
+        );
+        app.wait_for_operation(&ctx);
+        assert!(app.branch_delete.is_none(), "the receipt closes the dialog");
+        assert_eq!(
+            app.mutation_notice.as_deref(),
+            Some("Deleted branch merged")
+        );
+        assert_eq!(git_in(path, &["branch", "--list", "merged"])?, "");
+
+        // A failure keeps the dialog open and shows Git's error there.
+        app.tag_delete = Some(TagDeleteDialog {
+            name: "missing".into(),
+            error: None,
+        });
+        app.delete_tag(&ctx, "missing")?;
+        app.wait_for_operation(&ctx);
+        let dialog = app.tag_delete.as_ref().ok_or("the dialog closed")?;
+        assert!(dialog.error.is_some(), "the dialog shows the failure");
+        assert!(app.mutation_notice.is_none(), "the busy label is gone");
+        assert!(
+            app.outcome.is_none(),
+            "the dialog, not the footer, reports it"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn new_tag_reads_signing_off_the_ui_thread_and_never_tags_unsigned() -> Checked {
+        let ctx = egui::Context::default();
+        let (dir, mut app) = two_commits()?;
+        let path = dir.path();
+        git_in(path, &["config", "tag.gpgsign", "true"])?;
+        app.state.selected = Some(git_in(path, &["rev-parse", "HEAD"])?);
+        let recording = gg_git::process::Recording::start(&[(path, "<repo>")]);
+        app.open_new_tag();
+        assert!(app.tag_create.is_some(), "New tag opens at once");
+        let config = app
+            .signing_cache
+            .settled(path)
+            .ok_or("the read New tag started")?;
+        assert!(config.tag_signing);
+        let records = recording.take();
+        assert!(
+            !records.is_empty(),
+            "New tag reads the signing configuration"
+        );
+        assert!(
+            records.iter().all(|record| !record.on_recording_thread),
+            "the signing read runs off the UI thread"
+        );
+        app.apply_tag_create(&ctx);
+        let dialog = app.tag_create.as_mut().ok_or("the dialog closed")?;
+        assert!(dialog.sign, "tag.gpgsign checks Sign");
+        assert!(!dialog.signing_ready);
+        assert_eq!(
+            dialog.signing_note.as_deref(),
+            Some("No signing key is configured.")
+        );
+        dialog.name = "v9".into();
+        dialog.message = "release".into();
+        app.start_tag_create(&ctx);
+        for _ in 0..2000 {
+            app.apply_tag_create(&ctx);
+            if app
+                .tag_create
+                .as_ref()
+                .is_none_or(|dialog| dialog.pending.is_none())
+            {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        let dialog = app.tag_create.as_ref().ok_or("the dialog closed")?;
+        assert_eq!(
+            dialog.error.as_deref(),
+            Some("No signing key is configured.")
+        );
+        assert_eq!(git_in(path, &["tag", "--list", "v9"])?, "", "no tag");
+        Ok(())
+    }
+
     /// Draw frames until `done` holds for the shown text (background reads
     /// arrive between frames); the last frame's text.
     fn frames_until(
@@ -18886,6 +19573,7 @@ mod tests {
             CommitAction::Reset(gg_engine::reset::Mode::Soft),
         );
         assert_eq!(app.reset_confirm, None, "Soft runs without the question");
+        app.wait_for_operation(&ctx);
         assert_eq!(git_in(path, &["rev-parse", "HEAD"])?, first);
         assert_eq!(
             git_in(path, &["diff", "--cached", "--name-only"])?,
@@ -18899,6 +19587,7 @@ mod tests {
             CommitAction::Reset(gg_engine::reset::Mode::Mixed),
         );
         assert_eq!(app.reset_confirm, None, "Mixed runs without the question");
+        app.wait_for_operation(&ctx);
         assert_eq!(git_in(path, &["rev-parse", "HEAD"])?, first);
         assert_eq!(git_in(path, &["diff", "--cached", "--name-only"])?, "");
         assert_eq!(
@@ -18982,6 +19671,7 @@ mod tests {
         assert_eq!(git_in(path, &["rev-parse", "HEAD"])?, outside, "not run");
         click_label(&ctx, &mut app, "Reset")?;
         let _ = frames_until(&ctx, &mut app, vec![], |app, _| app.reset_confirm.is_none())?;
+        app.wait_for_operation(&ctx);
         assert_eq!(
             git_in(path, &["rev-parse", "HEAD"])?,
             first,

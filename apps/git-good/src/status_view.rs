@@ -284,6 +284,12 @@ pub struct StatusView {
     commit_warning: Option<String>,
     last_signed: bool,
     signing: Option<gg_engine::signature::Config>,
+    /// Shared with the window; read off the UI thread (`signing_cache.rs`).
+    signing_cache: crate::signing_cache::Cache,
+    /// The cache generation `signing` came from.
+    signing_generation: u64,
+    /// The Sign default to apply once the configuration is known.
+    sign_default: Option<crate::settings::SignCommits>,
     sign_commit: bool,
     message: String,
     normal_draft: String,
@@ -324,8 +330,32 @@ pub struct StatusView {
     /// The row under the pointer this frame, and what it may do.
     under: Option<((usize, usize), crate::target_guard::Target)>,
 }
+/// The Sign checkbox's starting state for the Preferences › Commit choice:
+/// follow `commit.gpgSign`, always when signing is ready, or never.
+fn sign_default(
+    default: crate::settings::SignCommits,
+    config: &gg_engine::signature::Config,
+) -> bool {
+    match default {
+        crate::settings::SignCommits::Git => config.commit_signing,
+        crate::settings::SignCommits::Always => config.ready(),
+        crate::settings::SignCommits::Never => false,
+    }
+}
+
 impl StatusView {
+    #[cfg(test)]
     pub fn new(path: PathBuf, ctx: &egui::Context) -> Self {
+        Self::with_signing(path, ctx, Default::default())
+    }
+
+    /// Open on `path`, sharing the window's signing configuration; a fresh
+    /// read starts in the background and the last one read shows meanwhile.
+    pub fn with_signing(
+        path: PathBuf,
+        ctx: &egui::Context,
+        signing_cache: crate::signing_cache::Cache,
+    ) -> Self {
         let mut view = Self {
             path,
             identity: None,
@@ -345,6 +375,9 @@ impl StatusView {
             commit_warning: None,
             last_signed: false,
             signing: None,
+            signing_cache: Default::default(),
+            signing_generation: 0,
+            sign_default: Some(crate::settings::SignCommits::Git),
             sign_commit: false,
             message: String::new(),
             normal_draft: String::new(),
@@ -379,13 +412,28 @@ impl StatusView {
             guard: Default::default(),
             under: None,
         };
-        view.signing = Some(gg_git::signature::config(&view.path));
-        view.sign_commit = view
-            .signing
-            .as_ref()
-            .is_some_and(|config| config.commit_signing);
+        view.signing_cache = signing_cache;
+        view.signing_cache.attach(ctx);
+        view.signing_cache.refresh(&view.path);
+        view.poll_signing();
         view.start(ctx, false);
         view
+    }
+
+    /// Take a newly read signing configuration; the first one also applies
+    /// the pending Sign default.
+    fn poll_signing(&mut self) {
+        let Some((generation, config)) = self.signing_cache.current(&self.path) else {
+            return;
+        };
+        if generation == self.signing_generation {
+            return;
+        }
+        self.signing_generation = generation;
+        self.signing = Some(config);
+        if let Some(default) = self.sign_default.take() {
+            self.apply_sign_default(default);
+        }
     }
     fn start(&mut self, ctx: &egui::Context, replacing: bool) {
         self.staged = None;
@@ -1052,16 +1100,15 @@ impl StatusView {
 
     /// Apply the Preferences › Commit choice for the **Sign** checkbox:
     /// follow `commit.gpgSign`, always when signing is ready, or never.
+    /// Until the configuration is read, the choice waits for it.
     pub fn apply_sign_default(&mut self, default: crate::settings::SignCommits) {
-        let ready = self.signing.as_ref().is_some_and(|config| config.ready());
-        self.sign_commit = match default {
-            crate::settings::SignCommits::Git => self
-                .signing
-                .as_ref()
-                .is_some_and(|config| config.commit_signing),
-            crate::settings::SignCommits::Always => ready,
-            crate::settings::SignCommits::Never => false,
-        };
+        match &self.signing {
+            Some(config) => {
+                self.sign_commit = sign_default(default, config);
+                self.sign_default = None;
+            }
+            None => self.sign_default = Some(default),
+        }
     }
 
     #[cfg(test)]
@@ -1163,7 +1210,7 @@ impl StatusView {
     }
 
     fn start_commit(&mut self, ctx: &egui::Context) {
-        self.signing = Some(gg_git::signature::config(&self.path));
+        self.poll_signing();
         let signing_error = self.signing_error();
         if commit_reason(
             self.mutations_blocked(),
@@ -1183,16 +1230,27 @@ impl StatusView {
         };
         let message = self.message.clone();
         let amend = self.amend;
-        let options = gg_git::commit::Options {
-            sign: self.sign_commit,
-            verify: crate::settings::run_hooks(ctx),
-        };
+        let sign = self.sign_commit;
+        let pending_default = self.sign_default;
+        let verify = crate::settings::run_hooks(ctx);
+        let signing = self.signing_cache.clone();
+        let path = self.path.clone();
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         let repaint = ctx.clone();
         match std::thread::Builder::new()
             .name("gg-commit".into())
             .spawn(move || {
-                let result = if amend {
+                // The configuration as it is now, as `git good commit` reads
+                // it; a setup that cannot sign never commits unsigned.
+                let config = signing.fresh(&path);
+                let sign = pending_default.map_or(sign, |default| sign_default(default, &config));
+                let options = gg_git::commit::Options { sign, verify };
+                let result = if sign && !config.ready() {
+                    Err(config
+                        .note
+                        .clone()
+                        .unwrap_or_else(|| "Signing key or tool is unavailable.".into()))
+                } else if amend {
                     gg_git::commit::amend_with(&repository, &message, options)
                 } else {
                     gg_git::commit::create_with(&repository, &message, options)
@@ -1209,7 +1267,7 @@ impl StatusView {
         }
     }
 
-    fn poll_commit(&mut self, ctx: &egui::Context) {
+    pub(crate) fn poll_commit(&mut self, ctx: &egui::Context) {
         if let Some(result) = self.commit.as_ref().and_then(|rx| match rx.try_recv() {
             Ok(result) => Some(result),
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
@@ -1250,7 +1308,7 @@ impl StatusView {
                     self.start(ctx, true);
                 }
                 Err(e) => {
-                    self.signing = Some(gg_git::signature::config(&self.path));
+                    self.signing_cache.refresh(&self.path);
                     self.start(ctx, true);
                     self.action_error = Some(e.clone());
                     self.error = Some(e);
@@ -2116,6 +2174,7 @@ impl StatusView {
         }
         let ctx = ui.ctx().clone();
         let ctx = &ctx;
+        self.poll_signing();
         self.poll_commit(ctx);
         self.stage.poll();
         if self.stage.error().is_some() {
@@ -2403,6 +2462,9 @@ mod tests {
             commit_warning: None,
             last_signed: false,
             signing: None,
+            signing_cache: Default::default(),
+            signing_generation: 0,
+            sign_default: Some(crate::settings::SignCommits::Git),
             sign_commit: false,
             message: String::new(),
             normal_draft: String::new(),
@@ -4240,6 +4302,8 @@ mod tests {
         let ctx = egui::Context::default();
         let mut view = StatusView::new(dir.path().into(), &ctx);
         settle(&ctx, &mut view, 1120.0);
+        // The signing configuration is read off the UI thread.
+        pump(&ctx, &mut view, 1120.0, |view| view.signing.is_some());
         assert!(view.sign_commit, "commit.gpgsign starts the sign choice on");
         assert!(view.signing_error().is_some());
         view.message = "signed UI".into();
