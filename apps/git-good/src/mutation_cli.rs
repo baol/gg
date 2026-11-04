@@ -14,14 +14,15 @@ pub fn revert(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::e
 }
 
 fn run(
-    mut args: impl Iterator<Item = OsString>,
+    args: impl Iterator<Item = OsString>,
     operation: Operation,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let mut args = crate::cli_args::Args::new(args);
     let mut path = std::env::current_dir()?;
     let mut commits = Vec::new();
     let mut action = None;
     while let Some(arg) = args.next() {
-        match arg.to_str() {
+        match args.option(&arg) {
             Some("--repo") => path = PathBuf::from(args.next().ok_or("--repo needs a path")?),
             Some("--continue") if action.is_none() => action = Some("continue"),
             Some("--abort") if action.is_none() => action = Some("abort"),
@@ -58,9 +59,11 @@ fn run(
             match operation {
                 Operation::CherryPick => gg_git::mutation::cherry_pick_many(&path, &named)?,
                 Operation::Revert => gg_git::mutation::revert(&path, named[0])?,
-                Operation::Merge => return Err("Use git good merge for merge operations.".into()),
+                Operation::Merge => {
+                    return Err("Use git good --cli merge for merge operations.".into());
+                }
                 Operation::Rebase => {
-                    return Err("Use git good rebase for rebase operations.".into());
+                    return Err("Use git good --cli rebase for rebase operations.".into());
                 }
             }
         }
@@ -79,8 +82,7 @@ fn run(
 }
 
 fn write_receipt(receipt: serde_json::Value) -> Result<(), Box<dyn std::error::Error>> {
-    serde_json::to_writer(std::io::stdout().lock(), &receipt)?;
-    println!();
+    crate::cli_args::emit(&receipt)?;
     Ok(())
 }
 

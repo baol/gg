@@ -1,13 +1,14 @@
 //! Read bounded line attribution as JSON.
 use std::{ffi::OsString, path::Path, path::PathBuf};
 
-pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::error::Error>> {
+pub fn run(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::error::Error>> {
+    let mut args = crate::cli_args::Args::new(args);
     let mut path = std::env::current_dir()?;
     let mut revision = "HEAD".to_string();
     let mut lines = None;
     let mut file = None;
     while let Some(arg) = args.next() {
-        match arg.to_str() {
+        match args.option(&arg) {
             Some("--repo") => path = PathBuf::from(args.next().ok_or("--repo needs a path")?),
             Some("--revision") => {
                 revision = args
@@ -36,31 +37,28 @@ pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::
             _ if file.is_none() => file = Some(arg),
             _ => {
                 return Err(
-                    "Usage: git good blame PATH [--revision REF] [--lines START,END] [--repo PATH]"
+                    "Usage: git good --cli blame PATH [--revision REF] [--lines START,END] [--repo PATH]"
                         .into(),
                 );
             }
         }
     }
-    let file = file
-        .ok_or("Usage: git good blame PATH [--revision REF] [--lines START,END] [--repo PATH]")?;
+    let file = file.ok_or(
+        "Usage: git good --cli blame PATH [--revision REF] [--lines START,END] [--repo PATH]",
+    )?;
     let bytes = path_bytes(&file)?;
     let blame = gg_git::blame::read(&path, &revision, &bytes, lines, &|| false)?;
-    serde_json::to_writer(
-        std::io::stdout().lock(),
-        &serde_json::json!({
-            "operation": "blame",
-            "repository": display_repository(&path),
-            "revision": blame.revision,
-            "path": blame.path,
-            "start_line": blame.start_line,
-            "end_line": blame.end_line,
-            "lines": blame.lines,
-            "complete": blame.complete,
-            "note": blame.note,
-        }),
-    )?;
-    println!();
+    crate::cli_args::emit(&serde_json::json!({
+        "operation": "blame",
+        "repository": display_repository(&path),
+        "revision": blame.revision,
+        "path": blame.path,
+        "start_line": blame.start_line,
+        "end_line": blame.end_line,
+        "lines": blame.lines,
+        "complete": blame.complete,
+        "note": blame.note,
+    }))?;
     Ok(())
 }
 

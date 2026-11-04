@@ -5,12 +5,13 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::error::Error>> {
+pub fn run(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::error::Error>> {
+    let mut args = crate::cli_args::Args::new(args);
     let mut path = std::env::current_dir()?;
     let mut commit = None;
     let mut mode = None;
     while let Some(arg) = args.next() {
-        match arg.to_str() {
+        match args.option(&arg) {
             Some("--repo") => path = PathBuf::from(args.next().ok_or("--repo needs a path")?),
             Some("--soft") if mode.is_none() => mode = Some(Mode::Soft),
             Some("--mixed") if mode.is_none() => mode = Some(Mode::Mixed),
@@ -23,7 +24,7 @@ pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::
             }
             _ => {
                 return Err(
-                    "Usage: git good reset --soft|--mixed|--hard COMMIT [--repo PATH]".into(),
+                    "Usage: git good --cli reset --soft|--mixed|--hard COMMIT [--repo PATH]".into(),
                 );
             }
         }
@@ -31,19 +32,15 @@ pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::
     let commit = commit.ok_or("Reset requires a commit")?;
     let mode = mode.ok_or("Reset requires --soft, --mixed, or --hard")?;
     let receipt = gg_git::reset::reset(&path, &commit, mode)?;
-    serde_json::to_writer(
-        std::io::stdout().lock(),
-        &serde_json::json!({
-            "operation": "reset",
-            "repository": display_repository(&path),
-            "commit": receipt.commit,
-            "mode": receipt.mode,
-            "applied": receipt.applied,
-            "backup": receipt.backup,
-            "complete": true,
-        }),
-    )?;
-    println!();
+    crate::cli_args::emit(&serde_json::json!({
+        "operation": "reset",
+        "repository": display_repository(&path),
+        "commit": receipt.commit,
+        "mode": receipt.mode,
+        "applied": receipt.applied,
+        "backup": receipt.backup,
+        "complete": true,
+    }))?;
     Ok(())
 }
 

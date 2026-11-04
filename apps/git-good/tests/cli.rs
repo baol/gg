@@ -40,6 +40,12 @@ fn git_output(path: &Path, args: &[&str]) -> Result<Vec<u8>> {
     }
     Ok(output.stdout)
 }
+/// `git-good --cli …`: every command follows `--cli`.
+fn cli(binary: impl AsRef<std::ffi::OsStr>) -> Command {
+    let mut command = Command::new(binary);
+    command.arg("--cli");
+    command
+}
 #[test]
 fn git_dispatch_discovers_current_and_nested_repositories() -> Result {
     let repo = tempfile::tempdir()?;
@@ -53,7 +59,7 @@ fn git_dispatch_discovers_current_and_nested_repositories() -> Result {
     ))?;
     for cwd in [repo.path(), nested.as_path()] {
         let output = Command::new("git")
-            .args(["good", "history"])
+            .args(["good", "--cli", "history"])
             .current_dir(cwd)
             .env("PATH", &path)
             .output()?;
@@ -80,21 +86,226 @@ fn explicit_path_overrides_cwd_and_failure_uses_stderr() -> Result {
     let other = tempfile::tempdir()?;
     init(repo.path(), &["-b", "explicit"])?;
     let binary = env!("CARGO_BIN_EXE_git-good");
-    let output = Command::new(binary)
-        .arg("history")
+    let output = cli(binary)
+        .args(["history", "--repo"])
         .arg(repo.path())
         .current_dir(other.path())
         .output()?;
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout)?;
     assert_eq!(json["head"], "explicit");
-    let error = Command::new(binary)
+    let error = cli(binary)
         .arg("history")
         .current_dir(other.path())
         .output()?;
     assert!(!error.status.success());
     assert!(error.stdout.is_empty());
     assert!(String::from_utf8_lossy(&error.stderr).contains("Could not read"));
+    Ok(())
+}
+
+#[test]
+fn a_failure_prints_the_plain_message() -> Result {
+    let dir = tempfile::tempdir()?;
+    let output = cli(env!("CARGO_BIN_EXE_git-good"))
+        .args(["history", "extra"])
+        .current_dir(dir.path())
+        .output()?;
+    assert_eq!(output.status.code(), Some(2), "a usage error exits 2");
+    assert!(output.stdout.is_empty());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "Error: Usage: git good --cli history [--repo PATH]\n"
+    );
+    Ok(())
+}
+
+/// A bare argument is a folder; commands follow `--cli` (decision 15).
+#[test]
+fn commands_follow_cli_and_a_bare_word_is_a_folder() -> Result {
+    let dir = tempfile::tempdir()?;
+    let binary = env!("CARGO_BIN_EXE_git-good");
+    let run = |args: &[&str]| {
+        Command::new(binary)
+            .args(args)
+            .current_dir(dir.path())
+            .output()
+    };
+    let old = run(&["status"])?;
+    assert!(!old.status.success());
+    assert!(old.stdout.is_empty());
+    assert_eq!(
+        String::from_utf8_lossy(&old.stderr),
+        "Error: No folder status. Did you mean git good --cli status?\n"
+    );
+    let unknown = run(&["--cli", "stat"])?;
+    assert!(
+        String::from_utf8_lossy(&unknown.stderr).contains("Unknown command stat."),
+        "{}",
+        String::from_utf8_lossy(&unknown.stderr)
+    );
+    let option = run(&["-x"])?;
+    assert!(String::from_utf8_lossy(&option.stderr).contains("Unknown option -x."));
+    let short = Command::new(binary).arg("-h").output()?;
+    assert!(short.status.success());
+    assert!(String::from_utf8_lossy(&short.stdout).contains("git good --cli status"));
+    Ok(())
+}
+
+/// After `--`, an option-shaped word is a value.
+#[test]
+fn double_dash_ends_options() -> Result {
+    let repo = tempfile::tempdir()?;
+    init(repo.path(), &["-b", "main"])?;
+    std::fs::write(repo.path().join("-x.txt"), b"x\n")?;
+    git(repo.path(), &["add", "--", "-x.txt"])?;
+    git(
+        repo.path(),
+        &[
+            "-c",
+            "user.name=T",
+            "-c",
+            "user.email=t@example.org",
+            "commit",
+            "-qm",
+            "dash",
+        ],
+    )?;
+    let output = cli(env!("CARGO_BIN_EXE_git-good"))
+        .args(["blame", "--", "-x.txt"])
+        .current_dir(repo.path())
+        .output()?;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(json["path"], "-x.txt");
+    Ok(())
+}
+
+/// `count` commits on main through fast-import.
+fn many_commits(path: &Path, count: usize) -> Result {
+    use std::io::Write;
+    use std::process::Stdio;
+    let mut child = Command::new("git")
+        .arg("-C")
+        .arg(path)
+        .args(["fast-import", "--quiet"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    {
+        let mut input = child.stdin.take().ok_or("missing fast-import input")?;
+        for i in 0..count {
+            let message = format!("Commit {i} with a subject long enough to fill the pipe");
+            writeln!(
+                input,
+                "commit refs/heads/main\ncommitter Ada <ada@example.org> 1760000000 +0000\ndata {}\n{}\n",
+                message.len(),
+                message
+            )?;
+        }
+    }
+    let import = child.wait_with_output()?;
+    if !import.status.success() {
+        return Err(String::from_utf8_lossy(&import.stderr).into_owned().into());
+    }
+    Ok(())
+}
+
+/// `history | head`: the reader goes away and Git Good ends quietly
+/// (decision 14), with no panic text and its own exit code.
+#[test]
+fn a_closed_stdout_ends_quietly() -> Result {
+    use std::io::Read;
+    use std::process::Stdio;
+    let repo = tempfile::tempdir()?;
+    init(repo.path(), &["-b", "main"])?;
+    many_commits(repo.path(), 3000)?;
+    let mut child = cli(env!("CARGO_BIN_EXE_git-good"))
+        .arg("history")
+        .current_dir(repo.path())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let mut stdout = child.stdout.take().ok_or("missing stdout")?;
+    let mut start = [0; 64];
+    stdout.read_exact(&mut start)?;
+    drop(stdout);
+    let output = child.wait_with_output()?;
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&output.stderr), "");
+    Ok(())
+}
+
+/// A traversal that fails part way still prints one valid JSON document,
+/// ending in `error`, and exits 1 with the reason on stderr.
+#[test]
+fn history_that_fails_mid_stream_ends_with_an_error_member() -> Result {
+    let repo = tempfile::tempdir()?;
+    init(repo.path(), &["-b", "main"])?;
+    many_commits(repo.path(), 5)?;
+    git(repo.path(), &["repack", "-qad"])?;
+    // Unpack every object loose and drop the root commit's: the walk
+    // prints the newer commits, then fails on the root.
+    let root = String::from_utf8(git_output(
+        repo.path(),
+        &["rev-list", "--max-parents=0", "HEAD"],
+    )?)?;
+    let root = root.trim().to_string();
+    let keep = String::from_utf8(git_output(repo.path(), &["rev-list", "HEAD"])?)?;
+    let pack_dir = repo.path().join(".git/objects/pack");
+    let packs = std::fs::read_dir(&pack_dir)?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .collect::<Vec<_>>();
+    let moved = repo.path().join("packs");
+    std::fs::create_dir(&moved)?;
+    for pack in &packs {
+        std::fs::rename(pack, moved.join(pack.file_name().ok_or("pack name")?))?;
+    }
+    for pack in std::fs::read_dir(&moved)? {
+        let pack = pack?.path();
+        if pack.extension().is_some_and(|ext| ext == "pack") {
+            let status = Command::new("git")
+                .arg("-C")
+                .arg(repo.path())
+                .arg("unpack-objects")
+                .arg("-q")
+                .stdin(std::fs::File::open(&pack)?)
+                .status()?;
+            assert!(status.success());
+        }
+    }
+    for id in keep.lines().filter(|id| *id == root) {
+        std::fs::remove_file(
+            repo.path()
+                .join(".git/objects")
+                .join(&id[..2])
+                .join(&id[2..]),
+        )?;
+    }
+    let output = cli(env!("CARGO_BIN_EXE_git-good"))
+        .arg("history")
+        .current_dir(repo.path())
+        .output()?;
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stderr).starts_with("Error: "));
+    let history: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(history["complete"], false);
+    assert_eq!(history["status"], "failed");
+    assert!(
+        history["error"]
+            .as_str()
+            .is_some_and(|error| !error.is_empty())
+    );
+    assert!(
+        history["commits"]
+            .as_array()
+            .is_some_and(|commits| commits.len() < 5)
+    );
     Ok(())
 }
 
@@ -130,7 +341,7 @@ fn json_includes_every_commit_beyond_the_former_cap() -> Result {
         "{}",
         String::from_utf8_lossy(&import.stderr)
     );
-    let output = Command::new(env!("CARGO_BIN_EXE_git-good"))
+    let output = cli(env!("CARGO_BIN_EXE_git-good"))
         .arg("history")
         .current_dir(repo.path())
         .output()?;
@@ -199,7 +410,7 @@ fn browsing_preserves_repository_index_and_dirty_worktree() -> Result {
     let before = snapshot(repo.path())?;
     let exports = tempfile::tempdir()?;
     for pass in 0..2 {
-        let output = Command::new(env!("CARGO_BIN_EXE_git-good"))
+        let output = cli(env!("CARGO_BIN_EXE_git-good"))
             .arg("history")
             .current_dir(repo.path())
             .output()?;
@@ -230,7 +441,7 @@ fn browsing_preserves_repository_index_and_dirty_worktree() -> Result {
         ] {
             let exporting = args.last() == Some(&"--output");
             let destination = exports.path().join(format!("saved-{pass}"));
-            let mut command = Command::new(env!("CARGO_BIN_EXE_git-good"));
+            let mut command = cli(env!("CARGO_BIN_EXE_git-good"));
             command.args(args).current_dir(repo.path());
             if exporting {
                 command.arg(&destination);
@@ -283,21 +494,21 @@ fn help_lists_every_cli_command() -> Result {
     assert!(output.stderr.is_empty());
     let help = String::from_utf8(output.stdout)?;
     for usage in [
-        "git-good history",
-        "git-good refs",
-        "git-good status",
-        "git-good stage",
-        "git-good unstage",
-        "git-good commit",
-        "git-good switch",
-        "git-good fetch",
-        "git-good push",
-        "git-good clone",
-        "git-good init",
-        "git-good stash",
-        "git-good cherry-pick",
-        "git-good revert",
-        "git-good show",
+        "git good --cli history",
+        "git good --cli refs",
+        "git good --cli status",
+        "git good --cli stage",
+        "git good --cli unstage",
+        "git good --cli commit",
+        "git good --cli switch",
+        "git good --cli fetch",
+        "git good --cli push",
+        "git good --cli clone",
+        "git good --cli init",
+        "git good --cli stash",
+        "git good --cli cherry-pick",
+        "git good --cli revert",
+        "git good --cli show",
     ] {
         assert!(help.contains(usage), "help is missing {usage:?}:\n{help}");
     }
@@ -324,7 +535,7 @@ fn show_discovers_repo_streams_exact_files_and_rejects_invalid_parent() -> Resul
         ],
     )?;
     let binary = env!("CARGO_BIN_EXE_git-good");
-    let output = Command::new(binary)
+    let output = cli(binary)
         .args(["show", "HEAD"])
         .current_dir(repo.path().join("nested"))
         .output()?;
@@ -343,7 +554,7 @@ fn show_discovers_repo_streams_exact_files_and_rejects_invalid_parent() -> Resul
         serde_json::json!("nested/café.txt".as_bytes())
     );
     let other = tempfile::tempdir()?;
-    let explicit = Command::new(binary)
+    let explicit = cli(binary)
         .args(["show", "HEAD", "--repo"])
         .arg(repo.path())
         .current_dir(other.path())
@@ -354,10 +565,7 @@ fn show_discovers_repo_streams_exact_files_and_rejects_invalid_parent() -> Resul
         vec!["show", "missing"],
         vec!["show"],
     ] {
-        let error = Command::new(binary)
-            .args(args)
-            .current_dir(repo.path())
-            .output()?;
+        let error = cli(binary).args(args).current_dir(repo.path()).output()?;
         assert!(!error.status.success());
         assert!(error.stdout.is_empty());
         assert!(!error.stderr.is_empty());
@@ -383,7 +591,7 @@ fn show_file_returns_diff_and_missing_path_uses_stderr() -> Result {
             "root",
         ],
     )?;
-    let output = Command::new(env!("CARGO_BIN_EXE_git-good"))
+    let output = cli(env!("CARGO_BIN_EXE_git-good"))
         .args(["show", "HEAD", "--file", "file"])
         .current_dir(repo.path())
         .output()?;
@@ -401,7 +609,7 @@ fn show_file_returns_diff_and_missing_path_uses_stderr() -> Result {
         rows.iter()
             .any(|r| r["new_line"] == 2 && r["text"] == "world")
     );
-    let error = Command::new(env!("CARGO_BIN_EXE_git-good"))
+    let error = cli(env!("CARGO_BIN_EXE_git-good"))
         .args(["show", "HEAD", "--file", "missing"])
         .current_dir(repo.path())
         .output()?;
@@ -436,7 +644,7 @@ fn show_file_uses_exact_non_utf8_path_bytes() -> Result {
         "{}",
         String::from_utf8_lossy(&imported.stderr)
     );
-    let output = Command::new(env!("CARGO_BIN_EXE_git-good"))
+    let output = cli(env!("CARGO_BIN_EXE_git-good"))
         .args(["show", "HEAD", "--file"])
         .arg(name)
         .current_dir(repo.path())
@@ -483,7 +691,7 @@ fn export_is_exact_beyond_diff_budget_and_preserves_existing_destinations() -> R
     git(repo.path(), &["gc", "--prune=now"])?;
     let output = destination.path().join("export.bin");
     let run = |side: &str, path: &Path| {
-        Command::new(env!("CARGO_BIN_EXE_git-good"))
+        cli(env!("CARGO_BIN_EXE_git-good"))
             .args([
                 "show",
                 "HEAD",
@@ -534,12 +742,12 @@ fn status_cli_streams_whole_worktree_and_reports_errors() -> Result {
     std::fs::write(repo.path().join("new.txt"), b"new")?;
     let binary = env!("CARGO_BIN_EXE_git-good");
     for explicit in [false, true] {
-        let mut command = Command::new(binary);
+        let mut command = cli(binary);
         command
             .arg("status")
             .current_dir(repo.path().join("nested"));
         if explicit {
-            command.arg(repo.path());
+            command.arg("--repo").arg(repo.path());
         }
         let out = command.output()?;
         assert!(
@@ -556,14 +764,14 @@ fn status_cli_streams_whole_worktree_and_reports_errors() -> Result {
     }
     let missing = repo.path().join("missing");
     for args in [
-        vec!["status".into(), missing.into_os_string()],
+        vec!["status".into(), "--repo".into(), missing.into_os_string()],
         vec![
             "status".into(),
             repo.path().as_os_str().into(),
             "extra".into(),
         ],
     ] {
-        let out = Command::new(binary).args(args).output()?;
+        let out = cli(binary).args(args).output()?;
         assert!(!out.status.success());
         assert!(out.stdout.is_empty());
         assert!(!out.stderr.is_empty());
@@ -581,7 +789,7 @@ fn selected_status_cli_requires_area_and_returns_working_diff() -> Result {
     std::fs::write(p.join("a"), b"working\n")?;
     let binary = env!("CARGO_BIN_EXE_git-good");
     for area in ["staged", "unstaged"] {
-        let output = Command::new(binary)
+        let output = cli(binary)
             .args(["status", "--file", "a", "--area", area])
             .current_dir(p)
             .output()?;
@@ -604,7 +812,7 @@ fn selected_status_cli_requires_area_and_returns_working_diff() -> Result {
         vec!["status", "--file", "missing", "--area", "unstaged"],
         vec!["status", "--area", "wrong"],
     ] {
-        let output = Command::new(binary).args(args).current_dir(p).output()?;
+        let output = cli(binary).args(args).current_dir(p).output()?;
         assert!(!output.status.success());
         assert!(output.stdout.is_empty());
         assert!(!output.stderr.is_empty());
@@ -621,7 +829,7 @@ fn unstage_cli_receipt_and_errors_preserve_working_files() -> Result {
     git(p, &["add", "a"])?;
     std::fs::write(p.join("a"), "working")?;
     let binary = env!("CARGO_BIN_EXE_git-good");
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["unstage", "--file", "a", "--repo"])
         .arg(p)
         .output()?;
@@ -649,7 +857,7 @@ fn unstage_cli_receipt_and_errors_preserve_working_files() -> Result {
         vec!["unstage", "--file", "missing"],
         vec!["unstage", "--file", "../a"],
     ] {
-        let out = Command::new(binary).args(args).current_dir(p).output()?;
+        let out = cli(binary).args(args).current_dir(p).output()?;
         assert!(!out.status.success());
         assert!(out.stdout.is_empty());
         assert!(!out.stderr.is_empty());
@@ -664,7 +872,7 @@ fn stage_cli_receipt_and_errors_preserve_working_files() -> Result {
     init(p, &[])?;
     std::fs::write(p.join("a"), "working")?;
     let binary = env!("CARGO_BIN_EXE_git-good");
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["stage", "--file", "a", "--repo"])
         .arg(p)
         .output()?;
@@ -693,7 +901,7 @@ fn stage_cli_receipt_and_errors_preserve_working_files() -> Result {
         vec!["stage", "--file", "../a"],
         vec!["stage", "--file", "a"],
     ] {
-        let out = Command::new(binary).args(args).current_dir(p).output()?;
+        let out = cli(binary).args(args).current_dir(p).output()?;
         assert!(!out.status.success());
         assert!(out.stdout.is_empty());
         assert!(!out.stderr.is_empty());
@@ -728,7 +936,7 @@ fn stage_cli_selected_hunks_match_git_and_keep_remaining_edits() -> Result {
     std::fs::write(p.join("a"), working)?;
     let binary = env!("CARGO_BIN_EXE_git-good");
     let header = |p: &Path| -> Result<String> {
-        let status = Command::new(env!("CARGO_BIN_EXE_git-good"))
+        let status = cli(env!("CARGO_BIN_EXE_git-good"))
             .args(["status", "--file", "a", "--area", "unstaged"])
             .current_dir(p)
             .output()?;
@@ -746,7 +954,7 @@ fn stage_cli_selected_hunks_match_git_and_keep_remaining_edits() -> Result {
             .ok_or_else(|| "missing hunk header".into())
     };
     let first = header(p)?;
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["stage", "--file", "a", "--hunk", &first])
         .current_dir(p)
         .output()?;
@@ -778,7 +986,7 @@ fn stage_cli_selected_hunks_match_git_and_keep_remaining_edits() -> Result {
         .output()?;
     assert_eq!(status.stdout, b"MM a\0");
     let index = std::fs::read(p.join(".git/index"))?;
-    let bad = Command::new(binary)
+    let bad = cli(binary)
         .args(["stage", "--file", "a", "--hunk", "@@ -99,1 +99,1 @@"])
         .current_dir(p)
         .output()?;
@@ -786,7 +994,7 @@ fn stage_cli_selected_hunks_match_git_and_keep_remaining_edits() -> Result {
     assert!(bad.stdout.is_empty());
     assert!(!bad.stderr.is_empty());
     assert_eq!(std::fs::read(p.join(".git/index"))?, index);
-    let missing = Command::new(binary)
+    let missing = cli(binary)
         .args(["stage", "--file", "a", "--hunk"])
         .current_dir(p)
         .output()?;
@@ -795,7 +1003,7 @@ fn stage_cli_selected_hunks_match_git_and_keep_remaining_edits() -> Result {
     assert!(!missing.stderr.is_empty());
 
     let remaining = header(p)?;
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["stage", "--file", "a", "--hunk", &remaining])
         .current_dir(p)
         .output()?;
@@ -828,7 +1036,7 @@ fn commit_cli_commits_the_index_and_preserves_working_changes() -> Result {
     std::fs::write(repo.path().join("a"), b"staged\n")?;
     git(repo.path(), &["add", "a"])?;
     std::fs::write(repo.path().join("a"), b"working\n")?;
-    let output = Command::new(env!("CARGO_BIN_EXE_git-good"))
+    let output = cli(env!("CARGO_BIN_EXE_git-good"))
         .args(["commit", "-m", "from cli"])
         .current_dir(repo.path())
         .output()?;
@@ -891,7 +1099,7 @@ fn commit_cli_sign_failure_preserves_head_and_index() -> Result {
     )?;
     let head = git_output(repo.path(), &["rev-parse", "HEAD"])?;
     let index = std::fs::read(repo.path().join(".git/index"))?;
-    let output = Command::new(env!("CARGO_BIN_EXE_git-good"))
+    let output = cli(env!("CARGO_BIN_EXE_git-good"))
         .args(["commit", "--sign", "-m", "signed but unavailable"])
         .current_dir(repo.path())
         .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -936,7 +1144,7 @@ fn commit_cli_runs_hooks_and_reports_failures_with_recovery() -> Result {
         "#!/bin/sh\nprintf 'hooked\\n' > hook.txt\ngit add hook.txt\n",
     )?;
     std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755))?;
-    let output = Command::new(env!("CARGO_BIN_EXE_git-good"))
+    let output = cli(env!("CARGO_BIN_EXE_git-good"))
         .args(["commit", "-m", "with hook"])
         .current_dir(repo.path())
         .output()?;
@@ -954,7 +1162,7 @@ fn commit_cli_runs_hooks_and_reports_failures_with_recovery() -> Result {
     git(repo.path(), &["add", "a"])?;
     let index = std::fs::read(repo.path().join(".git/index"))?;
     std::fs::write(&hook, "#!/bin/sh\necho blocked >&2\nexit 5\n")?;
-    let failed = Command::new(env!("CARGO_BIN_EXE_git-good"))
+    let failed = cli(env!("CARGO_BIN_EXE_git-good"))
         .args(["commit", "-m", "blocked"])
         .current_dir(repo.path())
         .output()?;
@@ -1007,8 +1215,8 @@ fn refs_cli_streams_branches_and_tags_without_mutating() -> Result {
         &["config", "branch.main.merge", "refs/heads/main"],
     )?;
     let before = git_output(repo.path(), &["rev-parse", "HEAD"])?;
-    let output = Command::new(env!("CARGO_BIN_EXE_git-good"))
-        .arg("refs")
+    let output = cli(env!("CARGO_BIN_EXE_git-good"))
+        .args(["refs", "--repo"])
         .arg(repo.path())
         .current_dir(repo.path())
         .output()?;
@@ -1062,7 +1270,7 @@ fn switch_cli_changes_branches_and_reports_dirty_worktrees() -> Result {
     git(repo.path(), &["commit", "-qam", "feature"])?;
     git(repo.path(), &["switch", "main"])?;
 
-    let output = Command::new(env!("CARGO_BIN_EXE_git-good"))
+    let output = cli(env!("CARGO_BIN_EXE_git-good"))
         .args(["switch", "feature"])
         .current_dir(repo.path())
         .output()?;
@@ -1080,7 +1288,7 @@ fn switch_cli_changes_branches_and_reports_dirty_worktrees() -> Result {
     );
 
     std::fs::write(repo.path().join("a"), b"dirty\n")?;
-    let dirty = Command::new(env!("CARGO_BIN_EXE_git-good"))
+    let dirty = cli(env!("CARGO_BIN_EXE_git-good"))
         .args(["switch", "main"])
         .current_dir(repo.path())
         .output()?;
@@ -1092,7 +1300,7 @@ fn switch_cli_changes_branches_and_reports_dirty_worktrees() -> Result {
     );
     std::fs::write(repo.path().join("a"), b"feature\n")?;
 
-    let created = Command::new(env!("CARGO_BIN_EXE_git-good"))
+    let created = cli(env!("CARGO_BIN_EXE_git-good"))
         .args(["switch", "--create", "next"])
         .current_dir(repo.path())
         .output()?;
@@ -1140,7 +1348,7 @@ fn sync_cli_clones_fetches_pushes_and_reports_failures() -> Result {
     let destination = tempfile::tempdir()?;
     let target = destination.path().join("cloned");
     let binary = env!("CARGO_BIN_EXE_git-good");
-    let out = Command::new(binary)
+    let out = cli(binary)
         .arg("clone")
         .arg(remote.path())
         .arg(&target)
@@ -1179,7 +1387,7 @@ fn sync_cli_clones_fetches_pushes_and_reports_failures() -> Result {
     git(source.path(), &["push", "-q", "origin", "main"])?;
     let remote_head = git_output(source.path(), &["rev-parse", "HEAD"])?;
     let local_head = git_output(&target, &["rev-parse", "HEAD"])?;
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["fetch", "origin", "--prune", "--repo"])
         .arg(&target)
         .output()?;
@@ -1215,7 +1423,7 @@ fn sync_cli_clones_fetches_pushes_and_reports_failures() -> Result {
         ],
     )?;
     let pushed_head = git_output(&target, &["rev-parse", "HEAD"])?;
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["push", "origin", "main", "--set-upstream", "--repo"])
         .arg(&target)
         .output()?;
@@ -1267,7 +1475,7 @@ fn sync_cli_clones_fetches_pushes_and_reports_failures() -> Result {
             "local only",
         ],
     )?;
-    let rejected = Command::new(binary)
+    let rejected = cli(binary)
         .args(["push", "origin", "main", "--repo"])
         .arg(&target)
         .output()?;
@@ -1278,10 +1486,7 @@ fn sync_cli_clones_fetches_pushes_and_reports_failures() -> Result {
     assert_eq!(std::fs::read(target.join("b"))?, b"local only\n");
 
     for args in [vec!["clone"], vec!["fetch", "--repo"]] {
-        let out = Command::new(binary)
-            .args(args)
-            .current_dir(&target)
-            .output()?;
+        let out = cli(binary).args(args).current_dir(&target).output()?;
         assert!(!out.status.success());
         assert!(out.stdout.is_empty());
         assert!(!out.stderr.is_empty());
@@ -1319,7 +1524,7 @@ fn sync_cli_force_with_lease_is_explicit_and_rejects_stale_leases() -> Result {
     let destination = tempfile::tempdir()?;
     let target = destination.path().join("cloned");
     let binary = env!("CARGO_BIN_EXE_git-good");
-    let out = Command::new(binary)
+    let out = cli(binary)
         .arg("clone")
         .arg(remote.path())
         .arg(&target)
@@ -1363,7 +1568,7 @@ fn sync_cli_force_with_lease_is_explicit_and_rejects_stale_leases() -> Result {
     let remote_after_source = git_output(remote.path(), &["rev-parse", "refs/heads/main"])?;
 
     let push = |extra: &[&str]| -> Result<std::process::Output> {
-        Ok(Command::new(binary)
+        Ok(cli(binary)
             .args(["push", "origin", "main"])
             .args(extra)
             .arg("--repo")
@@ -1394,7 +1599,7 @@ fn sync_cli_force_with_lease_is_explicit_and_rejects_stale_leases() -> Result {
         remote_after_source
     );
 
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["fetch", "origin", "--repo"])
         .arg(&target)
         .output()?;
@@ -1443,7 +1648,7 @@ fn stash_cli_lists_pushes_applies_pops_and_drops() -> Result {
 
     let binary = env!("CARGO_BIN_EXE_git-good");
     std::fs::write(repo.path().join("a"), b"modified\n")?;
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["stash", "push", "-m", "work", "--repo"])
         .arg(repo.path())
         .output()?;
@@ -1459,7 +1664,7 @@ fn stash_cli_lists_pushes_applies_pops_and_drops() -> Result {
     assert_eq!(receipt["reference"], "stash@{0}");
     assert_eq!(std::fs::read(repo.path().join("a"))?, b"base\n");
 
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["stash", "list", "--repo"])
         .arg(repo.path())
         .output()?;
@@ -1474,7 +1679,7 @@ fn stash_cli_lists_pushes_applies_pops_and_drops() -> Result {
             .is_some_and(|message| message.contains("work"))
     );
 
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["stash", "apply", "--repo"])
         .arg(repo.path())
         .output()?;
@@ -1494,7 +1699,7 @@ fn stash_cli_lists_pushes_applies_pops_and_drops() -> Result {
     );
 
     git(repo.path(), &["checkout", "--", "a"])?;
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["stash", "pop", "--repo"])
         .arg(repo.path())
         .output()?;
@@ -1508,7 +1713,7 @@ fn stash_cli_lists_pushes_applies_pops_and_drops() -> Result {
 
     std::fs::write(repo.path().join("a"), b"again\n")?;
     git_output(repo.path(), &["stash", "push", "-m", "again"])?;
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["stash", "drop", "--repo"])
         .arg(repo.path())
         .output()?;
@@ -1518,7 +1723,7 @@ fn stash_cli_lists_pushes_applies_pops_and_drops() -> Result {
     assert_eq!(receipt["dropped"], true);
     assert_eq!(git_output(repo.path(), &["stash", "list"])?, b"");
 
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["stash", "apply", "abc", "--repo"])
         .arg(repo.path())
         .output()?;
@@ -1546,18 +1751,19 @@ fn cherry_pick_cli_applies_conflicts_and_recovers() -> Result {
     let main_head = git_output(repo.path(), &["rev-parse", "HEAD"])?;
 
     let binary = env!("CARGO_BIN_EXE_git-good");
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["cherry-pick", "other", "--repo"])
         .arg(repo.path())
         .output()?;
-    assert!(out.status.success());
+    assert_eq!(out.status.code(), Some(4), "a conflict stop exits 4");
     let receipt: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(receipt["status"], "conflict");
     assert_eq!(receipt["operation"], "cherry-pick");
     assert_eq!(receipt["applied"], false);
     assert_eq!(receipt["in_progress"], true);
     assert_eq!(receipt["conflicts"], serde_json::json!(["a"]));
 
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["cherry-pick", "--abort", "--repo"])
         .arg(repo.path())
         .output()?;
@@ -1567,13 +1773,13 @@ fn cherry_pick_cli_applies_conflicts_and_recovers() -> Result {
     assert_eq!(git_output(repo.path(), &["rev-parse", "HEAD"])?, main_head);
     assert_eq!(std::fs::read(repo.path().join("a"))?, b"main\n");
 
-    Command::new(binary)
+    cli(binary)
         .args(["cherry-pick", "other", "--repo"])
         .arg(repo.path())
         .output()?;
     std::fs::write(repo.path().join("a"), b"resolved\n")?;
     git(repo.path(), &["add", "a"])?;
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["cherry-pick", "--continue", "--repo"])
         .arg(repo.path())
         .output()?;
@@ -1590,7 +1796,7 @@ fn cherry_pick_cli_applies_conflicts_and_recovers() -> Result {
         b"other\n"
     );
 
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["cherry-pick", "--bad", "--repo"])
         .arg(repo.path())
         .output()?;
@@ -1613,7 +1819,7 @@ fn revert_cli_inverts_a_commit() -> Result {
     git(repo.path(), &["commit", "-qam", "changed"])?;
 
     let binary = env!("CARGO_BIN_EXE_git-good");
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["revert", "HEAD", "--repo"])
         .arg(repo.path())
         .output()?;
@@ -1650,7 +1856,7 @@ fn merge_cli_fast_forwards_conflicts_and_recovers() -> Result {
     git(repo.path(), &["switch", "-q", "main"])?;
 
     let binary = env!("CARGO_BIN_EXE_git-good");
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["merge", "feature", "--repo"])
         .arg(repo.path())
         .output()?;
@@ -1673,17 +1879,18 @@ fn merge_cli_fast_forwards_conflicts_and_recovers() -> Result {
     git(repo.path(), &["commit", "-qam", "main change"])?;
     let main_head = git_output(repo.path(), &["rev-parse", "HEAD"])?;
 
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["merge", "conflict", "--repo"])
         .arg(repo.path())
         .output()?;
-    assert!(out.status.success());
+    assert_eq!(out.status.code(), Some(4), "a conflict stop exits 4");
     let receipt: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(receipt["status"], "conflict");
     assert_eq!(receipt["applied"], false);
     assert_eq!(receipt["in_progress"], true);
     assert_eq!(receipt["conflicts"], serde_json::json!(["a"]));
 
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["merge", "--abort", "--repo"])
         .arg(repo.path())
         .output()?;
@@ -1691,13 +1898,13 @@ fn merge_cli_fast_forwards_conflicts_and_recovers() -> Result {
     assert_eq!(git_output(repo.path(), &["rev-parse", "HEAD"])?, main_head);
     assert_eq!(std::fs::read(repo.path().join("a"))?, b"main\n");
 
-    Command::new(binary)
+    cli(binary)
         .args(["merge", "conflict", "--repo"])
         .arg(repo.path())
         .output()?;
     std::fs::write(repo.path().join("a"), b"resolved\n")?;
     git(repo.path(), &["add", "a"])?;
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["merge", "--continue", "--repo"])
         .arg(repo.path())
         .output()?;
@@ -1711,7 +1918,7 @@ fn merge_cli_fast_forwards_conflicts_and_recovers() -> Result {
     assert_eq!(receipt["in_progress"], false);
     assert_eq!(std::fs::read(repo.path().join("a"))?, b"resolved\n");
 
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["merge", "--skip", "--repo"])
         .arg(repo.path())
         .output()?;
@@ -1746,14 +1953,14 @@ fn rebase_cli_rewrites_records_backup_and_recovers() -> Result {
 
     let binary = env!("CARGO_BIN_EXE_git-good");
     std::fs::write(repo.path().join("b"), b"dirty\n")?;
-    let dirty = Command::new(binary)
+    let dirty = cli(binary)
         .args(["rebase", "main", "--repo"])
         .arg(repo.path())
         .output()?;
     assert!(!dirty.status.success());
     assert!(String::from_utf8_lossy(&dirty.stderr).contains("not clean"));
 
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["rebase", "main", "--autostash", "--repo"])
         .arg(repo.path())
         .output()?;
@@ -1788,19 +1995,20 @@ fn rebase_cli_rewrites_records_backup_and_recovers() -> Result {
     git(repo.path(), &["commit", "-qam", "main change"])?;
     git(repo.path(), &["switch", "-q", "conflict"])?;
 
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["rebase", "main", "--repo"])
         .arg(repo.path())
         .output()?;
-    assert!(out.status.success());
+    assert_eq!(out.status.code(), Some(4), "a conflict stop exits 4");
     let receipt: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(receipt["status"], "conflict");
     assert_eq!(receipt["applied"], false);
     assert_eq!(receipt["in_progress"], true);
     assert_eq!(receipt["conflicts"], serde_json::json!(["a"]));
     let backup = receipt["backup"].as_str().ok_or("missing backup")?;
     assert!(backup.starts_with("refs/gg/backup/rebase/"));
 
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["rebase", "--abort", "--repo"])
         .arg(repo.path())
         .output()?;
@@ -1813,13 +2021,13 @@ fn rebase_cli_rewrites_records_backup_and_recovers() -> Result {
     );
     assert_eq!(std::fs::read(repo.path().join("a"))?, b"feature\n");
 
-    Command::new(binary)
+    cli(binary)
         .args(["rebase", "main", "--repo"])
         .arg(repo.path())
         .output()?;
     std::fs::write(repo.path().join("a"), b"resolved\n")?;
     git(repo.path(), &["add", "a"])?;
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["rebase", "--continue", "--repo"])
         .arg(repo.path())
         .output()?;
@@ -1833,7 +2041,7 @@ fn rebase_cli_rewrites_records_backup_and_recovers() -> Result {
     assert_eq!(receipt["in_progress"], false);
     assert_eq!(std::fs::read(repo.path().join("a"))?, b"resolved\n");
 
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["rebase", "--bad", "--repo"])
         .arg(repo.path())
         .output()?;
@@ -1865,7 +2073,7 @@ fn rewrite_cli_rewords_fixes_up_drops_and_edits() -> Result {
     let four = text(&["rev-parse", "HEAD"])?;
     let binary = env!("CARGO_BIN_EXE_git-good");
 
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args([
             "rewrite",
             "--from",
@@ -1893,11 +2101,15 @@ fn rewrite_cli_rewords_fixes_up_drops_and_edits() -> Result {
     assert_eq!(receipt["applied"], false);
     assert_eq!(receipt["in_progress"], true);
     assert_eq!(receipt["conflicts"], serde_json::json!([]));
+    assert_eq!(
+        receipt["status"], "stopped",
+        "an --edit stop is planned: exit 0"
+    );
     // The reopened commit's changes are staged on its parent; commit them again.
     assert_eq!(text(&["diff", "--cached", "--name-only"])?, "four");
     git(repo.path(), &["commit", "-qm", "four, again"])?;
 
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["rewrite", "--continue", "--repo"])
         .arg(repo.path())
         .output()?;
@@ -1911,7 +2123,7 @@ fn rewrite_cli_rewords_fixes_up_drops_and_edits() -> Result {
     assert!(!repo.path().join("three").exists());
     assert_eq!(std::fs::read(repo.path().join("two"))?, b"two\n");
 
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["rewrite", "--repo"])
         .arg(repo.path())
         .args(["--from", "HEAD", "--reword", "HEAD"])
@@ -1946,7 +2158,7 @@ fn rewrite_cli_reorders_squashes_and_recovers() -> Result {
     let previous = third.clone();
     let binary = env!("CARGO_BIN_EXE_git-good");
 
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args([
             "rewrite", "--from", &first, "--pick", &second, "--pick", &first, "--pick", &third,
             "--repo",
@@ -1975,7 +2187,7 @@ fn rewrite_cli_reorders_squashes_and_recovers() -> Result {
     let squashed_first = text(&["rev-parse", "HEAD~2"])?;
     let squashed_second = text(&["rev-parse", "HEAD~1"])?;
     let squashed_third = text(&["rev-parse", "HEAD"])?;
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args([
             "rewrite",
             "--from",
@@ -2016,7 +2228,7 @@ fn rewrite_cli_reorders_squashes_and_recovers() -> Result {
     git(repo.path(), &["commit", "-qam", "two"])?;
     let line_second = text(&["rev-parse", "HEAD"])?;
 
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args([
             "rewrite",
             "--from",
@@ -2029,13 +2241,14 @@ fn rewrite_cli_reorders_squashes_and_recovers() -> Result {
         ])
         .arg(repo.path())
         .output()?;
-    assert!(out.status.success());
+    assert_eq!(out.status.code(), Some(4), "a conflict stop exits 4");
     let receipt: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(receipt["status"], "conflict");
     assert_eq!(receipt["applied"], false);
     assert_eq!(receipt["in_progress"], true);
     assert_eq!(receipt["conflicts"], serde_json::json!(["x"]));
 
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["rewrite", "--abort", "--repo"])
         .arg(repo.path())
         .output()?;
@@ -2046,7 +2259,7 @@ fn rewrite_cli_reorders_squashes_and_recovers() -> Result {
     assert_eq!(text(&["rev-parse", "HEAD"])?, line_second);
     assert_eq!(std::fs::read(repo.path().join("x"))?, b"two\n");
 
-    Command::new(binary)
+    cli(binary)
         .args([
             "rewrite",
             "--from",
@@ -2059,7 +2272,7 @@ fn rewrite_cli_reorders_squashes_and_recovers() -> Result {
         ])
         .arg(repo.path())
         .output()?;
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["rewrite", "--skip", "--repo"])
         .arg(repo.path())
         .output()?;
@@ -2069,7 +2282,7 @@ fn rewrite_cli_reorders_squashes_and_recovers() -> Result {
     assert_eq!(receipt["in_progress"], false);
     assert_eq!(std::fs::read(repo.path().join("x"))?, b"one\n");
 
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["rewrite", "--bad", "--repo"])
         .arg(repo.path())
         .output()?;
@@ -2094,7 +2307,7 @@ fn merge_cli_no_ff_creates_a_merge_commit() -> Result {
     git(repo.path(), &["commit", "-qm", "feature"])?;
     git(repo.path(), &["switch", "-q", "main"])?;
 
-    let out = Command::new(env!("CARGO_BIN_EXE_git-good"))
+    let out = cli(env!("CARGO_BIN_EXE_git-good"))
         .args(["merge", "feature", "--no-ff", "--repo"])
         .arg(repo.path())
         .output()?;
@@ -2132,7 +2345,7 @@ fn conflict_cli_lists_reads_and_resolves() -> Result {
     let _ = git_output(repo.path(), &["merge", "feature"]);
 
     let binary = env!("CARGO_BIN_EXE_git-good");
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["conflicts", "--repo"])
         .arg(repo.path())
         .output()?;
@@ -2141,7 +2354,7 @@ fn conflict_cli_lists_reads_and_resolves() -> Result {
     assert_eq!(receipt["operation"], "conflicts");
     assert_eq!(receipt["paths"], serde_json::json!(["a"]));
 
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["conflict", "--file", "a", "--repo"])
         .arg(repo.path())
         .output()?;
@@ -2151,7 +2364,7 @@ fn conflict_cli_lists_reads_and_resolves() -> Result {
     assert_eq!(receipt["ours"], "main\n");
     assert_eq!(receipt["theirs"], "feature\n");
 
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["conflict", "--file", "a", "--use", "theirs", "--repo"])
         .arg(repo.path())
         .output()?;
@@ -2164,7 +2377,7 @@ fn conflict_cli_lists_reads_and_resolves() -> Result {
         b""
     );
 
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["conflict", "--file", "missing", "--repo"])
         .arg(repo.path())
         .output()?;
@@ -2206,7 +2419,7 @@ fn conflicted_names(names: &[&std::ffi::OsStr]) -> Result<tempfile::TempDir> {
 fn conflict_cli_resolves_only_the_literal_glob_named_path() -> Result {
     let repo = conflicted_names(&["*.txt".as_ref(), "a.txt".as_ref()])?;
     let binary = env!("CARGO_BIN_EXE_git-good");
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["conflict", "--file", "*.txt", "--use", "theirs", "--repo"])
         .arg(repo.path())
         .output()?;
@@ -2232,7 +2445,7 @@ fn conflict_cli_round_trips_non_utf8_path_bytes() -> Result {
     let name = OsString::from_vec(b"raw\xff\nname".to_vec());
     let repo = conflicted_names(&[name.as_os_str()])?;
     let binary = env!("CARGO_BIN_EXE_git-good");
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["conflicts", "--repo"])
         .arg(repo.path())
         .output()?;
@@ -2241,7 +2454,7 @@ fn conflict_cli_round_trips_non_utf8_path_bytes() -> Result {
     assert_eq!(receipt["paths"], serde_json::json!(["raw\\xff\\nname"]));
     assert_eq!(receipt["path_bytes"], serde_json::json!([b"raw\xff\nname"]));
 
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["conflict", "--file"])
         .arg(&name)
         .arg("--repo")
@@ -2257,7 +2470,7 @@ fn conflict_cli_round_trips_non_utf8_path_bytes() -> Result {
     assert_eq!(receipt["path_bytes"], serde_json::json!(b"raw\xff\nname"));
     assert_eq!(receipt["theirs"], "feature\n");
 
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["conflict", "--file"])
         .arg(&name)
         .args(["--use", "theirs", "--repo"])
@@ -2296,14 +2509,14 @@ fn conflict_cli_keeps_a_deletion() -> Result {
     let _ = git_output(repo.path(), &["merge", "feature"]);
 
     let binary = env!("CARGO_BIN_EXE_git-good");
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["conflict", "--file", "docs.md", "--use", "theirs", "--repo"])
         .arg(repo.path())
         .output()?;
     assert!(!out.status.success(), "theirs deleted the file");
     assert!(String::from_utf8_lossy(&out.stderr).contains("--use deletion"));
 
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args([
             "conflict", "--file", "docs.md", "--use", "deletion", "--repo",
         ])
@@ -2340,7 +2553,7 @@ fn reset_cli_applies_soft_mixed_and_hard() -> Result {
     let second = git_output(repo.path(), &["rev-parse", "HEAD"])?;
 
     let binary = env!("CARGO_BIN_EXE_git-good");
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["reset", "--soft", "HEAD^", "--repo"])
         .arg(repo.path())
         .output()?;
@@ -2369,14 +2582,14 @@ fn reset_cli_applies_soft_mixed_and_hard() -> Result {
         b"a\n"
     );
 
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["reset", "--hard", "HEAD", "--repo"])
         .arg(repo.path())
         .output()?;
     assert!(out.status.success());
     assert_eq!(git_output(repo.path(), &["status", "--porcelain"])?, b"");
 
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["reset", "missing", "--repo"])
         .arg(repo.path())
         .output()?;
@@ -2401,7 +2614,7 @@ fn reset_cli_hard_refuses_to_overwrite_untracked_files() -> Result {
     std::fs::write(repo.path().join("notes"), b"mine\n")?;
     let before = git_output(repo.path(), &["rev-parse", "HEAD"])?;
 
-    let out = Command::new(env!("CARGO_BIN_EXE_git-good"))
+    let out = cli(env!("CARGO_BIN_EXE_git-good"))
         .args(["reset", "--hard", "HEAD^", "--repo"])
         .arg(repo.path())
         .output()?;
@@ -2427,7 +2640,7 @@ fn show_against_compares_with_an_arbitrary_base() -> Result {
     std::fs::write(repo.path().join("a"), b"two\n")?;
     git(repo.path(), &["commit", "-qam", "two"])?;
 
-    let out = Command::new(env!("CARGO_BIN_EXE_git-good"))
+    let out = cli(env!("CARGO_BIN_EXE_git-good"))
         .args(["show", "HEAD", "--against", "HEAD^", "--repo"])
         .arg(repo.path())
         .output()?;
@@ -2444,7 +2657,7 @@ fn show_against_compares_with_an_arbitrary_base() -> Result {
     );
     assert_eq!(json["files"][0]["path"], "a");
 
-    let out = Command::new(env!("CARGO_BIN_EXE_git-good"))
+    let out = cli(env!("CARGO_BIN_EXE_git-good"))
         .args([
             "show",
             "HEAD",
@@ -2474,7 +2687,7 @@ fn branch_and_tag_delete_cli() -> Result {
     git(repo.path(), &["tag", "v1"])?;
 
     let binary = env!("CARGO_BIN_EXE_git-good");
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["branch", "--delete", "feature", "--repo"])
         .arg(repo.path())
         .output()?;
@@ -2488,14 +2701,14 @@ fn branch_and_tag_delete_cli() -> Result {
             .any(|window| window == b"feature")
     );
 
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["branch", "--delete", "main", "--repo"])
         .arg(repo.path())
         .output()?;
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("current branch"));
 
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["tag", "--delete", "v1", "--repo"])
         .arg(repo.path())
         .output()?;
@@ -2504,7 +2717,7 @@ fn branch_and_tag_delete_cli() -> Result {
     assert_eq!(receipt["operation"], "tag-delete");
     assert_eq!(receipt["tag"], "v1");
 
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["tag", "--delete", "missing", "--repo"])
         .arg(repo.path())
         .output()?;
@@ -2523,7 +2736,7 @@ fn tag_create_cli_creates_annotated_tags_and_blocks_broken_signing() -> Result {
     git(repo.path(), &["commit", "-qm", "base"])?;
     let binary = env!("CARGO_BIN_EXE_git-good");
     let create = |name: &str, extra: &[&str]| -> Result<std::process::Output> {
-        Ok(Command::new(binary)
+        Ok(cli(binary)
             .args(["tag", "--create", name, "--at", "HEAD", "-m", "release"])
             .args(extra)
             .current_dir(repo.path())
@@ -2615,7 +2828,7 @@ fn commit_amend_and_reflog_cli() -> Result {
         .to_string();
 
     let binary = env!("CARGO_BIN_EXE_git-good");
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["commit", "--amend", "-m", "amended subject", "--repo"])
         .arg(repo.path())
         .output()?;
@@ -2639,7 +2852,7 @@ fn commit_amend_and_reflog_cli() -> Result {
         b"amended subject\n"
     );
 
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["reflog", "HEAD", "--repo"])
         .arg(repo.path())
         .output()?;
@@ -2651,7 +2864,7 @@ fn commit_amend_and_reflog_cli() -> Result {
     assert_eq!(reflog["entries"][0]["selector"], "HEAD@{0}");
     assert_eq!(reflog["entries"][0]["action"], "commit (amend)");
 
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["reflog", "missing", "--repo"])
         .arg(repo.path())
         .output()?;
@@ -2678,7 +2891,7 @@ fn blame_cli_reports_attributed_ranges_and_errors() -> Result {
         .to_string();
 
     let binary = env!("CARGO_BIN_EXE_git-good");
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["blame", "a", "--repo"])
         .arg(repo.path())
         .output()?;
@@ -2699,7 +2912,7 @@ fn blame_cli_reports_attributed_ranges_and_errors() -> Result {
     assert_eq!(blame["lines"][1]["email"], "test@example.org");
     assert_eq!(blame["lines"][1]["summary"], "change");
 
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["blame", "a", "--lines", "2,3", "--repo"])
         .arg(repo.path())
         .output()?;
@@ -2715,7 +2928,7 @@ fn blame_cli_reports_attributed_ranges_and_errors() -> Result {
     assert_eq!(range["lines"][0]["commit"], head);
     assert_eq!(range["lines"][1]["commit"], base);
 
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["blame", "missing", "--repo"])
         .arg(repo.path())
         .output()?;
@@ -2734,7 +2947,7 @@ fn worktree_cli_lists_adds_and_removes() -> Result {
     git(repo.path(), &["commit", "-qm", "base"])?;
     let binary = env!("CARGO_BIN_EXE_git-good");
 
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["worktree", "list", "--repo"])
         .arg(repo.path())
         .output()?;
@@ -2750,7 +2963,7 @@ fn worktree_cli_lists_adds_and_removes() -> Result {
 
     let linked = tempfile::tempdir()?;
     let destination = linked.path().join("linked");
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["worktree", "add"])
         .arg(&destination)
         .args(["--create", "feature", "--repo"])
@@ -2765,7 +2978,7 @@ fn worktree_cli_lists_adds_and_removes() -> Result {
     assert_eq!(added["operation"], "worktree add");
     assert_eq!(added["branch"], "feature");
 
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["worktree", "add"])
         .arg(linked.path().join("second"))
         .args(["--branch", "feature", "--repo"])
@@ -2775,7 +2988,7 @@ fn worktree_cli_lists_adds_and_removes() -> Result {
     assert!(String::from_utf8_lossy(&out.stderr).contains("already checked out"));
 
     std::fs::write(destination.join("a"), b"dirty\n")?;
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["worktree", "remove"])
         .arg(&destination)
         .args(["--repo"])
@@ -2785,7 +2998,7 @@ fn worktree_cli_lists_adds_and_removes() -> Result {
     assert!(String::from_utf8_lossy(&out.stderr).contains("local changes"));
     std::fs::write(destination.join("a"), b"base\n")?;
 
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["worktree", "remove"])
         .arg(&destination)
         .args(["--repo"])
@@ -2796,7 +3009,7 @@ fn worktree_cli_lists_adds_and_removes() -> Result {
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["worktree", "list", "--repo"])
         .arg(repo.path())
         .output()?;
@@ -2845,7 +3058,7 @@ fn submodule_cli_reports_and_updates_a_gitlink() -> Result {
         .to_string();
 
     let binary = env!("CARGO_BIN_EXE_git-good");
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["submodule", "status", "sub", "--repo"])
         .arg(parent.path())
         .output()?;
@@ -2862,7 +3075,7 @@ fn submodule_cli_reports_and_updates_a_gitlink() -> Result {
     assert_eq!(status["submodule"]["dirty"], false);
 
     git(&parent.path().join("sub"), &["checkout", "-q", &first])?;
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["submodule", "update", "sub", "--repo"])
         .arg(parent.path())
         .output()?;
@@ -2876,7 +3089,7 @@ fn submodule_cli_reports_and_updates_a_gitlink() -> Result {
     assert_eq!(receipt["submodule"]["checked_out"], index);
 
     std::fs::write(parent.path().join("sub/lib.txt"), b"dirty\n")?;
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["submodule", "update", "sub", "--repo"])
         .arg(parent.path())
         .output()?;
@@ -2899,7 +3112,7 @@ fn lfs_cli_reports_pointer_identity_and_availability() -> Result {
     git(repo.path(), &["add", "asset.bin"])?;
     git(repo.path(), &["commit", "-qm", "pointer"])?;
     let binary = env!("CARGO_BIN_EXE_git-good");
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["lfs", "status", "asset.bin", "--repo"])
         .arg(repo.path())
         .output()?;
@@ -2927,7 +3140,7 @@ fn signature_cli_reports_config_and_unsigned_commit() -> Result {
     git(repo.path(), &["commit", "-qm", "base"])?;
     let binary = env!("CARGO_BIN_EXE_git-good");
 
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["signature", "config", "--repo"])
         .arg(repo.path())
         .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -2947,7 +3160,7 @@ fn signature_cli_reports_config_and_unsigned_commit() -> Result {
     assert_eq!(config["config"]["commit_signing"], false);
     assert_eq!(config["config"]["tag_signing"], false);
 
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["signature", "verify", "HEAD", "--repo"])
         .arg(repo.path())
         .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -2985,7 +3198,7 @@ fn lfs_cli_working_areas_report_index_and_worktree_pointers() -> Result {
     git(repo.path(), &["commit", "-qm", "base pointer"])?;
     let binary = env!("CARGO_BIN_EXE_git-good");
     let status = |area: &str, path: &str| -> Result<serde_json::Value> {
-        let out = Command::new(binary)
+        let out = cli(binary)
             .args(["lfs", "status", path, "--area", area, "--repo"])
             .arg(repo.path())
             .output()?;
@@ -3015,7 +3228,7 @@ fn lfs_cli_working_areas_report_index_and_worktree_pointers() -> Result {
     assert!(untracked["lfs"]["before"].is_null());
     assert_eq!(untracked["lfs"]["after"]["oid"], third);
 
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args([
             "lfs",
             "status",
@@ -3051,7 +3264,7 @@ fn branch_create_at_cli_does_not_switch() -> Result {
         .to_string();
 
     let binary = env!("CARGO_BIN_EXE_git-good");
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["branch", "--create", "recovered", "--at", &head, "--repo"])
         .arg(repo.path())
         .output()?;
@@ -3077,12 +3290,12 @@ fn branch_create_at_cli_does_not_switch() -> Result {
         "main"
     );
 
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["branch", "--create", "recovered", "--repo"])
         .arg(repo.path())
         .output()?;
     assert!(!out.status.success());
-    let out = Command::new(binary)
+    let out = cli(binary)
         .args(["branch", "--create", "bad", "--at", "nope", "--repo"])
         .arg(repo.path())
         .output()?;
@@ -3098,7 +3311,7 @@ fn init_cli_creates_commits_and_refuses_inside_a_repository() -> Result {
     std::fs::write(target.join("a.txt"), b"a\n")?;
     let binary = env!("CARGO_BIN_EXE_git-good");
     let run = |args: &[&str], cwd: &Path| {
-        Command::new(binary)
+        cli(binary)
             .args(args)
             .current_dir(cwd)
             .env("GIT_CONFIG_NOSYSTEM", "1")

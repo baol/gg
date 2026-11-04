@@ -25,16 +25,12 @@ pub fn status(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::e
         Target::Change(change) => gg_git::lfs::read(&path, change)?,
         Target::Working(working) => gg_git::lfs::read_working(&path, working)?,
     };
-    serde_json::to_writer(
-        std::io::stdout().lock(),
-        &serde_json::json!({
-            "operation": "lfs status",
-            "repository": display_repository(&path),
-            "scope": target.scope(),
-            "lfs": details,
-        }),
-    )?;
-    println!();
+    crate::cli_args::emit(&serde_json::json!({
+        "operation": "lfs status",
+        "repository": display_repository(&path),
+        "scope": target.scope(),
+        "lfs": details,
+    }))?;
     Ok(())
 }
 
@@ -44,23 +40,20 @@ pub fn fetch(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::er
         Target::Change(change) => gg_git::lfs::fetch(&path, change)?,
         Target::Working(working) => gg_git::lfs::fetch_working(&path, working)?,
     };
-    serde_json::to_writer(
-        std::io::stdout().lock(),
-        &serde_json::json!({
-            "operation": "lfs fetch",
-            "repository": display_repository(&path),
-            "scope": target.scope(),
-            "lfs": details,
-            "receipt": receipt,
-        }),
-    )?;
-    println!();
+    crate::cli_args::emit(&serde_json::json!({
+        "operation": "lfs fetch",
+        "repository": display_repository(&path),
+        "scope": target.scope(),
+        "lfs": details,
+        "receipt": receipt,
+    }))?;
     Ok(())
 }
 
 fn parse(
-    mut args: impl Iterator<Item = OsString>,
+    args: impl Iterator<Item = OsString>,
 ) -> Result<(PathBuf, Target), Box<dyn std::error::Error>> {
+    let mut args = crate::cli_args::Args::new(args);
     let mut repo = std::env::current_dir()?;
     let mut revision = "HEAD".to_string();
     let mut revision_set = false;
@@ -68,7 +61,7 @@ fn parse(
     let mut area = None;
     let mut file = None;
     while let Some(arg) = args.next() {
-        match arg.to_str() {
+        match args.option(&arg) {
             Some("--repo") => repo = PathBuf::from(args.next().ok_or("--repo needs a path")?),
             Some("--revision") => {
                 revision = args
@@ -166,7 +159,7 @@ fn path_bytes(path: &std::ffi::OsStr) -> Result<Vec<u8>, Box<dyn std::error::Err
 }
 
 fn usage() -> &'static str {
-    "Usage: git good lfs <status|fetch> PATH [--area staged|unstaged|untracked|conflict] [--revision REF] [--before REF] [--repo PATH]"
+    "Usage: git good --cli lfs <status|fetch> PATH [--area staged|unstaged|untracked|conflict] [--revision REF] [--before REF] [--repo PATH]"
 }
 
 fn display_repository(path: &Path) -> String {

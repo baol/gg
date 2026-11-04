@@ -845,3 +845,29 @@ Linux x86_64 · Rust 1.97.0 · Xvfb/llvmpipe · this repository's own history an
 - egui tests: changed options start a new generation and new readers take the window's options; hidden whitespace disables hunk and line actions while whole-file staging stays; invisibles render dimmed `→`/`·` sections on added and removed lines only (Inline and Side by side, 720 and 1120, on and off); wrapped long lines fit the reader in Inline, Side by side, and Full file at 720 and 1120 with fixed-height continuation rows, and turning wrapping on or off keeps the top row; settings round-trip `diff_context`, `diff_whitespace`, `show_invisibles`, and `wrap_lines`.
 - Native X11 at 1280×740: Preferences › Diff with the label column (Default layout, Context lines, Whitespace, Display), and a commit review with **Wrap long lines** on, continuation rows without gutter numbers. Only the dark theme was inspected natively.
 - Limitations: wrapping breaks at a column rather than a word; characters wider than a monospace column can be clipped at a wrapped row's right edge.
+
+## Review fixes: Git edges and silent degradation · 2026-11-04
+
+Linux x86_64 · Rust 1.97.0 · Git 2.43.0 · git-lfs 3.4.1 · disposable Git fixtures.
+
+- `cargo fmt --all --check` and `cargo clippy --workspace --all-targets --locked -- -D warnings` passed. `cargo test --workspace --locked` passed 960 tests (5 ignored opt-in performance checks) except `new_tag_reads_signing_off_the_ui_thread_and_never_tags_unsigned`, which fails here before and after this change: the sandbox's global Git config sets `user.signingkey`, so its *No signing key is configured* premise does not hold.
+- Git messages: `git_speaks_english_and_hooks_keep_the_user_locale` (crates/git/src/process.rs) checks that the chokepoint sets `LC_MESSAGES=C` and drops `LANGUAGE`, and that hook runs restore the user's locale.
+- Hooks on old Git: `hooks_need_git_2_36` (crates/git/src/commit.rs) parses `git --version` forms (`2.34.1`, `2.45.2.windows.1`, `2.36.0.rc1`) and refuses hooks below 2.36 with the version found and Preferences' **Run commit hooks**.
+- LFS fetch: `fetch_paths_fetches_the_objects_of_the_named_paths` (crates/git/tests/lfs.rs) clones a real LFS origin with smudging skipped and fetches `a*.bin`, `c,d.bin`, `e\f.bin`, `g[1].bin`, and `h.bin` beside `ab.bin`, `d.bin`, `ef.bin`, `g1.bin`, and `sub/h.bin`. Before the fix the display paths fetched `ab.bin`, `d.bin`, `g1.bin`, and `sub/h.bin` and missed four of the five chosen; now exactly the five chosen objects arrive.
+- Status identity: `validate_refuses_a_switch_to_another_branch_at_the_same_commit` (crates/git/tests/status.rs) moves HEAD to another branch at the same commit, then detaches it there; both now fail validation, so a stage or commit observed on one branch is not applied to another.
+- Remote names: `a_remote_name_is_never_read_as_an_option` (crates/git/tests/sync.rs) refuses `--upload-pack=…` as a remote before Git runs.
+- Watcher failure: `a_repository_that_cannot_be_watched_is_told_once_and_reread_on_focus` (apps/git-good/src/main.rs) shows the warning once with its reason, and a focus change reloads the repository (FRM-61a).
+- CLI errors: `a_failure_prints_the_plain_message` (apps/git-good/tests/cli.rs) checks `Error: <message>` without Debug quotes and exit 1 (CLI-C01).
+- Panic escapes: the `unreachable!()` arms in `merge`, `rebase`, and `rewrite` CLI dispatch and in conflict publishing now return errors. Conflict resolution writes its temporary file with `create_new`, so it never follows a link planted at its name.
+- Checked and not changed: `git blame -- <path>` takes one literal path, not a pathspec (`git blame -- 'a?b'` reports *no such path*), so blame needs no `--literal-pathspecs`. `git switch` runs only on names that pass local-branch validation.
+- No UI layout changed; the screenshot hook recaptures because UI sources changed.
+
+## CLI reshape: --cli, --repo, exit codes, receipts · 2026-11-04
+
+Linux x86_64 · Rust 1.97.0 · Git 2.43.0 · disposable Git fixtures. Decisions 12–16 in [acceptance](acceptance.md#spec-decisions--2026-11-04).
+
+- `cargo fmt --all --check` and `cargo clippy --workspace --all-targets --locked -- -D warnings` passed. `cargo test --workspace --locked` passed except `new_tag_reads_signing_off_the_ui_thread_and_never_tags_unsigned`, which fails in this sandbox before and after the change (its global Git config sets `user.signingkey`).
+- Command line: `commands_follow_cli_and_a_bare_word_is_a_folder` checks *No folder status. Did you mean git good --cli status?*, *Unknown command stat.*, *Unknown option -x.* and `-h`; `double_dash_ends_options` blames a committed `-x.txt` after `--`; `dashes_end_options` (cli_args.rs) checks the parser wrapper. Every CLI test now runs `git-good --cli …` with `--repo`.
+- Exit codes and receipts: `a_failure_prints_the_plain_message` exits 2 for a usage error; the merge, rebase, cherry-pick and rewrite conflict stops exit 4 with `status: "conflict"`; the rewrite `--edit` stop reports `status: "stopped"` and exits 0; `usage_messages_exit_2` (cli_args.rs) classifies the usage messages.
+- Output failures: `a_closed_stdout_ends_quietly` reads 64 bytes of a 3,000-commit `history` and closes the pipe: exit 0, empty stderr (before: `Error: Broken pipe`, exit 1). `history_that_fails_mid_stream_ends_with_an_error_member` removes the root commit's object: stdout is one valid document with `complete: false`, `status: "failed"` and `error`, exit 1.
+- Limitations: refusals (3) and partial completion (5) still exit 1; they need failures typed by the Git layer. Ctrl+C has no handler: the default signal ends Git Good and its Git child, and the shell reports 130.

@@ -5,13 +5,14 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::error::Error>> {
+pub fn run(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::error::Error>> {
+    let mut args = crate::cli_args::Args::new(args);
     let mut path = std::env::current_dir()?;
     let mut reference = None;
     let mut autostash = false;
     let mut action = None;
     while let Some(arg) = args.next() {
-        match arg.to_str() {
+        match args.option(&arg) {
             Some("--repo") => path = PathBuf::from(args.next().ok_or("--repo needs a path")?),
             Some("--autostash") if action.is_none() => autostash = true,
             Some("--no-autostash") if action.is_none() => autostash = false,
@@ -26,7 +27,7 @@ pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::
             }
             _ => {
                 return Err(
-                    "Usage: git good rebase REF [--autostash] [--repo PATH]\n       git good rebase --continue|--skip|--abort [--repo PATH]"
+                    "Usage: git good --cli rebase REF [--autostash] [--repo PATH]\n       git good --cli rebase --continue|--skip|--abort [--repo PATH]"
                         .into(),
                 );
             }
@@ -37,7 +38,7 @@ pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::
             "continue" => gg_git::mutation::continue_operation(&path, Operation::Rebase)?,
             "skip" => gg_git::mutation::skip_operation(&path, Operation::Rebase)?,
             "abort" => gg_git::mutation::abort_operation(&path, Operation::Rebase)?,
-            _ => unreachable!(),
+            other => return Err(format!("Unknown action --{other}").into()),
         };
         write_receipt(serde_json::json!({
             "operation": "rebase",
@@ -74,8 +75,7 @@ pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::
 }
 
 fn write_receipt(receipt: serde_json::Value) -> Result<(), Box<dyn std::error::Error>> {
-    serde_json::to_writer(std::io::stdout().lock(), &receipt)?;
-    println!();
+    crate::cli_args::emit(&receipt)?;
     Ok(())
 }
 

@@ -37,12 +37,17 @@ impl Session {
             .map_err(|e| e.to_string())?
             .id()
             .map(|id| id.to_string());
+        let head_ref = repo
+            .head_name()
+            .map_err(|e| e.to_string())?
+            .map(|name| name.as_bstr().to_string());
         let index = index_fingerprint(&repo)?;
         Ok(Self {
             repo,
             identity: StatusIdentity {
                 path: workdir,
                 head,
+                head_ref,
                 index,
                 base_tree,
             },
@@ -302,7 +307,10 @@ fn index_fingerprint(repo: &gix::Repository) -> Result<String, String> {
 }
 pub fn validate(identity: &StatusIdentity) -> Result<(), String> {
     let current = Session::open(&identity.path)?.identity;
-    if current.head != identity.head || current.index != identity.index {
+    if current.head != identity.head
+        || current.head_ref != identity.head_ref
+        || current.index != identity.index
+    {
         return Err("Repository changed since this status scan. Refresh status.".into());
     }
     Ok(())

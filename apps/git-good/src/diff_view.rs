@@ -4212,6 +4212,7 @@ mod tests {
             repository: StatusIdentity {
                 path: PathBuf::from("/repo"),
                 head: Some("a".repeat(40)),
+                head_ref: None,
                 index: "b".repeat(40),
                 base_tree: None,
             },
@@ -4515,6 +4516,7 @@ mod tests {
             repository: StatusIdentity {
                 path: "/repo".into(),
                 head: None,
+                head_ref: None,
                 index: "index".into(),
                 base_tree: None,
             },
@@ -4593,6 +4595,7 @@ mod tests {
                 repository: StatusIdentity {
                     path: "/repo".into(),
                     head: None,
+                    head_ref: None,
                     index: "index".into(),
                     base_tree: None,
                 },
@@ -4916,6 +4919,7 @@ mod tests {
                 repository: StatusIdentity {
                     path: "/repo".into(),
                     head: None,
+                    head_ref: None,
                     index: "index".into(),
                     base_tree: None,
                 },
@@ -5359,6 +5363,7 @@ mod tests {
                 repository: StatusIdentity {
                     path: "/repo".into(),
                     head: None,
+                    head_ref: None,
                     index: "index".into(),
                     base_tree: None,
                 },

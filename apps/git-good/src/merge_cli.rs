@@ -5,13 +5,14 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::error::Error>> {
+pub fn run(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::error::Error>> {
+    let mut args = crate::cli_args::Args::new(args);
     let mut path = std::env::current_dir()?;
     let mut reference = None;
     let mut no_ff = false;
     let mut action = None;
     while let Some(arg) = args.next() {
-        match arg.to_str() {
+        match args.option(&arg) {
             Some("--repo") => path = PathBuf::from(args.next().ok_or("--repo needs a path")?),
             Some("--no-ff") if !no_ff => no_ff = true,
             Some("--continue") if action.is_none() => action = Some("continue"),
@@ -24,7 +25,7 @@ pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::
             }
             _ => {
                 return Err(
-                    "Usage: git good merge REF [--no-ff] [--repo PATH]\n       git good merge --continue|--abort [--repo PATH]"
+                    "Usage: git good --cli merge REF [--no-ff] [--repo PATH]\n       git good --cli merge --continue|--abort [--repo PATH]"
                         .into(),
                 );
             }
@@ -34,7 +35,7 @@ pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::
         let receipt = match action {
             "continue" => gg_git::mutation::continue_operation(&path, Operation::Merge)?,
             "abort" => gg_git::mutation::abort_operation(&path, Operation::Merge)?,
-            _ => unreachable!(),
+            other => return Err(format!("Unknown action --{other}").into()),
         };
         write_receipt(serde_json::json!({
             "operation": "merge",
@@ -66,8 +67,7 @@ pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::
 }
 
 fn write_receipt(receipt: serde_json::Value) -> Result<(), Box<dyn std::error::Error>> {
-    serde_json::to_writer(std::io::stdout().lock(), &receipt)?;
-    println!();
+    crate::cli_args::emit(&receipt)?;
     Ok(())
 }
 

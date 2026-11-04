@@ -9,7 +9,7 @@ Each case has an ID (area prefix and number), a fixture, a layer, Given/When/The
 - **Layer:** *product* (a task completes, consequences are clear, work is preserved and recoverable), *interaction* (selection, focus, shortcuts, stale results, narrow layouts), or *visual* (sizes, colors, placement, exact copy). Product cases come first when time is short.
 - **Covered by (kind):** the tests that check the case today and where they run: *backend* (Git-level tests in `crates/`), *interaction* (egui input and geometry tests in `apps/git-good/src`), *end-to-end* (the `git good` binary in `apps/git-good/tests/cli.rs`). *(partial)* means the tests check only part of the case, for example a GUI case backed only by Git-level tests, or a dialog that is rendered but not completed. *Not automated* means no test yet.
 
-Areas: [Frame and toolbar](#frame-and-toolbar) (FRM) · [History and refs](#history-and-refs) (HIS) · [Review and reader](#review-and-reader) (REV) · [Local Changes](#local-changes) (CHG) · [Network](#network) (NET) · [Stash](#stash) (STA) · [Merge, cherry-pick, revert and conflicts](#merge-cherry-pick-revert-and-conflicts) (INT) · [Rewrite and recovery](#rewrite-and-recovery) (RWR) · [Preferences](#preferences) (PRF) · [Worktrees, submodules and LFS](#worktrees-submodules-and-lfs) (WTR, SUB, LFS) · [Signing](#signing) (SIG) · [Repository dialogs](#repository-dialogs) (DLG) · [CLI](#cli) (CLI) · [Shared rules](#shared-rules) (RULE) · [Cross-cutting scenarios](#cross-cutting-scenarios) (XCT) · [CLI contract](#cli-contract) (CLI-C) · [Open spec questions](#open-spec-questions)
+Areas: [Frame and toolbar](#frame-and-toolbar) (FRM) · [History and refs](#history-and-refs) (HIS) · [Review and reader](#review-and-reader) (REV) · [Local Changes](#local-changes) (CHG) · [Network](#network) (NET) · [Stash](#stash) (STA) · [Merge, cherry-pick, revert and conflicts](#merge-cherry-pick-revert-and-conflicts) (INT) · [Rewrite and recovery](#rewrite-and-recovery) (RWR) · [Preferences](#preferences) (PRF) · [Worktrees, submodules and LFS](#worktrees-submodules-and-lfs) (WTR, SUB, LFS) · [Signing](#signing) (SIG) · [Repository dialogs](#repository-dialogs) (DLG) · [CLI](#cli) (CLI) · [Shared rules](#shared-rules) (RULE) · [Cross-cutting scenarios](#cross-cutting-scenarios) (XCT) · [CLI contract](#cli-contract) (CLI-C) · [Spec decisions](#spec-decisions--2026-11-04)
 
 ## Fixtures
 
@@ -32,7 +32,7 @@ Every fixture is a disposable directory built from scratch by a script with fixe
 | `fx-rebase` | `main` 6 commits ahead of `origin/main` in an `fx-remote-even`-style clone, including a commit touching `folder_picker.rs`, a commit with a branch `wip` on it, and one with tag `v0.1.39`. Used for interactive rebase plans. Clean worktree. |
 | `fx-rebase-edit` | `fx-rebase` with `git rebase -i` stopped at an `edit` step (step 3 of 6). |
 | `fx-rebase-conflict` | `fx-rebase` with a rebase stopped on a conflict at step 4 of 6. |
-| `fx-rewrite-reopened` | `fx-rebase` with `git good rewrite --edit` stopped at a reopened commit (its changes staged), and the private backup ref written by gg. |
+| `fx-rewrite-reopened` | `fx-rebase` with `git good --cli rewrite --edit` stopped at a reopened commit (its changes staged), and the private backup ref written by gg. |
 | `fx-backups` | `fx-branchy` with three Git Good backup refs (`refs/gg/backup/…`) named 2 days, 40 days and 120 days old, and a reflog containing a reset, an amend, a rebase and a branch switch. |
 | `fx-file-history` | `src/lib.rs` with 12 versions across 12 commits, renamed from `src/old.rs` at version 6, a line range (lines 20–30) changed in 4 of them; `img/logo.png` with 3 versions of different sizes; a file over 2 MiB `big.log`; a file with 120,000 lines `long.txt`; a binary `blob.bin`; a symlink `link → src/lib.rs`. |
 | `fx-hooks` | `fx-dirty` with a `pre-commit` hook that fails with output `lint: 2 problems`, a `commit-msg` hook that rejects subjects starting with `wip`, and a `prepare-commit-msg` hook that appends a trailer. |
@@ -239,11 +239,11 @@ Covered by (interaction): `a_menu_taller_than_the_window_scrolls_by_keys_wheel_a
 
 ### Toolbar
 
-### FRM-23 Toolbar holds only the core commands, in one order everywhere
+### FRM-23 Toolbar holds its commands in one order everywhere
 Fixture: `fx-branchy`
 Layer: interaction
 - When shown in History, Local Changes and Review, wide and narrow
-- Then left to right: refs sidebar toggle, **Changes** tab, **History** tab, **Fetch**, **Pull**, **Push**, then right-aligned branch button and search; there are no New branch, New tag, Merge, Stash changes, Stashes, Interactive rebase or Recovery buttons (FRM-72); icons never overlap, move between views, or extend past the window edge
+- Then left to right: refs sidebar toggle, **Changes** tab, **History** tab, **Fetch**, **Pull**, **Push**, **New branch**, **Stash changes**, **Stashes**, **Interactive rebase from here**, **Recovery**, then right-aligned branch button and search; New tag, Merge into current and Interactive rebase of the current branch have no buttons (FRM-72); icons never overlap, move between views, or extend past the window edge
 Covered by (interaction, partial): `window_toolbar_holds_navigation_and_sync_in_place_across_views_and_widths`, `local_changes_and_history_share_one_navigation_strip_at_every_width`, `commands_off_the_toolbar_keep_their_menu_home_and_search_entry` (apps/git-good/src/main.rs) (History and Local Changes at 720 and 1120 px; Review not checked)
 
 ### FRM-24 Toolbar tooltips name the command and its menu shortcut
@@ -506,6 +506,13 @@ Layer: interaction
 - Then about 300 ms after the last event the Changes badge shows `1` and Local Changes lists `a.txt`, without waiting for the next input; History is not reloaded; the previous content stays until the new content arrives
 Covered by (interaction): `a_real_repository_reports_a_changed_file`, `a_batch_reports_after_it_settles_or_when_flushed` (apps/git-good/src/watcher.rs); `changes_made_outside_show_in_an_idle_window` (apps/git-good/src/idle_tests.rs)
 
+### FRM-61a A repository that cannot be watched says so
+Fixture: `fx-linear`
+Layer: interaction
+- When the watcher cannot start for the open repository (inotify out of instances)
+- Then a warning reads *Outside changes are not shown automatically: Git Good cannot watch this repository. It re-reads when the window gets focus.* with the system's reason in Details…, once per repository; each time the window gets focus back it reloads the history and status
+Covered by (interaction): `a_repository_that_cannot_be_watched_is_told_once_and_reread_on_focus` (apps/git-good/src/main.rs)
+
 ### FRM-62 External ref change reloads history; objects, logs, locks ignored
 Fixture: `fx-linear`
 Layer: interaction
@@ -577,7 +584,7 @@ Covered by (interaction, partial): `window_toolbar_holds_navigation_and_sync_in_
 ### FRM-72 Every command is reachable at narrow width through menus and search
 Fixture: `fx-branchy`, `fx-stash`; narrow
 Layer: interaction
-- When each command removed from the toolbar — **New branch…**, **New tag…**, **Merge into current…**, **Stash changes…**, **Stashes…**, **Interactive rebase of current branch…**, **Recovery…** — is looked up by its menu home and by typing its name in search
+- When each command — the toolbar's **New branch…**, **Stash changes…**, **Stashes…** and **Recovery…**, and **New tag…**, **Merge into current…** and **Interactive rebase of current branch…**, which have no button — is looked up by its menu home and by typing its name in search
 - Then each is found in exactly one menu (every menu fits the window, no clipped item) and under search **Actions** with its menu home; both routes open the same dialog or window; a disabled command shows the same reason in both
 Covered by (interaction, partial): `commands_off_the_toolbar_keep_their_menu_home_and_search_entry`, `changes_stashes_opens_the_picker_inside_the_narrow_window`, `repository_recovery_opens_one_window_on_the_last_source` (apps/git-good/src/main.rs) (menu home, search entry and shared reason; menu fit at narrow width and the search route not driven)
 
@@ -912,7 +919,7 @@ Covered by (Not automated)
 ### HIS-38 Toggle inspector with Space
 Fixture: `fx-linear`
 Layer: interaction
-- When Space (or **View › Commit inspector**)
+- When Space (or **View › Commit details**)
 - Then the inspector hides and the list grows; the refs sidebar keeps full height; Space shows it again; the choice persists across launch (`details_visible`)
 Covered by (Not automated)
 
@@ -1175,7 +1182,7 @@ Covered by (backend, partial): `merge_bare_and_linked_worktree` (history.rs); GU
 ### HIS-77 Refs CLI is read-only
 Fixture: `fx-remote`
 Layer: product
-- When `git good refs` runs
+- When `git good --cli refs` runs
 - Then JSON lists HEAD, local branches, remotes, tags with full/short names, peeled IDs and tracking; `refs/gg/` is excluded; the repository is byte-identical afterwards
 Covered by (backend, end-to-end): `refs_cli_streams_branches_and_tags_without_mutating` (cli.rs), `reads_head_branches_remotes_and_annotated_tags` (refs.rs)
 
@@ -1685,19 +1692,19 @@ Covered by (Not automated)
 ### REV-71 CLI show streams summaries and validates parent
 Fixture: `fx-branchy`
 Layer: product
-- `git good show <merge> --parent 2` → JSON summaries with repository/comparison identity and exact path bytes; `--parent 0` or `3` → error on stderr, nonzero exit; cwd discovery without `--repo`
+- `git good --cli show <merge> --parent 2` → JSON summaries with repository/comparison identity and exact path bytes; `--parent 0` or `3` → error on stderr, nonzero exit; cwd discovery without `--repo`
 Covered by (end-to-end): `show_discovers_repo_streams_exact_files_and_rejects_invalid_parent` (tests/cli.rs)
 
 ### REV-72 CLI show --file and --against
 Fixture: `fx-linear`
 Layer: product
-- `git good show c20 --file a.txt` → selected-file diff with exact source-line bytes; missing path → stderr error; `--against c10` compares with that base; non-UTF-8 path bytes match
+- `git good --cli show c20 --file a.txt` → selected-file diff with exact source-line bytes; missing path → stderr error; `--against c10` compares with that base; non-UTF-8 path bytes match
 Covered by (end-to-end): `show_file_returns_diff_and_missing_path_uses_stderr`, `show_file_uses_exact_non_utf8_path_bytes`, `show_against_compares_with_an_arbitrary_base` (tests/cli.rs)
 
 ### REV-73 CLI export and blame
 Fixture: `fx-file-history`
 Layer: product
-- `git good show <c> --file big.log --export after --output out.log` → JSON receipt, exact bytes, existing destination refused; `git good blame src/lib.rs --lines 20,30` → bounded attributed JSON; bad range → error
+- `git good --cli show <c> --file big.log --export after --output out.log` → JSON receipt, exact bytes, existing destination refused; `git good --cli blame src/lib.rs --lines 20,30` → bounded attributed JSON; bad range → error
 Covered by (end-to-end): `export_is_exact_beyond_diff_budget_and_preserves_existing_destinations`, `blame_cli_reports_attributed_ranges_and_errors` (tests/cli.rs)
 
 ### REV-75 Find in file
@@ -1892,7 +1899,7 @@ Fixture: `fx-dirty`
 Layer: product
 - When the user selects `new.txt`, `d.txt`, `run.sh`, `logo.png`
 - Then no **Stage hunk**/**Discard hunk** or line picking is offered (binary and mode-only show explicit summaries); the header **Stage** is still available
-- And CLI `git good stage --file run.sh --hunk '<any>'` fails with an error and no index change
+- And CLI `git good --cli stage --file run.sh --hunk '<any>'` fails with an error and no index change
 Covered by (backend, partial): `stage_hunks_reject_unsupported_changes_and_selections` (crates/git/tests/status.rs); GUI path not automated
 
 ### CHG-25 Hidden whitespace hides hunk/line actions
@@ -2120,7 +2127,7 @@ Layer: interaction
 - When the user clicks a commit and Ctrl/Cmd-clicks another
 - Then both rows are filled, the footer starts `2 commits selected`, and the Commit menu reads **Compare these two**, **Copy 2 commits** and **Cherry-pick 2 commits onto HEAD**
 - And Compare these two opens Review on the newer commit against the older; Copy copies `id subject author date` per commit, newest first
-- And with the two `feature` commits picked, Cherry-pick runs the same Git commands as `git good cherry-pick feature~1 feature` (oldest first, one `git cherry-pick`)
+- And with the two `feature` commits picked, Cherry-pick runs the same Git commands as `git good --cli cherry-pick feature~1 feature` (oldest first, one `git cherry-pick`)
 - And Shift-click and Shift+Up/Down pick from the anchor; a range over rows not loaded picks nothing and the footer names how many are missing; a reload or filter ends the picks
 Covered by (interaction): `two_picked_commits_compare_with_each_other_and_copy_as_lines` (apps/git-good/src/main.rs); `commits_are_picked_by_ctrl_and_shift_and_listed_oldest_first` (apps/git-good/src/state.rs); `cherry_picking_two_picked_commits_runs_the_cli_commands` (apps/git-good/src/parity_tests.rs); `several_commits_are_picked_oldest_first_in_one_cherry_pick` (crates/git/tests/mutation.rs)
 
@@ -2181,7 +2188,7 @@ Covered by (interaction): `normal_and_amend_drafts_stay_separate` (status_view.r
 ### CHG-61 Amend on an unborn branch is unavailable
 Fixture: `fx-unborn`
 Layer: product
-- Then **Amend HEAD** is disabled (no HEAD); CLI `git good commit --amend -m x` fails
+- Then **Amend HEAD** is disabled (no HEAD); CLI `git good --cli commit --amend -m x` fails
 Covered by (backend, partial): `amend_rejects_unborn_head_and_empty_messages` (crates/git/tests/commit.rs); GUI path not automated
 
 ### CHG-62 Sign checkbox follows commit.gpgsign and readiness
@@ -2236,12 +2243,12 @@ Covered by (interaction, partial): `commits_made_at_a_rebase_stop_sit_under_the_
 ### CHG-70 CLI stage/unstage/commit receipts
 Fixture: `fx-dirty`; `fx-hooks`
 Layer: product
-- When running `git good stage --file c.txt`, `git good stage --file a.txt --hunk '<header>'`, `git good unstage --file b.txt`, `git good commit -m "CLI"` (and `--sign`/`--no-sign`, `--amend`)
+- When running `git good --cli stage --file c.txt`, `git good --cli stage --file a.txt --hunk '<header>'`, `git good --cli unstage --file b.txt`, `git good --cli commit -m "CLI"` (and `--sign`/`--no-sign`, `--amend`)
 - Then each prints a JSON receipt (stage adds `"hunks"`; commit has commit, tree, parents, signed, warnings; `--amend` adds `amended`, `previous`, `backup`); errors go to stderr with non-zero exit and no index change
 - And in `fx-hooks` `commit` fails with `lint: 2 problems` on stderr and the index kept; `--sign` without a signer fails with HEAD and index unchanged
 Covered by (end-to-end): `stage_cli_receipt_and_errors_preserve_working_files`, `stage_cli_selected_hunks_match_git_and_keep_remaining_edits`, `unstage_cli_receipt_and_errors_preserve_working_files`, `commit_cli_commits_the_index_and_preserves_working_changes`, `commit_cli_runs_hooks_and_reports_failures_with_recovery`, `commit_cli_sign_failure_preserves_head_and_index`, `commit_amend_and_reflog_cli` (apps/git-good/tests/cli.rs)
 
-### CHG-71 `git good status` on bare and unborn repositories
+### CHG-71 `git good --cli status` on bare and unborn repositories
 Fixture: `fx-bare`; `fx-unborn`
 Layer: product
 - Then bare returns an identified working-tree requirement error; unborn lists `README.md` as untracked
@@ -2252,7 +2259,7 @@ Layer: product
 - Given **Discard all tracked changes…** is open listing 9 files
 - When another process edits tracked `f.txt` and the user confirms
 - Then nothing is discarded; the list refreshes (`f.txt` added, primary `Discard 10 files, staged and unstaged`), and the notice reads `The repository changed; review the updated list and confirm again.`; a second confirm discards exactly the refreshed list
-- Gap: the per-file **Discard unstaged changes…** confirmation does not revalidate yet (see [open questions](#open-spec-questions))
+- Gap: the per-file **Discard unstaged changes…** confirmation does not revalidate yet (decided: [spec decisions](#spec-decisions--2026-11-04))
 Covered by (interaction, partial): `discard_all_rereads_and_asks_again_after_an_outside_change` (apps/git-good/src/main.rs), `guard_confirms_only_what_the_dialog_showed` (apps/git-good/src/consequence.rs) (Discard all only)
 
 Sources: architecture.md §Remote tracking and network mutations · M4, §History mutations and recovery · M5, operation area / outcome paragraphs (~79–81), Stashes picker (~91), refs context menu (~180), Pull (~184), Preferences (~358–364); final-design.md §Stashes and command table; cli.md §Sync and stash, §Merge, rebase, rewrite, and conflicts; user-flows.md F06–F09. Rebase/interactive rebase and the Recovery/backups/reflog windows are out of scope here.
@@ -2365,13 +2372,13 @@ Fixture: `fx-remote` (remote branch of `gone` deleted on origin; a stale `origin
 Layer: product
 - Given Preferences › General › **Fetch** prune is on
 - When **Fetch** runs
-- Then `origin/gone` disappears from **REMOTES**; with the option off it remains. CLI: `git good fetch origin --prune` removes it
+- Then `origin/gone` disappears from **REMOTES**; with the option off it remains. CLI: `git good --cli fetch origin --prune` removes it
 Covered by (Not automated)
 
 ### NET-15 Fetch with no or ambiguous default remote is an error
 Fixture: `fx-linear` (no remote); variant with two remotes `a` and `b`, neither `origin`
 Layer: product
-- When **Fetch** runs (or `git good fetch`)
+- When **Fetch** runs (or `git good --cli fetch`)
 - Then it fails before Git runs with an error naming the missing/ambiguous remote; nothing changes
 Covered by (backend, partial): `fetch_reports_missing_and_ambiguous_default_remotes` (crates/git/tests/sync.rs); GUI path not automated
 
@@ -2446,7 +2453,7 @@ Covered by (backend, end-to-end, partial): `sync_cli_force_with_lease_is_explici
 ### NET-26 CLI refuses bare --force
 Fixture: `fx-remote`
 Layer: product
-- When `git good push origin main --force` runs
+- When `git good --cli push origin main --force` runs
 - Then it exits nonzero with a usage error on stderr, prints no receipt, and `origin.git` is unchanged
 Covered by (end-to-end): `sync_cli_force_with_lease_is_explicit_and_rejects_stale_leases` (tests/cli.rs)
 
@@ -2475,7 +2482,7 @@ Covered by (backend, partial): `recognizes_actionable_credential_failures` (crat
 ### NET-30 URL user information is redacted everywhere
 Fixture: proposed `fx-remote-auth` (remote URL `https://ada:s3cret@127.0.0.1:1/repo.git`)
 Layer: product
-- When Fetch fails and **Details…** is opened; also `git good fetch` stderr and receipt
+- When Fetch fails and **Details…** is opened; also `git good --cli fetch` stderr and receipt
 - Then the URL appears with its host and path but never `s3cret`; no helper output or environment values appear
 Covered by (backend, partial): `redacts_passwords_but_keeps_url_identity` (crates/git/src/sync.rs); GUI path not automated
 
@@ -2519,7 +2526,7 @@ Covered by (Not automated)
 ### NET-37 CLI fetch/push/clone receipts and failure shape
 Fixture: `fx-remote`
 Layer: product
-- When `git good fetch origin`, `git good push origin local-only --set-upstream`, `git good clone <url> <path>` run with stderr not a terminal
+- When `git good --cli fetch origin`, `git good --cli push origin local-only --set-upstream`, `git good --cli clone <url> <path>` run with stderr not a terminal
 - Then stdout carries exactly one JSON receipt each (remote and fetched state; branch, remote, upstream, force-with-lease state, lease, warning; cloned path); progress goes only to stderr; a non-fast-forward push and a stale `--force-with-lease` fail nonzero before the remote changes; a failing command exits nonzero with stderr only and no partial receipt
 Covered by (end-to-end): `sync_cli_clones_fetches_pushes_and_reports_failures`, `sync_cli_force_with_lease_is_explicit_and_rejects_stale_leases` (tests/cli.rs)
 
@@ -2529,7 +2536,7 @@ Layer: product
 - Given **Delete remote branch** for `origin/release` is open naming the last fetched commit
 - When `git fetch` in a terminal moves `origin/release` to a newer commit, and the user confirms
 - Then Git Good does not push; the dialog re-reads and names the new fetched commit, with the notice `The repository changed; review the updated list and confirm again.`; a second confirm deletes with the new lease (NET-28 covers a remote that moved without a local fetch: Git refuses)
-- Gap: **Delete remote branch** does not revalidate yet; confirming pushes with the lease the dialog showed, which Git refuses as in NET-28 (see [open questions](#open-spec-questions))
+- Gap: **Delete remote branch** does not revalidate yet; confirming pushes with the lease the dialog showed, which Git refuses as in NET-28 (decided: [spec decisions](#spec-decisions--2026-11-04))
 Covered by (Not automated)
 
 ## Stash
@@ -2537,7 +2544,7 @@ Covered by (Not automated)
 ### STA-01 Stash changes is disabled on a clean worktree
 Fixture: `fx-linear`
 Layer: interaction
-- Then **Changes → Stash changes…** and its search Action are disabled with `No local changes to stash` (no toolbar button exists); `git good stash push -m x` exits nonzero with an actionable error, no receipt
+- Then **Changes → Stash changes…** and its search Action are disabled with `No local changes to stash` (no toolbar button exists); `git good --cli stash push -m x` exits nonzero with an actionable error, no receipt
 Covered by (backend, interaction, partial): `stash_commands_follow_local_changes_and_entries` (src/main.rs); `rejects_clean_trees_and_invalid_references` (crates/git/tests/stash.rs)
 
 ### STA-02 Stash dialog counts what it will stash and follows Include untracked
@@ -2574,7 +2581,7 @@ Covered by (Not automated)
 ### STA-06 CLI stash push keeps Git's default for untracked files
 Fixture: `fx-dirty`
 Layer: product
-- When `git good stash push -m wip` runs
+- When `git good --cli stash push -m wip` runs
 - Then `new.txt` stays in the worktree; with `--include-untracked` it is stashed; the receipt names `stash@{0}` and created state
 Covered by (end-to-end): `stash_cli_lists_pushes_applies_pops_and_drops` (tests/cli.rs)
 
@@ -2594,7 +2601,7 @@ Covered by (backend, interaction): `stash_picker_lists_entries_with_restore_show
 ### STA-09 Stash made on a detached HEAD shows **detached**
 Fixture: `fx-branchy-detached` with an edit stashed
 Layer: visual
-- Then its picker row reads `on detached · …`; `git good stash list` has `"branch": null`
+- Then its picker row reads `on detached · …`; `git good --cli stash list` has `"branch": null`
 Covered by (backend, partial): `subject_names_the_branch` (crates/engine/src/stash.rs); GUI path not automated
 
 ### STA-10 Picker keeps a fixed size and scrolls past six rows
@@ -2685,14 +2692,14 @@ Covered by (interaction, partial): `changes_stashes_opens_the_picker_inside_the_
 ### STA-22 CLI rejects option-shaped or non-numeric references
 Fixture: `fx-stash`
 Layer: product
-- When `git good stash drop --all`, `git good stash apply foo`, `git good stash pop stash@{x}` run
-- Then each exits nonzero before Git runs; `git good stash apply 1` and `stash@{1}` are accepted
+- When `git good --cli stash drop --all`, `git good --cli stash apply foo`, `git good --cli stash pop stash@{x}` run
+- Then each exits nonzero before Git runs; `git good --cli stash apply 1` and `stash@{1}` are accepted
 Covered by (backend): `rejects_clean_trees_and_invalid_references` (crates/git/tests/stash.rs)
 
 ### STA-23 CLI stash list is read-only and explicit when empty
 Fixture: `fx-stash`; `fx-linear`
 Layer: product
-- When `git good stash list` runs
+- When `git good --cli stash list` runs
 - Then entries carry `index`, `reference`, `commit`, `message`, `branch`, `age`, and `files: null`, newest first; on `fx-linear` `entries` is `[]` with exit 0; refs, index and files are unchanged
 Covered by (backend, end-to-end): `lists_newest_first_and_preserves_unrelated_files` (crates/git/tests/stash.rs); `stash_cli_lists_pushes_applies_pops_and_drops` (tests/cli.rs)
 
@@ -2709,7 +2716,7 @@ Layer: product
 - Given the drop confirmation for `stash@{1}` is shown
 - When `git stash drop stash@{0}` runs in a terminal (the entry is now `stash@{0}`) and the user confirms
 - Then nothing is dropped; the picker re-reads, keeps the same entry selected (matched by commit) under its new name `stash@{0}`, and shows `The repository changed; review the updated list and confirm again.`; a second confirm drops that entry, never whichever entry now holds the old index
-- Gap: the drop confirmation does not revalidate yet (see [open questions](#open-spec-questions))
+- Gap: the drop confirmation does not revalidate yet (decided: [spec decisions](#spec-decisions--2026-11-04))
 Covered by (Not automated)
 
 ### STA-26 A stash shows its result at once, at CLI speed
@@ -2741,7 +2748,7 @@ Fixture: same as INT-02
 Layer: product
 - Given **Always create a merge commit** checked
 - When `ahead` is merged
-- Then a merge commit is created; the dialog opens checked next time and Preferences › General › Dialog defaults shows it. CLI `git good merge ahead --no-ff` does the same
+- Then a merge commit is created; the dialog opens checked next time and Preferences › General › Dialog defaults shows it. CLI `git good --cli merge ahead --no-ff` does the same
 Covered by (backend, end-to-end, partial): `no_ff_forces_a_merge_commit` (crates/git/tests/merge.rs); `merge_cli_no_ff_creates_a_merge_commit` (tests/cli.rs)
 
 ### INT-04 Merge requires a clean tracked worktree
@@ -2754,7 +2761,7 @@ Covered by (Not automated)
 ### INT-05 Merge accepts remote-tracking refs and tags; rejects option-shaped refs
 Fixture: `fx-remote`
 Layer: product
-- When `origin/main` is merged from its REMOTES row (**Merge**), and `git good merge -- --abort-me` / `git good merge nosuch` run
+- When `origin/main` is merged from its REMOTES row (**Merge**), and `git good --cli merge -- --abort-me` / `git good --cli merge nosuch` run
 - Then the remote-tracking merge works; the invalid references fail before Git runs with nonzero status
 Covered by (backend, partial): `rejects_option_shaped_and_missing_references` (crates/git/tests/merge.rs); GUI path not automated
 
@@ -3381,7 +3388,7 @@ Covered by (backend, partial): `rebase_requires_a_clean_worktree_unless_autostas
 ### RWR-58 Rebase onto rejects missing/option-shaped refs
 Fixture: `fx-linear`
 Layer: product
-- When `git good rebase --exec=x` or `git good rebase nosuch` runs
+- When `git good --cli rebase --exec=x` or `git good --cli rebase nosuch` runs
 - Then it fails with an actionable error; no backup, no state change
 Covered by (backend, partial): `rebase_rejects_option_shaped_and_missing_references` (crates/git/tests/rebase.rs); GUI path not automated
 
@@ -3423,7 +3430,7 @@ Fixture: `fx-dirty`; `fx-reset-collision`
 Layer: product
 - When the user resets to `c27` Soft / Mixed / Hard (separate runs)
 - Then Soft keeps index and working files; Mixed clears the index, keeps working files; Hard discards staged and working tracked changes; untracked files stay in all
-- And `git good reset --hard c05` in `fx-reset-collision` refuses nonzero with empty stdout, stderr saying it would overwrite untracked files and naming `later.txt`; HEAD, index and `later.txt` are unchanged
+- And `git good --cli reset --hard c05` in `fx-reset-collision` refuses nonzero with empty stdout, stderr saying it would overwrite untracked files and naming `later.txt`; HEAD, index and `later.txt` are unchanged
 - And the same refusal holds when the untracked file's name is not UTF-8 (`b'raw\xff.txt'`, listed lossily) and when the repository's folder name ends with a space
 - And every mode first saves the tip it leaves as a `reset` backup (`refs/gg/backup/reset/…`), named in the receipt's `backup` and in the GUI's status line (*Reset to <id> <subject> · backup <ref>*); when the backup cannot be written the reset fails and nothing changes
 Covered by (backend, end-to-end): `soft_reset_keeps_index_and_worktree`, `mixed_reset_clears_the_index_but_keeps_worktree`, `hard_reset_discards_index_and_worktree`, `hard_reset_refuses_to_overwrite_untracked_and_ignored_files`, `hard_reset_refuses_to_overwrite_an_untracked_file_whose_name_is_not_utf8`, `hard_reset_refuses_to_overwrite_untracked_files_in_a_folder_ending_with_a_space`, `every_reset_mode_saves_the_previous_tip_as_a_backup`, `reset_fails_without_moving_when_the_backup_cannot_be_written` (crates/git/tests/reset.rs); `reset_cli_applies_soft_mixed_and_hard`, `reset_cli_hard_refuses_to_overwrite_untracked_files` (apps/git-good/tests/cli.rs)
@@ -3497,7 +3504,7 @@ Covered by (Not automated)
 ### RWR-75 Missing reflog reference shows an error, not stale entries
 Fixture: `fx-backups`, branch `old` deleted while Recovery shows its reflog
 Layer: product
-- Then the Reflog source shows no stale entries and the status strip names Git's error; an existing reference with no entries reads *No reflog entries for <ref>.*; `git good reflog nosuch` fails likewise
+- Then the Reflog source shows no stale entries and the status strip names Git's error; an existing reference with no entries reads *No reflog entries for <ref>.*; `git good --cli reflog nosuch` fails likewise
 Covered by (backend, interaction): `reflog_reads_in_plain_language_with_the_raw_message_below` (apps/git-good/src/recovery_view.rs); `rejects_missing_and_option_shaped_reflogs` (crates/git/tests/reflog.rs)
 
 ### RWR-76 Keep private backups prunes old backups on open
@@ -4217,16 +4224,16 @@ Covered by (end-to-end): `help_lists_every_cli_command` (apps/git-good/tests/cli
 ### CLI-03 Git dispatch and nested discovery
 Fixture: `fx-linear`, cwd `fx-linear/src`
 Layer: product
-- When `git good history`
+- When `git good --cli history`
 - Then JSON for `fx-linear` (30 commits) is streamed
 Covered by (end-to-end): `git_dispatch_discovers_current_and_nested_repositories` (apps/git-good/tests/cli.rs)
 
 ### CLI-04 history: explicit path wins; non-repo fails
 Fixture: cwd `fx-linear`, path `fx-branchy`; then `fx-not-repo`
 Layer: product
-- When `git good history ../fx-branchy`
+- When `git good --cli history --repo ../fx-branchy`
 - Then JSON is for fx-branchy
-- When `git good history <fx-not-repo>`
+- When `git good --cli history --repo <fx-not-repo>`
 - Then status nonzero, stdout empty, stderr contains `Could not read`
 Covered by (end-to-end): `explicit_path_overrides_cwd_and_failure_uses_stderr` (apps/git-good/tests/cli.rs)
 
@@ -4239,9 +4246,13 @@ Covered by (end-to-end): `json_includes_every_commit_beyond_the_former_cap`, `br
 ### CLI-06 Extra arguments are rejected
 Fixture: `fx-linear`
 Layer: product
-- When `git good history . extra`
-- Then stderr `Use git-good --help for usage`, nonzero
-Covered by (Not automated)
+- When `git good --cli history extra`
+- Then stderr `Error: Usage: git good --cli history [--repo PATH]`, nonzero, empty stdout
+- When `git good status` (no such folder), `git good --cli stat`, or `git good -x`
+- Then no window opens; stderr reads *No folder status. Did you mean git good --cli status?*, *Unknown command stat.*, or *Unknown option -x.*; nonzero
+- When `git good --cli blame -- -x.txt` on a committed `-x.txt`
+- Then the attribution of `-x.txt` is printed: after `--` every word is a value
+Covered by (end-to-end): `a_failure_prints_the_plain_message`, `commands_follow_cli_and_a_bare_word_is_a_folder`, `double_dash_ends_options` (apps/git-good/tests/cli.rs)
 
 ### CLI-07 refs — see HIS-77
 
@@ -4254,7 +4265,7 @@ Covered by (Not automated)
 ### CLI-11 reflog and blame
 Fixture: `fx-backups`; `fx-file-history`
 Layer: product
-- `git good reflog` prints entries; `reflog --bogus` / missing ref fails; `blame src/lib.rs --lines 20,30` prints attributed ranges; blame of `blob.bin` / `link` fails with a reason
+- `git good --cli reflog` prints entries; `reflog --bogus` / missing ref fails; `blame src/lib.rs --lines 20,30` prints attributed ranges; blame of `blob.bin` / `link` fails with a reason
 Covered by (end-to-end): `commit_amend_and_reflog_cli`, `blame_cli_reports_attributed_ranges_and_errors` (apps/git-good/tests/cli.rs)
 
 ### CLI-12 switch, branch, tag delete, reset
@@ -4278,86 +4289,86 @@ Covered by (end-to-end): `tag_create_cli_creates_annotated_tags_and_blocks_broke
 ### CLI-16a merge fast-forwards
 Fixture: `fx-branchy` plus branch `ahead` one commit past `main`
 Layer: product
-- When `git good merge ahead`
-- Then exit 0 and one receipt `operation: "merge"`, `kind: "fast_forward"`, `applied: true`; `main` points at `ahead`'s tip with no merge commit; `git good merge old` reports already up to date and changes nothing
+- When `git good --cli merge ahead`
+- Then exit 0 and one receipt `operation: "merge"`, `kind: "fast_forward"`, `applied: true`; `main` points at `ahead`'s tip with no merge commit; `git good --cli merge old` reports already up to date and changes nothing
 Covered by (end-to-end, partial): `merge_cli_fast_forwards_conflicts_and_recovers` (apps/git-good/tests/cli.rs) (up-to-date not checked)
 
 ### CLI-16b merge --no-ff
 Fixture: as CLI-16a
 Layer: product
-- When `git good merge ahead --no-ff`
+- When `git good --cli merge ahead --no-ff`
 - Then a two-parent merge commit is created and reported
 Covered by (end-to-end): `merge_cli_no_ff_creates_a_merge_commit` (apps/git-good/tests/cli.rs)
 
 ### CLI-16c merge conflict, --abort and --continue
 Fixture: `fx-branchy` with `main` and `feature/login` editing the same line
 Layer: product
-- When `git good merge feature/login`
+- When `git good --cli merge feature/login`
 - Then exit 0 with `applied: false`, `in_progress: true`, `conflicts: [<path>]` (the repository changed: the receipt is the record)
-- When `git good merge --abort`
+- When `git good --cli merge --abort`
 - Then HEAD and the file equal the pre-merge state
-- When the merge is repeated, the path resolved and staged, and `git good merge --continue` runs
-- Then `applied: true`, `in_progress: false`; `git good merge --skip` fails nonzero with `Unknown merge option` and empty stdout
+- When the merge is repeated, the path resolved and staged, and `git good --cli merge --continue` runs
+- Then `applied: true`, `in_progress: false`; `git good --cli merge --skip` fails nonzero with `Unknown merge option` and empty stdout
 Covered by (end-to-end): `merge_cli_fast_forwards_conflicts_and_recovers` (apps/git-good/tests/cli.rs)
 
 ### CLI-16d rebase records a backup and recovers
 Fixture: a branch `feature` diverged from `main`, then a conflicting variant
 Layer: product
-- When `git good rebase main` with a dirty tracked file
+- When `git good --cli rebase main` with a dirty tracked file
 - Then it fails nonzero with `not clean` and nothing changes; with `--autostash` it succeeds: receipt `operation: "rebase"`, `reference`, `commit`, `previous`, `backup` under `refs/gg/backup/rebase/`, `applied: true`, and the dirty edit is restored
 - When the conflicting variant runs
-- Then exit 0 with `in_progress: true`, `conflicts`, and a `backup`; `--abort` restores the old tip; resolving and `--continue` finishes; `git good reset --hard <backup>` restores the pre-rebase tip
+- Then exit 0 with `in_progress: true`, `conflicts`, and a `backup`; `--abort` restores the old tip; resolving and `--continue` finishes; `git good --cli reset --hard <backup>` restores the pre-rebase tip
 Covered by (end-to-end, partial): `rebase_cli_rewrites_records_backup_and_recovers` (apps/git-good/tests/cli.rs) (restore from the backup ref not checked)
 
 ### CLI-16e rewrite: reword, fixup, drop, edit
 Fixture: `fx-rebase`
 Layer: product
-- When `git good rewrite --from <oldest> --pick … --reword <id> "New subject" --fixup <id> --drop <id> --edit <id>` runs (every range commit once, oldest first)
+- When `git good --cli rewrite --from <oldest> --pick … --reword <id> "New subject" --fixup <id> --drop <id> --edit <id>` runs (every range commit once, oldest first)
 - Then the receipt carries `from`, `previous`, `backup`, `applied`, `in_progress: true`, empty `conflicts`, a warning naming the reopened commit, and the step count; no editor opens
 Covered by (end-to-end): `rewrite_cli_rewords_fixes_up_drops_and_edits` (apps/git-good/tests/cli.rs)
 
 ### CLI-16f rewrite: reorder, squash, continue and abort
 Fixture: `fx-rebase`
 Layer: product
-- When a reorder plus squash rewrite runs, then `git good rewrite --continue` / `--abort` at a stop
+- When a reorder plus squash rewrite runs, then `git good --cli rewrite --continue` / `--abort` at a stop
 - Then the squash keeps both messages; continue and abort print the receipt shape with null `reference`, `commit`, `previous`, `backup`
 Covered by (end-to-end): `rewrite_cli_reorders_squashes_and_recovers` (apps/git-good/tests/cli.rs)
 
 ### CLI-16g cherry-pick conflict and recovery
 Fixture: `fx-branchy` with a commit on another branch that conflicts with `main`
 Layer: product
-- When `git good cherry-pick other`
+- When `git good --cli cherry-pick other`
 - Then exit 0 with `operation: "cherry-pick"`, `applied: false`, `in_progress: true`, `conflicts: [<path>]`; `--abort` restores HEAD and the file; repeating, resolving, staging and `--continue` creates the commit; `cherry-pick --bad` fails with `Unknown cherry-pick option` and empty stdout
 Covered by (end-to-end): `cherry_pick_cli_applies_conflicts_and_recovers` (apps/git-good/tests/cli.rs)
 
 ### CLI-16h revert
 Fixture: `fx-linear`
 Layer: product
-- When `git good revert HEAD`
+- When `git good --cli revert HEAD`
 - Then receipt `operation: "revert"`, `applied: true`, `in_progress: false`; the file is back to its parent's content; the new subject starts with `Revert`
-- And in `fx-revert-conflict` `git good revert --skip` ends the operation with no new commit
+- And in `fx-revert-conflict` `git good --cli revert --skip` ends the operation with no new commit
 Covered by (end-to-end, partial): `revert_cli_inverts_a_commit` (apps/git-good/tests/cli.rs) (conflict and --skip not checked)
 
 ### CLI-16i conflicts lists unmerged paths
 Fixture: `fx-merge-conflict`
 Layer: product
-- When `git good conflicts`
+- When `git good --cli conflicts`
 - Then receipt `operation: "conflicts"` with `paths` listing `src/app.rs`, `docs.md`, `logo.png` and `path_bytes` their exact bytes in the same order; nothing changes
 Covered by (end-to-end): `conflict_cli_lists_reads_and_resolves`, `conflict_cli_round_trips_non_utf8_path_bytes` (apps/git-good/tests/cli.rs)
 
 ### CLI-16j conflict --file reads and resolves one path
 Fixture: `fx-merge-conflict`
 Layer: product
-- When `git good conflict --file src/app.rs`, then `--use theirs`, then `git good conflict --file docs.md --stage`
+- When `git good --cli conflict --file src/app.rs`, then `--use theirs`, then `git good --cli conflict --file docs.md --stage`
 - Then the first prints `base`, `ours`, `theirs`; the second writes theirs, stages it (`operation: "conflict-resolve"`) and the path is no longer unmerged; the third stages the current working content; an unknown path fails with `No unmerged stages` and empty stdout; `--use base` fails nonzero
-- And on a fresh `fx-merge-conflict`, `git good conflict --file docs.md --use <the side that deleted it>` fails nonzero naming `--use deletion`; `--use deletion` removes `docs.md` from the working tree and the index (receipt `operation: "conflict-resolve"`, `side: "deletion"`); `--use deletion` on a path both sides kept fails with `Keep deletion applies only when one side deleted <path>.`
+- And on a fresh `fx-merge-conflict`, `git good --cli conflict --file docs.md --use <the side that deleted it>` fails nonzero naming `--use deletion`; `--use deletion` removes `docs.md` from the working tree and the index (receipt `operation: "conflict-resolve"`, `side: "deletion"`); `--use deletion` on a path both sides kept fails with `Keep deletion applies only when one side deleted <path>.`
 - And with conflicts on files named `*.txt` and `a.txt`, `--file '*.txt'` with `--use theirs`, `--use deletion`, `--stage`, a GUI **Stage resolution**, or **−** (reopen) acts on `*.txt` only: `a.txt` stays unmerged with its markers on disk
 Covered by (backend, end-to-end, partial): `conflict_cli_lists_reads_and_resolves`, `conflict_cli_keeps_a_deletion`, `conflict_cli_resolves_only_the_literal_glob_named_path` (apps/git-good/tests/cli.rs); `rejects_unknown_paths_and_base_selection`, `keeping_a_deletion_is_refused_without_a_deleted_side_or_after_an_edit`, `use_side_points_the_deleted_side_to_keep_deletion`, `choosing_a_side_for_a_glob_named_file_leaves_other_conflicts`, `staging_and_reopening_a_glob_named_conflict_leaves_other_conflicts`, `publishing_a_glob_named_resolution_leaves_other_conflicts`, `keeping_the_deletion_of_a_glob_named_file_leaves_other_conflicts` (crates/git/tests/conflict.rs) (--stage through the CLI not checked)
 
 ### CLI-17 worktree list
 Fixture: `fx-worktrees`
 Layer: product
-- `git good worktree list` → `operation: "worktree list"`, `worktrees` with main flagged `main: true`, lock reason `on usb disk`, prunable `wt-gone`
+- `git good --cli worktree list` → `operation: "worktree list"`, `worktrees` with main flagged `main: true`, lock reason `on usb disk`, prunable `wt-gone`
 Covered by (end-to-end, partial): `worktree_cli_lists_adds_and_removes` (apps/git-good/tests/cli.rs); lock/prune fields not automated
 
 ### CLI-18 worktree add (create and existing) and errors
@@ -4399,19 +4410,19 @@ Covered by (backend, end-to-end, partial): `signature_cli_reports_config_and_uns
 ### CLI-24 Missing or unknown subcommand of grouped commands
 Fixture: `fx-linear`
 Layer: product
-- `git good signature` → stderr `Use git-good signature <config|verify> --help for usage`, nonzero; `git good lfs nope`, `git good worktree nope`, `git good submodule` similarly fail with usage; stdout empty
+- `git good --cli signature` → stderr `Use git good --cli signature <config|verify> --help for usage`, nonzero; `git good --cli lfs nope`, `git good --cli worktree nope`, `git good --cli submodule` similarly fail with usage; stdout empty
 Covered by (Not automated)
 
 ### CLI-25 Unknown option and missing --repo value
 Fixture: `fx-linear`
 Layer: product
-- `git good worktree list --bogus` → usage on stderr; `git good worktree list --repo` → `--repo needs a path`; both nonzero
+- `git good --cli worktree list --bogus` → usage on stderr; `git good --cli worktree list --repo` → `--repo needs a path`; both nonzero
 Covered by (Not automated)
 
 ### CLI-26 --repo pointing outside a repository
 Fixture: `fx-not-repo`
 Layer: product
-- `git good worktree list --repo <fx-not-repo>` (and `signature config --repo <fx-not-repo>`; `refs` and `status` take it positionally: `git good refs <fx-not-repo>`, `git good status <fx-not-repo>`) → nonzero, stderr names the path, empty stdout
+- `git good --cli worktree list --repo <fx-not-repo>` (and `signature config`, `refs`, `status`, `history` with `--repo <fx-not-repo>`) → nonzero, stderr names the path, empty stdout
 Covered by (Not automated)
 
 ### CLI-27 Launch with PATH opens the GUI on that repository — see FRM-02
@@ -4419,9 +4430,9 @@ Covered by (Not automated)
 ### CLI-28 Init creates a repository and refuses inside one
 Fixture: an empty temporary folder with `notes/a.txt`; `fx-linear`
 Layer: product
-- When `git good init --branch trunk --commit notes`
+- When `git good --cli init --branch trunk --commit notes`
 - Then stdout is one receipt `{"operation":"init","path","branch":"trunk","head","files":1,"complete":true}`, `notes` is a repository on `trunk` whose HEAD is `head` (`Initial commit`)
-- When `git good init` runs in `notes/docs`
+- When `git good --cli init` runs in `notes/docs`
 - Then it exits nonzero with `is inside the repository` on stderr, empty stdout, and nothing created
 Covered by (end-to-end): `init_cli_creates_commits_and_refuses_inside_a_repository` (apps/git-good/tests/cli.rs)
 
@@ -4523,7 +4534,7 @@ Covered by (Not automated)
 ### XCT-10 Rebase onto with autostash, from GUI and CLI
 Fixture: `fx-rebase-autostash`; branch `other` whose tip changes `folder_picker.rs`
 Layer: product
-- When **Branch › Rebase current onto…** `other` with **Automatically stash working changes** runs, and separately `git good rebase other --autostash`
+- When **Branch › Rebase current onto…** `other` with **Automatically stash working changes** runs, and separately `git good --cli rebase other --autostash`
 - Then both finish the rebase, keep the entry when restoration conflicts, and report it: the GUI as in XCT-08, the CLI receipt with a warning naming the kept stash entry and the backup
 Covered by (Not automated)
 
@@ -4533,7 +4544,7 @@ Covered by (Not automated)
 Fixture: `fx-rebase`, a plan reordering two commits so step 4 conflicts
 Layer: product
 - When the plan starts, stops on the conflict, and the user opens **Resolve conflicts…**, chooses the side labeled `Theirs (<8-char id> <subject>)` for every block, stages and continues
-- Then the labels read `Ours (onto <base>)` / `Theirs (<8-char id> <subject>)` (INT-38); `git good conflict --file <path>` returns as `theirs` the bytes shown under that label; after **Continue** the rewritten commit carries the chosen content
+- Then the labels read `Ours (onto <base>)` / `Theirs (<8-char id> <subject>)` (INT-38); `git good --cli conflict --file <path>` returns as `theirs` the bytes shown under that label; after **Continue** the rewritten commit carries the chosen content
 Covered by (Not automated)
 
 ### XCT-12 Labels follow the step
@@ -4623,37 +4634,37 @@ Covered by (interaction, partial): `recovery_window_stays_inside_the_narrow_view
 ### CLI and GUI continuity
 
 ### XCT-24 Rebase started in the CLI, finished in the GUI
-Fixture: `fx-rebase-conflict` created by `git good rebase origin/main` instead of Git
+Fixture: `fx-rebase-conflict` created by `git good --cli rebase origin/main` instead of Git
 Layer: product
 - When Git Good opens, the user resolves in **Resolve conflicts…** and clicks **Continue**
-- Then the band shows the stop the CLI receipt described (step, commit, conflicts); Recovery's newest backup is the receipt's `backup`; afterwards `git good conflicts` lists none and `git good history` shows the rebased commits
+- Then the band shows the stop the CLI receipt described (step, commit, conflicts); Recovery's newest backup is the receipt's `backup`; afterwards `git good --cli conflicts` lists none and `git good --cli history` shows the rebased commits
 Covered by (Not automated)
 
 ### XCT-25 Merge in progress shared live by CLI and GUI
-Fixture: `fx-merge-conflict` created by `git good merge feature/login`
+Fixture: `fx-merge-conflict` created by `git good --cli merge feature/login`
 Layer: product
-- When Git Good is open on it and `git good conflict --file src/app.rs --use theirs` runs in a terminal
-- Then within ~300 ms Git Good moves `src/app.rs` to `RESOLVED, STAGED` and the count drops to 2; `git good conflicts` and the GUI list the same paths at every point
+- When Git Good is open on it and `git good --cli conflict --file src/app.rs --use theirs` runs in a terminal
+- Then within ~300 ms Git Good moves `src/app.rs` to `RESOLVED, STAGED` and the count drops to 2; `git good --cli conflicts` and the GUI list the same paths at every point
 Covered by (Not automated)
 
 ### XCT-26 Cherry-pick started in the GUI, finished in the CLI
 Fixture: `fx-branchy`, a conflicting `feature/login` commit
 Layer: product
-- When **Cherry-pick onto HEAD** stops on a conflict, the path is resolved and staged in the GUI, and `git good cherry-pick --continue` runs in a terminal
+- When **Cherry-pick onto HEAD** stops on a conflict, the path is resolved and staged in the GUI, and `git good --cli cherry-pick --continue` runs in a terminal
 - Then the CLI receipt reports `applied: true`, `in_progress: false`, and Git Good's operation band clears without user action
 Covered by (Not automated)
 
 ### XCT-27 Reopened stop: CLI and GUI agree on Continue
 Fixture: `fx-rewrite-reopened` with tracked changes remaining
 Layer: product
-- When `git good rewrite --continue` runs while the GUI shows **Continue** disabled
+- When `git good --cli rewrite --continue` runs while the GUI shows **Continue** disabled
 - Then the CLI refuses with the same reason (`Commit or stash the 2 remaining changed files first.`) and changes nothing; once committed in the GUI, the CLI continue succeeds and the GUI band clears
 Covered by (Not automated)
 
 ### XCT-28 Same consequences in both
 Fixture: `fx-reset-collision`; `fx-branchy`
 Layer: product
-- When Hard reset to `c05` is attempted in **Reset here** and with `git good reset --hard c05`; and `feature/login` is deleted in the GUI and with `git good branch --delete feature/login`
+- When Hard reset to `c05` is attempted in **Reset here** and with `git good --cli reset --hard c05`; and `feature/login` is deleted in the GUI and with `git good --cli branch --delete feature/login`
 - Then both refuse the reset naming `later.txt`; the GUI lists the 4 unmerged commits and the CLI refuses without `--force` naming them; neither changes anything
 Covered by (Not automated)
 
@@ -4683,7 +4694,7 @@ Layer: interaction
 - When the user deletes it
 - Then frames keep drawing while Git runs: the dialog stays open with its primary disabled, the footer reads `Deleting branch merged…` with a spinner, and stash, branch and commit mutations are disabled with `Wait for the current operation to finish`; a second mutation is refused, not queued
 - And when Git returns the receipt `Deleted branch merged` closes the dialog; a failure (Delete tag on a missing tag) leaves its dialog open with Git's error and no footer error. Stash changes, New branch and Rename behave alike; the Stashes picker, Reset, Cherry-pick and Revert close as they start and report in the footer, as before (`Stashing 3 files…`, `Restoring stash@{0}…`, `Dropping stash@{0}…`, `Creating topic…`, `Renaming feature to topic…`, `Deleting tag v1…`, `Resetting to 1a2b3c4…`, `Cherry-picking 1a2b3c4…`, `Reverting 1a2b3c4…`)
-- And New tag opens at once, showing the last signing configuration read, and takes the background read when it lands (Sign checked by `tag.gpgsign`, *No signing key is configured.*); Create waits for that read on its worker and refuses to make an unsigned tag. Local Changes reads the configuration the same way; focus and a change to the repository's `config` read it again; the commit worker reads it before committing, as `git good commit` does
+- And New tag opens at once, showing the last signing configuration read, and takes the background read when it lands (Sign checked by `tag.gpgsign`, *No signing key is configured.*); Create waits for that read on its worker and refuses to make an unsigned tag. Local Changes reads the configuration the same way; focus and a change to the repository's `config` read it again; the commit worker reads it before committing, as `git good --cli commit` does
 Covered by (interaction): `a_dialog_mutation_runs_on_the_worker_and_its_dialog_waits_for_git`, `new_tag_reads_signing_off_the_ui_thread_and_never_tags_unsigned`, `dialogs_take_typing_at_once_and_answer_enter_and_esc` (apps/git-good/src/main.rs); `a_worker_waits_for_the_read_in_flight_and_views_see_it_once` (apps/git-good/src/signing_cache.rs); `signing_readiness_blocks_the_commit_without_unsigned_fallback` (apps/git-good/src/status_view.rs)
 
 ### XCT-34 Back and Forward
@@ -4715,70 +4726,71 @@ Covered by (interaction): `a_launch_keeps_the_previous_log_and_redacts_and_caps`
 
 ## CLI contract
 
-The contract for scripts using `git good`. Current behavior is stated where it exists; *Proposed* marks behavior awaiting a decision (see [open questions](#open-spec-questions)).
+The contract for scripts using `git good --cli`. *Proposed* marks behavior decided but not yet built ([spec decisions](#spec-decisions--2026-11-04)).
 
 ### CLI-C01 Output kind per command
 Fixture: `fx-linear`
 Layer: product
-- Then `--version` prints plain text `git-good <version>` and `--help` plain usage text, both exit 0 without a repository; `git good` with no argument or with a single PATH launches the GUI; every other command (`history`, `refs`, `show`, `status`, `stage`, `unstage`, `commit`, `reflog`, `blame`, `signature`, `switch`, `branch`, `tag`, `reset`, `fetch`, `push`, `clone`, `stash`, `merge`, `rebase`, `rewrite`, `cherry-pick`, `revert`, `conflicts`, `conflict`, `worktree`, `submodule`, `lfs`) prints JSON and never opens a window (`clone` does not open the clone either)
-- And today any unknown first word is taken as a PATH and opens the GUI (`git good histroy`); *Proposed*: an unknown word that is not an existing folder is a usage error
-Covered by (end-to-end, partial): `version_matches_package_without_a_repository`, `help_lists_every_cli_command` (apps/git-good/tests/cli.rs)
+- Then `--version` prints plain text `git-good <version>` and `--help` (or `-h`) plain usage text, both exit 0 without a repository; `git good` with no argument or with a single FOLDER launches the GUI; every command after `--cli` (`history`, `refs`, `show`, `status`, `stage`, `unstage`, `commit`, `reflog`, `blame`, `signature`, `switch`, `branch`, `tag`, `reset`, `fetch`, `push`, `clone`, `stash`, `merge`, `rebase`, `rewrite`, `cherry-pick`, `revert`, `conflicts`, `conflict`, `worktree`, `submodule`, `lfs`) prints JSON and never opens a window (`clone` does not open the clone either)
+- And a bare first word is always a folder; commands follow `--cli`. A missing folder named like a command (`git good status`) and an unknown word after `--cli` (`git good --cli histroy`) are usage errors and open no window
+Covered by (end-to-end, partial): `version_matches_package_without_a_repository`, `help_lists_every_cli_command`, `commands_follow_cli_and_a_bare_word_is_a_folder` (apps/git-good/tests/cli.rs)
 
 ### CLI-C02 JSON framing
 Fixture: every JSON command of CLI-C01 on its usual fixture
 Layer: product
-- Then stdout holds exactly one UTF-8 JSON document followed by a newline and nothing else; progress and warnings for humans go to stderr; keys are snake_case and every receipt names its `operation`; `history` may stream its one document incrementally
-- And *Proposed*: keys and their types are stable; later versions only add keys, so consumers ignore unknown keys
+- Then stdout holds exactly one UTF-8 JSON document followed by a newline and nothing else; progress and warnings for humans go to stderr; keys are snake_case and every receipt names its `operation` and its `status`; `history`, `status` and `show` stream their one document incrementally and end it with `complete` and `status`
+- And keys and their types are stable: later versions only add keys, so consumers ignore unknown keys; every path field comes as `path` (escaped) beside `path_bytes` (exact) (decision 16)
 Covered by (end-to-end, partial): every receipt test in apps/git-good/tests/cli.rs parses stdout as one document, e.g. `sync_cli_clones_fetches_pushes_and_reports_failures`, `stash_cli_lists_pushes_applies_pops_and_drops` (no stability check)
 
 ### CLI-C03 Distinct outcomes
 Fixture: `fx-dirty`, `fx-branchy`, `fx-merge-conflict`, `fx-remote-slow`
 Layer: product
-- Today: success exits 0; every failure exits 1 with `Error: <message>` on stderr and empty stdout; a conflict exits 0 with a receipt `applied: false`, `in_progress: true`, `conflicts: […]`
-- *Proposed*: exit 0 completed (`status: "completed"`, warnings in `warnings`) or stopped as planned (`status: "stopped"`, e.g. a rewrite `--edit` stop); 2 usage error; 3 refusal before any change; 4 conflict (`status: "conflict"`); 5 partial completion (`status: "partial"`); 130 cancelled by SIGINT; 1 any other failure. Usage errors, refusals and failures print nothing on stdout; conflict and partial outcomes print their receipt
-Covered by (Not automated)
+- Then exit 0 completed (`status: "completed"`) or stopped as planned (`status: "stopped"`, e.g. a rewrite `--edit` stop); 2 usage error; 4 conflict (`status: "conflict"`); 1 any other failure, with `Error: <message>` on stderr and nothing on stdout. Ctrl+C ends the process by the signal, which shells report as 130
+- *Proposed* (decided, not yet built; needs failures typed by the Git layer): 3 refusal before any change (`status: "refused"`); 5 partial completion (`status: "partial"`). Until then both exit 1
+Covered by (end-to-end, partial): `a_failure_prints_the_plain_message` (2), `merge_cli_fast_forwards_conflicts_and_recovers`, `rebase_cli_rewrites_records_backup_and_recovers`, `cherry_pick_cli_applies_conflicts_and_recovers`, `rewrite_cli_reorders_squashes_and_recovers` (4, `stopped`) (apps/git-good/tests/cli.rs)
 
 ### CLI-C04 Usage error
 Fixture: `fx-linear`
 Layer: product
-- When `git good merge --skip`, `git good worktree list --bogus`, `git good worktree list --repo`, `git good signature`
-- Then stderr names the problem (`Unknown merge option`, usage line, `--repo needs a path`), stdout is empty, nothing changes; today exit 1, *Proposed* exit 2 (CLI-06, CLI-24, CLI-25)
-Covered by (end-to-end, partial): `merge_cli_fast_forwards_conflicts_and_recovers`, `cherry_pick_cli_applies_conflicts_and_recovers` (apps/git-good/tests/cli.rs) (exit code value not checked)
+- When `git good --cli merge --skip`, `git good --cli worktree list --bogus`, `git good --cli worktree list --repo`, `git good --cli signature`
+- Then stderr names the problem (`Unknown merge option`, usage line, `--repo needs a path`), stdout is empty, nothing changes; exit 2 (CLI-06, CLI-24, CLI-25)
+Covered by (end-to-end, partial): `merge_cli_fast_forwards_conflicts_and_recovers`, `cherry_pick_cli_applies_conflicts_and_recovers` (apps/git-good/tests/cli.rs); `a_failure_prints_the_plain_message` checks exit 2
 
 ### CLI-C05 Refusal
 Fixture: `fx-dirty` with a branch `other`; `fx-reset-collision`
 Layer: product
-- When `git good rebase other`, `git good switch other`, `git good reset --hard c05`
-- Then each refuses before changing anything (repository byte-identical), stderr names the reason and the paths involved, stdout is empty; today exit 1, *Proposed* exit 3
+- When `git good --cli rebase other`, `git good --cli switch other`, `git good --cli reset --hard c05`
+- Then each refuses before changing anything (repository byte-identical), stderr names the reason and the paths involved, stdout is empty; exit 1 today, *Proposed* exit 3
 Covered by (end-to-end, partial): `rebase_cli_rewrites_records_backup_and_recovers`, `switch_cli_changes_branches_and_reports_dirty_worktrees` (apps/git-good/tests/cli.rs)
 
 ### CLI-C06 Conflict leaves a machine-readable receipt
 Fixture: `fx-branchy` set up so `merge`, `rebase` and `cherry-pick` conflict
 Layer: product
 - When each runs
-- Then stdout carries the receipt with `operation`, `in_progress: true`, `conflicts` (exact paths), and `backup` when one was written (rebase, rewrite); the next steps are `--continue`/`--skip`/`--abort`; today exit 0, *Proposed* exit 4 with `status: "conflict"`
-Covered by (end-to-end, partial): `merge_cli_fast_forwards_conflicts_and_recovers`, `rebase_cli_rewrites_records_backup_and_recovers`, `cherry_pick_cli_applies_conflicts_and_recovers` (apps/git-good/tests/cli.rs) (current shape only)
+- Then stdout carries the receipt with `operation`, `in_progress: true`, `conflicts` (exact paths), and `backup` when one was written (rebase, rewrite); the next steps are `--continue`/`--skip`/`--abort`; exit 4 with `status: "conflict"`
+Covered by (end-to-end, partial): `merge_cli_fast_forwards_conflicts_and_recovers`, `rebase_cli_rewrites_records_backup_and_recovers`, `cherry_pick_cli_applies_conflicts_and_recovers` (apps/git-good/tests/cli.rs)
 
 ### CLI-C07 Cancellation
 Fixture: `fx-remote-slow`
 Layer: product
-- When `git good fetch` receives SIGINT during transfer
-- Then the Git child is terminated and reaped (no orphan process), stdout is empty, stderr says the fetch was cancelled and the repository should be re-read before retrying; *Proposed* exit 130. Today no signal handling exists
+- When `git good --cli fetch` receives SIGINT during transfer
+- Then the Git child is terminated and reaped (no orphan process), stdout is empty, stderr says the fetch was cancelled and the repository should be re-read before retrying; the shell reports 130. Today no signal handling exists: the default signal ends Git Good and its Git child together
 Covered by (Not automated)
 
 ### CLI-C08 Partial completion
 Fixture: `fx-merge-conflict` with `.git/index.lock` created after the conflict was read; `fx-remote` where setting the upstream fails after a successful push
 Layer: product
-- When `git good conflict --file src/app.rs --use theirs`, and `git good push origin local-only --set-upstream`
+- When `git good --cli conflict --file src/app.rs --use theirs`, and `git good --cli push origin local-only --set-upstream`
 - Then *Proposed*: exit 5 with a receipt `status: "partial"` naming what was done (working file replaced; branch pushed) and what was not (path still unmerged; upstream not set). Today: exit 1, stdout empty, the change only described on stderr
 Covered by (Not automated)
 
 ### CLI-C09 Writing the output fails
 Fixture: `fx-linear` and `fx-dirty`
 Layer: product
-- When stdout is closed or full (`git good refs >&-`, `git good commit -m x > /dev/full`, `git good history | head -c 10`)
-- Then a read-only command stops promptly and exits nonzero without a panic message; a command that already changed the repository says so on stderr with the identities a script needs (new commit ID, backup ref) and exits with the partial outcome (*Proposed* 5). Today `println!` panics (exit 101) after the change, and `history` leaves truncated JSON when it fails mid-stream
-Covered by (Not automated)
+- When stdout is closed or full (`git good --cli refs >&-`, `git good --cli commit -m x > /dev/full`, `git good --cli history | head -c 10`)
+- Then a closed stdout ends the command quietly, with no panic text, and the exit code of what it already did (0 for a read, the receipt's code for a mutation); a full disk is a plain failure (exit 1, `Error:` on stderr)
+- And a streamed document whose read fails part way still ends as one valid JSON document, with `complete: false`, `status: "failed"` and `error`, and exits 1 with the reason on stderr
+Covered by (end-to-end, partial): `a_closed_stdout_ends_quietly`, `history_that_fails_mid_stream_ends_with_an_error_member` (apps/git-good/tests/cli.rs)
 
 ### CLI-C10 Unsuccessful exits that changed the repository always print state
 Fixture: as CLI-C06 and CLI-C08
@@ -4789,46 +4801,45 @@ Covered by (end-to-end, partial): `rebase_cli_rewrites_records_backup_and_recove
 ### CLI-C11 Paths with spaces
 Fixture: `fx-linear` at `/tmp/a b/fx-linear`, with tracked `dir with space/my file.txt` edited
 Layer: product
-- When `git good status "/tmp/a b/fx-linear" --file "dir with space/my file.txt" --area unstaged`, `git good stage --file "dir with space/my file.txt"`, `git good worktree add "../wt with space" --create x`
+- When `git good --cli status --repo "/tmp/a b/fx-linear" --file "dir with space/my file.txt" --area unstaged`, `git good --cli stage --file "dir with space/my file.txt"`, `git good --cli worktree add "../wt with space" --create x`
 - Then each acts on exactly that path and reports it unchanged in `path`
 Covered by (Not automated)
 
 ### CLI-C12 Leading hyphens
 Fixture: `fx-linear` with tracked `-x.txt` and `--weird` edited
 Layer: product
-- When `git good stage --file -x.txt`, `git good show HEAD --file --weird`, `git good blame -- -x.txt`
-- Then option values are taken verbatim after their flag (today `--file -x.txt` works); *Proposed*: `--` ends options for positional paths (`blame`, `history`, `refs`, `status`), which today reject any option-shaped word
-Covered by (Not automated)
+- When `git good --cli stage --file -x.txt`, `git good --cli show HEAD --file --weird`, `git good --cli blame -- -x.txt`
+- Then option values are taken verbatim after their flag (`--file -x.txt` works), and `--` ends options in every command, so `git good --cli blame -- -x.txt` names the file `-x.txt`
+Covered by (end-to-end, partial): `double_dash_ends_options` (apps/git-good/tests/cli.rs) — `blame --`
 
 ### CLI-C13 Non-UTF-8 names
 Fixture: a commit adding a file named with byte `0xFF` and a newline
 Layer: product
-- When `git good show HEAD --file <raw bytes>`, `git good status`, `git good conflicts` on a conflicted such path, then `git good conflict --file <raw bytes>` and `--use theirs`
+- When `git good --cli show HEAD --file <raw bytes>`, `git good --cli status`, `git good --cli conflicts` on a conflicted such path, then `git good --cli conflict --file <raw bytes>` and `--use theirs`
 - Then the exact path is accepted as raw bytes; JSON reports `path` escaped (`raw\xff\nname`) and `path_bytes` as the exact byte array (`conflicts`: `paths` escaped and `path_bytes` in the same order); the conflict resolves and stages that file; arguments that must be text (URLs) are refused with `must be UTF-8`
 Covered by (backend, end-to-end, partial): `show_file_uses_exact_non_utf8_path_bytes`, `conflict_cli_round_trips_non_utf8_path_bytes` (apps/git-good/tests/cli.rs); `conflict_paths_keep_their_exact_bytes` (crates/git/tests/conflict.rs) (status not checked)
 
-## Open spec questions
+## Spec decisions · 2026-11-04
 
-Contradictions and gaps found while writing these cases. Each needs a decision; the affected cases follow the code where the specs disagree, or the proposed contract where marked *Proposed*.
+The owner decided the open spec questions found while writing these cases. Each decision names what users see; the affected cases change with the code that builds it.
 
-1. **View menu.** architecture.md says **Commit details** (`Space`) in one place and **Commit inspector** in another; final-design.md also lists diff layout, density and theme items there. Only final-design.md gives Help › Keyboard shortcuts `?`. (FRM-60 and FRM-53 follow the decided behavior: `Ctrl+R` is Reword.)
-2. **Search Files group.** final-design.md calls it later work; the code and architecture.md ship it.
-3. **Network Cancel location.** architecture.md says the status line (footer); a test name says operation area.
-4. **Branch work called "later".** architecture.md §Branch switching says delete, rename, tracking and tag creation remain later work; they ship.
-5. **Destructive confirmations.** Line discard names its blocks and ranges (CHG-35), and **Discard all tracked changes…**, **Reset here** and **Delete branch** revalidate on confirm (RULE-05); but hunk discard still asks inline with a plain **Discard**, **Delete tag** and **Delete on origin…** list nothing before their primary, and the per-file discard, the stash drop and **Delete on origin…** do not revalidate (CHG-72, STA-25, NET-38). Are those to be built?
-6. **Rebase result and stop band.** Count format `6 commits → 4 · 1 dropped` versus with ` · 1 stop`; stop band chips on line 2 (final design) versus line 3 (architecture, code). Which reopened-stop button label wins when both unstaged files and stop commits exist is unspecified.
-7. **Full file layout slot.** M7 keeps Inline | Side by side disabled in Full file; Local Changes puts Before | After there. Action names differ: **Blame**/**Show attribution**, **Compare with current HEAD**/**Compare with HEAD**, ⋯ menu "File history"/button **History**. `ArrowLeft` back to files and `D`/`F` reader keys are undocumented.
-8. **Preferences.** final-design.md calls it a non-blocking window, architecture.md a modal; **Load avatars from the network** is listed under both General and Appearance; theme order differs; the `settings.json` key list misses `zoom`, `code_font`, `editor`, `sign_tags`, `recent_repositories`, `reopen_last`, `backup_days`, `pull_strategy` and more. The Avatars section still reads as Gravatar-on-by-default.
-9. **Worktrees.** The window offers Prune, Lock… and Unlock (WTR-13, WTR-14); the CLI has none of them.
-10. **CLI drift.** `tag --sign` versus `--sign|--no-sign`; `switch --stash`, worktree `--branch/--create/--at`, submodule `--recorded/--before` are missing from cli.md; `--help` prints `git-good`; no `-h`; `--help` says `clone` "opens" the clone but the CLI only prints a receipt (CLI-C01).
-11. **Signing defaults.** **Sign tags** preference versus `tag.gpgsign`; Sign commits has three modes but the Signing text says it follows `commit.gpgsign`.
-12. **Stale user flows.** user-flows F07 still describes a Stashes window and Restore…; line 32 lists old toolbar menus; the toolbar now holds only Fetch, Pull and Push (FRM-23).
-13. **Unspecified states.** Bare repository UI; the missing-parent incomplete comparison label; operation band first line for merge/cherry-pick/revert; pending labels during Continue/Abort; disabled reasons for Fetch, Push, Merge and Recovery; empty refs-sidebar groups while filtering (spec keeps headers, test expects `No matching refs`).
-14. **Recovery window Refresh.** The Backups and Reflog sources each have a **Refresh** button in code, against "There is no Refresh command".
-15. **Restart and stop drafts.** After quitting at a reopened stop (XCT-01), is the reopened commit's message offered again, and does Local Changes open again on reopen? Are unstaged conflict-block choices (XCT-03) meant to be lost?
-16. **CLI exit codes and `status`.** Every failure exits 1 today and conflicts exit 0. CLI-C03 proposes 0 completed/stopped, 1 failure, 2 usage, 3 refusal, 4 conflict, 5 partial, 130 SIGINT, plus a `status` key in every receipt. Keep conflicts at 0 instead?
-17. **Receipts on unsuccessful exits.** "Failures print nothing on stdout" (CLI section) conflicts with printing a receipt for conflict and partial outcomes (CLI-C06, CLI-C08, CLI-C10). Which wins, and is the receipt schema the same as on success?
-18. **Output write failures.** `println!` panics with exit 101 when stdout is closed, after a mutation already happened; `history` leaves truncated JSON when traversal fails mid-stream (CLI-C09). Should `history` buffer, or end with an error document?
-19. **Argument parsing.** No `--` separator exists and option-shaped positionals are rejected (CLI-C12); an unknown first word launches the GUI on it as a path (CLI-C01). Adopt `--` and a usage error for unknown words?
-20. **JSON stability.** No versioning or "additive only" promise exists for receipt keys (CLI-C02); is `path` (escaped) plus `path_bytes` the rule for every path field, not only `show`?
-21. **Accessibility targets.** Is 125 % zoom required at 720×480 (576×384 logical, below the minimum window) or only at 1440×900 (XCT-22)? Which AccessKit names and descriptions are required for disabled reasons (XCT-19)?
+1. **Docs follow shipped code (questions 1–4, 10, 12).** View › **Commit details** (`Space`); the Search Files group ships; network Cancel sits where the code puts it; branch delete, rename, tracking and tag creation ship; cli.md lists every parsed flag; user-flows F07 and the toolbar list match the stash picker and the shipped toolbar.
+2. **Destructive confirmations (5).** Every destructive action lists what it removes before its primary and reads the repository again on confirm: hunk discard, per-file discard, stash drop, **Delete tag** and **Delete on origin…** join Discard all, Reset and Delete branch (RULE-05). A confirmation never loses an outside edit made while it was open.
+3. **Rebase band (6).** The result reads `6 commits → 4 · 1 dropped · 1 stop` when a step stopped. At a reopened stop with unstaged files, the primary stays **Continue rebase**, with a note that unstaged files stay out of the commit.
+4. **Reader names (7).** Git's short words everywhere: **Blame**, **History**, **Compare with HEAD**.
+5. **Preferences (8).** A modal, as built. The `settings.json` key list in architecture.md is completed.
+6. **CLI parity (9).** Every GUI mutation has a CLI form: `worktree prune|lock|unlock`, `pull`, and hunk and line discard are added, and the GUI/CLI parity tests cover each.
+7. **Signing (11).** Git Good keeps no signing setting of its own. Preferences shows and edits Git's `commit.gpgSign` and `tag.gpgSign` (global or this repository); the Sign checkbox in Commit and New tag stays a per-action choice. Git Good and plain `git` always sign alike.
+8. **Bare repositories (13).** Open read-only: History, refs, Review, blame and file history work; Local Changes, stash, commit, switch, merge and rebase are disabled with *A bare repository has no working files.*
+9. **Refs filter (13).** Groups keep their headers with a count of 0 so the sidebar holds still; when nothing matches anywhere, one *No matching refs* line shows.
+10. **Recovery (14).** No Refresh buttons: Backups and Reflog re-read on focus and on watcher changes, like every other tool window.
+11. **Restart at a stop (15).** Reopening after quitting at a reopened stop opens Local Changes with the reopened commit's message as the draft. Unstaged conflict-block choices are saved like drafts and restored for the same conflict; they are dropped when the file changed outside.
+12. **Exit codes (16).** 0 completed, 1 failure, 2 usage, 3 refused, 4 stopped on conflicts, 5 partial, 130 interrupted. `git good --cli merge x && deploy` never continues into a conflicted tree.
+13. **Receipts (17).** Every exit that inspected or changed the repository prints the same receipt schema with a `status` key (`completed`, `conflict`, `partial`, `refused`). A plain failure prints nothing on stdout and its reason on stderr.
+14. **Output failures (18).** A closed stdout ends quietly with the command's own code and no panic text. `history` streams; a traversal error ends the document with an `error` member, so the output is always valid JSON.
+15. **Command line shape (19).** A bare argument is always a folder: `git good [PATH]` opens the GUI. Commands come after `--cli`: `git good --cli status --repo .`. The repository is always `--repo PATH`; positionals are only a command's own subject (a ref, a file, a URL), and `--` ends options. When PATH does not exist and names a command, Git Good opens no window and exits 2 with *No folder status. Did you mean git good --cli status?* The old forms are not kept.
+16. **JSON stability (20).** Additive only: keys are never renamed or removed; new keys may appear. Every path field comes as `path` (escaped for display) beside `path_bytes` (exact).
+17. **Zoom (21).** 125 % zoom is required from a 900×600 window up (720×480 logical); smaller windows use 100–110 %.
+18. **Accessibility (21).** Through AccessKit every control and row has a name (a history row: subject, author, date; a diff row: line kind and text), and every disabled control gives its disabled reason as its description. A screen-reader user can complete every workflow the keyboard can.
+
+Still open (13): the missing-parent incomplete comparison label; the operation band's first line for merge, cherry-pick and revert; pending labels during Continue and Abort; disabled reasons for Fetch, Push, Merge and Recovery.

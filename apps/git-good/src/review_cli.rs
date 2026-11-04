@@ -1,10 +1,11 @@
 //! Streaming comparison JSON for terminal consumers.
 use gg_engine::review::{ReviewReader, ReviewRequest, ReviewStep};
 use std::{ffi::OsString, io::Write, path::PathBuf};
-pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::error::Error>> {
+pub fn run(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::error::Error>> {
+    let mut args = crate::cli_args::Args::new(args);
     let revision = args
         .next()
-        .ok_or("Usage: git good show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]")?
+        .ok_or("Usage: git good --cli show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]")?
         .into_string()
         .map_err(|_| "Commit revision must be UTF-8")?;
     let mut request = ReviewRequest {
@@ -17,7 +18,7 @@ pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::
     let mut export_side = None;
     let mut output = None;
     while let Some(option) = args.next() {
-        match option.to_str() {
+        match args.option(&option) {
             Some("--export") => {
                 export_side = Some(args.next().ok_or("--export needs before or after")?);
             }
@@ -54,7 +55,7 @@ pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::
             }
             _ => {
                 return Err(
-                    "Usage: git good show <commit> [--repo PATH] [--parent N] [--against REF] [--file PATH] [--export before|after --output PATH]".into(),
+                    "Usage: git good --cli show <commit> [--repo PATH] [--parent N] [--against REF] [--file PATH] [--export before|after --output PATH]".into(),
                 );
             }
         }
@@ -103,14 +104,10 @@ pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::
             let side = side.as_ref().ok_or("Selected side is absent")?;
             let size =
                 crate::export::save(&reader.comparison().path, side, &destination, || false)?;
-            serde_json::to_writer(
-                std::io::stdout().lock(),
-                &serde_json::json!({
-                    "comparison": reader.comparison(), "file": change, "side": which.to_string_lossy(),
-                    "output": destination.to_string_lossy(), "bytes": size
-                }),
-            )?;
-            println!();
+            crate::cli_args::emit(&serde_json::json!({
+                "comparison": reader.comparison(), "file": change, "side": which.to_string_lossy(),
+                "output": destination.to_string_lossy(), "bytes": size
+            }))?;
             return Ok(());
         }
         let diff = gg_git::diff::read(&reader.comparison().path, &change, || false)?;
@@ -121,7 +118,7 @@ pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::
         serde_json::to_writer(&mut out, &change)?;
         write!(out, ",\"diff\":")?;
         serde_json::to_writer(&mut out, &diff)?;
-        writeln!(out, "}}")?;
+        writeln!(out, ",\"status\":\"completed\"}}")?;
         out.flush()?;
         return Ok(());
     }
@@ -132,20 +129,20 @@ pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::
         serde_json::to_string(reader.comparison())?
     )?;
     let mut first = true;
-    loop {
-        match reader.step()? {
-            ReviewStep::Change(change) => {
+    let read = loop {
+        match reader.step() {
+            Ok(ReviewStep::Change(change)) => {
                 if !first {
                     write!(out, ",")?;
                 }
                 serde_json::to_writer(&mut out, &change)?;
                 first = false;
             }
-            ReviewStep::Pending => {}
-            ReviewStep::Complete => break,
+            Ok(ReviewStep::Pending) => {}
+            Ok(ReviewStep::Complete) => break Ok(()),
+            Err(error) => break Err(error.into()),
         }
-    }
-    writeln!(out, "],\"complete\":true}}")?;
-    out.flush()?;
-    Ok(())
+    };
+    write!(out, "]")?;
+    crate::cli_args::end_stream(&mut out, read)
 }

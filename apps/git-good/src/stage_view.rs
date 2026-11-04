@@ -289,6 +289,7 @@ mod tests {
             repository: StatusIdentity {
                 path: "/nonexistent".into(),
                 head: None,
+                head_ref: None,
                 index: String::new(),
                 base_tree: None,
             },

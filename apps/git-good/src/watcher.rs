@@ -41,6 +41,27 @@ impl Changes {
     }
 }
 
+/// Why a watcher did not start.
+#[derive(Debug)]
+pub enum StartError {
+    /// Git could not read the folder as a repository; the history read
+    /// reports that itself.
+    NotRepository(String),
+    /// The system could not watch the repository, such as when inotify is
+    /// out of instances or watches.
+    Unwatchable(String),
+}
+
+impl std::fmt::Display for StartError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotRepository(error) | Self::Unwatchable(error) => f.write_str(error),
+        }
+    }
+}
+
+impl std::error::Error for StartError {}
+
 /// Where the repository keeps its files.
 #[derive(Clone, Debug)]
 pub struct Layout {
@@ -142,13 +163,13 @@ impl Watcher {
     /// Watch the repository at `workdir`; `repaint` wakes the window after
     /// each event so a frame drains it. That frame asks for another when the
     /// batch will settle ([`Watcher::settles_in`]).
-    pub fn start(workdir: &Path, repaint: impl Fn() + Send + 'static) -> Result<Self, String> {
-        let layout = layout(workdir)?;
+    pub fn start(workdir: &Path, repaint: impl Fn() + Send + 'static) -> Result<Self, StartError> {
+        let layout = layout(workdir).map_err(StartError::NotRepository)?;
         let (sender, receiver) = channel();
         #[cfg(target_os = "linux")]
-        let inner = linux::start(layout, sender, repaint)?;
+        let inner = linux::start(layout, sender, repaint).map_err(StartError::Unwatchable)?;
         #[cfg(not(target_os = "linux"))]
-        let inner = with_notify(layout, sender, repaint)?;
+        let inner = with_notify(layout, sender, repaint).map_err(StartError::Unwatchable)?;
         Ok(Self {
             _inner: inner,
             receiver,
