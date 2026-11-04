@@ -3997,8 +3997,13 @@ mod tests {
             button_pos(&output, "Discard").ok_or("missing Discard button")? + egui::vec2(4.0, 4.0);
         click(&ctx, &mut view, 1120.0, discard);
         pump(&ctx, &mut view, 1120.0, |view| {
-            !view.stage.mutating() && view.complete && !view.replacing && view.lists[0].count == 0
+            view.stage.error().is_some()
+                || (!view.stage.mutating()
+                    && view.complete
+                    && !view.replacing
+                    && view.lists[0].count == 0)
         });
+        assert_eq!(view.stage.error(), None, "the discard failed");
         assert_eq!(std::fs::read(p.join("a"))?, b"base\n");
         assert_eq!(std::fs::read(p.join("e"))?, b"base\n");
         assert_eq!(

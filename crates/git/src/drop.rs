@@ -254,11 +254,31 @@ fn replace(temp: &Path, full: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Windows: `rename` replaces the file in one step, but fails while another
+/// handle has it open without delete sharing, as a reader, an editor, an
+/// antivirus scan or the search indexer briefly does. Such a share
+/// violation is retried for about a second before it is reported.
 #[cfg(not(unix))]
 fn replace(temp: &Path, full: &Path) -> Result<()> {
-    if full.exists() {
-        std::fs::remove_file(full)?;
+    const SHARING_VIOLATION: i32 = 32;
+    const LOCK_VIOLATION: i32 = 33;
+    let mut wait = std::time::Duration::from_millis(5);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    loop {
+        match std::fs::rename(temp, full) {
+            Ok(()) => return Ok(()),
+            Err(error)
+                if std::time::Instant::now() < deadline
+                    && (error.kind() == std::io::ErrorKind::PermissionDenied
+                        || matches!(
+                            error.raw_os_error(),
+                            Some(SHARING_VIOLATION | LOCK_VIOLATION)
+                        )) =>
+            {
+                std::thread::sleep(wait);
+                wait = (wait * 2).min(std::time::Duration::from_millis(100));
+            }
+            Err(error) => return Err(error.into()),
+        }
     }
-    std::fs::rename(temp, full)?;
-    Ok(())
 }
