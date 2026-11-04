@@ -10882,13 +10882,21 @@ impl Browser {
             self.open_working(ctx);
         }
         self.ctx_width = ctx.content_rect().width();
-        if let Some((changes, first)) = self.watcher.as_mut().and_then(|watcher| watcher.poll()) {
-            self.apply_changes(ctx, changes, first);
-        }
-        // Changes still settling: draw again when they settle, or an idle
-        // window would show them only at the next input.
-        if let Some(wait) = self.watcher.as_ref().and_then(watcher::Watcher::settles_in) {
-            ctx.request_repaint_after(wait);
+        // While a mutation's Git runs, the changes it makes wait for its
+        // result: the refresh after the result reads them, and none starts
+        // between its Git commands (RULE-16). Its worker wakes the window.
+        let mutating =
+            self.operation_worker.is_some() || self.network.is_some() || self.branch.is_some();
+        if !mutating {
+            if let Some((changes, first)) = self.watcher.as_mut().and_then(|watcher| watcher.poll())
+            {
+                self.apply_changes(ctx, changes, first);
+            }
+            // Changes still settling: draw again when they settle, or an idle
+            // window would show them only at the next input.
+            if let Some(wait) = self.watcher.as_ref().and_then(watcher::Watcher::settles_in) {
+                ctx.request_repaint_after(wait);
+            }
         }
         if self.welcome_shown() {
             self.settle_welcome();
@@ -14981,6 +14989,76 @@ mod tests {
             std::fs::read_dir(&store)?.count(),
             0,
             "a commit deletes the draft"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_change_settling_while_a_mutation_runs_waits_for_its_result()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let git = |path: &std::path::Path, args: &[&str]| -> Result<(), String> {
+            let output = std::process::Command::new("git")
+                .arg("-C")
+                .arg(path)
+                .args(args)
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env(
+                    "GIT_CONFIG_GLOBAL",
+                    if cfg!(windows) { "NUL" } else { "/dev/null" },
+                )
+                .output()
+                .map_err(|error| error.to_string())?;
+            if output.status.success() {
+                Ok(())
+            } else {
+                Err(String::from_utf8_lossy(&output.stderr).into_owned())
+            }
+        };
+        let dir = tempfile::tempdir()?;
+        let path = std::fs::canonicalize(dir.path())?;
+        git(&path, &["init", "-q", "-b", "main"])?;
+        git(&path, &["config", "user.name", "Test"])?;
+        git(&path, &["config", "user.email", "test@example.org"])?;
+        std::fs::write(path.join("a"), b"base\n")?;
+        git(&path, &["add", "a"])?;
+        git(&path, &["commit", "-qm", "base"])?;
+        let ctx = egui::Context::default();
+        let mut app = Browser::new(path.clone());
+        let mut frame = |app: &mut Browser| {
+            let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ui| {
+                app.draw_ui(ui)
+            });
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        };
+        app.load(&ctx);
+        // Open and let every read and watcher batch finish.
+        let quiet = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while std::time::Instant::now() < quiet {
+            frame(&mut app);
+        }
+        while app.local_summary_job.is_some() {
+            frame(&mut app);
+        }
+
+        // A mutation runs; a file changes and its batch settles meanwhile.
+        let (_running, rx) = std::sync::mpsc::sync_channel(1);
+        app.operation_worker = Some(rx);
+        std::fs::write(path.join("a"), b"changed\n")?;
+        let settled = std::time::Instant::now() + std::time::Duration::from_millis(1500);
+        while std::time::Instant::now() < settled {
+            frame(&mut app);
+            assert!(
+                app.local_summary_job.is_none(),
+                "no refresh starts between a mutation's Git commands"
+            );
+        }
+
+        // Its result is in: the waiting batch refreshes.
+        app.operation_worker = None;
+        frame(&mut app);
+        assert!(
+            app.local_summary_job.is_some(),
+            "the change is read once the mutation is done"
         );
         Ok(())
     }
