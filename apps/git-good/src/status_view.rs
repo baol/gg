@@ -3988,13 +3988,27 @@ mod tests {
             changes: Vec::new(),
         }]);
         let output = run(&ctx, &mut view, 1120.0, vec![]);
-        let asks = output.shapes.iter().any(|shape| {
-            matches!(&shape.shape, egui::epaint::Shape::Text(text)
-                if text.galley.job.text.contains("from 2 selected files"))
-        });
-        assert!(asks, "the confirmation names the count");
-        let discard =
-            button_pos(&output, "Discard").ok_or("missing Discard button")? + egui::vec2(4.0, 4.0);
+        // The Discard button on the confirmation's own row: the reader may
+        // show other Discard buttons further down.
+        let texts: Vec<(String, egui::Pos2)> = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) => Some((text.galley.job.text.clone(), text.pos)),
+                _ => None,
+            })
+            .collect();
+        let asks = texts
+            .iter()
+            .find(|(text, _)| text.contains("from 2 selected files"))
+            .map(|(_, pos)| *pos)
+            .ok_or("the confirmation names the count")?;
+        let discard = texts
+            .iter()
+            .filter(|(text, pos)| text == "Discard" && (pos.y - asks.y).abs() < 12.0)
+            .map(|(_, pos)| *pos + egui::vec2(4.0, 4.0))
+            .next()
+            .ok_or("missing the confirmation's Discard button")?;
         click(&ctx, &mut view, 1120.0, discard);
         pump(&ctx, &mut view, 1120.0, |view| {
             view.stage.error().is_some()
