@@ -256,6 +256,22 @@ impl gg_engine::HistoryReader for Session {
 }
 
 /// True when a clean-worktree precondition rejected the action.
+/// Which of `ids` name no object in the repository at `path`, read
+/// in-process (no Git process); none when the repository cannot be opened.
+pub fn missing_objects<'a>(
+    path: &std::path::Path,
+    ids: impl IntoIterator<Item = &'a str>,
+) -> Vec<&'a str> {
+    let Ok(repo) = gix::open(path) else {
+        return Vec::new();
+    };
+    ids.into_iter()
+        .filter(|id| {
+            gix::ObjectId::from_hex(id.as_bytes()).map_or(true, |object| !repo.has_object(object))
+        })
+        .collect()
+}
+
 pub fn dirty_tree_error(error: &str) -> bool {
     error.starts_with("Working tree is not clean")
 }

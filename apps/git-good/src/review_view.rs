@@ -264,6 +264,17 @@ impl Review {
     }
 
     /// Take a commit request raised by the attribution strip.
+    /// Where this review is, for Back and Forward: its comparison, subject,
+    /// and the file selected (or about to be).
+    pub fn place(&self) -> (ReviewRequest, String, Option<String>) {
+        let file = self
+            .selected
+            .and_then(|row| self.rows.get(&row))
+            .map(|change| change.path.clone())
+            .or_else(|| self.pending_path.clone());
+        (self.request.clone(), self.subject.clone(), file)
+    }
+
     pub fn take_open_commit(&mut self) -> Option<(String, String)> {
         self.diff.take_open_commit()
     }
