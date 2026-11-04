@@ -15,6 +15,9 @@ pub struct Receipt {
     pub reference: String,
     /// Resolved commit when the merge started.
     pub commit: Option<String>,
+    /// HEAD when the merge started.
+    #[serde(default)]
+    pub before: Option<String>,
     /// How HEAD advanced when the merge completed.
     pub kind: Option<Kind>,
     pub applied: bool,

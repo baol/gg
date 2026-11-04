@@ -473,7 +473,7 @@ Covered by (interaction): `panes_hold_still_while_a_rebase_stop_changes`, `rewri
 Fixture: `fx-branchy`
 Layer: interaction
 - When a switch, a create, a stash-and-switch, a remote-branch checkout, a merge, or a rebase onto runs
-- Then the footer reads, with a spinner, `Switching to feature/login…`, `Creating feature/x…`, `Stashing 3 files and switching to feature/login…`, `Creating other from origin/other…`, `Merging origin/main into main…`, `Rebasing main onto origin/main…`; a merge or rebase that never stops shows no band and finishes with a receipt (`Merged origin/main into main · 3 commits`, `Rebased main onto origin/main`)
+- Then the footer reads, with a spinner, `Switching to feature/login…`, `Creating feature/x…`, `Stashing 3 files and switching to feature/login…`, `Creating other from origin/other…`, `Merging origin/main into main…`, `Rebasing main onto origin/main…`; a merge or rebase that never stops shows no band and finishes with a receipt (`Merged origin/main into main · 3 commits`, `Rebased main onto origin/main`); the receipt shows as soon as Git returns and the commit count, counted afterwards, joins it without restarting its fade (RULE-16)
 Covered by (interaction): `footer_labels_name_the_job_and_its_target`, `the_switcher_runs_the_row_under_the_keyboard_cursor`, `rebase_worker_keeps_frames_rendering_while_a_hook_waits` (apps/git-good/src/main.rs)
 
 ### FRM-75 A blocked switch is amber with Stash and switch

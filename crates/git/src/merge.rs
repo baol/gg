@@ -16,31 +16,23 @@ pub fn fast_forward(path: &Path, reference: &str) -> Result<Receipt, String> {
     merge_with(path, reference, "--ff-only")
 }
 
-/// How many commits `reference` has that HEAD lacks: what a merge of it
-/// brings in (`git rev-list --count HEAD..reference`). Counted in-process,
-/// so the GUI's merge starts only the processes `git good merge` starts
-/// (RULE-16).
-pub fn incoming(path: &Path, reference: &str) -> Result<usize, String> {
-    let reference = reference.trim();
-    if reference.is_empty() || reference.starts_with('-') {
-        return Err("Merge reference must not start with '-'.".into());
-    }
+/// How many commits `commit` has that `before` lacks: what a merge of
+/// `commit` brought in when HEAD was `before` (`git rev-list --count
+/// before..commit`). Counted in-process, after the merge, so the GUI's merge
+/// does only what `git good merge` does before its result shows (RULE-16).
+pub fn brought_in(path: &Path, commit: &str, before: &str) -> Result<usize, String> {
     let count = || -> Result<usize, Box<dyn std::error::Error>> {
         let repo = gix::discover(path)?;
-        let tip = repo
-            .rev_parse_single(reference)?
-            .object()?
-            .peel_to_kind(gix::object::Kind::Commit)?
-            .id;
-        let head = repo.head_id()?.detach();
+        let tip = gix::ObjectId::from_hex(commit.as_bytes())?;
+        let before = gix::ObjectId::from_hex(before.as_bytes())?;
         let mut count = 0;
-        for commit in repo.rev_walk([tip]).with_hidden([head]).all()? {
+        for commit in repo.rev_walk([tip]).with_hidden([before]).all()? {
             commit?;
             count += 1;
         }
         Ok(count)
     };
-    count().map_err(|error| format!("Count incoming commits: {error}"))
+    count().map_err(|error| format!("Count merged commits: {error}"))
 }
 
 fn merge_with(path: &Path, reference: &str, mode: &str) -> Result<Receipt, String> {
@@ -85,6 +77,7 @@ fn merge_with(path: &Path, reference: &str, mode: &str) -> Result<Receipt, Strin
     Ok(Receipt {
         reference: reference.to_string(),
         commit: Some(resolved),
+        before: Some(before),
         kind,
         applied: output.status.success() && !in_progress,
         in_progress,

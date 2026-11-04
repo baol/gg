@@ -1440,10 +1440,22 @@ enum OperationArea {
     },
 }
 
+/// Whether two paths name the same folder as written, ignoring Windows'
+/// verbatim prefix: a canonicalized path reads `\\?\D:\repo`, the one Git
+/// and gix report `D:\repo`. Separators already compare equal.
+fn same_path(a: &std::path::Path, b: &std::path::Path) -> bool {
+    fn plain(path: &std::path::Path) -> std::borrow::Cow<'_, std::path::Path> {
+        match path.to_str().and_then(|text| text.strip_prefix(r"\\?\")) {
+            Some(rest) if !rest.starts_with("UNC") => std::path::PathBuf::from(rest).into(),
+            _ => path.into(),
+        }
+    }
+    a == b || plain(a) == plain(b)
+}
+
 enum OperationOutcome {
-    /// A merge or fast-forward: the receipt, the branch, and how many
-    /// commits it brought in.
-    Merge(gg_engine::merge::Receipt, String, Option<usize>),
+    /// A merge or fast-forward: the receipt and the branch.
+    Merge(gg_engine::merge::Receipt, String),
     /// A rebase of the named branch.
     Rebase(gg_engine::rebase::Receipt, String),
     Recovery {
@@ -1962,6 +1974,8 @@ struct Browser {
     track_dialog: Option<String>,
     stash_dialog: Option<StashDialog>,
     stash_notice: Option<String>,
+    /// A merge's receipt without its commit count, and the count on its way.
+    merge_count: Option<(String, std::sync::mpsc::Receiver<usize>)>,
     mutation: Option<gg_engine::mutation::OperationState>,
     mutation_notice: Option<String>,
     mutation_error: Option<String>,
@@ -2166,6 +2180,7 @@ impl Browser {
             track_dialog: None,
             stash_dialog: None,
             stash_notice: None,
+            merge_count: None,
             notice_seen: None,
             mutation: None,
             mutation_notice: None,
@@ -6471,6 +6486,7 @@ impl Browser {
         self.outcome_details_open = false;
         self.network_notice = None;
         self.stash_notice = None;
+        self.merge_count = None;
         self.branch_warning = None;
         self.operation_worker = None;
         self.operation_owner = OperationOwner::Footer;
@@ -6493,7 +6509,7 @@ impl Browser {
             self.state
                 .history
                 .as_ref()
-                .is_none_or(|history| &history.path != requested)
+                .is_none_or(|history| !same_path(&history.path, requested))
         }) {
             return;
         }
@@ -7313,6 +7329,71 @@ impl Browser {
         self.outcome_details_open = false;
     }
 
+    /// Count what a merge brought in after its receipt shows, so the merge
+    /// itself does only what `git good merge` does (RULE-16); the count joins
+    /// the receipt when it arrives ([`Browser::poll_merge_count`]).
+    fn count_merged(
+        &mut self,
+        ctx: &egui::Context,
+        receipt: &gg_engine::merge::Receipt,
+        summary: String,
+    ) {
+        let (Some(path), Some(commit), Some(before)) = (
+            self.stash_path(),
+            receipt.commit.clone(),
+            receipt.before.clone(),
+        ) else {
+            return;
+        };
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        let repaint = ctx.clone();
+        let started = std::thread::Builder::new()
+            .name("gg-merge-count".into())
+            .spawn(move || {
+                if let Ok(count) = gg_git::merge::brought_in(&path, &commit, &before) {
+                    let _ = tx.send(count);
+                    repaint.request_repaint();
+                }
+            });
+        self.merge_count = started.ok().map(|_| (summary, rx));
+    }
+
+    /// Add the merged commit count to the receipt it belongs to, if that
+    /// receipt is still the one shown.
+    fn poll_merge_count(&mut self) {
+        let Some((summary, rx)) = &self.merge_count else {
+            return;
+        };
+        let count = match rx.try_recv() {
+            Ok(count) => count,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.merge_count = None;
+                return;
+            }
+        };
+        let summary = summary.clone();
+        self.merge_count = None;
+        if count == 0 {
+            return;
+        }
+        let counted = format!("{summary} · {}", operation_band::plural(count, "commit"));
+        if self.mutation_notice.as_ref() == Some(&summary) {
+            self.mutation_notice = Some(counted.clone());
+            // The same receipt, completed: its fade does not restart.
+            if let Some((seen, _)) = &mut self.notice_seen
+                && *seen == summary
+            {
+                *seen = counted.clone();
+            }
+        }
+        if let Some(outcome) = &mut self.outcome
+            && outcome.summary == summary
+        {
+            outcome.summary = counted;
+        }
+    }
+
     fn set_outcome(
         &mut self,
         severity: OutcomeSeverity,
@@ -7530,24 +7611,23 @@ impl Browser {
             self.refresh_local_summary(ctx);
         }
         match outcome {
-            OperationOutcome::Merge(receipt, branch, incoming) => {
-                let commits = incoming
-                    .filter(|count| *count > 0)
-                    .map(|count| format!(" · {}", operation_band::plural(count, "commit")))
-                    .unwrap_or_default();
+            OperationOutcome::Merge(receipt, branch) => {
                 let summary = match receipt.kind {
                     Some(gg_engine::merge::Kind::UpToDate) => {
                         format!("{branch} is already up to date with {}", receipt.reference)
                     }
                     Some(gg_engine::merge::Kind::FastForward) => {
-                        format!("Fast-forwarded {branch} to {}{commits}", receipt.reference)
+                        format!("Fast-forwarded {branch} to {}", receipt.reference)
                     }
-                    _ => format!("Merged {} into {branch}{commits}", receipt.reference),
+                    _ => format!("Merged {} into {branch}", receipt.reference),
                 };
                 // A merge Git stopped is the band's to report.
                 if receipt.conflicts.is_empty() && !receipt.in_progress {
                     self.mutation_notice = Some(summary.clone());
-                    self.set_outcome(OutcomeSeverity::Info, summary, None, None);
+                    self.set_outcome(OutcomeSeverity::Info, summary.clone(), None, None);
+                    if receipt.kind != Some(gg_engine::merge::Kind::UpToDate) {
+                        self.count_merged(ctx, &receipt, summary);
+                    }
                 } else {
                     self.mutation_notice = None;
                 }
@@ -7693,6 +7773,7 @@ impl Browser {
     /// Publish what the branch, network, rewrite and operation workers
     /// reported since the last frame.
     fn poll_jobs(&mut self, ctx: &egui::Context) {
+        self.poll_merge_count();
         if let Some(result) = self.branch.as_ref().and_then(|rx| match rx.try_recv() {
             Ok(result) => Some(result),
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
@@ -8139,9 +8220,8 @@ impl Browser {
         let branch = self.current_branch_name();
         let label = format!("Merging {reference} into {branch}…");
         self.start_operation(ctx, label, move || {
-            let incoming = gg_git::merge::incoming(&path, &reference).ok();
             gg_git::merge::merge(&path, &reference, no_ff)
-                .map(|receipt| OperationOutcome::Merge(receipt, branch, incoming))
+                .map(|receipt| OperationOutcome::Merge(receipt, branch))
         })
     }
 
@@ -8155,9 +8235,8 @@ impl Browser {
         let branch = self.current_branch_name();
         let label = format!("Fast-forwarding {branch} to {reference}…");
         self.start_operation(ctx, label, move || {
-            let incoming = gg_git::merge::incoming(&path, &reference).ok();
             gg_git::merge::fast_forward(&path, &reference)
-                .map(|receipt| OperationOutcome::Merge(receipt, branch, incoming))
+                .map(|receipt| OperationOutcome::Merge(receipt, branch))
         })
     }
 
@@ -9227,7 +9306,7 @@ impl Browser {
             .state
             .history
             .as_ref()
-            .is_some_and(|history| history.path != path);
+            .is_some_and(|history| !same_path(&history.path, &path));
         if switching {
             self.clear_operation_state();
             self.mutation_path = None;
@@ -14608,6 +14687,58 @@ mod tests {
                     .text
                     .contains("Create the first commit before creating a branch.")
         )));
+    }
+
+    #[test]
+    fn a_verbatim_path_names_the_same_repository() {
+        use std::path::Path;
+        assert!(same_path(
+            Path::new(r"\\?\D:\a\repo"),
+            Path::new(r"D:\a\repo")
+        ));
+        assert!(same_path(Path::new("/r/repo"), Path::new("/r/repo")));
+        assert!(!same_path(
+            Path::new(r"\\?\D:\a\repo"),
+            Path::new(r"D:\a\other")
+        ));
+        assert!(!same_path(Path::new("/r/repo"), Path::new("/r/other")));
+    }
+
+    #[test]
+    fn a_merge_count_joins_only_the_receipt_it_belongs_to() {
+        let mut app = Browser::new(std::path::PathBuf::from("."));
+        let summary = "Merged feature into main".to_string();
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        app.merge_count = Some((summary.clone(), rx));
+        app.mutation_notice = Some(summary.clone());
+        app.track_notice();
+        let shown = app.notice_seen.as_ref().map(|(_, at)| *at);
+        app.set_outcome(OutcomeSeverity::Info, summary.clone(), None, None);
+        app.poll_merge_count();
+        assert!(app.merge_count.is_some(), "nothing arrived yet");
+        assert!(tx.send(3).is_ok());
+        app.poll_merge_count();
+        let counted = "Merged feature into main · 3 commits";
+        assert_eq!(app.mutation_notice.as_deref(), Some(counted));
+        assert_eq!(
+            app.outcome.as_ref().map(|o| o.summary.as_str()),
+            Some(counted)
+        );
+        app.track_notice();
+        assert_eq!(
+            app.notice_seen.as_ref().map(|(_, at)| *at),
+            shown,
+            "the fade does not restart"
+        );
+        assert!(app.merge_count.is_none());
+
+        // A later receipt keeps its own text.
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        app.merge_count = Some((summary, rx));
+        app.mutation_notice = Some("Created topic".into());
+        assert!(tx.send(2).is_ok());
+        app.poll_merge_count();
+        assert_eq!(app.mutation_notice.as_deref(), Some("Created topic"));
     }
 
     #[test]

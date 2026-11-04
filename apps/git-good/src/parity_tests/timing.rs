@@ -6,8 +6,9 @@
 //! result is published), not until the background refresh after it ends.
 //! Between polls it sleeps until a worker asks for a repaint, as the
 //! window's event loop does.
-//! The CLI is timed around its handler. Setup, fixture creation and the
-//! quiet time between runs are not timed. A mutation fails when its GUI
+//! The CLI is timed around its handler, after waiting as long as the window
+//! waits to go quiet. Setup, fixture creation and the quiet time between
+//! runs are not timed. A mutation fails when its GUI
 //! median exceeds 1.01 × its CLI median + 2 ms.
 //!
 //! `cargo test --release -p git-good --locked -- --ignored --nocapture
@@ -16,6 +17,9 @@
 //! name contains one of its comma-separated words.
 use super::*;
 use std::time::{Duration, Instant};
+
+/// How long the window stays quiet before its timed run ([`Gui::quiet`]).
+const QUIET: Duration = Duration::from_millis(800);
 
 /// The timed GUI call, prepared by untimed setup.
 type GuiRun = Box<dyn FnOnce(&mut Gui) -> Result>;
@@ -422,6 +426,10 @@ fn time_cli(case: &Case) -> Result<Duration> {
     let run = (case.cli)(&fixture)?;
     // Both sides hold a recording, so both pay its bookkeeping.
     let _recording = recording(&fixture);
+    // The GUI's run starts after the window went quiet; a Git process
+    // started right after the setup's runs at a different speed, so the CLI
+    // waits as long.
+    std::thread::sleep(QUIET);
     let started = Instant::now();
     run()?;
     Ok(started.elapsed())

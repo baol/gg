@@ -59,10 +59,14 @@ fn fast_forward_and_up_to_date() -> Result {
     git(p, &["commit", "-qm", "feature"])?;
     git(p, &["switch", "-q", "main"])?;
     let base = head(p)?;
-    assert_eq!(gg_git::merge::incoming(p, "feature")?, 1);
-
     let receipt = gg_git::merge::merge(p, "feature", false)?;
-    assert_eq!(gg_git::merge::incoming(p, "feature")?, 0);
+    let (commit, before) = (
+        receipt.commit.clone().ok_or("no commit")?,
+        receipt.before.clone().ok_or("no HEAD before")?,
+    );
+    assert_eq!(before, base);
+    assert_eq!(gg_git::merge::brought_in(p, &commit, &before)?, 1);
+    assert_eq!(gg_git::merge::brought_in(p, &commit, &commit)?, 0);
     assert!(receipt.applied);
     assert!(!receipt.in_progress);
     assert_eq!(receipt.kind, Some(gg_engine::merge::Kind::FastForward));
