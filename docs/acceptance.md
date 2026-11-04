@@ -9,7 +9,7 @@ Each case has an ID (area prefix and number), a fixture, a layer, Given/When/The
 - **Layer:** *product* (a task completes, consequences are clear, work is preserved and recoverable), *interaction* (selection, focus, shortcuts, stale results, narrow layouts), or *visual* (sizes, colors, placement, exact copy). Product cases come first when time is short.
 - **Covered by (kind):** the tests that check the case today and where they run: *backend* (Git-level tests in `crates/`), *interaction* (egui input and geometry tests in `apps/git-good/src`), *end-to-end* (the `git good` binary in `apps/git-good/tests/cli.rs`). *(partial)* means the tests check only part of the case, for example a GUI case backed only by Git-level tests, or a dialog that is rendered but not completed. *Not automated* means no test yet.
 
-Areas: [Frame and toolbar](#frame-and-toolbar) (FRM) · [History and refs](#history-and-refs) (HIS) · [Review and reader](#review-and-reader) (REV) · [Local Changes](#local-changes) (CHG) · [Network](#network) (NET) · [Stash](#stash) (STA) · [Merge, cherry-pick, revert and conflicts](#merge-cherry-pick-revert-and-conflicts) (INT) · [Rewrite and recovery](#rewrite-and-recovery) (RWR) · [Preferences](#preferences) (PRF) · [Worktrees, submodules and LFS](#worktrees-submodules-and-lfs) (WTR, SUB, LFS) · [Signing](#signing) (SIG) · [Repository dialogs](#repository-dialogs) (DLG) · [CLI](#cli) (CLI) · [Shared rules](#shared-rules) (RULE) · [Cross-cutting scenarios](#cross-cutting-scenarios) (XCT) · [CLI contract](#cli-contract) (CLI-C) · [Open spec questions](#open-spec-questions)
+Areas: [Frame and toolbar](#frame-and-toolbar) (FRM) · [History and refs](#history-and-refs) (HIS) · [Review and reader](#review-and-reader) (REV) · [Local Changes](#local-changes) (CHG) · [Network](#network) (NET) · [Stash](#stash) (STA) · [Merge, cherry-pick, revert and conflicts](#merge-cherry-pick-revert-and-conflicts) (INT) · [Rewrite and recovery](#rewrite-and-recovery) (RWR) · [Preferences](#preferences) (PRF) · [Worktrees, submodules and LFS](#worktrees-submodules-and-lfs) (WTR, SUB, LFS) · [Signing](#signing) (SIG) · [Repository dialogs](#repository-dialogs) (DLG) · [CLI](#cli) (CLI) · [Shared rules](#shared-rules) (RULE) · [Cross-cutting scenarios](#cross-cutting-scenarios) (XCT) · [CLI contract](#cli-contract) (CLI-C) · [Spec decisions](#spec-decisions--2026-11-04)
 
 ## Fixtures
 
@@ -2259,7 +2259,7 @@ Layer: product
 - Given **Discard all tracked changes…** is open listing 9 files
 - When another process edits tracked `f.txt` and the user confirms
 - Then nothing is discarded; the list refreshes (`f.txt` added, primary `Discard 10 files, staged and unstaged`), and the notice reads `The repository changed; review the updated list and confirm again.`; a second confirm discards exactly the refreshed list
-- Gap: the per-file **Discard unstaged changes…** confirmation does not revalidate yet (see [open questions](#open-spec-questions))
+- Gap: the per-file **Discard unstaged changes…** confirmation does not revalidate yet (decided: [spec decisions](#spec-decisions--2026-11-04))
 Covered by (interaction, partial): `discard_all_rereads_and_asks_again_after_an_outside_change` (apps/git-good/src/main.rs), `guard_confirms_only_what_the_dialog_showed` (apps/git-good/src/consequence.rs) (Discard all only)
 
 Sources: architecture.md §Remote tracking and network mutations · M4, §History mutations and recovery · M5, operation area / outcome paragraphs (~79–81), Stashes picker (~91), refs context menu (~180), Pull (~184), Preferences (~358–364); final-design.md §Stashes and command table; cli.md §Sync and stash, §Merge, rebase, rewrite, and conflicts; user-flows.md F06–F09. Rebase/interactive rebase and the Recovery/backups/reflog windows are out of scope here.
@@ -2536,7 +2536,7 @@ Layer: product
 - Given **Delete remote branch** for `origin/release` is open naming the last fetched commit
 - When `git fetch` in a terminal moves `origin/release` to a newer commit, and the user confirms
 - Then Git Good does not push; the dialog re-reads and names the new fetched commit, with the notice `The repository changed; review the updated list and confirm again.`; a second confirm deletes with the new lease (NET-28 covers a remote that moved without a local fetch: Git refuses)
-- Gap: **Delete remote branch** does not revalidate yet; confirming pushes with the lease the dialog showed, which Git refuses as in NET-28 (see [open questions](#open-spec-questions))
+- Gap: **Delete remote branch** does not revalidate yet; confirming pushes with the lease the dialog showed, which Git refuses as in NET-28 (decided: [spec decisions](#spec-decisions--2026-11-04))
 Covered by (Not automated)
 
 ## Stash
@@ -2716,7 +2716,7 @@ Layer: product
 - Given the drop confirmation for `stash@{1}` is shown
 - When `git stash drop stash@{0}` runs in a terminal (the entry is now `stash@{0}`) and the user confirms
 - Then nothing is dropped; the picker re-reads, keeps the same entry selected (matched by commit) under its new name `stash@{0}`, and shows `The repository changed; review the updated list and confirm again.`; a second confirm drops that entry, never whichever entry now holds the old index
-- Gap: the drop confirmation does not revalidate yet (see [open questions](#open-spec-questions))
+- Gap: the drop confirmation does not revalidate yet (decided: [spec decisions](#spec-decisions--2026-11-04))
 Covered by (Not automated)
 
 ### STA-26 A stash shows its result at once, at CLI speed
@@ -4722,7 +4722,7 @@ Covered by (interaction): `a_launch_keeps_the_previous_log_and_redacts_and_caps`
 
 ## CLI contract
 
-The contract for scripts using `git good`. Current behavior is stated where it exists; *Proposed* marks behavior awaiting a decision (see [open questions](#open-spec-questions)).
+The contract for scripts using `git good`. Current behavior is stated where it exists; *Proposed* marks behavior awaiting a decision (decided: [spec decisions](#spec-decisions--2026-11-04)).
 
 ### CLI-C01 Output kind per command
 Fixture: `fx-linear`
@@ -4814,28 +4814,27 @@ Layer: product
 - Then the exact path is accepted as raw bytes; JSON reports `path` escaped (`raw\xff\nname`) and `path_bytes` as the exact byte array (`conflicts`: `paths` escaped and `path_bytes` in the same order); the conflict resolves and stages that file; arguments that must be text (URLs) are refused with `must be UTF-8`
 Covered by (backend, end-to-end, partial): `show_file_uses_exact_non_utf8_path_bytes`, `conflict_cli_round_trips_non_utf8_path_bytes` (apps/git-good/tests/cli.rs); `conflict_paths_keep_their_exact_bytes` (crates/git/tests/conflict.rs) (status not checked)
 
-## Open spec questions
+## Spec decisions · 2026-11-04
 
-Contradictions and gaps found while writing these cases. Each needs a decision; the affected cases follow the code where the specs disagree, or the proposed contract where marked *Proposed*.
+The owner decided the open spec questions found while writing these cases. Each decision names what users see; the affected cases change with the code that builds it.
 
-1. **View menu.** architecture.md says **Commit details** (`Space`) in one place and **Commit inspector** in another; final-design.md also lists diff layout, density and theme items there. Only final-design.md gives Help › Keyboard shortcuts `?`. (FRM-60 and FRM-53 follow the decided behavior: `Ctrl+R` is Reword.)
-2. **Search Files group.** final-design.md calls it later work; the code and architecture.md ship it.
-3. **Network Cancel location.** architecture.md says the status line (footer); a test name says operation area.
-4. **Branch work called "later".** architecture.md §Branch switching says delete, rename, tracking and tag creation remain later work; they ship.
-5. **Destructive confirmations.** Line discard names its blocks and ranges (CHG-35), and **Discard all tracked changes…**, **Reset here** and **Delete branch** revalidate on confirm (RULE-05); but hunk discard still asks inline with a plain **Discard**, **Delete tag** and **Delete on origin…** list nothing before their primary, and the per-file discard, the stash drop and **Delete on origin…** do not revalidate (CHG-72, STA-25, NET-38). Are those to be built?
-6. **Rebase result and stop band.** Count format `6 commits → 4 · 1 dropped` versus with ` · 1 stop`; stop band chips on line 2 (final design) versus line 3 (architecture, code). Which reopened-stop button label wins when both unstaged files and stop commits exist is unspecified.
-7. **Full file layout slot.** M7 keeps Inline | Side by side disabled in Full file; Local Changes puts Before | After there. Action names differ: **Blame**/**Show attribution**, **Compare with current HEAD**/**Compare with HEAD**, ⋯ menu "File history"/button **History**. `ArrowLeft` back to files and `D`/`F` reader keys are undocumented.
-8. **Preferences.** final-design.md calls it a non-blocking window, architecture.md a modal; **Load avatars from the network** is listed under both General and Appearance; theme order differs; the `settings.json` key list misses `zoom`, `code_font`, `editor`, `sign_tags`, `recent_repositories`, `reopen_last`, `backup_days`, `pull_strategy` and more. The Avatars section still reads as Gravatar-on-by-default.
-9. **Worktrees.** The window offers Prune, Lock… and Unlock (WTR-13, WTR-14); the CLI has none of them.
-10. **CLI drift.** `tag --sign` versus `--sign|--no-sign`; `switch --stash`, worktree `--branch/--create/--at`, submodule `--recorded/--before` are missing from cli.md; `--help` prints `git-good`; no `-h`; `--help` says `clone` "opens" the clone but the CLI only prints a receipt (CLI-C01).
-11. **Signing defaults.** **Sign tags** preference versus `tag.gpgsign`; Sign commits has three modes but the Signing text says it follows `commit.gpgsign`.
-12. **Stale user flows.** user-flows F07 still describes a Stashes window and Restore…; line 32 lists old toolbar menus; the toolbar now holds only Fetch, Pull and Push (FRM-23).
-13. **Unspecified states.** Bare repository UI; the missing-parent incomplete comparison label; operation band first line for merge/cherry-pick/revert; pending labels during Continue/Abort; disabled reasons for Fetch, Push, Merge and Recovery; empty refs-sidebar groups while filtering (spec keeps headers, test expects `No matching refs`).
-14. **Recovery window Refresh.** The Backups and Reflog sources each have a **Refresh** button in code, against "There is no Refresh command".
-15. **Restart and stop drafts.** After quitting at a reopened stop (XCT-01), is the reopened commit's message offered again, and does Local Changes open again on reopen? Are unstaged conflict-block choices (XCT-03) meant to be lost?
-16. **CLI exit codes and `status`.** Every failure exits 1 today and conflicts exit 0. CLI-C03 proposes 0 completed/stopped, 1 failure, 2 usage, 3 refusal, 4 conflict, 5 partial, 130 SIGINT, plus a `status` key in every receipt. Keep conflicts at 0 instead?
-17. **Receipts on unsuccessful exits.** "Failures print nothing on stdout" (CLI section) conflicts with printing a receipt for conflict and partial outcomes (CLI-C06, CLI-C08, CLI-C10). Which wins, and is the receipt schema the same as on success?
-18. **Output write failures.** `println!` panics with exit 101 when stdout is closed, after a mutation already happened; `history` leaves truncated JSON when traversal fails mid-stream (CLI-C09). Should `history` buffer, or end with an error document?
-19. **Argument parsing.** No `--` separator exists and option-shaped positionals are rejected (CLI-C12); an unknown first word launches the GUI on it as a path (CLI-C01). Adopt `--` and a usage error for unknown words?
-20. **JSON stability.** No versioning or "additive only" promise exists for receipt keys (CLI-C02); is `path` (escaped) plus `path_bytes` the rule for every path field, not only `show`?
-21. **Accessibility targets.** Is 125 % zoom required at 720×480 (576×384 logical, below the minimum window) or only at 1440×900 (XCT-22)? Which AccessKit names and descriptions are required for disabled reasons (XCT-19)?
+1. **Docs follow shipped code (questions 1–4, 10, 12).** View › **Commit details** (`Space`); the Search Files group ships; network Cancel sits where the code puts it; branch delete, rename, tracking and tag creation ship; cli.md lists every parsed flag; user-flows F07 and the toolbar list match the stash picker and the shipped toolbar.
+2. **Destructive confirmations (5).** Every destructive action lists what it removes before its primary and reads the repository again on confirm: hunk discard, per-file discard, stash drop, **Delete tag** and **Delete on origin…** join Discard all, Reset and Delete branch (RULE-05). A confirmation never loses an outside edit made while it was open.
+3. **Rebase band (6).** The result reads `6 commits → 4 · 1 dropped · 1 stop` when a step stopped. At a reopened stop with unstaged files, the primary stays **Continue rebase**, with a note that unstaged files stay out of the commit.
+4. **Reader names (7).** Git's short words everywhere: **Blame**, **History**, **Compare with HEAD**.
+5. **Preferences (8).** A modal, as built. The `settings.json` key list in architecture.md is completed.
+6. **CLI parity (9).** Every GUI mutation has a CLI form: `worktree prune|lock|unlock`, `pull`, and hunk and line discard are added, and the GUI/CLI parity tests cover each.
+7. **Signing (11).** Git Good keeps no signing setting of its own. Preferences shows and edits Git's `commit.gpgSign` and `tag.gpgSign` (global or this repository); the Sign checkbox in Commit and New tag stays a per-action choice. Git Good and plain `git` always sign alike.
+8. **Bare repositories (13).** Open read-only: History, refs, Review, blame and file history work; Local Changes, stash, commit, switch, merge and rebase are disabled with *A bare repository has no working files.*
+9. **Refs filter (13).** Groups keep their headers with a count of 0 so the sidebar holds still; when nothing matches anywhere, one *No matching refs* line shows.
+10. **Recovery (14).** No Refresh buttons: Backups and Reflog re-read on focus and on watcher changes, like every other tool window.
+11. **Restart at a stop (15).** Reopening after quitting at a reopened stop opens Local Changes with the reopened commit's message as the draft. Unstaged conflict-block choices are saved like drafts and restored for the same conflict; they are dropped when the file changed outside.
+12. **Exit codes (16).** 0 completed, 1 failure, 2 usage, 3 refused, 4 stopped on conflicts, 5 partial, 130 interrupted. `git good --cli merge x && deploy` never continues into a conflicted tree.
+13. **Receipts (17).** Every exit that inspected or changed the repository prints the same receipt schema with a `status` key (`completed`, `conflict`, `partial`, `refused`). A plain failure prints nothing on stdout and its reason on stderr.
+14. **Output failures (18).** A closed stdout ends quietly with the command's own code and no panic text. `history` streams; a traversal error ends the document with an `error` member, so the output is always valid JSON.
+15. **Command line shape (19).** A bare argument is always a folder: `git good [PATH]` opens the GUI. Commands come after `--cli`: `git good --cli status --repo .`. The repository is always `--repo PATH`; positionals are only a command's own subject (a ref, a file, a URL), and `--` ends options. When PATH does not exist and names a command, Git Good opens no window and exits 2 with *No folder status. Did you mean git good --cli status?* The old forms are not kept.
+16. **JSON stability (20).** Additive only: keys are never renamed or removed; new keys may appear. Every path field comes as `path` (escaped for display) beside `path_bytes` (exact).
+17. **Zoom (21).** 125 % zoom is required from a 900×600 window up (720×480 logical); smaller windows use 100–110 %.
+18. **Accessibility (21).** Through AccessKit every control and row has a name (a history row: subject, author, date; a diff row: line kind and text), and every disabled control gives its disabled reason as its description. A screen-reader user can complete every workflow the keyboard can.
+
+Still open (13): the missing-parent incomplete comparison label; the operation band's first line for merge, cherry-pick and revert; pending labels during Continue and Abort; disabled reasons for Fetch, Push, Merge and Recovery.
