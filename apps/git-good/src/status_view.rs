@@ -4010,6 +4010,22 @@ mod tests {
             .next()
             .ok_or("missing the confirmation's Discard button")?;
         click(&ctx, &mut view, 1120.0, discard);
+        assert!(
+            view.drop_confirm.is_none(),
+            "the click at {discard:?} did not confirm; picked {}, focus {}, blocked {}, texts {:?}",
+            view.lists[view.focus].picked(),
+            view.focus,
+            view.mutations_blocked(),
+            texts
+                .iter()
+                .filter(|(text, _)| text.contains("Discard") || text.contains("Cancel"))
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            view.stage.mutating() || view.stage.error().is_some() || view.lists[0].count == 0,
+            "the confirmed discard did not start; picked {}",
+            view.lists[view.focus].picked()
+        );
         pump(&ctx, &mut view, 1120.0, |view| {
             view.stage.error().is_some()
                 || (!view.stage.mutating()
