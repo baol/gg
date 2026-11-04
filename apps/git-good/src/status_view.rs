@@ -288,6 +288,8 @@ pub struct StatusView {
     signing_cache: crate::signing_cache::Cache,
     /// The cache generation `signing` came from.
     signing_generation: u64,
+    /// [`StatusView::repository_key`], resolved once.
+    key: std::cell::OnceCell<PathBuf>,
     /// The Sign default to apply once the configuration is known.
     sign_default: Option<crate::settings::SignCommits>,
     sign_commit: bool,
@@ -376,6 +378,7 @@ impl StatusView {
             last_signed: false,
             signing: None,
             signing_cache: Default::default(),
+            key: Default::default(),
             signing_generation: 0,
             sign_default: Some(crate::settings::SignCommits::Git),
             sign_commit: false,
@@ -1025,7 +1028,9 @@ impl StatusView {
 
     /// Canonical worktree identity used to keep drafts from crossing repositories.
     pub(crate) fn repository_key(&self) -> PathBuf {
-        std::fs::canonicalize(&self.path).unwrap_or_else(|_| self.path.clone())
+        self.key
+            .get_or_init(|| std::fs::canonicalize(&self.path).unwrap_or_else(|_| self.path.clone()))
+            .clone()
     }
 
     /// Capture the active draft before the workspace is dropped.
@@ -2463,6 +2468,7 @@ mod tests {
             last_signed: false,
             signing: None,
             signing_cache: Default::default(),
+            key: Default::default(),
             signing_generation: 0,
             sign_default: Some(crate::settings::SignCommits::Git),
             sign_commit: false,

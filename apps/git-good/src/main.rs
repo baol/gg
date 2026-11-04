@@ -20,6 +20,7 @@ mod density;
 mod details_view;
 mod diff_view;
 mod diff_worker;
+mod drafts;
 mod editor;
 mod export;
 mod file_history_view;
@@ -1921,6 +1922,8 @@ struct Browser {
     review: Option<review_view::Review>,
     working: Option<status_view::StatusView>,
     working_drafts: std::collections::HashMap<PathBuf, status_view::Draft>,
+    /// The same drafts on disk, so they survive quit and crash (`drafts.rs`).
+    drafts: drafts::Store,
     pending_commit: Option<String>,
     branch: Option<std::sync::mpsc::Receiver<Result<gg_git::branch::Receipt, String>>>,
     branch_label: Option<String>,
@@ -2123,6 +2126,11 @@ impl Browser {
             review: None,
             working: None,
             working_drafts: std::collections::HashMap::new(),
+            drafts: if cfg!(test) {
+                drafts::Store::in_dir(None)
+            } else {
+                drafts::Store::open()
+            },
             pending_commit: None,
             branch: None,
             branch_label: None,
@@ -6428,11 +6436,32 @@ impl Browser {
             self.signing_cache.clone(),
         );
         working.apply_sign_default(self.prefs.sign_commits);
-        if let Some(draft) = self.working_drafts.get(&working.repository_key()).cloned() {
+        let key = working.repository_key();
+        if let Some(draft) = self
+            .working_drafts
+            .get(&key)
+            .cloned()
+            .or_else(|| self.drafts.load(&key))
+        {
             working.restore_draft(draft, ctx);
         }
         self.working = Some(working);
         ctx.request_repaint();
+    }
+
+    /// Write the open Local Changes draft to disk once typing pauses, or at
+    /// once after a commit cleared part of it (`drafts.rs`).
+    fn keep_draft(&mut self, ctx: &egui::Context, committed: bool) {
+        let Some(working) = &self.working else {
+            return;
+        };
+        let key = working.repository_key();
+        let draft = working.capture_draft();
+        if committed {
+            self.drafts.save_now(&key, &draft);
+        } else if let Some(wait) = self.drafts.note(&key, &draft, std::time::Instant::now()) {
+            ctx.request_repaint_after(wait);
+        }
     }
 
     fn close_to_history(&mut self, ctx: &egui::Context) {
@@ -10796,6 +10825,10 @@ impl Browser {
     }
 
     fn draw_ui(&mut self, ui: &mut egui::Ui) {
+        if self.working.is_none() {
+            // Local Changes closed: what it left waiting is written now.
+            self.drafts.flush();
+        }
         // A shortcut pressed with the keyboard on the menu bar leaves the bar
         // and runs, so this comes before any shortcut is read.
         crate::menu_keys::leave_for_shortcut(ui.ctx());
@@ -13035,6 +13068,7 @@ impl Browser {
                 .working
                 .as_mut()
                 .and_then(|working| working.take_commit());
+            self.keep_draft(ctx, committed.is_some());
             if let Some(id) = committed {
                 self.pending_commit = Some(id);
                 // A commit at a rebase stop changes what remains to continue.
@@ -13589,6 +13623,17 @@ impl eframe::App for Browser {
     fn raw_input_hook(&mut self, ctx: &egui::Context, input: &mut egui::RawInput) {
         self.window_input(ctx, input);
         self.prepare_input(input);
+    }
+
+    fn on_exit(&mut self) {
+        if let Some(working) = &self.working {
+            self.drafts.note(
+                &working.repository_key(),
+                &working.capture_draft(),
+                std::time::Instant::now(),
+            );
+        }
+        self.drafts.finish();
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _: &mut eframe::Frame) {
@@ -14819,6 +14864,111 @@ mod tests {
         assert!(
             app.pending.is_none(),
             "the stash's history waited for the pointer to leave History"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_commit_draft_survives_reopening_the_window() -> Result<(), Box<dyn std::error::Error>> {
+        let git = |path: &std::path::Path, args: &[&str]| -> Result<(), String> {
+            let output = std::process::Command::new("git")
+                .arg("-C")
+                .arg(path)
+                .args(args)
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env(
+                    "GIT_CONFIG_GLOBAL",
+                    if cfg!(windows) { "NUL" } else { "/dev/null" },
+                )
+                .output()
+                .map_err(|error| error.to_string())?;
+            if output.status.success() {
+                Ok(())
+            } else {
+                Err(String::from_utf8_lossy(&output.stderr).into_owned())
+            }
+        };
+        let dir = tempfile::tempdir()?;
+        let repo = dir.path().join("repo");
+        let store = dir.path().join("drafts");
+        std::fs::create_dir(&repo)?;
+        git(&repo, &["init", "-q", "-b", "main"])?;
+        git(&repo, &["config", "user.name", "Test"])?;
+        git(&repo, &["config", "user.email", "test@example.org"])?;
+        git(&repo, &["config", "commit.gpgsign", "false"])?;
+        std::fs::write(repo.join("a"), b"base\n")?;
+        git(&repo, &["add", "a"])?;
+        git(&repo, &["commit", "-qm", "base"])?;
+        std::fs::write(repo.join("b"), b"new\n")?;
+        git(&repo, &["add", "b"])?;
+
+        let open = |ctx: &egui::Context| -> Result<Browser, Box<dyn std::error::Error>> {
+            let mut app = Browser::new(repo.clone());
+            app.drafts = drafts::Store::in_dir(Some(store.clone()));
+            app.load(ctx);
+            for _ in 0..400 {
+                let _ = crate::tests::run_ui(ctx, frame_input(1120.0, 740.0, vec![]), |ui| {
+                    app.draw_ui(ui)
+                });
+                if app.pending.is_none() && app.state.history.is_some() {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            app.open_working(ctx);
+            if app.working.is_none() {
+                return Err("Local Changes did not open".into());
+            }
+            Ok(app)
+        };
+        let frame = |app: &mut Browser, ctx: &egui::Context| {
+            let _ = crate::tests::run_ui(ctx, frame_input(1120.0, 740.0, vec![]), |ui| {
+                app.draw_ui(ui)
+            });
+        };
+
+        let ctx = egui::Context::default();
+        let mut app = open(&ctx)?;
+        if let Some(working) = &mut app.working {
+            working.set_draft("Add b\n\nWhy it matters".into());
+        }
+        frame(&mut app, &ctx);
+        let pause = std::time::Instant::now() + drafts::PAUSE;
+        while std::time::Instant::now() < pause {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        frame(&mut app, &ctx);
+        // A crash now loses nothing: the window is dropped without closing.
+        app.drafts.finish();
+        std::mem::forget(app);
+
+        let ctx = egui::Context::default();
+        let mut app = open(&ctx)?;
+        assert_eq!(
+            app.working
+                .as_ref()
+                .map(|working| working.draft().to_string())
+                .as_deref(),
+            Some("Add b\n\nWhy it matters"),
+            "the draft is restored"
+        );
+        for _ in 0..800 {
+            frame(&mut app, &ctx);
+            if let Some(working) = &mut app.working {
+                // Ctrl+Enter, once the lists and signing setup have loaded.
+                working.commit_now(&ctx);
+            }
+            if app.pending_commit.is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(app.pending_commit.is_some(), "the commit did not finish");
+        app.drafts.finish();
+        assert_eq!(
+            std::fs::read_dir(&store)?.count(),
+            0,
+            "a commit deletes the draft"
         );
         Ok(())
     }
