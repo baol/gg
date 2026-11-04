@@ -48,21 +48,17 @@ pub fn run(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::erro
     )?;
     let bytes = path_bytes(&file)?;
     let blame = gg_git::blame::read(&path, &revision, &bytes, lines, &|| false)?;
-    serde_json::to_writer(
-        std::io::stdout().lock(),
-        &serde_json::json!({
-            "operation": "blame",
-            "repository": display_repository(&path),
-            "revision": blame.revision,
-            "path": blame.path,
-            "start_line": blame.start_line,
-            "end_line": blame.end_line,
-            "lines": blame.lines,
-            "complete": blame.complete,
-            "note": blame.note,
-        }),
-    )?;
-    println!();
+    crate::cli_args::emit(&serde_json::json!({
+        "operation": "blame",
+        "repository": display_repository(&path),
+        "revision": blame.revision,
+        "path": blame.path,
+        "start_line": blame.start_line,
+        "end_line": blame.end_line,
+        "lines": blame.lines,
+        "complete": blame.complete,
+        "note": blame.note,
+    }))?;
     Ok(())
 }
 

@@ -12,15 +12,11 @@ pub fn list(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::err
         }
     }
     let snapshot = gg_git::worktree::list(&path)?;
-    serde_json::to_writer(
-        std::io::stdout().lock(),
-        &serde_json::json!({
-            "operation": "worktree list",
-            "repository": display_repository(&path),
-            "worktrees": snapshot.worktrees,
-        }),
-    )?;
-    println!();
+    crate::cli_args::emit(&serde_json::json!({
+        "operation": "worktree list",
+        "repository": display_repository(&path),
+        "worktrees": snapshot.worktrees,
+    }))?;
     Ok(())
 }
 
@@ -73,17 +69,13 @@ pub fn add(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::erro
             at,
         },
     )?;
-    serde_json::to_writer(
-        std::io::stdout().lock(),
-        &serde_json::json!({
-            "operation": "worktree add",
-            "repository": display_repository(&path),
-            "path": receipt.path,
-            "branch": receipt.branch,
-            "head": receipt.head,
-        }),
-    )?;
-    println!();
+    crate::cli_args::emit(&serde_json::json!({
+        "operation": "worktree add",
+        "repository": display_repository(&path),
+        "path": receipt.path,
+        "branch": receipt.branch,
+        "head": receipt.head,
+    }))?;
     Ok(())
 }
 
@@ -101,17 +93,13 @@ pub fn remove(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::e
     }
     let destination = destination.ok_or_else(|| usage().to_string())?;
     let receipt = gg_git::worktree::remove(&path, &destination)?;
-    serde_json::to_writer(
-        std::io::stdout().lock(),
-        &serde_json::json!({
-            "operation": "worktree remove",
-            "repository": display_repository(&path),
-            "path": receipt.path,
-            "branch": receipt.branch,
-            "head": receipt.head,
-        }),
-    )?;
-    println!();
+    crate::cli_args::emit(&serde_json::json!({
+        "operation": "worktree remove",
+        "repository": display_repository(&path),
+        "path": receipt.path,
+        "branch": receipt.branch,
+        "head": receipt.head,
+    }))?;
     Ok(())
 }
 

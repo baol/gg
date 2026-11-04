@@ -22,17 +22,13 @@ pub fn run(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::erro
     }
     let reference = reference.unwrap_or_else(|| "HEAD".into());
     let snapshot = gg_git::reflog::read(&path, &reference)?;
-    serde_json::to_writer(
-        std::io::stdout().lock(),
-        &serde_json::json!({
-            "operation": "reflog",
-            "repository": display_repository(&path),
-            "reference": snapshot.reference,
-            "entries": snapshot.entries,
-            "complete": true,
-        }),
-    )?;
-    println!();
+    crate::cli_args::emit(&serde_json::json!({
+        "operation": "reflog",
+        "repository": display_repository(&path),
+        "reference": snapshot.reference,
+        "entries": snapshot.entries,
+        "complete": true,
+    }))?;
     Ok(())
 }
 

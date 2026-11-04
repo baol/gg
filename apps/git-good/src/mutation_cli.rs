@@ -82,8 +82,7 @@ fn run(
 }
 
 fn write_receipt(receipt: serde_json::Value) -> Result<(), Box<dyn std::error::Error>> {
-    serde_json::to_writer(std::io::stdout().lock(), &receipt)?;
-    println!();
+    crate::cli_args::emit(&receipt)?;
     Ok(())
 }
 

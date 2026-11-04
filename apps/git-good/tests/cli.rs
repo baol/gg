@@ -111,7 +111,7 @@ fn a_failure_prints_the_plain_message() -> Result {
         .args(["history", "extra"])
         .current_dir(dir.path())
         .output()?;
-    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(output.status.code(), Some(2), "a usage error exits 2");
     assert!(output.stdout.is_empty());
     assert_eq!(
         String::from_utf8_lossy(&output.stderr),
@@ -182,6 +182,130 @@ fn double_dash_ends_options() -> Result {
     );
     let json: serde_json::Value = serde_json::from_slice(&output.stdout)?;
     assert_eq!(json["path"], "-x.txt");
+    Ok(())
+}
+
+/// `count` commits on main through fast-import.
+fn many_commits(path: &Path, count: usize) -> Result {
+    use std::io::Write;
+    use std::process::Stdio;
+    let mut child = Command::new("git")
+        .arg("-C")
+        .arg(path)
+        .args(["fast-import", "--quiet"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    {
+        let mut input = child.stdin.take().ok_or("missing fast-import input")?;
+        for i in 0..count {
+            let message = format!("Commit {i} with a subject long enough to fill the pipe");
+            writeln!(
+                input,
+                "commit refs/heads/main\ncommitter Ada <ada@example.org> 1760000000 +0000\ndata {}\n{}\n",
+                message.len(),
+                message
+            )?;
+        }
+    }
+    let import = child.wait_with_output()?;
+    if !import.status.success() {
+        return Err(String::from_utf8_lossy(&import.stderr).into_owned().into());
+    }
+    Ok(())
+}
+
+/// `history | head`: the reader goes away and Git Good ends quietly
+/// (decision 14), with no panic text and its own exit code.
+#[test]
+fn a_closed_stdout_ends_quietly() -> Result {
+    use std::io::Read;
+    use std::process::Stdio;
+    let repo = tempfile::tempdir()?;
+    init(repo.path(), &["-b", "main"])?;
+    many_commits(repo.path(), 3000)?;
+    let mut child = cli(env!("CARGO_BIN_EXE_git-good"))
+        .arg("history")
+        .current_dir(repo.path())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let mut stdout = child.stdout.take().ok_or("missing stdout")?;
+    let mut start = [0; 64];
+    stdout.read_exact(&mut start)?;
+    drop(stdout);
+    let output = child.wait_with_output()?;
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&output.stderr), "");
+    Ok(())
+}
+
+/// A traversal that fails part way still prints one valid JSON document,
+/// ending in `error`, and exits 1 with the reason on stderr.
+#[test]
+fn history_that_fails_mid_stream_ends_with_an_error_member() -> Result {
+    let repo = tempfile::tempdir()?;
+    init(repo.path(), &["-b", "main"])?;
+    many_commits(repo.path(), 5)?;
+    git(repo.path(), &["repack", "-qad"])?;
+    // Unpack every object loose and drop the root commit's: the walk
+    // prints the newer commits, then fails on the root.
+    let root = String::from_utf8(git_output(
+        repo.path(),
+        &["rev-list", "--max-parents=0", "HEAD"],
+    )?)?;
+    let root = root.trim().to_string();
+    let keep = String::from_utf8(git_output(repo.path(), &["rev-list", "HEAD"])?)?;
+    let pack_dir = repo.path().join(".git/objects/pack");
+    let packs = std::fs::read_dir(&pack_dir)?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .collect::<Vec<_>>();
+    let moved = repo.path().join("packs");
+    std::fs::create_dir(&moved)?;
+    for pack in &packs {
+        std::fs::rename(pack, moved.join(pack.file_name().ok_or("pack name")?))?;
+    }
+    for pack in std::fs::read_dir(&moved)? {
+        let pack = pack?.path();
+        if pack.extension().is_some_and(|ext| ext == "pack") {
+            let status = Command::new("git")
+                .arg("-C")
+                .arg(repo.path())
+                .arg("unpack-objects")
+                .arg("-q")
+                .stdin(std::fs::File::open(&pack)?)
+                .status()?;
+            assert!(status.success());
+        }
+    }
+    for id in keep.lines().filter(|id| *id == root) {
+        std::fs::remove_file(
+            repo.path()
+                .join(".git/objects")
+                .join(&id[..2])
+                .join(&id[2..]),
+        )?;
+    }
+    let output = cli(env!("CARGO_BIN_EXE_git-good"))
+        .arg("history")
+        .current_dir(repo.path())
+        .output()?;
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stderr).starts_with("Error: "));
+    let history: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(history["complete"], false);
+    assert_eq!(history["status"], "failed");
+    assert!(
+        history["error"]
+            .as_str()
+            .is_some_and(|error| !error.is_empty())
+    );
+    assert!(
+        history["commits"]
+            .as_array()
+            .is_some_and(|commits| commits.len() < 5)
+    );
     Ok(())
 }
 
@@ -1631,8 +1755,9 @@ fn cherry_pick_cli_applies_conflicts_and_recovers() -> Result {
         .args(["cherry-pick", "other", "--repo"])
         .arg(repo.path())
         .output()?;
-    assert!(out.status.success());
+    assert_eq!(out.status.code(), Some(4), "a conflict stop exits 4");
     let receipt: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(receipt["status"], "conflict");
     assert_eq!(receipt["operation"], "cherry-pick");
     assert_eq!(receipt["applied"], false);
     assert_eq!(receipt["in_progress"], true);
@@ -1758,8 +1883,9 @@ fn merge_cli_fast_forwards_conflicts_and_recovers() -> Result {
         .args(["merge", "conflict", "--repo"])
         .arg(repo.path())
         .output()?;
-    assert!(out.status.success());
+    assert_eq!(out.status.code(), Some(4), "a conflict stop exits 4");
     let receipt: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(receipt["status"], "conflict");
     assert_eq!(receipt["applied"], false);
     assert_eq!(receipt["in_progress"], true);
     assert_eq!(receipt["conflicts"], serde_json::json!(["a"]));
@@ -1873,8 +1999,9 @@ fn rebase_cli_rewrites_records_backup_and_recovers() -> Result {
         .args(["rebase", "main", "--repo"])
         .arg(repo.path())
         .output()?;
-    assert!(out.status.success());
+    assert_eq!(out.status.code(), Some(4), "a conflict stop exits 4");
     let receipt: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(receipt["status"], "conflict");
     assert_eq!(receipt["applied"], false);
     assert_eq!(receipt["in_progress"], true);
     assert_eq!(receipt["conflicts"], serde_json::json!(["a"]));
@@ -1974,6 +2101,10 @@ fn rewrite_cli_rewords_fixes_up_drops_and_edits() -> Result {
     assert_eq!(receipt["applied"], false);
     assert_eq!(receipt["in_progress"], true);
     assert_eq!(receipt["conflicts"], serde_json::json!([]));
+    assert_eq!(
+        receipt["status"], "stopped",
+        "an --edit stop is planned: exit 0"
+    );
     // The reopened commit's changes are staged on its parent; commit them again.
     assert_eq!(text(&["diff", "--cached", "--name-only"])?, "four");
     git(repo.path(), &["commit", "-qm", "four, again"])?;
@@ -2110,8 +2241,9 @@ fn rewrite_cli_reorders_squashes_and_recovers() -> Result {
         ])
         .arg(repo.path())
         .output()?;
-    assert!(out.status.success());
+    assert_eq!(out.status.code(), Some(4), "a conflict stop exits 4");
     let receipt: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(receipt["status"], "conflict");
     assert_eq!(receipt["applied"], false);
     assert_eq!(receipt["in_progress"], true);
     assert_eq!(receipt["conflicts"], serde_json::json!(["x"]));

@@ -4726,55 +4726,55 @@ Covered by (interaction): `a_launch_keeps_the_previous_log_and_redacts_and_caps`
 
 ## CLI contract
 
-The contract for scripts using `git good`. Current behavior is stated where it exists; *Proposed* marks behavior awaiting a decision (decided: [spec decisions](#spec-decisions--2026-11-04)).
+The contract for scripts using `git good --cli`. *Proposed* marks behavior decided but not yet built ([spec decisions](#spec-decisions--2026-11-04)).
 
 ### CLI-C01 Output kind per command
 Fixture: `fx-linear`
 Layer: product
-- Then `--version` prints plain text `git-good <version>` and `--help` plain usage text, both exit 0 without a repository; `git good` with no argument or with a single PATH launches the GUI; every other command (`history`, `refs`, `show`, `status`, `stage`, `unstage`, `commit`, `reflog`, `blame`, `signature`, `switch`, `branch`, `tag`, `reset`, `fetch`, `push`, `clone`, `stash`, `merge`, `rebase`, `rewrite`, `cherry-pick`, `revert`, `conflicts`, `conflict`, `worktree`, `submodule`, `lfs`) prints JSON and never opens a window (`clone` does not open the clone either)
+- Then `--version` prints plain text `git-good <version>` and `--help` (or `-h`) plain usage text, both exit 0 without a repository; `git good` with no argument or with a single FOLDER launches the GUI; every command after `--cli` (`history`, `refs`, `show`, `status`, `stage`, `unstage`, `commit`, `reflog`, `blame`, `signature`, `switch`, `branch`, `tag`, `reset`, `fetch`, `push`, `clone`, `stash`, `merge`, `rebase`, `rewrite`, `cherry-pick`, `revert`, `conflicts`, `conflict`, `worktree`, `submodule`, `lfs`) prints JSON and never opens a window (`clone` does not open the clone either)
 - And a bare first word is always a folder; commands follow `--cli`. A missing folder named like a command (`git good status`) and an unknown word after `--cli` (`git good --cli histroy`) are usage errors and open no window
-Covered by (end-to-end, partial): `version_matches_package_without_a_repository`, `help_lists_every_cli_command` (apps/git-good/tests/cli.rs)
+Covered by (end-to-end, partial): `version_matches_package_without_a_repository`, `help_lists_every_cli_command`, `commands_follow_cli_and_a_bare_word_is_a_folder` (apps/git-good/tests/cli.rs)
 
 ### CLI-C02 JSON framing
 Fixture: every JSON command of CLI-C01 on its usual fixture
 Layer: product
-- Then stdout holds exactly one UTF-8 JSON document followed by a newline and nothing else; progress and warnings for humans go to stderr; keys are snake_case and every receipt names its `operation`; `history` may stream its one document incrementally
-- And *Proposed*: keys and their types are stable; later versions only add keys, so consumers ignore unknown keys
+- Then stdout holds exactly one UTF-8 JSON document followed by a newline and nothing else; progress and warnings for humans go to stderr; keys are snake_case and every receipt names its `operation` and its `status`; `history`, `status` and `show` stream their one document incrementally and end it with `complete` and `status`
+- And keys and their types are stable: later versions only add keys, so consumers ignore unknown keys; every path field comes as `path` (escaped) beside `path_bytes` (exact) (decision 16)
 Covered by (end-to-end, partial): every receipt test in apps/git-good/tests/cli.rs parses stdout as one document, e.g. `sync_cli_clones_fetches_pushes_and_reports_failures`, `stash_cli_lists_pushes_applies_pops_and_drops` (no stability check)
 
 ### CLI-C03 Distinct outcomes
 Fixture: `fx-dirty`, `fx-branchy`, `fx-merge-conflict`, `fx-remote-slow`
 Layer: product
-- Today: success exits 0; every failure exits 1 with `Error: <message>` on stderr and empty stdout; a conflict exits 0 with a receipt `applied: false`, `in_progress: true`, `conflicts: […]`
-- *Proposed*: exit 0 completed (`status: "completed"`, warnings in `warnings`) or stopped as planned (`status: "stopped"`, e.g. a rewrite `--edit` stop); 2 usage error; 3 refusal before any change; 4 conflict (`status: "conflict"`); 5 partial completion (`status: "partial"`); 130 cancelled by SIGINT; 1 any other failure. Usage errors, refusals and failures print nothing on stdout; conflict and partial outcomes print their receipt
-Covered by (Not automated)
+- Then exit 0 completed (`status: "completed"`) or stopped as planned (`status: "stopped"`, e.g. a rewrite `--edit` stop); 2 usage error; 4 conflict (`status: "conflict"`); 1 any other failure, with `Error: <message>` on stderr and nothing on stdout. Ctrl+C ends the process by the signal, which shells report as 130
+- *Proposed* (decided, not yet built; needs failures typed by the Git layer): 3 refusal before any change (`status: "refused"`); 5 partial completion (`status: "partial"`). Until then both exit 1
+Covered by (end-to-end, partial): `a_failure_prints_the_plain_message` (2), `merge_cli_fast_forwards_conflicts_and_recovers`, `rebase_cli_rewrites_records_backup_and_recovers`, `cherry_pick_cli_applies_conflicts_and_recovers`, `rewrite_cli_reorders_squashes_and_recovers` (4, `stopped`) (apps/git-good/tests/cli.rs)
 
 ### CLI-C04 Usage error
 Fixture: `fx-linear`
 Layer: product
 - When `git good --cli merge --skip`, `git good --cli worktree list --bogus`, `git good --cli worktree list --repo`, `git good --cli signature`
-- Then stderr names the problem (`Unknown merge option`, usage line, `--repo needs a path`), stdout is empty, nothing changes; today exit 1, *Proposed* exit 2 (CLI-06, CLI-24, CLI-25)
-Covered by (end-to-end, partial): `merge_cli_fast_forwards_conflicts_and_recovers`, `cherry_pick_cli_applies_conflicts_and_recovers` (apps/git-good/tests/cli.rs) (exit code value not checked)
+- Then stderr names the problem (`Unknown merge option`, usage line, `--repo needs a path`), stdout is empty, nothing changes; exit 2 (CLI-06, CLI-24, CLI-25)
+Covered by (end-to-end, partial): `merge_cli_fast_forwards_conflicts_and_recovers`, `cherry_pick_cli_applies_conflicts_and_recovers` (apps/git-good/tests/cli.rs); `a_failure_prints_the_plain_message` checks exit 2
 
 ### CLI-C05 Refusal
 Fixture: `fx-dirty` with a branch `other`; `fx-reset-collision`
 Layer: product
 - When `git good --cli rebase other`, `git good --cli switch other`, `git good --cli reset --hard c05`
-- Then each refuses before changing anything (repository byte-identical), stderr names the reason and the paths involved, stdout is empty; today exit 1, *Proposed* exit 3
+- Then each refuses before changing anything (repository byte-identical), stderr names the reason and the paths involved, stdout is empty; exit 1 today, *Proposed* exit 3
 Covered by (end-to-end, partial): `rebase_cli_rewrites_records_backup_and_recovers`, `switch_cli_changes_branches_and_reports_dirty_worktrees` (apps/git-good/tests/cli.rs)
 
 ### CLI-C06 Conflict leaves a machine-readable receipt
 Fixture: `fx-branchy` set up so `merge`, `rebase` and `cherry-pick` conflict
 Layer: product
 - When each runs
-- Then stdout carries the receipt with `operation`, `in_progress: true`, `conflicts` (exact paths), and `backup` when one was written (rebase, rewrite); the next steps are `--continue`/`--skip`/`--abort`; today exit 0, *Proposed* exit 4 with `status: "conflict"`
-Covered by (end-to-end, partial): `merge_cli_fast_forwards_conflicts_and_recovers`, `rebase_cli_rewrites_records_backup_and_recovers`, `cherry_pick_cli_applies_conflicts_and_recovers` (apps/git-good/tests/cli.rs) (current shape only)
+- Then stdout carries the receipt with `operation`, `in_progress: true`, `conflicts` (exact paths), and `backup` when one was written (rebase, rewrite); the next steps are `--continue`/`--skip`/`--abort`; exit 4 with `status: "conflict"`
+Covered by (end-to-end, partial): `merge_cli_fast_forwards_conflicts_and_recovers`, `rebase_cli_rewrites_records_backup_and_recovers`, `cherry_pick_cli_applies_conflicts_and_recovers` (apps/git-good/tests/cli.rs)
 
 ### CLI-C07 Cancellation
 Fixture: `fx-remote-slow`
 Layer: product
 - When `git good --cli fetch` receives SIGINT during transfer
-- Then the Git child is terminated and reaped (no orphan process), stdout is empty, stderr says the fetch was cancelled and the repository should be re-read before retrying; *Proposed* exit 130. Today no signal handling exists
+- Then the Git child is terminated and reaped (no orphan process), stdout is empty, stderr says the fetch was cancelled and the repository should be re-read before retrying; the shell reports 130. Today no signal handling exists: the default signal ends Git Good and its Git child together
 Covered by (Not automated)
 
 ### CLI-C08 Partial completion
@@ -4788,8 +4788,9 @@ Covered by (Not automated)
 Fixture: `fx-linear` and `fx-dirty`
 Layer: product
 - When stdout is closed or full (`git good --cli refs >&-`, `git good --cli commit -m x > /dev/full`, `git good --cli history | head -c 10`)
-- Then a read-only command stops promptly and exits nonzero without a panic message; a command that already changed the repository says so on stderr with the identities a script needs (new commit ID, backup ref) and exits with the partial outcome (*Proposed* 5). Today `println!` panics (exit 101) after the change, and `history` leaves truncated JSON when it fails mid-stream
-Covered by (Not automated)
+- Then a closed stdout ends the command quietly, with no panic text, and the exit code of what it already did (0 for a read, the receipt's code for a mutation); a full disk is a plain failure (exit 1, `Error:` on stderr)
+- And a streamed document whose read fails part way still ends as one valid JSON document, with `complete: false`, `status: "failed"` and `error`, and exits 1 with the reason on stderr
+Covered by (end-to-end, partial): `a_closed_stdout_ends_quietly`, `history_that_fails_mid_stream_ends_with_an_error_member` (apps/git-good/tests/cli.rs)
 
 ### CLI-C10 Unsuccessful exits that changed the repository always print state
 Fixture: as CLI-C06 and CLI-C08
@@ -4800,7 +4801,7 @@ Covered by (end-to-end, partial): `rebase_cli_rewrites_records_backup_and_recove
 ### CLI-C11 Paths with spaces
 Fixture: `fx-linear` at `/tmp/a b/fx-linear`, with tracked `dir with space/my file.txt` edited
 Layer: product
-- When `git good --cli status "/tmp/a b/fx-linear" --file "dir with space/my file.txt" --area unstaged`, `git good --cli stage --file "dir with space/my file.txt"`, `git good --cli worktree add "../wt with space" --create x`
+- When `git good --cli status --repo "/tmp/a b/fx-linear" --file "dir with space/my file.txt" --area unstaged`, `git good --cli stage --file "dir with space/my file.txt"`, `git good --cli worktree add "../wt with space" --create x`
 - Then each acts on exactly that path and reports it unchanged in `path`
 Covered by (Not automated)
 

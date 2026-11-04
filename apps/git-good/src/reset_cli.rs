@@ -32,19 +32,15 @@ pub fn run(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::erro
     let commit = commit.ok_or("Reset requires a commit")?;
     let mode = mode.ok_or("Reset requires --soft, --mixed, or --hard")?;
     let receipt = gg_git::reset::reset(&path, &commit, mode)?;
-    serde_json::to_writer(
-        std::io::stdout().lock(),
-        &serde_json::json!({
-            "operation": "reset",
-            "repository": display_repository(&path),
-            "commit": receipt.commit,
-            "mode": receipt.mode,
-            "applied": receipt.applied,
-            "backup": receipt.backup,
-            "complete": true,
-        }),
-    )?;
-    println!();
+    crate::cli_args::emit(&serde_json::json!({
+        "operation": "reset",
+        "repository": display_repository(&path),
+        "commit": receipt.commit,
+        "mode": receipt.mode,
+        "applied": receipt.applied,
+        "backup": receipt.backup,
+        "complete": true,
+    }))?;
     Ok(())
 }
 

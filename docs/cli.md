@@ -6,6 +6,20 @@ Purpose: list `git good` command-line operations.
 
 A missing folder named like a command (`git good status`) opens no window: it fails with *No folder status. Did you mean git good --cli status?* An unknown word after `--cli` fails with *Unknown command …*, and an option before it with *Unknown option …*; `git good -- -dir` opens a folder whose name starts with a dash.
 
+## Results and exit codes
+
+Every receipt carries `status`: `completed`, `stopped` (an operation paused as planned, such as a rewrite `--edit` stop), or `conflict`. `history`, `status` and `show` stream one document and end it with `complete` and `status`; a read that fails part way ends it with `complete: false`, `status: "failed"` and `error`. Keys are only ever added, never renamed or removed; paths come as `path` (escaped for display) beside `path_bytes` (exact).
+
+| Exit | Meaning |
+|---|---|
+| 0 | Completed, or stopped as planned |
+| 1 | Failure; `Error: <message>` on stderr, nothing on stdout |
+| 2 | Usage error: unknown command, option, or missing value |
+| 4 | Stopped on conflicts; the receipt lists them |
+| 130 | Interrupted by Ctrl+C (reported by the shell) |
+
+Refusals before any change (3) and partial completion (5) are decided but still exit 1. A closed stdout (`| head`) ends a command quietly with the code of what it already did.
+
 ## Launch and inspect
 
 ```sh

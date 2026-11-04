@@ -34,15 +34,11 @@ pub fn status(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::e
     let submodule = submodule.ok_or_else(|| usage().to_string())?;
     let bytes = path_bytes(&submodule)?;
     let details = gg_git::submodule::read(&path, &bytes, recorded.as_deref(), before.as_deref())?;
-    serde_json::to_writer(
-        std::io::stdout().lock(),
-        &serde_json::json!({
-            "operation": "submodule status",
-            "repository": display_repository(&path),
-            "submodule": details,
-        }),
-    )?;
-    println!();
+    crate::cli_args::emit(&serde_json::json!({
+        "operation": "submodule status",
+        "repository": display_repository(&path),
+        "submodule": details,
+    }))?;
     Ok(())
 }
 
@@ -61,16 +57,12 @@ pub fn update(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::e
     let submodule = submodule.ok_or_else(|| usage().to_string())?;
     let bytes = path_bytes(&submodule)?;
     let (details, receipt) = gg_git::submodule::update(&path, &bytes)?;
-    serde_json::to_writer(
-        std::io::stdout().lock(),
-        &serde_json::json!({
-            "operation": "submodule update",
-            "repository": display_repository(&path),
-            "submodule": details,
-            "receipt": receipt,
-        }),
-    )?;
-    println!();
+    crate::cli_args::emit(&serde_json::json!({
+        "operation": "submodule update",
+        "repository": display_repository(&path),
+        "submodule": details,
+        "receipt": receipt,
+    }))?;
     Ok(())
 }
 

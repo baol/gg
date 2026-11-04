@@ -67,8 +67,7 @@ pub fn run(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::erro
 }
 
 fn write_receipt(receipt: serde_json::Value) -> Result<(), Box<dyn std::error::Error>> {
-    serde_json::to_writer(std::io::stdout().lock(), &receipt)?;
-    println!();
+    crate::cli_args::emit(&receipt)?;
     Ok(())
 }
 

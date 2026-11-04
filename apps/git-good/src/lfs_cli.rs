@@ -25,16 +25,12 @@ pub fn status(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::e
         Target::Change(change) => gg_git::lfs::read(&path, change)?,
         Target::Working(working) => gg_git::lfs::read_working(&path, working)?,
     };
-    serde_json::to_writer(
-        std::io::stdout().lock(),
-        &serde_json::json!({
-            "operation": "lfs status",
-            "repository": display_repository(&path),
-            "scope": target.scope(),
-            "lfs": details,
-        }),
-    )?;
-    println!();
+    crate::cli_args::emit(&serde_json::json!({
+        "operation": "lfs status",
+        "repository": display_repository(&path),
+        "scope": target.scope(),
+        "lfs": details,
+    }))?;
     Ok(())
 }
 
@@ -44,17 +40,13 @@ pub fn fetch(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::er
         Target::Change(change) => gg_git::lfs::fetch(&path, change)?,
         Target::Working(working) => gg_git::lfs::fetch_working(&path, working)?,
     };
-    serde_json::to_writer(
-        std::io::stdout().lock(),
-        &serde_json::json!({
-            "operation": "lfs fetch",
-            "repository": display_repository(&path),
-            "scope": target.scope(),
-            "lfs": details,
-            "receipt": receipt,
-        }),
-    )?;
-    println!();
+    crate::cli_args::emit(&serde_json::json!({
+        "operation": "lfs fetch",
+        "repository": display_repository(&path),
+        "scope": target.scope(),
+        "lfs": details,
+        "receipt": receipt,
+    }))?;
     Ok(())
 }
 

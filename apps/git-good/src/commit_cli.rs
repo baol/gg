@@ -38,20 +38,16 @@ pub fn run(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::erro
         (false, true) => gg_git::commit::create_signed(&session.identity, &message)?,
         (false, false) => gg_git::commit::create(&session.identity, &message)?,
     };
-    serde_json::to_writer(
-        std::io::stdout().lock(),
-        &serde_json::json!({
-            "operation": if amend { "amend" } else { "commit" },
-            "id": receipt.id,
-            "tree": receipt.tree,
-            "parents": receipt.parents,
-            "signed": receipt.signed,
-            "previous": receipt.previous,
-            "backup": receipt.backup,
-            "warnings": receipt.warnings,
-            "complete": true,
-        }),
-    )?;
-    println!();
+    crate::cli_args::emit(&serde_json::json!({
+        "operation": if amend { "amend" } else { "commit" },
+        "id": receipt.id,
+        "tree": receipt.tree,
+        "parents": receipt.parents,
+        "signed": receipt.signed,
+        "previous": receipt.previous,
+        "backup": receipt.backup,
+        "warnings": receipt.warnings,
+        "complete": true,
+    }))?;
     Ok(())
 }

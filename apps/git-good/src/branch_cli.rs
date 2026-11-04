@@ -42,18 +42,14 @@ pub fn run(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::erro
     } else {
         gg_git::branch::switch(&path, &branch)?
     };
-    serde_json::to_writer(
-        std::io::stdout().lock(),
-        &serde_json::json!({
-            "operation": if receipt.created { "create" } else { "switch" },
-            "branch": receipt.branch,
-            "head": receipt.head,
-            "warnings": receipt.warnings,
-            "stash": receipt.stash,
-            "complete": true,
-        }),
-    )?;
-    println!();
+    crate::cli_args::emit(&serde_json::json!({
+        "operation": if receipt.created { "create" } else { "switch" },
+        "branch": receipt.branch,
+        "head": receipt.head,
+        "warnings": receipt.warnings,
+        "stash": receipt.stash,
+        "complete": true,
+    }))?;
     Ok(())
 }
 
@@ -102,33 +98,26 @@ pub fn manage(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::e
     }
     if delete {
         let receipt = gg_git::branch::delete(&path, &branch, force)?;
-        serde_json::to_writer(
-            std::io::stdout().lock(),
-            &serde_json::json!({
-                "operation": "branch-delete",
-                "branch": receipt.branch,
-                "force": receipt.force,
-                "complete": true,
-            }),
-        )?;
+        crate::cli_args::emit(&serde_json::json!({
+            "operation": "branch-delete",
+            "branch": receipt.branch,
+            "force": receipt.force,
+            "complete": true,
+        }))?;
     } else if create {
         let start = start.as_deref().unwrap_or("HEAD");
         let receipt = gg_git::branch::create_at(&path, &branch, start)?;
-        serde_json::to_writer(
-            std::io::stdout().lock(),
-            &serde_json::json!({
-                "operation": "branch-create",
-                "branch": receipt.branch,
-                "commit": receipt.commit,
-                "complete": true,
-            }),
-        )?;
+        crate::cli_args::emit(&serde_json::json!({
+            "operation": "branch-create",
+            "branch": receipt.branch,
+            "commit": receipt.commit,
+            "complete": true,
+        }))?;
     } else {
         return Err(
             "Usage: git good --cli branch --delete BRANCH [--force] [--repo PATH]\n       git good --cli branch --create NAME [--at REF] [--repo PATH]"
                 .into(),
         );
     }
-    println!();
     Ok(())
 }

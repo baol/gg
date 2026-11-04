@@ -121,13 +121,20 @@ thread_local! {
     static WATCH_FAILS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-/// `Error: <message>` on stderr and exit 1 for every failure (CLI-C01).
+/// Exit with the receipt's code (0, or 4 for a conflict stop). A failure
+/// prints `Error: <message>` on stderr and exits 2 for a usage error, else
+/// 1; stdout closing under the command (`| head`) ends it quietly with the
+/// code of what it already did (decision 12, 14).
 fn main() -> std::process::ExitCode {
     match run() {
-        Ok(()) => std::process::ExitCode::SUCCESS,
+        Ok(()) => std::process::ExitCode::from(cli_args::outcome()),
+        Err(error) if cli_args::closed_output(error.as_ref()) => {
+            std::process::ExitCode::from(cli_args::outcome())
+        }
         Err(error) => {
-            eprintln!("Error: {error}");
-            std::process::ExitCode::FAILURE
+            let message = error.to_string();
+            eprintln!("Error: {message}");
+            std::process::ExitCode::from(cli_args::failure_code(&message))
         }
     }
 }
@@ -328,11 +335,17 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let first = args.next();
     let given = match first.as_ref().and_then(|first| first.to_str()) {
         Some("--version") => {
-            println!("git-good {}", env!("CARGO_PKG_VERSION"));
+            use std::io::Write;
+            writeln!(
+                std::io::stdout().lock(),
+                "git-good {}",
+                env!("CARGO_PKG_VERSION")
+            )?;
             return Ok(());
         }
         Some("--help" | "-h") => {
-            println!("{}", help());
+            use std::io::Write;
+            writeln!(std::io::stdout().lock(), "{}", help())?;
             return Ok(());
         }
         Some("--cli") => {
@@ -463,20 +476,26 @@ fn write_history_json(
         serde_json::to_string(&session.identity.head)?
     )?;
     let mut first = true;
-    while let Some(commit) = session.next_commit()? {
-        if !first {
-            write!(writer, ",")?;
+    let read = loop {
+        match session.next_commit() {
+            Ok(Some(commit)) => {
+                if !first {
+                    write!(writer, ",")?;
+                }
+                serde_json::to_writer(&mut *writer, &commit)?;
+                first = false;
+            }
+            Ok(None) => break Ok(()),
+            Err(error) => break Err(error.into()),
         }
-        serde_json::to_writer(&mut *writer, &commit)?;
-        first = false;
-    }
-    writeln!(
+    };
+    write!(
         writer,
-        "],\"truncated\":false,\"shallow\":{}}}",
+        "],\"truncated\":{},\"shallow\":{}",
+        read.is_err(),
         session.identity.shallow
     )?;
-    writer.flush()?;
-    Ok(())
+    cli_args::end_stream(writer, read)
 }
 
 struct CloneDialog {

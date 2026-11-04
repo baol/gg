@@ -54,11 +54,7 @@ pub fn run(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::erro
             entry: selected.ok_or("Path is absent from the selected status area")?,
         };
         let diff = gg_git::working_diff::read(&request, || false)?;
-        serde_json::to_writer(
-            std::io::stdout().lock(),
-            &serde_json::json!({"comparison":request,"diff":diff}),
-        )?;
-        println!();
+        crate::cli_args::emit(&serde_json::json!({"comparison":request,"diff":diff}))?;
         return Ok(());
     }
     let mut out = std::io::BufWriter::new(std::io::stdout().lock());
@@ -69,7 +65,8 @@ pub fn run(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::erro
     )?;
     out.flush()?;
     let mut first = true;
-    session.scan(&AtomicBool::new(false), |entry| {
+    let mut write_error = None;
+    let scanned = session.scan(&AtomicBool::new(false), |entry| {
         (|| -> Result<(), Box<dyn std::error::Error>> {
             if !first {
                 write!(out, ",")?;
@@ -79,11 +76,17 @@ pub fn run(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::erro
             out.flush()?;
             Ok(())
         })()
-        .map_err(|e| e.to_string())
-    })?;
-    writeln!(out, "],\"complete\":true}}")?;
-    out.flush()?;
-    Ok(())
+        .map_err(|error| {
+            let text = error.to_string();
+            write_error = Some(error);
+            text
+        })
+    });
+    if let Some(error) = write_error {
+        return Err(error);
+    }
+    write!(out, "]")?;
+    crate::cli_args::end_stream(&mut out, scanned.map_err(Into::into))
 }
 
 /// Unstage one observed path, using the same status identity as the UI.
@@ -115,11 +118,9 @@ pub fn unstage(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::
         entry: selected.ok_or("Path is absent from staged status")?,
     };
     gg_git::unstage::file(&request)?;
-    serde_json::to_writer(
-        std::io::stdout().lock(),
+    crate::cli_args::emit(
         &serde_json::json!({"operation":"unstage", "path_bytes":request.entry.path_bytes, "complete":true}),
     )?;
-    println!();
     Ok(())
 }
 
@@ -190,8 +191,7 @@ pub fn stage(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::er
     if !hunks.is_empty() {
         receipt["hunks"] = hunks.len().into();
     }
-    serde_json::to_writer(std::io::stdout().lock(), &receipt)?;
-    println!();
+    crate::cli_args::emit(&receipt)?;
     Ok(())
 }
 

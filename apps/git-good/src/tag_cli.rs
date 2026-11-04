@@ -52,35 +52,27 @@ pub fn run(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::erro
         let message = message.ok_or("Tag creation requires -m MESSAGE")?;
         let signed = sign.unwrap_or_else(|| gg_git::signature::config(&path).tag_signing);
         let receipt = gg_git::tag::create(&path, &tag, &target, &message, signed)?;
-        serde_json::to_writer(
-            std::io::stdout().lock(),
-            &serde_json::json!({
-                "operation": "tag-create",
-                "repository": display_repository(&path),
-                "tag": receipt.tag,
-                "target": receipt.target,
-                "id": receipt.id,
-                "signed": receipt.signed,
-                "complete": true,
-            }),
-        )?;
-        println!();
+        crate::cli_args::emit(&serde_json::json!({
+            "operation": "tag-create",
+            "repository": display_repository(&path),
+            "tag": receipt.tag,
+            "target": receipt.target,
+            "id": receipt.id,
+            "signed": receipt.signed,
+            "complete": true,
+        }))?;
         return Ok(());
     }
     if !delete {
         return Err(usage().into());
     }
     let receipt = gg_git::tag::delete(&path, &tag)?;
-    serde_json::to_writer(
-        std::io::stdout().lock(),
-        &serde_json::json!({
-            "operation": "tag-delete",
-            "repository": display_repository(&path),
-            "tag": receipt.tag,
-            "complete": true,
-        }),
-    )?;
-    println!();
+    crate::cli_args::emit(&serde_json::json!({
+        "operation": "tag-delete",
+        "repository": display_repository(&path),
+        "tag": receipt.tag,
+        "complete": true,
+    }))?;
     Ok(())
 }
 

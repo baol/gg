@@ -27,17 +27,13 @@ pub fn run(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::erro
         None => std::env::current_dir()?,
     })?;
     let receipt = gg_git::init::init(&path, &branch, commit)?;
-    serde_json::to_writer(
-        std::io::stdout().lock(),
-        &serde_json::json!({
-            "operation": "init",
-            "path": receipt.path,
-            "branch": receipt.branch,
-            "head": receipt.head,
-            "files": receipt.files,
-            "complete": true,
-        }),
-    )?;
-    println!();
+    crate::cli_args::emit(&serde_json::json!({
+        "operation": "init",
+        "path": receipt.path,
+        "branch": receipt.branch,
+        "head": receipt.head,
+        "files": receipt.files,
+        "complete": true,
+    }))?;
     Ok(())
 }

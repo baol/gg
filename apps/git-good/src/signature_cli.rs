@@ -11,15 +11,11 @@ pub fn config(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::e
         }
     }
     let config = gg_git::signature::config(&path);
-    serde_json::to_writer(
-        std::io::stdout().lock(),
-        &serde_json::json!({
-            "operation": "signature config",
-            "repository": display_repository(&path),
-            "config": config,
-        }),
-    )?;
-    println!();
+    crate::cli_args::emit(&serde_json::json!({
+        "operation": "signature config",
+        "repository": display_repository(&path),
+        "config": config,
+    }))?;
     Ok(())
 }
 
@@ -42,15 +38,11 @@ pub fn verify(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::e
     }
     let reference = reference.ok_or_else(|| usage().to_string())?;
     let verification = gg_git::signature::verify(&path, &reference)?;
-    serde_json::to_writer(
-        std::io::stdout().lock(),
-        &serde_json::json!({
-            "operation": "signature verify",
-            "repository": display_repository(&path),
-            "verification": verification,
-        }),
-    )?;
-    println!();
+    crate::cli_args::emit(&serde_json::json!({
+        "operation": "signature verify",
+        "repository": display_repository(&path),
+        "verification": verification,
+    }))?;
     Ok(())
 }
 

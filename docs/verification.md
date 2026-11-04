@@ -861,3 +861,13 @@ Linux x86_64 · Rust 1.97.0 · Git 2.43.0 · git-lfs 3.4.1 · disposable Git fix
 - Panic escapes: the `unreachable!()` arms in `merge`, `rebase`, and `rewrite` CLI dispatch and in conflict publishing now return errors. Conflict resolution writes its temporary file with `create_new`, so it never follows a link planted at its name.
 - Checked and not changed: `git blame -- <path>` takes one literal path, not a pathspec (`git blame -- 'a?b'` reports *no such path*), so blame needs no `--literal-pathspecs`. `git switch` runs only on names that pass local-branch validation.
 - No UI layout changed; the screenshot hook recaptures because UI sources changed.
+
+## CLI reshape: --cli, --repo, exit codes, receipts · 2026-11-04
+
+Linux x86_64 · Rust 1.97.0 · Git 2.43.0 · disposable Git fixtures. Decisions 12–16 in [acceptance](acceptance.md#spec-decisions--2026-11-04).
+
+- `cargo fmt --all --check` and `cargo clippy --workspace --all-targets --locked -- -D warnings` passed. `cargo test --workspace --locked` passed except `new_tag_reads_signing_off_the_ui_thread_and_never_tags_unsigned`, which fails in this sandbox before and after the change (its global Git config sets `user.signingkey`).
+- Command line: `commands_follow_cli_and_a_bare_word_is_a_folder` checks *No folder status. Did you mean git good --cli status?*, *Unknown command stat.*, *Unknown option -x.* and `-h`; `double_dash_ends_options` blames a committed `-x.txt` after `--`; `dashes_end_options` (cli_args.rs) checks the parser wrapper. Every CLI test now runs `git-good --cli …` with `--repo`.
+- Exit codes and receipts: `a_failure_prints_the_plain_message` exits 2 for a usage error; the merge, rebase, cherry-pick and rewrite conflict stops exit 4 with `status: "conflict"`; the rewrite `--edit` stop reports `status: "stopped"` and exits 0; `usage_messages_exit_2` (cli_args.rs) classifies the usage messages.
+- Output failures: `a_closed_stdout_ends_quietly` reads 64 bytes of a 3,000-commit `history` and closes the pipe: exit 0, empty stderr (before: `Error: Broken pipe`, exit 1). `history_that_fails_mid_stream_ends_with_an_error_member` removes the root commit's object: stdout is one valid document with `complete: false`, `status: "failed"` and `error`, exit 1.
+- Limitations: refusals (3) and partial completion (5) still exit 1; they need failures typed by the Git layer. Ctrl+C has no handler: the default signal ends Git Good and its Git child, and the shell reports 130.
