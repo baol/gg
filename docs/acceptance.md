@@ -239,11 +239,11 @@ Covered by (interaction): `a_menu_taller_than_the_window_scrolls_by_keys_wheel_a
 
 ### Toolbar
 
-### FRM-23 Toolbar holds only the core commands, in one order everywhere
+### FRM-23 Toolbar holds its commands in one order everywhere
 Fixture: `fx-branchy`
 Layer: interaction
 - When shown in History, Local Changes and Review, wide and narrow
-- Then left to right: refs sidebar toggle, **Changes** tab, **History** tab, **Fetch**, **Pull**, **Push**, then right-aligned branch button and search; there are no New branch, New tag, Merge, Stash changes, Stashes, Interactive rebase or Recovery buttons (FRM-72); icons never overlap, move between views, or extend past the window edge
+- Then left to right: refs sidebar toggle, **Changes** tab, **History** tab, **Fetch**, **Pull**, **Push**, **New branch**, **Stash changes**, **Stashes**, **Interactive rebase from here**, **Recovery**, then right-aligned branch button and search; New tag, Merge into current and Interactive rebase of the current branch have no buttons (FRM-72); icons never overlap, move between views, or extend past the window edge
 Covered by (interaction, partial): `window_toolbar_holds_navigation_and_sync_in_place_across_views_and_widths`, `local_changes_and_history_share_one_navigation_strip_at_every_width`, `commands_off_the_toolbar_keep_their_menu_home_and_search_entry` (apps/git-good/src/main.rs) (History and Local Changes at 720 and 1120 px; Review not checked)
 
 ### FRM-24 Toolbar tooltips name the command and its menu shortcut
@@ -584,7 +584,7 @@ Covered by (interaction, partial): `window_toolbar_holds_navigation_and_sync_in_
 ### FRM-72 Every command is reachable at narrow width through menus and search
 Fixture: `fx-branchy`, `fx-stash`; narrow
 Layer: interaction
-- When each command removed from the toolbar — **New branch…**, **New tag…**, **Merge into current…**, **Stash changes…**, **Stashes…**, **Interactive rebase of current branch…**, **Recovery…** — is looked up by its menu home and by typing its name in search
+- When each command — the toolbar's **New branch…**, **Stash changes…**, **Stashes…** and **Recovery…**, and **New tag…**, **Merge into current…** and **Interactive rebase of current branch…**, which have no button — is looked up by its menu home and by typing its name in search
 - Then each is found in exactly one menu (every menu fits the window, no clipped item) and under search **Actions** with its menu home; both routes open the same dialog or window; a disabled command shows the same reason in both
 Covered by (interaction, partial): `commands_off_the_toolbar_keep_their_menu_home_and_search_entry`, `changes_stashes_opens_the_picker_inside_the_narrow_window`, `repository_recovery_opens_one_window_on_the_last_source` (apps/git-good/src/main.rs) (menu home, search entry and shared reason; menu fit at narrow width and the search route not driven)
 
@@ -919,7 +919,7 @@ Covered by (Not automated)
 ### HIS-38 Toggle inspector with Space
 Fixture: `fx-linear`
 Layer: interaction
-- When Space (or **View › Commit inspector**)
+- When Space (or **View › Commit details**)
 - Then the inspector hides and the list grows; the refs sidebar keeps full height; Space shows it again; the choice persists across launch (`details_visible`)
 Covered by (Not automated)
 

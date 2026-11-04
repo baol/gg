@@ -5762,7 +5762,7 @@ impl Browser {
                     .unless((!ready.has_repo).then_some(no_repo))
                     .checked((self.refs_shown() && sidebar) || self.refs_drawer)
                     .entry(),
-                item("Commit inspector", "Space", FrameCommand::ToggleDetails)
+                item("Commit details", "Space", FrameCommand::ToggleDetails)
                     .unless(idle(ready.has_repo))
                     .checked(details)
                     .entry(),
@@ -21533,7 +21533,7 @@ mod tests {
                 "Forward",
                 "-",
                 "Refs sidebar",
-                "Commit inspector",
+                "Commit details",
                 "-",
                 "Inline diff",
                 "Side-by-side diff",
