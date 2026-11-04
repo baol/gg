@@ -4686,6 +4686,15 @@ Layer: interaction
 - And New tag opens at once, showing the last signing configuration read, and takes the background read when it lands (Sign checked by `tag.gpgsign`, *No signing key is configured.*); Create waits for that read on its worker and refuses to make an unsigned tag. Local Changes reads the configuration the same way; focus and a change to the repository's `config` read it again; the commit worker reads it before committing, as `git good commit` does
 Covered by (interaction): `a_dialog_mutation_runs_on_the_worker_and_its_dialog_waits_for_git`, `new_tag_reads_signing_off_the_ui_thread_and_never_tags_unsigned`, `dialogs_take_typing_at_once_and_answer_enter_and_esc` (apps/git-good/src/main.rs); `a_worker_waits_for_the_read_in_flight_and_views_see_it_once` (apps/git-good/src/signing_cache.rs); `signing_readiness_blocks_the_commit_without_unsigned_fallback` (apps/git-good/src/status_view.rs)
 
+### XCT-33 Undo the last operation
+Fixture: `main` with two commits; a branch `merged` at the first
+Layer: interaction
+- When the user deletes `merged`, the receipt reads `Deleted branch merged` with **Undo**; Undo creates `merged` again at its old tip and reports `Undone: branch merged is back at …`
+- When the user resets `main` hard to its parent, the receipt offers **Undo**; with a file changed, Undo is refused with an error and nothing moves; with a clean tree it restores the old tip and saves the tip it replaces as a backup
+- When the user commits in Local Changes, the status line shows **Undo**; Undo moves `main` back to the commit's parent, keeps the commit's changes staged and the files untouched
+- And only the last operation can be undone: starting another operation forgets the Undo
+Covered by (interaction): `undo_brings_a_deleted_branch_back_at_its_tip`, `undo_of_a_reset_needs_a_clean_tree_and_restores_the_tip`, `a_commit_in_local_changes_offers_undo_to_its_parent`, `undo_of_a_commit_keeps_its_changes_staged` (apps/git-good/src/main.rs)
+
 ### XCT-32 Launches and crashes leave a log
 Fixture: a configuration folder with a `gg/logs/gg.log` from an earlier run
 Layer: product
