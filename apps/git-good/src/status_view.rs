@@ -2714,6 +2714,7 @@ mod tests {
             identity: Some(gg_engine::status::StatusIdentity {
                 path: "/repository".into(),
                 head: Some("a".repeat(40)),
+                head_ref: None,
                 index: "index".into(),
                 base_tree: None,
             }),
@@ -2791,6 +2792,7 @@ mod tests {
             identity: gg_engine::status::StatusIdentity {
                 path: "/repository".into(),
                 head: None,
+                head_ref: None,
                 index: "absent".into(),
                 base_tree: None,
             },

@@ -6,6 +6,10 @@ use std::path::PathBuf;
 pub struct StatusIdentity {
     pub path: PathBuf,
     pub head: Option<String>,
+    /// The ref HEAD names, such as `refs/heads/main`; `None` when detached.
+    /// A switch to another branch at the same commit changes it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head_ref: Option<String>,
     pub index: String,
     /// Tree compared with the index for staged entries. `None` means the HEAD tree.
     #[serde(default, skip_serializing_if = "Option::is_none")]

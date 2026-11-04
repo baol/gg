@@ -388,7 +388,8 @@ pub fn publish(
             Resolution::Base => base,
             Resolution::Ours => ours,
             Resolution::Theirs => theirs,
-            Resolution::Working | Resolution::Deletion => unreachable!(),
+            // Handled above.
+            Resolution::Working | Resolution::Deletion => None,
         }
         .ok_or_else(|| format!("The selected side is absent for {}.", display_path(file)))?;
         if !matches!(entry.mode.as_str(), "100644" | "100755") {
@@ -663,7 +664,11 @@ fn write_working(path: &Path, file: &[u8], bytes: &[u8], mode: &str) -> Result<(
         TEMP.fetch_add(1, Ordering::Relaxed)
     ));
     let result = (|| -> Result<(), std::io::Error> {
-        let mut file = std::fs::File::create(&temp)?;
+        // A new file only: never follow a link planted at the name.
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)?;
         file.write_all(bytes)?;
         file.sync_all()?;
         #[cfg(unix)]

@@ -506,6 +506,13 @@ Layer: interaction
 - Then about 300 ms after the last event the Changes badge shows `1` and Local Changes lists `a.txt`, without waiting for the next input; History is not reloaded; the previous content stays until the new content arrives
 Covered by (interaction): `a_real_repository_reports_a_changed_file`, `a_batch_reports_after_it_settles_or_when_flushed` (apps/git-good/src/watcher.rs); `changes_made_outside_show_in_an_idle_window` (apps/git-good/src/idle_tests.rs)
 
+### FRM-61a A repository that cannot be watched says so
+Fixture: `fx-linear`
+Layer: interaction
+- When the watcher cannot start for the open repository (inotify out of instances)
+- Then a warning reads *Outside changes are not shown automatically: Git Good cannot watch this repository. It re-reads when the window gets focus.* with the system's reason in Details…, once per repository; each time the window gets focus back it reloads the history and status
+Covered by (interaction): `a_repository_that_cannot_be_watched_is_told_once_and_reread_on_focus` (apps/git-good/src/main.rs)
+
 ### FRM-62 External ref change reloads history; objects, logs, locks ignored
 Fixture: `fx-linear`
 Layer: interaction

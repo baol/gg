@@ -313,7 +313,7 @@ fn fetch_inner(
     if let Some(remote) = &details.remote {
         command.arg(remote);
     }
-    command.arg(format!("--include={path}"));
+    command.arg(format!("--include={}", include_pattern(path_bytes)));
     let output = command
         .output()
         .map_err(|error| format!("Could not run git-lfs: {error}"))?;
@@ -438,9 +438,34 @@ pub fn head_pointers(repo: &Path) -> Result<HeadPointers, String> {
     })
 }
 
+/// A `git lfs fetch --include` pattern that names one repository path:
+/// anchored at the root, with the glob characters escaped. LFS splits the
+/// list at every comma, escaped or not, so a comma and a byte that is not
+/// UTF-8 each match as `?`; the pattern then also names the paths that
+/// differ from this one only there, and fetches their objects too.
+pub(crate) fn include_pattern(path: &[u8]) -> String {
+    let mut pattern = String::from("/");
+    for chunk in path.utf8_chunks() {
+        for character in chunk.valid().chars() {
+            match character {
+                ',' => pattern.push('?'),
+                '*' | '?' | '[' | ']' | '\\' | '!' | '#' | '{' | '}' => {
+                    pattern.push('\\');
+                    pattern.push(character);
+                }
+                _ => pattern.push(character),
+            }
+        }
+        for _ in chunk.invalid() {
+            pattern.push('?');
+        }
+    }
+    pattern
+}
+
 /// Fetch the objects of several HEAD pointers in one `git lfs fetch`, then
 /// re-read HEAD's pointers. Working files are not changed.
-pub fn fetch_paths(repo: &Path, paths: &[String]) -> Result<HeadPointers, String> {
+pub fn fetch_paths(repo: &Path, paths: &[Vec<u8>]) -> Result<HeadPointers, String> {
     if paths.is_empty() {
         return Err("Select the objects to fetch.".into());
     }
@@ -452,7 +477,11 @@ pub fn fetch_paths(repo: &Path, paths: &[String]) -> Result<HeadPointers, String
     if let Some(remote) = remote(repo) {
         command.arg(remote);
     }
-    command.arg(format!("--include={}", paths.join(",")));
+    let patterns = paths
+        .iter()
+        .map(|path| include_pattern(path))
+        .collect::<Vec<_>>();
+    command.arg(format!("--include={}", patterns.join(",")));
     let output = command
         .output()
         .map_err(|error| format!("Could not run git-lfs: {error}"))?;

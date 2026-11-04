@@ -440,7 +440,7 @@ impl ListWindow {
         }
     }
 
-    fn fetch(&mut self, paths: Vec<String>, size: u64) {
+    fn fetch(&mut self, paths: Vec<Vec<u8>>, size: u64) {
         let (send, receive) = mpsc::channel();
         let path = self.path.clone();
         let ctx = self.ctx.clone();
@@ -484,7 +484,7 @@ impl ListWindow {
         let batch_size = batch.iter().map(|pointer| pointer.size).sum::<u64>();
         let batch_paths = batch
             .iter()
-            .map(|pointer| pointer.path.clone())
+            .map(|pointer| pointer.path_bytes.clone())
             .collect::<Vec<_>>();
         let mut fetch = false;
         egui::Window::new("LFS objects")

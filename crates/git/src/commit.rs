@@ -559,6 +559,50 @@ fn read_message(path: &Path) -> Result<String> {
     normalize_message(&message)
 }
 
+/// `git hook run` arrived in Git 2.36.
+const HOOK_GIT: (u32, u32) = (2, 36);
+
+/// The `major.minor` of `git --version`, such as `2.34.1` or
+/// `2.45.2.windows.1`.
+pub(crate) fn parse_git_version(text: &str) -> Option<(u32, u32)> {
+    let version = text.trim().strip_prefix("git version ")?;
+    let mut parts = version.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts
+        .next()?
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect::<String>()
+        .parse()
+        .ok()?;
+    Some((major, minor))
+}
+
+/// Refuse hooks before running one on a Git without `git hook`, which would
+/// otherwise fail as an unknown command. Read once per process.
+fn check_hook_git() -> Result<()> {
+    static VERSION: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    let text = VERSION.get_or_init(|| {
+        let output = crate::process::git().arg("--version").output().ok()?;
+        Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    });
+    hook_git_supported(text.as_deref())
+}
+
+pub(crate) fn hook_git_supported(version: Option<&str>) -> Result<()> {
+    let Some(text) = version else {
+        // No version to read: run the hook and report Git's own failure.
+        return Ok(());
+    };
+    match parse_git_version(text) {
+        Some(found) if found < HOOK_GIT => Err(format!(
+            "{text} cannot run commit hooks: Git Good runs them with git hook run, which needs Git 2.36 or later. Update Git, or turn off Run commit hooks in Preferences, and retry. The index and working tree are preserved."
+        )
+        .into()),
+        _ => Ok(()),
+    }
+}
+
 fn run_hook(worktree: &Path, name: &str, args: &[&OsStr]) -> Result<()> {
     run_hook_input(worktree, name, args, None)
 }
@@ -569,8 +613,10 @@ fn run_hook_input(
     args: &[&OsStr],
     input: Option<&[u8]>,
 ) -> Result<()> {
+    check_hook_git()?;
     let mut command = crate::process::git();
     command
+        .user_locale()
         .arg("hook")
         .arg("run")
         .arg("--ignore-missing")
@@ -641,4 +687,28 @@ fn run_hook_input(
         output.status
     )
     .into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hooks_need_git_2_36() {
+        assert_eq!(parse_git_version("git version 2.34.1\n"), Some((2, 34)));
+        assert_eq!(
+            parse_git_version("git version 2.45.2.windows.1"),
+            Some((2, 45))
+        );
+        assert_eq!(parse_git_version("git version 2.36.0.rc1"), Some((2, 36)));
+        let old = hook_git_supported(Some("git version 2.34.1"))
+            .err()
+            .map(|error| error.to_string())
+            .unwrap_or_default();
+        assert!(old.contains("needs Git 2.36 or later"), "{old}");
+        assert!(old.contains("git version 2.34.1"), "{old}");
+        assert!(hook_git_supported(Some("git version 2.36.0")).is_ok());
+        assert!(hook_git_supported(Some("git version 3.0.0")).is_ok());
+        assert!(hook_git_supported(None).is_ok());
+    }
 }

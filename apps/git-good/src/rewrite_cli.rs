@@ -64,7 +64,7 @@ pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::
             "continue" => gg_git::mutation::continue_operation(&path, Operation::Rebase)?,
             "skip" => gg_git::mutation::skip_operation(&path, Operation::Rebase)?,
             "abort" => gg_git::mutation::abort_operation(&path, Operation::Rebase)?,
-            _ => unreachable!(),
+            other => return Err(format!("Unknown action --{other}").into()),
         };
         write_receipt(serde_json::json!({
             "operation": "rewrite",

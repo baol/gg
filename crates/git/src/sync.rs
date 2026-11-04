@@ -341,6 +341,12 @@ fn resolve_remote(
         if name.is_empty() {
             return Err("Remote name is empty.".into());
         }
+        // Git would read it as an option.
+        if name.starts_with('-') {
+            return Err(format!(
+                "Remote name {name} starts with a dash. Name a configured remote."
+            ));
+        }
         return Ok(name.to_string());
     }
     let names = repo

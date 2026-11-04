@@ -32,13 +32,41 @@ pub struct GitCommand {
 
 /// Start building a `git` command. The only production constructor of a
 /// Git process; a test (`git_processes_start_at_the_chokepoint`) keeps it so.
+///
+/// Git writes its messages in English whatever the user's locale: Git Good
+/// tells some failures apart by Git's message (a rejected push, nothing to
+/// stash). The user's character set is kept. [`GitCommand::user_locale`]
+/// restores the user's language for commands that run the user's own
+/// programs, such as hooks.
 pub fn git() -> GitCommand {
-    GitCommand {
-        command: Command::new("git"),
+    let mut command = Command::new("git");
+    english_messages(&mut command);
+    GitCommand { command }
+}
+
+/// `LC_MESSAGES=C` names the message language. `LC_ALL` would override it,
+/// so its value moves to `LC_CTYPE`; `LANGUAGE` is dropped.
+fn english_messages(command: &mut Command) {
+    if let Some(all) = std::env::var_os("LC_ALL").filter(|value| !value.is_empty()) {
+        command.env_remove("LC_ALL").env("LC_CTYPE", all);
     }
+    command.env("LC_MESSAGES", "C").env_remove("LANGUAGE");
 }
 
 impl GitCommand {
+    /// Run with the user's locale as Git Good inherited it, for commands
+    /// whose output is the user's own (hooks): Git Good shows it and reads
+    /// nothing from it.
+    pub fn user_locale(&mut self) -> &mut Self {
+        for name in ["LC_ALL", "LC_CTYPE", "LC_MESSAGES", "LANGUAGE"] {
+            match std::env::var_os(name) {
+                Some(value) => self.command.env(name, value),
+                None => self.command.env_remove(name),
+            };
+        }
+        self
+    }
+
     pub fn arg<S: AsRef<OsStr>>(&mut self, arg: S) -> &mut Self {
         self.command.arg(arg);
         self
@@ -298,5 +326,29 @@ mod tests {
         let after = Recording::start(&[(other.path(), "<other>")]);
         assert!(after.records().is_empty());
         Ok(())
+    }
+
+    fn env_of<'a>(command: &'a GitCommand, name: &str) -> Option<Option<&'a std::ffi::OsStr>> {
+        command
+            .command
+            .get_envs()
+            .find(|(key, _)| *key == std::ffi::OsStr::new(name))
+            .map(|(_, value)| value)
+    }
+
+    #[test]
+    fn git_speaks_english_and_hooks_keep_the_user_locale() {
+        let command = git();
+        assert_eq!(
+            env_of(&command, "LC_MESSAGES"),
+            Some(Some(std::ffi::OsStr::new("C")))
+        );
+        assert_eq!(env_of(&command, "LANGUAGE"), Some(None));
+        let mut hook = git();
+        hook.user_locale();
+        assert_eq!(
+            env_of(&hook, "LC_MESSAGES").flatten(),
+            std::env::var_os("LC_MESSAGES").as_deref()
+        );
     }
 }

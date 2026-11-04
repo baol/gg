@@ -34,7 +34,7 @@ pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::
         let receipt = match action {
             "continue" => gg_git::mutation::continue_operation(&path, Operation::Merge)?,
             "abort" => gg_git::mutation::abort_operation(&path, Operation::Merge)?,
-            _ => unreachable!(),
+            other => return Err(format!("Unknown action --{other}").into()),
         };
         write_receipt(serde_json::json!({
             "operation": "merge",

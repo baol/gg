@@ -23,7 +23,7 @@ curl -L https://github.com/baol/gg/releases/latest/download/git-good-TARGET.tar.
 
 ### From source
 
-Requires Rust 1.95+. Re-run the same command to update:
+Requires Rust 1.95+. Git Good runs Git from PATH; commit hooks need Git 2.36+. Re-run the same command to update:
 
 ```sh
 cargo install --git https://github.com/baol/gg git-good --locked --force

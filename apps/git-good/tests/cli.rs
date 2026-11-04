@@ -99,6 +99,22 @@ fn explicit_path_overrides_cwd_and_failure_uses_stderr() -> Result {
 }
 
 #[test]
+fn a_failure_prints_the_plain_message() -> Result {
+    let dir = tempfile::tempdir()?;
+    let output = Command::new(env!("CARGO_BIN_EXE_git-good"))
+        .args(["history", ".", "extra"])
+        .current_dir(dir.path())
+        .output()?;
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "Error: Use git-good --help for usage\n"
+    );
+    Ok(())
+}
+
+#[test]
 fn json_includes_every_commit_beyond_the_former_cap() -> Result {
     use std::io::Write;
     use std::process::Stdio;

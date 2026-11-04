@@ -322,3 +322,87 @@ fn head_pointers_list_only_lfs_pointers_with_availability() -> Result {
     assert!(gg_git::lfs::fetch_paths(dir.path(), &[]).is_err());
     Ok(())
 }
+
+/// A clone whose LFS objects stay on the origin, for fetch tests; `None`
+/// without git-lfs.
+#[cfg(unix)]
+fn lfs_clone(files: &[&str]) -> Result<Option<(tempfile::TempDir, std::path::PathBuf)>> {
+    let lfs = Command::new("git")
+        .args(["lfs", "version"])
+        .output()
+        .is_ok_and(|output| output.status.success());
+    if !lfs {
+        eprintln!("skipped: git-lfs is not installed");
+        return Ok(None);
+    }
+    let dir = tempfile::tempdir()?;
+    let origin = dir.path().join("origin");
+    std::fs::create_dir_all(&origin)?;
+    git(&origin, &["init", "-q", "-b", "main"])?;
+    git(&origin, &["lfs", "install", "--local"])?;
+    git(&origin, &["lfs", "track", "*.bin"])?;
+    for file in files {
+        let path = origin.join(file);
+        std::fs::create_dir_all(path.parent().ok_or("missing parent")?)?;
+        std::fs::write(path, format!("{file}\n"))?;
+    }
+    git(&origin, &["add", "."])?;
+    git(&origin, &["commit", "-qm", "objects"])?;
+    let clone = dir.path().join("clone");
+    let status = Command::new("git")
+        .arg("clone")
+        .arg("-q")
+        .arg(format!("file://{}", origin.display()))
+        .arg(&clone)
+        .env("GIT_LFS_SKIP_SMUDGE", "1")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .status()?;
+    if !status.success() {
+        return Err("clone failed".into());
+    }
+    git(&clone, &["lfs", "install", "--local"])?;
+    Ok(Some((dir, clone)))
+}
+
+#[cfg(unix)]
+#[test]
+fn fetch_paths_fetches_the_objects_of_the_named_paths() -> Result {
+    let files = [
+        "a*.bin",
+        "ab.bin",
+        "c,d.bin",
+        "d.bin",
+        "e\\f.bin",
+        "ef.bin",
+        "g[1].bin",
+        "g1.bin",
+        "sub/h.bin",
+        "h.bin",
+    ];
+    let Some((_dir, clone)) = lfs_clone(&files)? else {
+        return Ok(());
+    };
+    let chosen = ["a*.bin", "c,d.bin", "e\\f.bin", "g[1].bin", "h.bin"];
+    let paths = chosen
+        .iter()
+        .map(|path| path.as_bytes().to_vec())
+        .collect::<Vec<_>>();
+    let pointers = gg_git::lfs::fetch_paths(&clone, &paths)?;
+    let mut available = pointers
+        .pointers
+        .iter()
+        .filter(|pointer| pointer.available)
+        .map(|pointer| pointer.path.as_str())
+        .collect::<Vec<_>>();
+    available.sort_unstable();
+    let mut expected = chosen.to_vec();
+    expected.sort_unstable();
+    // Display paths escape the backslash.
+    let expected = expected
+        .iter()
+        .map(|path| path.replace('\\', "\\\\"))
+        .collect::<Vec<_>>();
+    assert_eq!(available, expected);
+    Ok(())
+}

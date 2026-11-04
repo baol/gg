@@ -2139,3 +2139,28 @@ fn stage_unstage_and_discard_treat_a_glob_name_literally() -> Result {
     assert_eq!(unstaged(p)?, b"a.txt\0");
     Ok(())
 }
+
+#[test]
+fn validate_refuses_a_switch_to_another_branch_at_the_same_commit() -> Result {
+    let dir = tempfile::tempdir()?;
+    git(dir.path(), &["init", "-q", "-b", "main"])?;
+    std::fs::write(dir.path().join("a"), b"a\n")?;
+    git(dir.path(), &["add", "a"])?;
+    git(dir.path(), &["commit", "-qm", "base"])?;
+    git(dir.path(), &["branch", "other"])?;
+    let identity = gg_git::status::Session::open(dir.path())?.identity;
+    assert_eq!(identity.head_ref.as_deref(), Some("refs/heads/main"));
+    gg_git::status::validate(&identity)?;
+    // The commit and the index stay the same; only the branch changes.
+    git(dir.path(), &["symbolic-ref", "HEAD", "refs/heads/other"])?;
+    assert!(gg_git::status::validate(&identity).is_err());
+    git(dir.path(), &["symbolic-ref", "HEAD", "refs/heads/main"])?;
+    gg_git::status::validate(&identity)?;
+    let head = String::from_utf8(git(dir.path(), &["rev-parse", "HEAD"])?)?;
+    git(
+        dir.path(),
+        &["update-ref", "--no-deref", "HEAD", head.trim()],
+    )?;
+    assert!(gg_git::status::validate(&identity).is_err());
+    Ok(())
+}

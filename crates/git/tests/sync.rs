@@ -217,6 +217,26 @@ fn fetch_reports_missing_and_ambiguous_default_remotes() -> Result {
 }
 
 #[test]
+fn a_remote_name_is_never_read_as_an_option() -> Result {
+    let dir = repo()?;
+    let cancel = no_cancel();
+    let error = match gg_git::sync::fetch(
+        dir.path(),
+        Some("--upload-pack=touch pwned"),
+        false,
+        false,
+        &cancel,
+        &mut |_| {},
+    ) {
+        Ok(_) => return Err("an option-shaped remote unexpectedly fetched".into()),
+        Err(error) => error,
+    };
+    assert!(error.contains("starts with a dash"), "{error}");
+    assert!(!dir.path().join("pwned").exists());
+    Ok(())
+}
+
+#[test]
 fn cancellation_reports_cancel_without_a_receipt() -> Result {
     let remote = bare()?;
     let source = repo()?;

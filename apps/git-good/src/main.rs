@@ -114,7 +114,24 @@ use std::{
     path::{Path, PathBuf},
 };
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[cfg(test)]
+thread_local! {
+    /// Tests: the next watcher start fails, as when inotify is exhausted.
+    static WATCH_FAILS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// `Error: <message>` on stderr and exit 1 for every failure (CLI-C01).
+fn main() -> std::process::ExitCode {
+    match run() {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("Error: {error}");
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args_os().skip(1);
     let first = args.next();
     if first.as_deref() == Some(std::ffi::OsStr::new("--version")) {
@@ -2126,6 +2143,9 @@ struct Browser {
     conflict_counts: std::collections::HashMap<String, usize>,
     /// Watches the open repository; settled changes refresh what they touch.
     watcher: Option<watcher::Watcher>,
+    /// The repository the watcher could not watch: told once, then re-read
+    /// whenever the window gets focus back.
+    unwatched: Option<PathBuf>,
     /// When the history last started loading, so a ref change it already
     /// saw does not load it again.
     last_load: Option<std::time::Instant>,
@@ -2320,6 +2340,7 @@ impl Browser {
             state: state::State::default(),
             pending: None,
             watcher: None,
+            unwatched: None,
             last_load: None,
             rewrite_backup: None,
             rewrite_steps: Default::default(),
@@ -4604,6 +4625,46 @@ impl Browser {
         } else if changes.worktree || changes.index || changes.refs {
             self.refresh_mutation();
             self.refresh_working(ctx);
+        }
+    }
+
+    /// Watch `path` for outside changes. When the system cannot watch it
+    /// (no inotify instances left, an unsupported file system), say so once
+    /// and re-read on focus instead of showing stale content silently.
+    fn watch(&mut self, ctx: &egui::Context, path: &Path) {
+        let repaint = ctx.clone();
+        #[cfg(test)]
+        let fails = WATCH_FAILS.with(std::cell::Cell::get);
+        #[cfg(not(test))]
+        let fails = false;
+        let started = if fails {
+            Err(watcher::StartError::Unwatchable(
+                "inotify: too many open instances".into(),
+            ))
+        } else {
+            watcher::Watcher::start(path, move || {
+                repaint.request_repaint_after(std::time::Duration::from_millis(350));
+            })
+        };
+        match started {
+            Ok(watcher) => {
+                self.watcher = Some(watcher);
+                self.unwatched = None;
+            }
+            // The history read reports a folder Git cannot read.
+            Err(watcher::StartError::NotRepository(_)) => self.watcher = None,
+            Err(watcher::StartError::Unwatchable(error)) => {
+                self.watcher = None;
+                if self.unwatched.as_deref() != Some(path) {
+                    self.unwatched = Some(path.to_path_buf());
+                    self.set_outcome(
+                        OutcomeSeverity::Warning,
+                        "Outside changes are not shown automatically: Git Good cannot watch this repository. It re-reads when the window gets focus.".into(),
+                        Some(error),
+                        None,
+                    );
+                }
+            }
         }
     }
 
@@ -9611,11 +9672,7 @@ impl Browser {
             .as_ref()
             .is_none_or(|watcher| watcher.workdir != path)
         {
-            let repaint = ctx.clone();
-            self.watcher = watcher::Watcher::start(&path, move || {
-                repaint.request_repaint_after(std::time::Duration::from_millis(350));
-            })
-            .ok();
+            self.watch(ctx, &path);
         }
         let request = stream::Request {
             revision: self.state.filter_revision,
@@ -11290,6 +11347,15 @@ impl Browser {
         let focused = ctx.input(|i| i.focused);
         self.signing_cache.attach(ctx);
         if focused && !self.window_focused {
+            if self.unwatched.is_some() && !mutating {
+                let all = watcher::Changes {
+                    worktree: true,
+                    index: true,
+                    refs: true,
+                    config: true,
+                };
+                self.apply_changes(ctx, all, std::time::Instant::now());
+            }
             self.refresh_local_summary(ctx);
             self.reread_signing();
             // The Worktrees window has no Refresh button: it re-reads when
@@ -19455,6 +19521,45 @@ mod tests {
             events,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn a_repository_that_cannot_be_watched_is_told_once_and_reread_on_focus() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        let path = PathBuf::from("/projects/a-very-long-repository-name");
+        let failing_watch = |app: &mut Browser| {
+            WATCH_FAILS.with(|fails| fails.set(true));
+            app.watch(&ctx, &path);
+            WATCH_FAILS.with(|fails| fails.set(false));
+        };
+        failing_watch(&mut app);
+        assert!(app.watcher.is_none());
+        assert_eq!(app.unwatched.as_deref(), Some(path.as_path()));
+        let outcome = app.outcome.take();
+        assert!(
+            outcome.as_ref().is_some_and(|outcome| {
+                outcome.severity == OutcomeSeverity::Warning
+                    && outcome.summary.contains("cannot watch this repository")
+                    && outcome
+                        .details
+                        .as_deref()
+                        .is_some_and(|details| details.contains("inotify"))
+            }),
+            "the failure is told with its reason"
+        );
+        failing_watch(&mut app);
+        assert!(app.outcome.is_none(), "told once per repository");
+        // Focus back: the window reads the repository again.
+        app.window_focused = false;
+        app.last_load = None;
+        let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        assert!(
+            app.last_load.is_some(),
+            "focus re-reads an unwatched repository"
+        );
     }
 
     #[test]
