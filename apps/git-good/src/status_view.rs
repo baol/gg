@@ -3914,6 +3914,10 @@ mod tests {
         let dir = tempfile::tempdir()?;
         let p = dir.path();
         git(p, &["init", "-q"])?;
+        // As the other Local Changes tests: the discard reads the
+        // repository's config in-process, the status reads run Git without
+        // the system config, so line endings must not depend on the system.
+        git(p, &["config", "core.autocrlf", "false"])?;
         let names = ["a", "b", "c", "d", "e"];
         for name in names {
             std::fs::write(p.join(name), b"base\n")?;
