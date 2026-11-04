@@ -37,11 +37,13 @@ cargo install --path apps/git-good --locked --force
 
 ## Run
 
-Open the current repository (or pass a path):
+Open the current repository (or pass a folder):
 
 ```sh
 git good
 ```
+
+Commands for scripts follow `--cli` and print JSON, for example `git good --cli status --repo .`; see the [CLI reference](docs/cli.md).
 
 ## UI overview
 

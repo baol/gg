@@ -11,19 +11,19 @@ use std::{
 };
 
 pub fn fetch(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::error::Error>> {
-    let mut args = args;
+    let mut args = crate::cli_args::Args::new(args);
     let mut path = std::env::current_dir()?;
     let mut remote = None;
     let mut prune = false;
     while let Some(arg) = args.next() {
-        match arg.to_str() {
+        match args.option(&arg) {
             Some("--repo") => path = PathBuf::from(args.next().ok_or("--repo needs a path")?),
             Some("--prune") if !prune => prune = true,
             Some(value) if value.starts_with("--") => return Err("Unknown fetch option".into()),
             _ if remote.is_none() => {
                 remote = Some(arg.into_string().map_err(|_| "Remote must be UTF-8")?);
             }
-            _ => return Err("Usage: git good fetch [REMOTE] [--prune] [--repo PATH]".into()),
+            _ => return Err("Usage: git good --cli fetch [REMOTE] [--prune] [--repo PATH]".into()),
         }
     }
     let mut progress = progress_writer();
@@ -47,14 +47,14 @@ pub fn fetch(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::er
 }
 
 pub fn push(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::error::Error>> {
-    let mut args = args;
+    let mut args = crate::cli_args::Args::new(args);
     let mut path = std::env::current_dir()?;
     let mut remote = None;
     let mut branch = None;
     let mut set_upstream = false;
     let mut force_with_lease = false;
     while let Some(arg) = args.next() {
-        match arg.to_str() {
+        match args.option(&arg) {
             Some("--repo") => path = PathBuf::from(args.next().ok_or("--repo needs a path")?),
             Some("--set-upstream") if !set_upstream => set_upstream = true,
             Some("--force-with-lease") if !force_with_lease => force_with_lease = true,
@@ -67,7 +67,7 @@ pub fn push(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::err
             }
             _ => {
                 return Err(
-                    "Usage: git good push [REMOTE] [BRANCH] [--set-upstream] [--force-with-lease] [--repo PATH]".into(),
+                    "Usage: git good --cli push [REMOTE] [BRANCH] [--set-upstream] [--force-with-lease] [--repo PATH]".into(),
                 );
             }
         }
@@ -112,14 +112,15 @@ pub fn push(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::err
 pub fn clone(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::error::Error>> {
     let mut url = None;
     let mut destination = None;
-    for arg in args {
-        match arg.to_str() {
+    let mut args = crate::cli_args::Args::new(args);
+    while let Some(arg) = args.next() {
+        match args.option(&arg) {
             Some(value) if value.starts_with("--") => return Err("Unknown clone option".into()),
             _ if url.is_none() => {
                 url = Some(arg.into_string().map_err(|_| "URL must be UTF-8")?);
             }
             _ if destination.is_none() => destination = Some(PathBuf::from(arg)),
-            _ => return Err("Usage: git good clone URL [PATH]".into()),
+            _ => return Err("Usage: git good --cli clone URL [PATH]".into()),
         }
     }
     let url = url.ok_or("Clone requires a repository URL")?;

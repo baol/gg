@@ -7,7 +7,7 @@ use std::{
 pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::error::Error>> {
     let command = args
         .next()
-        .ok_or("Usage: git good stash <list|push|apply|pop|drop> [OPTIONS]")?
+        .ok_or("Usage: git good --cli stash <list|push|apply|pop|drop> [OPTIONS]")?
         .into_string()
         .map_err(|_| "Stash command must be UTF-8")?;
     match command.as_str() {
@@ -16,16 +16,17 @@ pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::
         "apply" => restore(args, false),
         "pop" => restore(args, true),
         "drop" => drop(args),
-        _ => Err("Usage: git good stash <list|push|apply|pop|drop> [OPTIONS]".into()),
+        _ => Err("Usage: git good --cli stash <list|push|apply|pop|drop> [OPTIONS]".into()),
     }
 }
 
-fn list(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::error::Error>> {
+fn list(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::error::Error>> {
+    let mut args = crate::cli_args::Args::new(args);
     let mut path = std::env::current_dir()?;
     while let Some(arg) = args.next() {
-        match arg.to_str() {
+        match args.option(&arg) {
             Some("--repo") => path = PathBuf::from(args.next().ok_or("--repo needs a path")?),
-            _ => return Err("Usage: git good stash list [--repo PATH]".into()),
+            _ => return Err("Usage: git good --cli stash list [--repo PATH]".into()),
         }
     }
     let stashes = gg_git::stash::list(&path)?;
@@ -38,13 +39,14 @@ fn list(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::err
     Ok(())
 }
 
-fn push(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::error::Error>> {
+fn push(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::error::Error>> {
+    let mut args = crate::cli_args::Args::new(args);
     let mut path = std::env::current_dir()?;
     let mut message = None;
     let mut include_untracked = false;
     let mut keep_index = false;
     while let Some(arg) = args.next() {
-        match arg.to_str() {
+        match args.option(&arg) {
             Some("--repo") => path = PathBuf::from(args.next().ok_or("--repo needs a path")?),
             Some("-m" | "--message") if message.is_none() => {
                 message = Some(
@@ -58,7 +60,7 @@ fn push(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::err
             Some("--keep-index") if !keep_index => keep_index = true,
             _ => {
                 return Err(
-                    "Usage: git good stash push [-m MESSAGE] [--include-untracked] [--keep-index] [--repo PATH]"
+                    "Usage: git good --cli stash push [-m MESSAGE] [--include-untracked] [--keep-index] [--repo PATH]"
                         .into(),
                 );
             }
@@ -77,14 +79,15 @@ fn push(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::err
 }
 
 fn restore(
-    mut args: impl Iterator<Item = OsString>,
+    args: impl Iterator<Item = OsString>,
     remove: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let mut args = crate::cli_args::Args::new(args);
     let mut path = std::env::current_dir()?;
     let mut reference = None;
     let mut restore_index = false;
     while let Some(arg) = args.next() {
-        match arg.to_str() {
+        match args.option(&arg) {
             Some("--repo") => path = PathBuf::from(args.next().ok_or("--repo needs a path")?),
             Some("--index") if !restore_index => restore_index = true,
             Some(value) if value.starts_with("--") => {
@@ -98,7 +101,7 @@ fn restore(
             }
             _ => {
                 return Err(
-                    "Usage: git good stash apply|pop [STASH] [--index] [--repo PATH]".into(),
+                    "Usage: git good --cli stash apply|pop [STASH] [--index] [--repo PATH]".into(),
                 );
             }
         }
@@ -121,11 +124,12 @@ fn restore(
     Ok(())
 }
 
-fn drop(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::error::Error>> {
+fn drop(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::error::Error>> {
+    let mut args = crate::cli_args::Args::new(args);
     let mut path = std::env::current_dir()?;
     let mut reference = None;
     while let Some(arg) = args.next() {
-        match arg.to_str() {
+        match args.option(&arg) {
             Some("--repo") => path = PathBuf::from(args.next().ok_or("--repo needs a path")?),
             Some(value) if value.starts_with("--") => return Err("Unknown stash option.".into()),
             _ if reference.is_none() => {
@@ -134,7 +138,7 @@ fn drop(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::err
                         .map_err(|_| "Stash reference must be UTF-8")?,
                 );
             }
-            _ => return Err("Usage: git good stash drop [STASH] [--repo PATH]".into()),
+            _ => return Err("Usage: git good --cli stash drop [STASH] [--repo PATH]".into()),
         }
     }
     let receipt = gg_git::stash::drop(&path, reference.as_deref())?;

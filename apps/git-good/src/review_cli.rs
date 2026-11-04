@@ -1,10 +1,11 @@
 //! Streaming comparison JSON for terminal consumers.
 use gg_engine::review::{ReviewReader, ReviewRequest, ReviewStep};
 use std::{ffi::OsString, io::Write, path::PathBuf};
-pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::error::Error>> {
+pub fn run(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::error::Error>> {
+    let mut args = crate::cli_args::Args::new(args);
     let revision = args
         .next()
-        .ok_or("Usage: git good show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]")?
+        .ok_or("Usage: git good --cli show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]")?
         .into_string()
         .map_err(|_| "Commit revision must be UTF-8")?;
     let mut request = ReviewRequest {
@@ -17,7 +18,7 @@ pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::
     let mut export_side = None;
     let mut output = None;
     while let Some(option) = args.next() {
-        match option.to_str() {
+        match args.option(&option) {
             Some("--export") => {
                 export_side = Some(args.next().ok_or("--export needs before or after")?);
             }
@@ -54,7 +55,7 @@ pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::
             }
             _ => {
                 return Err(
-                    "Usage: git good show <commit> [--repo PATH] [--parent N] [--against REF] [--file PATH] [--export before|after --output PATH]".into(),
+                    "Usage: git good --cli show <commit> [--repo PATH] [--parent N] [--against REF] [--file PATH] [--export before|after --output PATH]".into(),
                 );
             }
         }

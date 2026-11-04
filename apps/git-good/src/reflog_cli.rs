@@ -1,11 +1,12 @@
 //! Read reflog entries as JSON.
 use std::{ffi::OsString, path::Path, path::PathBuf};
 
-pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::error::Error>> {
+pub fn run(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::error::Error>> {
+    let mut args = crate::cli_args::Args::new(args);
     let mut path = std::env::current_dir()?;
     let mut reference = None;
     while let Some(arg) = args.next() {
-        match arg.to_str() {
+        match args.option(&arg) {
             Some("--repo") => path = PathBuf::from(args.next().ok_or("--repo needs a path")?),
             Some(value) if value.starts_with("--") => {
                 return Err("Unknown reflog option".into());
@@ -16,7 +17,7 @@ pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::
                         .map_err(|_| "Reflog reference must be UTF-8")?,
                 );
             }
-            _ => return Err("Usage: git good reflog [REF] [--repo PATH]".into()),
+            _ => return Err("Usage: git good --cli reflog [REF] [--repo PATH]".into()),
         }
     }
     let reference = reference.unwrap_or_else(|| "HEAD".into());

@@ -5,12 +5,13 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub fn list(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::error::Error>> {
+pub fn list(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::error::Error>> {
+    let mut args = crate::cli_args::Args::new(args);
     let mut path = std::env::current_dir()?;
     while let Some(arg) = args.next() {
-        match arg.to_str() {
+        match args.option(&arg) {
             Some("--repo") => path = PathBuf::from(args.next().ok_or("--repo needs a path")?),
-            _ => return Err("Usage: git good conflicts [--repo PATH]".into()),
+            _ => return Err("Usage: git good --cli conflicts [--repo PATH]".into()),
         }
     }
     let paths = gg_git::conflict::unmerged(&path)?;
@@ -28,13 +29,14 @@ pub fn list(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std:
     Ok(())
 }
 
-pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::error::Error>> {
+pub fn run(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::error::Error>> {
+    let mut args = crate::cli_args::Args::new(args);
     let mut path = std::env::current_dir()?;
     let mut file = None;
     let mut side = None;
     let mut stage = false;
     while let Some(arg) = args.next() {
-        match arg.to_str() {
+        match args.option(&arg) {
             Some("--repo") => path = PathBuf::from(args.next().ok_or("--repo needs a path")?),
             Some("--file") => {
                 file = Some(path_bytes(&args.next().ok_or("--file needs a path")?)?);
@@ -51,7 +53,7 @@ pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::
             Some(value) if value.starts_with("--") => return Err("Unknown conflict option".into()),
             _ => {
                 return Err(
-                    "Usage: git good conflict --file PATH [--use ours|theirs|deletion|--stage] [--repo PATH]"
+                    "Usage: git good --cli conflict --file PATH [--use ours|theirs|deletion|--stage] [--repo PATH]"
                         .into(),
                 );
             }

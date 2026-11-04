@@ -1,13 +1,14 @@
 //! Create or amend a commit from the index through the shared commit engine.
 use std::{ffi::OsString, path::PathBuf};
 
-pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::error::Error>> {
+pub fn run(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::error::Error>> {
+    let mut args = crate::cli_args::Args::new(args);
     let mut path = std::env::current_dir()?;
     let mut message = None;
     let mut amend = false;
     let mut sign = None;
     while let Some(arg) = args.next() {
-        match arg.to_str() {
+        match args.option(&arg) {
             Some("--repo") => path = PathBuf::from(args.next().ok_or("--repo needs a path")?),
             Some("--amend") if !amend => amend = true,
             Some("--sign" | "-s") if sign.is_none() => sign = Some(true),
@@ -22,7 +23,7 @@ pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::
             }
             _ => {
                 return Err(
-                    "Usage: git good commit [--amend] [--sign|--no-sign] -m MESSAGE [--repo PATH]"
+                    "Usage: git good --cli commit [--amend] [--sign|--no-sign] -m MESSAGE [--repo PATH]"
                         .into(),
                 );
             }

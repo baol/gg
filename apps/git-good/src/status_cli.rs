@@ -1,11 +1,12 @@
 //! Stream working status as JSON without mutating the repository.
 use std::{ffi::OsString, io::Write, path::PathBuf, sync::atomic::AtomicBool};
-pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::error::Error>> {
+pub fn run(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::error::Error>> {
+    let mut args = crate::cli_args::Args::new(args);
     let mut path = None;
     let mut file = None;
     let mut area = None;
     while let Some(arg) = args.next() {
-        match arg.to_str() {
+        match args.option(&arg) {
             Some("--file") => file = Some(args.next().ok_or("--file needs a path")?),
             Some("--area") => {
                 area = Some(
@@ -22,9 +23,14 @@ pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::
                     },
                 )
             }
-            Some(value) if value.starts_with("--") => return Err("Unknown status option".into()),
-            _ if path.is_none() => path = Some(PathBuf::from(arg)),
-            _ => return Err("Usage: git good status [PATH] [--file PATH --area AREA]".into()),
+            Some("--repo") if path.is_none() => {
+                path = Some(PathBuf::from(args.next().ok_or("--repo needs a path")?));
+            }
+            _ => {
+                return Err(
+                    "Usage: git good --cli status [--repo PATH] [--file PATH --area AREA]".into(),
+                );
+            }
         }
     }
     if file.is_some() != area.is_some() {
@@ -81,16 +87,17 @@ pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::
 }
 
 /// Unstage one observed path, using the same status identity as the UI.
-pub fn unstage(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::error::Error>> {
+pub fn unstage(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::error::Error>> {
+    let mut args = crate::cli_args::Args::new(args);
     let mut path = std::env::current_dir()?;
     let mut file = None;
     while let Some(arg) = args.next() {
-        match arg.to_str() {
+        match args.option(&arg) {
             Some("--repo") => path = PathBuf::from(args.next().ok_or("--repo needs a path")?),
             Some("--file") if file.is_none() => {
                 file = Some(args.next().ok_or("--file needs a path")?)
             }
-            _ => return Err("Usage: git good unstage --file PATH [--repo PATH]".into()),
+            _ => return Err("Usage: git good --cli unstage --file PATH [--repo PATH]".into()),
         }
     }
     let file = file.ok_or("Unstage requires --file PATH")?;
@@ -117,12 +124,13 @@ pub fn unstage(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn s
 }
 
 /// Stage one observed working path, using the same status identity as the UI.
-pub fn stage(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::error::Error>> {
+pub fn stage(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::error::Error>> {
+    let mut args = crate::cli_args::Args::new(args);
     let mut path = std::env::current_dir()?;
     let mut file = None;
     let mut hunks = vec![];
     while let Some(arg) = args.next() {
-        match arg.to_str() {
+        match args.option(&arg) {
             Some("--repo") => path = PathBuf::from(args.next().ok_or("--repo needs a path")?),
             Some("--file") if file.is_none() => {
                 file = Some(args.next().ok_or("--file needs a path")?)
@@ -135,7 +143,8 @@ pub fn stage(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std
             ),
             _ => {
                 return Err(
-                    "Usage: git good stage --file PATH [--hunk HEADER]... [--repo PATH]".into(),
+                    "Usage: git good --cli stage --file PATH [--hunk HEADER]... [--repo PATH]"
+                        .into(),
                 );
             }
         }

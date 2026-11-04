@@ -1,14 +1,15 @@
 //! Switch or create one local branch after clean-worktree validation.
 use std::{ffi::OsString, path::PathBuf};
 
-pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::error::Error>> {
+pub fn run(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::error::Error>> {
+    let mut args = crate::cli_args::Args::new(args);
     let mut path = std::env::current_dir()?;
     let mut create = false;
     let mut stash = false;
     let mut include_untracked = false;
     let mut branch = None;
     while let Some(arg) = args.next() {
-        match arg.to_str() {
+        match args.option(&arg) {
             Some("--repo") => path = PathBuf::from(args.next().ok_or("--repo needs a path")?),
             Some("--create") if !create => create = true,
             Some("--stash") if !stash => stash = true,
@@ -21,7 +22,7 @@ pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::
             }
             _ => {
                 return Err(
-                    "Usage: git good switch [--create] [--stash [--include-untracked]] BRANCH [--repo PATH]"
+                    "Usage: git good --cli switch [--create] [--stash [--include-untracked]] BRANCH [--repo PATH]"
                         .into(),
                 );
             }
@@ -56,7 +57,8 @@ pub fn run(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::
     Ok(())
 }
 
-pub fn manage(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::error::Error>> {
+pub fn manage(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::error::Error>> {
+    let mut args = crate::cli_args::Args::new(args);
     let mut path = std::env::current_dir()?;
     let mut branch = None;
     let mut delete = false;
@@ -64,7 +66,7 @@ pub fn manage(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn st
     let mut force = false;
     let mut start = None;
     while let Some(arg) = args.next() {
-        match arg.to_str() {
+        match args.option(&arg) {
             Some("--repo") => path = PathBuf::from(args.next().ok_or("--repo needs a path")?),
             Some("--delete") if !delete => delete = true,
             Some("--create") if !create => create = true,
@@ -84,7 +86,7 @@ pub fn manage(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn st
                 branch = Some(arg.into_string().map_err(|_| "Branch name must be UTF-8")?);
             }
             _ => {
-                return Err("Usage: git good branch --delete BRANCH [--force] [--repo PATH]\n       git good branch --create NAME [--at REF] [--repo PATH]".into());
+                return Err("Usage: git good --cli branch --delete BRANCH [--force] [--repo PATH]\n       git good --cli branch --create NAME [--at REF] [--repo PATH]".into());
             }
         }
     }
@@ -123,7 +125,7 @@ pub fn manage(mut args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn st
         )?;
     } else {
         return Err(
-            "Usage: git good branch --delete BRANCH [--force] [--repo PATH]\n       git good branch --create NAME [--at REF] [--repo PATH]"
+            "Usage: git good --cli branch --delete BRANCH [--force] [--repo PATH]\n       git good --cli branch --create NAME [--at REF] [--repo PATH]"
                 .into(),
         );
     }

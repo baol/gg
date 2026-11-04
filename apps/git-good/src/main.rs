@@ -7,6 +7,7 @@ mod bounded_text;
 mod branch_cli;
 mod branding;
 mod caption_style;
+mod cli_args;
 mod clipboard;
 mod colors;
 mod commit_cli;
@@ -131,138 +132,246 @@ fn main() -> std::process::ExitCode {
     }
 }
 
+/// The command words after `--cli`, in `--help` order, with their usage.
+const COMMANDS: &[(&str, &str)] = &[
+    ("history", "[--repo PATH]   Print history as JSON"),
+    (
+        "refs",
+        "[--repo PATH]   Print branches, remotes, tags, and HEAD as JSON",
+    ),
+    (
+        "status",
+        "[--repo PATH] [--file PATH --area AREA]   Print working status or diff as JSON",
+    ),
+    (
+        "stage",
+        "--file PATH [--hunk HEADER]... [--repo PATH]   Stage one file or selected hunks",
+    ),
+    ("unstage", "--file PATH [--repo PATH]   Unstage one file"),
+    (
+        "commit",
+        "[--amend] [--sign|--no-sign] -m MESSAGE [--repo PATH]   Commit the index or amend HEAD after Git hooks",
+    ),
+    (
+        "reflog",
+        "[REF] [--repo PATH]   Print reflog entries as JSON",
+    ),
+    (
+        "blame",
+        "FILE [--revision REF] [--lines START,END] [--repo PATH]   Print line attribution as JSON",
+    ),
+    (
+        "worktree",
+        "<list|add|remove> [OPTIONS] [--repo PATH]   List, add, or remove worktrees",
+    ),
+    (
+        "submodule",
+        "<status|update> FILE [OPTIONS] [--repo PATH]   Inspect or update a gitlink submodule",
+    ),
+    (
+        "lfs",
+        "<status|fetch> FILE [--area staged|unstaged|untracked|conflict] [--revision REF] [--before REF] [--repo PATH]   Inspect or fetch an LFS pointer",
+    ),
+    (
+        "signature",
+        "<config|verify> [REF] [--repo PATH]   Read signing config or verify a commit/tag",
+    ),
+    (
+        "switch",
+        "[--create] [--stash [--include-untracked]] BRANCH [--repo PATH]   Switch to or create a local branch, optionally stashing changes first",
+    ),
+    (
+        "fetch",
+        "[REMOTE] [--prune] [--repo PATH]   Fetch and update remote-tracking refs",
+    ),
+    (
+        "push",
+        "[REMOTE] [BRANCH] [--set-upstream] [--force-with-lease] [--repo PATH]   Push a local branch, with an explicit lease when rewriting",
+    ),
+    (
+        "clone",
+        "URL [DESTINATION]   Clone a repository and print its receipt",
+    ),
+    (
+        "init",
+        "[--branch NAME] [--commit] [FOLDER]   Create a repository, optionally committing the files already there",
+    ),
+    (
+        "stash",
+        "<list|push|apply|pop|drop> [OPTIONS] [--repo PATH]   List or mutate stashes",
+    ),
+    (
+        "cherry-pick",
+        "COMMIT... [--repo PATH]   Apply commits, oldest first",
+    ),
+    ("revert", "COMMIT [--repo PATH]   Invert a commit"),
+    (
+        "merge",
+        "REF [--no-ff] [--repo PATH]   Merge a branch, remote, or tag",
+    ),
+    (
+        "rebase",
+        "REF [--autostash] [--repo PATH] | --continue|--skip|--abort [--repo PATH]   Rebase onto a ref, or recover an in-progress rebase",
+    ),
+    (
+        "rewrite",
+        "--from COMMIT STEP... [--autostash] [--repo PATH] | --continue|--skip|--abort [--repo PATH]   Pick, reword, edit, squash, fixup, drop, or reorder a linear range (STEP: --pick|--edit|--squash|--fixup|--drop COMMIT, --reword COMMIT MESSAGE)",
+    ),
+    ("conflicts", "[--repo PATH]   List unmerged paths"),
+    (
+        "conflict",
+        "--file PATH [--use ours|theirs|deletion|--stage] [--repo PATH]   Read or resolve a conflict",
+    ),
+    (
+        "reset",
+        "--soft|--mixed|--hard COMMIT [--repo PATH]   Reset the current branch",
+    ),
+    (
+        "branch",
+        "--delete BRANCH [--force] | --create NAME [--at REF] [--repo PATH]   Delete or create a local branch without switching",
+    ),
+    (
+        "tag",
+        "--delete TAG | --create TAG --at REF -m MESSAGE [--sign] [--repo PATH]   Delete, or create an annotated or signed tag",
+    ),
+    (
+        "show",
+        "COMMIT [--repo PATH] [--parent N] [--against REF] [--file PATH] [--export before|after --output PATH]   Review or export",
+    ),
+];
+
+fn help() -> String {
+    let mut text = String::from(
+        "Git Good\n\ngit good [FOLDER]   Open a window on FOLDER (default: the working folder)\ngit good -- FOLDER   Open a folder whose name starts with a dash\ngit good --version   Print version\ngit good --help | -h   Print this help\n\nCommands print JSON and never open a window. A bare argument is always a folder;\ncommands follow --cli, the repository is --repo PATH, and -- ends options.\n\n",
+    );
+    for (name, usage) in COMMANDS {
+        text.push_str(&format!("git good --cli {name} {usage}\n"));
+    }
+    text.push_str("\nBrowse commits reachable from HEAD and all local, remote, and tag refs.");
+    text
+}
+
+/// Run one `--cli` command; `None` when the word names none.
+fn run_command(
+    name: &str,
+    mut args: impl Iterator<Item = std::ffi::OsString>,
+) -> Option<Result<(), Box<dyn std::error::Error>>> {
+    let mut sub = |usage: &str| -> Result<String, Box<dyn std::error::Error>> {
+        args.next()
+            .and_then(|sub| sub.into_string().ok())
+            .ok_or_else(|| usage.into())
+    };
+    let result = match name {
+        "history" => cli_args::repo_only(args, "Usage: git good --cli history [--repo PATH]")
+            .and_then(|path| {
+                write_history_json(
+                    &path,
+                    &mut std::io::BufWriter::new(std::io::stdout().lock()),
+                )
+            }),
+        "refs" => refs_cli::run(args),
+        "status" => status_cli::run(args),
+        "stage" => status_cli::stage(args),
+        "unstage" => status_cli::unstage(args),
+        "commit" => commit_cli::run(args),
+        "reflog" => reflog_cli::run(args),
+        "blame" => blame_cli::run(args),
+        "signature" => match sub("Usage: git good --cli signature <config|verify>") {
+            Ok(sub) if sub == "config" => signature_cli::config(args),
+            Ok(sub) if sub == "verify" => signature_cli::verify(args),
+            Ok(_) => Err("Usage: git good --cli signature <config|verify>".into()),
+            Err(error) => Err(error),
+        },
+        "lfs" => match sub("Usage: git good --cli lfs <status|fetch>") {
+            Ok(sub) if sub == "status" => lfs_cli::status(args),
+            Ok(sub) if sub == "fetch" => lfs_cli::fetch(args),
+            Ok(_) => Err("Usage: git good --cli lfs <status|fetch>".into()),
+            Err(error) => Err(error),
+        },
+        "submodule" => match sub("Usage: git good --cli submodule <status|update>") {
+            Ok(sub) if sub == "status" => submodule_cli::status(args),
+            Ok(sub) if sub == "update" => submodule_cli::update(args),
+            Ok(_) => Err("Usage: git good --cli submodule <status|update>".into()),
+            Err(error) => Err(error),
+        },
+        "worktree" => match sub("Usage: git good --cli worktree <list|add|remove>") {
+            Ok(sub) if sub == "list" => worktree_cli::list(args),
+            Ok(sub) if sub == "add" => worktree_cli::add(args),
+            Ok(sub) if sub == "remove" => worktree_cli::remove(args),
+            Ok(_) => Err("Usage: git good --cli worktree <list|add|remove>".into()),
+            Err(error) => Err(error),
+        },
+        "switch" => branch_cli::run(args),
+        "stash" => stash_cli::run(args),
+        "cherry-pick" => mutation_cli::cherry_pick(args),
+        "revert" => mutation_cli::revert(args),
+        "merge" => merge_cli::run(args),
+        "rebase" => rebase_cli::run(args),
+        "rewrite" => rewrite_cli::run(args),
+        "conflicts" => conflict_cli::list(args),
+        "conflict" => conflict_cli::run(args),
+        "reset" => reset_cli::run(args),
+        "branch" => branch_cli::manage(args),
+        "tag" => tag_cli::run(args),
+        "fetch" => sync_cli::fetch(args),
+        "push" => sync_cli::push(args),
+        "clone" => sync_cli::clone(args),
+        "init" => init_cli::run(args),
+        "show" => review_cli::run(args),
+        _ => return None,
+    };
+    Some(result)
+}
+
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args_os().skip(1);
     let first = args.next();
-    if first.as_deref() == Some(std::ffi::OsStr::new("--version")) {
-        println!("git-good {}", env!("CARGO_PKG_VERSION"));
-        return Ok(());
-    }
-    if first.as_deref() == Some(std::ffi::OsStr::new("--help")) {
-        println!(
-            "Git Good\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good refs [PATH]      Print branches, remotes, tags, and HEAD as JSON\ngit-good status [PATH] [--file PATH --area AREA]   Print working status or diff as JSON\ngit-good stage --file PATH [--hunk HEADER]... [--repo PATH]   Stage one file or selected hunks\ngit-good unstage --file PATH [--repo PATH]   Unstage one file\ngit-good commit [--amend] [--sign|--no-sign] -m MESSAGE [--repo PATH]   Commit the index or amend HEAD after Git hooks\ngit-good reflog [REF] [--repo PATH]   Print reflog entries as JSON\ngit-good blame PATH [--revision REF] [--lines START,END] [--repo PATH]   Print line attribution as JSON\ngit-good worktree <list|add|remove> [OPTIONS] [--repo PATH]   List, add, or remove worktrees\ngit-good submodule <status|update> PATH [OPTIONS] [--repo PATH]   Inspect or update a gitlink submodule\ngit-good lfs <status|fetch> PATH [--area staged|unstaged|untracked|conflict] [--revision REF] [--before REF] [--repo PATH]   Inspect or fetch an LFS pointer\ngit-good signature <config|verify> [REF] [--repo PATH]   Read signing config or verify a commit/tag\ngit-good switch [--create] [--stash [--include-untracked]] BRANCH [--repo PATH]   Switch to or create a local branch, optionally stashing changes first\ngit-good fetch [REMOTE] [--prune] [--repo PATH]   Fetch and update remote-tracking refs\ngit-good push [REMOTE] [BRANCH] [--set-upstream] [--force-with-lease] [--repo PATH]   Push a local branch, with an explicit lease when rewriting\ngit-good clone URL [PATH]   Clone a repository and open it\ngit-good init [--branch NAME] [--commit] [PATH]   Create a repository, optionally committing the files already there\ngit-good stash <list|push|apply|pop|drop> [OPTIONS] [--repo PATH]   List or mutate stashes\ngit-good cherry-pick COMMIT... [--repo PATH]   Apply commits, oldest first\ngit-good revert COMMIT [--repo PATH]   Invert a commit\ngit-good merge REF [--no-ff] [--repo PATH]   Merge a branch, remote, or tag\ngit-good rebase REF [--autostash] [--repo PATH]   Rebase the current branch onto a branch, remote, or tag\ngit-good rebase --continue|--skip|--abort [--repo PATH]   Recover an in-progress rebase\ngit-good rewrite --from COMMIT STEP... [--autostash] [--repo PATH]   Pick, reword, edit, squash, fixup, drop, or reorder a linear range (STEP: --pick|--edit|--squash|--fixup|--drop COMMIT, --reword COMMIT MESSAGE)\ngit-good rewrite --continue|--skip|--abort [--repo PATH]   Recover an in-progress rewrite\ngit-good conflicts [--repo PATH]   List unmerged paths\ngit-good conflict --file PATH [--use ours|theirs|deletion|--stage] [--repo PATH]   Read or resolve a conflict\ngit-good reset --soft|--mixed|--hard COMMIT [--repo PATH]   Reset the current branch\ngit-good branch --delete BRANCH [--force] [--repo PATH]   Delete a local branch\ngit-good branch --create NAME [--at REF] [--repo PATH]   Create a local branch without switching\ngit-good tag --delete TAG [--repo PATH]   Delete a local tag
-git-good tag --create TAG --at REF -m MESSAGE [--sign] [--repo PATH]   Create an annotated or signed tag\ngit-good show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]   Review or export\n\nBrowse commits reachable from HEAD and all local, remote, and tag refs."
+    let given = match first.as_ref().and_then(|first| first.to_str()) {
+        Some("--version") => {
+            println!("git-good {}", env!("CARGO_PKG_VERSION"));
+            return Ok(());
+        }
+        Some("--help" | "-h") => {
+            println!("{}", help());
+            return Ok(());
+        }
+        Some("--cli") => {
+            let name = args
+                .next()
+                .ok_or("Name a command after --cli. Use git good --help for the list.")?;
+            let name = name.to_string_lossy().into_owned();
+            return run_command(&name, args).unwrap_or_else(|| {
+                Err(format!("Unknown command {name}. Use git good --help for the list.").into())
+            });
+        }
+        Some("--") => args.next(),
+        Some(option) if option.starts_with('-') => {
+            return Err(format!(
+                "Unknown option {option}. Commands follow --cli; use git good --help for usage."
+            )
+            .into());
+        }
+        _ => first,
+    };
+    if args.next().is_some() {
+        return Err(
+            "Open one folder. Commands follow --cli; use git good --help for usage.".into(),
         );
-        return Ok(());
     }
-    if first.as_deref() == Some(std::ffi::OsStr::new("show")) {
-        return review_cli::run(args);
-    }
-    if first.as_deref() == Some(std::ffi::OsStr::new("status")) {
-        return status_cli::run(args);
-    }
-    if first.as_deref() == Some(std::ffi::OsStr::new("unstage")) {
-        return status_cli::unstage(args);
-    }
-    if first.as_deref() == Some(std::ffi::OsStr::new("stage")) {
-        return status_cli::stage(args);
-    }
-    if first.as_deref() == Some(std::ffi::OsStr::new("commit")) {
-        return commit_cli::run(args);
-    }
-    if first.as_deref() == Some(std::ffi::OsStr::new("reflog")) {
-        return reflog_cli::run(args);
-    }
-    if first.as_deref() == Some(std::ffi::OsStr::new("blame")) {
-        return blame_cli::run(args);
-    }
-    if first.as_deref() == Some(std::ffi::OsStr::new("signature")) {
-        let sub = args
-            .next()
-            .ok_or("Use git-good signature <config|verify> --help for usage")?;
-        return match sub.to_str() {
-            Some("config") => signature_cli::config(args),
-            Some("verify") => signature_cli::verify(args),
-            _ => Err("Use git-good signature <config|verify>".into()),
-        };
-    }
-    if first.as_deref() == Some(std::ffi::OsStr::new("lfs")) {
-        let sub = args
-            .next()
-            .ok_or("Use git-good lfs <status|fetch> --help for usage")?;
-        return match sub.to_str() {
-            Some("status") => lfs_cli::status(args),
-            Some("fetch") => lfs_cli::fetch(args),
-            _ => Err("Use git-good lfs <status|fetch>".into()),
-        };
-    }
-    if first.as_deref() == Some(std::ffi::OsStr::new("submodule")) {
-        let sub = args
-            .next()
-            .ok_or("Use git-good submodule <status|update> --help for usage")?;
-        return match sub.to_str() {
-            Some("status") => submodule_cli::status(args),
-            Some("update") => submodule_cli::update(args),
-            _ => Err("Use git-good submodule <status|update>".into()),
-        };
-    }
-    if first.as_deref() == Some(std::ffi::OsStr::new("worktree")) {
-        let sub = args
-            .next()
-            .ok_or("Use git-good worktree <list|add|remove> --help for usage")?;
-        return match sub.to_str() {
-            Some("list") => worktree_cli::list(args),
-            Some("add") => worktree_cli::add(args),
-            Some("remove") => worktree_cli::remove(args),
-            _ => Err("Use git-good worktree <list|add|remove>".into()),
-        };
-    }
-    if first.as_deref() == Some(std::ffi::OsStr::new("refs")) {
-        return refs_cli::run(args);
-    }
-    if first.as_deref() == Some(std::ffi::OsStr::new("switch")) {
-        return branch_cli::run(args);
-    }
-    if first.as_deref() == Some(std::ffi::OsStr::new("stash")) {
-        return stash_cli::run(args);
-    }
-    if first.as_deref() == Some(std::ffi::OsStr::new("cherry-pick")) {
-        return mutation_cli::cherry_pick(args);
-    }
-    if first.as_deref() == Some(std::ffi::OsStr::new("revert")) {
-        return mutation_cli::revert(args);
-    }
-    if first.as_deref() == Some(std::ffi::OsStr::new("merge")) {
-        return merge_cli::run(args);
-    }
-    if first.as_deref() == Some(std::ffi::OsStr::new("rebase")) {
-        return rebase_cli::run(args);
-    }
-    if first.as_deref() == Some(std::ffi::OsStr::new("rewrite")) {
-        return rewrite_cli::run(args);
-    }
-    if first.as_deref() == Some(std::ffi::OsStr::new("conflicts")) {
-        return conflict_cli::list(args);
-    }
-    if first.as_deref() == Some(std::ffi::OsStr::new("conflict")) {
-        return conflict_cli::run(args);
-    }
-    if first.as_deref() == Some(std::ffi::OsStr::new("reset")) {
-        return reset_cli::run(args);
-    }
-    if first.as_deref() == Some(std::ffi::OsStr::new("branch")) {
-        return branch_cli::manage(args);
-    }
-    if first.as_deref() == Some(std::ffi::OsStr::new("tag")) {
-        return tag_cli::run(args);
-    }
-    if first.as_deref() == Some(std::ffi::OsStr::new("fetch")) {
-        return sync_cli::fetch(args);
-    }
-    if first.as_deref() == Some(std::ffi::OsStr::new("push")) {
-        return sync_cli::push(args);
-    }
-    if first.as_deref() == Some(std::ffi::OsStr::new("clone")) {
-        return sync_cli::clone(args);
-    }
-    if first.as_deref() == Some(std::ffi::OsStr::new("init")) {
-        return init_cli::run(args);
-    }
-    let headless = first.as_deref() == Some(std::ffi::OsStr::new("history"));
-    let given = if headless { args.next() } else { first }.map(PathBuf::from);
-    let path = match given {
-        Some(path) => path,
-        None if headless => std::env::current_dir()?,
+    let path = match given.map(PathBuf::from) {
+        Some(path) => {
+            // A folder named like a command is still a folder, but a missing
+            // one is an old command line or a typo: no window for it.
+            if !path.exists()
+                && let Some(name) = path.to_str()
+                && COMMANDS.iter().any(|(command, _)| *command == name)
+            {
+                return Err(
+                    format!("No folder {name}. Did you mean git good --cli {name}?").into(),
+                );
+            }
+            path
+        }
         None => launch_folder(
             std::env::current_dir()?,
             settings::Prefs::load().reopen_last,
@@ -273,16 +382,6 @@ git-good tag --create TAG --at REF -m MESSAGE [--sign] [--repo PATH]   Create an
             is_repository,
         ),
     };
-    if args.next().is_some() {
-        return Err("Use git-good --help for usage".into());
-    }
-    if headless {
-        write_history_json(
-            &path,
-            &mut std::io::BufWriter::new(std::io::stdout().lock()),
-        )?;
-        return Ok(());
-    }
     let mut window_size = egui::vec2(1120.0, 740.0);
     if cfg!(debug_assertions)
         && let Ok(size) = std::env::var("GG_WINDOW_SIZE")
