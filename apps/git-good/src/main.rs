@@ -15024,7 +15024,7 @@ mod tests {
         git(&path, &["commit", "-qm", "base"])?;
         let ctx = egui::Context::default();
         let mut app = Browser::new(path.clone());
-        let mut frame = |app: &mut Browser| {
+        let frame = |app: &mut Browser| {
             let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ui| {
                 app.draw_ui(ui)
             });
