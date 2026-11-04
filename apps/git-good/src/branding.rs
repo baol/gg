@@ -149,12 +149,20 @@ pub fn show_about(ctx: &egui::Context, texture: &mut Option<egui::TextureHandle>
 }
 
 impl About {
-    /// The four build lines **Copy version info** puts on the clipboard, as
-    /// plain text for bug reports.
+    /// What **Copy version info** puts on the clipboard, as plain text for
+    /// bug reports: the four build lines, then Git's version (once read)
+    /// and the operating system.
     pub fn version_info(&self) -> String {
         format!(
-            "Git Good {}\ncommit {}\nbuilt {}\ntarget {}",
-            self.version, self.commit, self.built, self.target
+            "Git Good {}\ncommit {}\nbuilt {}\ntarget {}\ngit {}\nos {}",
+            self.version,
+            self.commit,
+            self.built,
+            self.target,
+            crate::diagnostics::known_git_version()
+                .map(|version| version.trim_start_matches("git version "))
+                .unwrap_or("unknown"),
+            crate::diagnostics::os()
         )
     }
 }
@@ -164,16 +172,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn version_info_is_four_plain_build_lines() {
+    fn version_info_is_plain_build_git_and_os_lines() {
         let info = about().version_info();
         let lines = info.lines().collect::<Vec<_>>();
-        assert_eq!(lines.len(), 4, "{info}");
+        assert_eq!(lines.len(), 6, "{info}");
         assert_eq!(lines[0], format!("Git Good {}", env!("CARGO_PKG_VERSION")));
         assert!(lines[1].starts_with("commit ") && lines[1].len() > "commit ".len());
         let date = lines[2].trim_start_matches("built ");
         assert_eq!(date.len(), 10, "{date}");
         assert_eq!(date.as_bytes()[4], b'-');
         assert!(lines[3].starts_with("target ") && lines[3].contains('-'));
+        assert!(lines[4].starts_with("git "), "{info}");
+        assert!(
+            lines[5].starts_with(&format!("os {}", std::env::consts::OS)),
+            "{info}"
+        );
     }
 
     #[test]

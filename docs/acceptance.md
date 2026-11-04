@@ -4105,7 +4105,7 @@ Covered by (interaction, partial): `one_recent_limit_for_the_welcome_list_open_r
 Fixture: `fx-linear`
 Layer: visual
 - When **Help › About Git Good**
-- Then the dialog frame (title **About Git Good** and × in one row, footer below) shows the logo, version, **Commit** (8 characters), **Built** (`YYYY-MM-DD · <target triple>`), authors (people only), license with link, source link, AI-assistance/no-warranty note; **Copy version info** copies four plain lines (`Git Good <version>`, `commit <id>`, `built <date>`, `target <triple>`); **Close** or `Esc` closes
+- Then the dialog frame (title **About Git Good** and × in one row, footer below) shows the logo, version, **Commit** (8 characters), **Built** (`YYYY-MM-DD · <target triple>`), authors (people only), license with link, source link, AI-assistance/no-warranty note; **Copy version info** copies six plain lines (`Git Good <version>`, `commit <id>`, `built <date>`, `target <triple>`, `git <version>` or `git unknown` before Git's version is read, `os <system> (<release>) <architecture>`); **Close** or `Esc` closes
 Covered by (interaction, partial): `about_names_the_license_and_the_human_authors`, `version_info_is_four_plain_build_lines` (apps/git-good/src/branding.rs); the rendered frame is checked by native review
 
 ### DLG-12 Decision dialogs are modal — see FRM-64
@@ -4656,6 +4656,15 @@ Layer: interaction
 - And when Git returns the receipt `Deleted branch merged` closes the dialog; a failure (Delete tag on a missing tag) leaves its dialog open with Git's error and no footer error. Stash changes, New branch and Rename behave alike; the Stashes picker, Reset, Cherry-pick and Revert close as they start and report in the footer, as before (`Stashing 3 files…`, `Restoring stash@{0}…`, `Dropping stash@{0}…`, `Creating topic…`, `Renaming feature to topic…`, `Deleting tag v1…`, `Resetting to 1a2b3c4…`, `Cherry-picking 1a2b3c4…`, `Reverting 1a2b3c4…`)
 - And New tag opens at once, showing the last signing configuration read, and takes the background read when it lands (Sign checked by `tag.gpgsign`, *No signing key is configured.*); Create waits for that read on its worker and refuses to make an unsigned tag. Local Changes reads the configuration the same way; focus and a change to the repository's `config` read it again; the commit worker reads it before committing, as `git good commit` does
 Covered by (interaction): `a_dialog_mutation_runs_on_the_worker_and_its_dialog_waits_for_git`, `new_tag_reads_signing_off_the_ui_thread_and_never_tags_unsigned`, `dialogs_take_typing_at_once_and_answer_enter_and_esc` (apps/git-good/src/main.rs); `a_worker_waits_for_the_read_in_flight_and_views_see_it_once` (apps/git-good/src/signing_cache.rs); `signing_readiness_blocks_the_commit_without_unsigned_fallback` (apps/git-good/src/status_view.rs)
+
+### XCT-32 Launches and crashes leave a log
+Fixture: a configuration folder with a `gg/logs/gg.log` from an earlier run
+Layer: product
+- When Git Good opens a window
+- Then the earlier log becomes `gg.previous.log` and a new `gg.log` starts with the version, commit, build date, target and OS, then Git's version; a failed operation's error, a panic with its thread, place and backtrace, and a launch that fails are appended; URL passwords read `https://user:***@host`; past 16 MiB one line says the log is capped and nothing more is written; CLI commands write no log
+- And a launch that fails with no terminal attached shows a native error dialog with the error and the log's path
+- And the window starts with no OpenGL backend on Windows and no wgpu indirect-call validation unless `WGPU_BACKEND` or `WGPU_VALIDATION_INDIRECT_CALL` say otherwise
+Covered by (interaction): `a_launch_keeps_the_previous_log_and_redacts_and_caps`, `url_passwords_are_redacted_and_the_rest_kept`, `times_are_utc_dates`, `the_os_names_the_system_and_architecture` (apps/git-good/src/diagnostics.rs); `version_info_is_plain_build_git_and_os_lines` (apps/git-good/src/branding.rs)
 
 ## CLI contract
 

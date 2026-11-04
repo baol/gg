@@ -18,6 +18,7 @@ mod conflict_workspace;
 mod consequence;
 mod density;
 mod details_view;
+mod diagnostics;
 mod diff_view;
 mod diff_worker;
 mod drafts;
@@ -274,10 +275,14 @@ git-good tag --create TAG --at REF -m MESSAGE [--sign] [--repo PATH]   Create an
     {
         window_size = egui::vec2(width.clamp(720.0, 3840.0), height.clamp(480.0, 2160.0));
     }
+    diagnostics::start();
     let custom_titlebar = custom_titlebar(&settings::Prefs::load());
+    let icon = branding::icon()
+        .inspect_err(|error| diagnostics::launch_failed(error))?
+        .clone();
     eframe::run_native(
         "Git Good",
-        native_options(custom_titlebar, window_size, branding::icon()?.clone()),
+        native_options(custom_titlebar, window_size, icon),
         Box::new(move |cc| {
             phosphor::install(&cc.egui_ctx);
             let mut app = Browser::new(path);
@@ -296,7 +301,8 @@ git-good tag --create TAG --at REF -m MESSAGE [--sign] [--repo PATH]   Create an
             app.load(&cc.egui_ctx);
             Ok(Box::new(app))
         }),
-    )?;
+    )
+    .inspect_err(|error| diagnostics::launch_failed(error))?;
     Ok(())
 }
 
@@ -323,6 +329,7 @@ fn native_options(
             .with_inner_size(size)
             .with_min_inner_size([720.0, 480.0])
             .with_decorations(!custom_titlebar),
+        wgpu_options: diagnostics::wgpu_options(),
         ..Default::default()
     }
 }
@@ -1078,11 +1085,7 @@ fn signing_rows(ui: &mut egui::Ui, signing: Option<&SigningConfig>) -> Option<Pa
 /// Commit; `None` when Git has no identity.
 /// `git version 2.x`, for Copy version info.
 fn git_version() -> Option<String> {
-    let output = gg_git::process::git().arg("--version").output().ok()?;
-    output
-        .status
-        .success()
-        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+    diagnostics::git_version().map(str::to_owned)
 }
 
 fn git_identity(repo: &Path) -> Option<String> {
@@ -7430,6 +7433,15 @@ impl Browser {
         details: Option<String>,
         recovery: Option<RecoveryAction>,
     ) {
+        if severity == OutcomeSeverity::Error {
+            diagnostics::log(
+                "error",
+                &match &details {
+                    Some(details) => format!("{summary}\n{details}"),
+                    None => summary.clone(),
+                },
+            );
+        }
         self.outcome = Some(Outcome {
             severity,
             summary,
