@@ -122,7 +122,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if first.as_deref() == Some(std::ffi::OsStr::new("--help")) {
         println!(
-            "Git Good\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good refs [PATH]      Print branches, remotes, tags, and HEAD as JSON\ngit-good status [PATH] [--file PATH --area AREA]   Print working status or diff as JSON\ngit-good stage --file PATH [--hunk HEADER]... [--repo PATH]   Stage one file or selected hunks\ngit-good unstage --file PATH [--repo PATH]   Unstage one file\ngit-good commit [--amend] [--sign|--no-sign] -m MESSAGE [--repo PATH]   Commit the index or amend HEAD after Git hooks\ngit-good reflog [REF] [--repo PATH]   Print reflog entries as JSON\ngit-good blame PATH [--revision REF] [--lines START,END] [--repo PATH]   Print line attribution as JSON\ngit-good worktree <list|add|remove> [OPTIONS] [--repo PATH]   List, add, or remove worktrees\ngit-good submodule <status|update> PATH [OPTIONS] [--repo PATH]   Inspect or update a gitlink submodule\ngit-good lfs <status|fetch> PATH [--area staged|unstaged|untracked|conflict] [--revision REF] [--before REF] [--repo PATH]   Inspect or fetch an LFS pointer\ngit-good signature <config|verify> [REF] [--repo PATH]   Read signing config or verify a commit/tag\ngit-good switch [--create] [--stash [--include-untracked]] BRANCH [--repo PATH]   Switch to or create a local branch, optionally stashing changes first\ngit-good fetch [REMOTE] [--prune] [--repo PATH]   Fetch and update remote-tracking refs\ngit-good push [REMOTE] [BRANCH] [--set-upstream] [--force-with-lease] [--repo PATH]   Push a local branch, with an explicit lease when rewriting\ngit-good clone URL [PATH]   Clone a repository and open it\ngit-good init [--branch NAME] [--commit] [PATH]   Create a repository, optionally committing the files already there\ngit-good stash <list|push|apply|pop|drop> [OPTIONS] [--repo PATH]   List or mutate stashes\ngit-good cherry-pick COMMIT [--repo PATH]   Apply a commit\ngit-good revert COMMIT [--repo PATH]   Invert a commit\ngit-good merge REF [--no-ff] [--repo PATH]   Merge a branch, remote, or tag\ngit-good rebase REF [--autostash] [--repo PATH]   Rebase the current branch onto a branch, remote, or tag\ngit-good rebase --continue|--skip|--abort [--repo PATH]   Recover an in-progress rebase\ngit-good rewrite --from COMMIT STEP... [--autostash] [--repo PATH]   Pick, reword, edit, squash, fixup, drop, or reorder a linear range (STEP: --pick|--edit|--squash|--fixup|--drop COMMIT, --reword COMMIT MESSAGE)\ngit-good rewrite --continue|--skip|--abort [--repo PATH]   Recover an in-progress rewrite\ngit-good conflicts [--repo PATH]   List unmerged paths\ngit-good conflict --file PATH [--use ours|theirs|deletion|--stage] [--repo PATH]   Read or resolve a conflict\ngit-good reset --soft|--mixed|--hard COMMIT [--repo PATH]   Reset the current branch\ngit-good branch --delete BRANCH [--force] [--repo PATH]   Delete a local branch\ngit-good branch --create NAME [--at REF] [--repo PATH]   Create a local branch without switching\ngit-good tag --delete TAG [--repo PATH]   Delete a local tag
+            "Git Good\n\ngit-good [PATH]\ngit-good --version        Print version\ngit-good history [PATH]   Print history as JSON\ngit-good refs [PATH]      Print branches, remotes, tags, and HEAD as JSON\ngit-good status [PATH] [--file PATH --area AREA]   Print working status or diff as JSON\ngit-good stage --file PATH [--hunk HEADER]... [--repo PATH]   Stage one file or selected hunks\ngit-good unstage --file PATH [--repo PATH]   Unstage one file\ngit-good commit [--amend] [--sign|--no-sign] -m MESSAGE [--repo PATH]   Commit the index or amend HEAD after Git hooks\ngit-good reflog [REF] [--repo PATH]   Print reflog entries as JSON\ngit-good blame PATH [--revision REF] [--lines START,END] [--repo PATH]   Print line attribution as JSON\ngit-good worktree <list|add|remove> [OPTIONS] [--repo PATH]   List, add, or remove worktrees\ngit-good submodule <status|update> PATH [OPTIONS] [--repo PATH]   Inspect or update a gitlink submodule\ngit-good lfs <status|fetch> PATH [--area staged|unstaged|untracked|conflict] [--revision REF] [--before REF] [--repo PATH]   Inspect or fetch an LFS pointer\ngit-good signature <config|verify> [REF] [--repo PATH]   Read signing config or verify a commit/tag\ngit-good switch [--create] [--stash [--include-untracked]] BRANCH [--repo PATH]   Switch to or create a local branch, optionally stashing changes first\ngit-good fetch [REMOTE] [--prune] [--repo PATH]   Fetch and update remote-tracking refs\ngit-good push [REMOTE] [BRANCH] [--set-upstream] [--force-with-lease] [--repo PATH]   Push a local branch, with an explicit lease when rewriting\ngit-good clone URL [PATH]   Clone a repository and open it\ngit-good init [--branch NAME] [--commit] [PATH]   Create a repository, optionally committing the files already there\ngit-good stash <list|push|apply|pop|drop> [OPTIONS] [--repo PATH]   List or mutate stashes\ngit-good cherry-pick COMMIT... [--repo PATH]   Apply commits, oldest first\ngit-good revert COMMIT [--repo PATH]   Invert a commit\ngit-good merge REF [--no-ff] [--repo PATH]   Merge a branch, remote, or tag\ngit-good rebase REF [--autostash] [--repo PATH]   Rebase the current branch onto a branch, remote, or tag\ngit-good rebase --continue|--skip|--abort [--repo PATH]   Recover an in-progress rebase\ngit-good rewrite --from COMMIT STEP... [--autostash] [--repo PATH]   Pick, reword, edit, squash, fixup, drop, or reorder a linear range (STEP: --pick|--edit|--squash|--fixup|--drop COMMIT, --reword COMMIT MESSAGE)\ngit-good rewrite --continue|--skip|--abort [--repo PATH]   Recover an in-progress rewrite\ngit-good conflicts [--repo PATH]   List unmerged paths\ngit-good conflict --file PATH [--use ours|theirs|deletion|--stage] [--repo PATH]   Read or resolve a conflict\ngit-good reset --soft|--mixed|--hard COMMIT [--repo PATH]   Reset the current branch\ngit-good branch --delete BRANCH [--force] [--repo PATH]   Delete a local branch\ngit-good branch --create NAME [--at REF] [--repo PATH]   Create a local branch without switching\ngit-good tag --delete TAG [--repo PATH]   Delete a local tag
 git-good tag --create TAG --at REF -m MESSAGE [--sign] [--repo PATH]   Create an annotated or signed tag\ngit-good show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]   Review or export\n\nBrowse commits reachable from HEAD and all local, remote, and tag refs."
         );
         return Ok(());
@@ -4116,11 +4116,7 @@ impl Browser {
             FrameCommand::ResetHere => {
                 self.on_selected(ctx, CommitAction::Reset(gg_engine::reset::Mode::Mixed));
             }
-            FrameCommand::CopyId => {
-                if let Some(id) = &self.state.selected {
-                    ctx.copy_text(id.clone());
-                }
-            }
+            FrameCommand::CopyId => self.copy_selected_commits(ctx),
             FrameCommand::RebasePreset(action) => self.rebase_preset(ctx, action),
             FrameCommand::StageAll => self.change_all(ctx, gg_git::worktree_changes::stage_all),
             FrameCommand::UnstageAll => {
@@ -4660,6 +4656,30 @@ impl Browser {
             .filter(|head| !head.detached)
             .and_then(|head| head.name.as_deref())
             .map(|name| name.strip_prefix("refs/heads/").unwrap_or(name).to_string())
+    }
+
+    /// Copy ID: the selected commit's ID, or with two or more picked one
+    /// `id subject author date` line each, newest first, as History lists them.
+    fn copy_selected_commits(&self, ctx: &egui::Context) {
+        if self.state.picked.len() >= 2 {
+            let lines: Vec<String> = self
+                .state
+                .picked
+                .values()
+                .map(|commit| {
+                    format!(
+                        "{} {} {} {}",
+                        commit.id,
+                        commit.subject(),
+                        commit.author,
+                        commit.time
+                    )
+                })
+                .collect();
+            ctx.copy_text(lines.join("\n"));
+        } else if let Some(id) = &self.state.selected {
+            ctx.copy_text(id.clone());
+        }
     }
 
     fn on_selected(&mut self, ctx: &egui::Context, action: CommitAction) {
@@ -5343,22 +5363,47 @@ impl Browser {
                     .entry(),
             ],
         });
+        let picked = self.state.picked.len();
         table.push(Menu {
             title: "Commit",
             entries: vec![
                 item("Review changes", "Enter", FrameCommand::ReviewSelected)
                     .unless(selected)
                     .entry(),
-                item("Compare with HEAD", "", FrameCommand::CompareHead)
-                    .unless(selected)
-                    .entry(),
-                item("Copy ID", "Ctrl+C", FrameCommand::CopyId)
-                    .unless(selected)
-                    .entry(),
+                item(
+                    if picked == 2 {
+                        "Compare these two".to_string()
+                    } else {
+                        "Compare with HEAD".to_string()
+                    },
+                    "",
+                    FrameCommand::CompareHead,
+                )
+                .unless(selected)
+                .entry(),
+                item(
+                    if picked >= 2 {
+                        format!("Copy {picked} commits")
+                    } else {
+                        "Copy ID".to_string()
+                    },
+                    "Ctrl+C",
+                    FrameCommand::CopyId,
+                )
+                .unless(selected)
+                .entry(),
                 Entry::Separator,
-                item("Cherry-pick onto HEAD", "", FrameCommand::CherryPick)
-                    .unless(mutate(self.mutation.is_none()))
-                    .entry(),
+                item(
+                    if picked >= 2 {
+                        format!("Cherry-pick {picked} commits onto HEAD")
+                    } else {
+                        "Cherry-pick onto HEAD".to_string()
+                    },
+                    "",
+                    FrameCommand::CherryPick,
+                )
+                .unless(mutate(self.mutation.is_none()))
+                .entry(),
                 item("Revert", "", FrameCommand::Revert)
                     .unless(mutate(self.mutation.is_none()))
                     .entry(),
@@ -6592,7 +6637,19 @@ impl Browser {
             .selected
             .clone()
             .ok_or("Select a commit before cherry-picking or reverting.")?;
+        // Two or more picked commits are cherry-picked together, oldest first.
+        let picks: Vec<String> = match operation {
+            gg_engine::mutation::Operation::CherryPick => self
+                .state
+                .picks_oldest_first()
+                .map(|commits| commits.iter().map(|commit| commit.id.clone()).collect())
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        };
         let label = match operation {
+            gg_engine::mutation::Operation::CherryPick if !picks.is_empty() => {
+                format!("Cherry-picking {} commits…", picks.len())
+            }
             gg_engine::mutation::Operation::CherryPick => {
                 format!("Cherry-picking {}…", short_id(&commit))
             }
@@ -6606,10 +6663,19 @@ impl Browser {
         };
         // The selected row is restored when the result is shown.
         self.start_operation(ctx, label, move || {
-            let receipt = match operation {
-                gg_engine::mutation::Operation::Revert => gg_git::mutation::revert(&path, &commit),
-                _ => gg_git::mutation::cherry_pick(&path, &commit),
-            }?;
+            let (receipt, commit) = match operation {
+                gg_engine::mutation::Operation::Revert => {
+                    (gg_git::mutation::revert(&path, &commit)?, commit)
+                }
+                _ if !picks.is_empty() => {
+                    let named: Vec<&str> = picks.iter().map(String::as_str).collect();
+                    (
+                        gg_git::mutation::cherry_pick_many(&path, &named)?,
+                        format!("{} commits", picks.len()),
+                    )
+                }
+                _ => (gg_git::mutation::cherry_pick(&path, &commit)?, commit),
+            };
             Ok(OperationOutcome::Picked {
                 operation,
                 commit,
@@ -7290,7 +7356,15 @@ impl Browser {
         } else {
             "j k: select   ·   Enter: review   ·   Alt+A: actions   ·   R: rebase from here   ·   Ctrl+K: search   ·   Ctrl/Cmd+F: filter   ·   Ctrl/Cmd+C: copy ID"
         };
-        let mut message = Message::new(Tone::Idle, hints);
+        let picked = self.state.picked.len();
+        let mut message = if picked >= 2 && self.state.history.is_some() {
+            Message::new(
+                Tone::Idle,
+                format!("{picked} commits selected   ·   {hints}"),
+            )
+        } else {
+            Message::new(Tone::Idle, hints)
+        };
         message.changes = self.changed_files();
         message
     }
@@ -7537,7 +7611,14 @@ impl Browser {
                     self.mutation_error = Some(error);
                 }
             }
-            CommitAction::Compare => self.open_compare(ctx, id, return_location),
+            // Two picked commits compare with each other, the newer as After.
+            CommitAction::Compare => match self.state.picks_oldest_first().as_deref() {
+                Some([older, newer]) => {
+                    let (older, newer) = (older.id.clone(), newer.id.clone());
+                    self.open_compare_against(ctx, newer, older, return_location);
+                }
+                _ => self.open_compare(ctx, id, return_location),
+            },
         }
     }
 
@@ -10767,6 +10848,17 @@ impl Browser {
         id: String,
         return_location: return_location::ReturnLocation,
     ) {
+        self.open_compare_against(ctx, id, "HEAD".into(), return_location);
+    }
+
+    /// Review `id` against `against` instead of its parent.
+    fn open_compare_against(
+        &mut self,
+        ctx: &egui::Context,
+        id: String,
+        against: String,
+        return_location: return_location::ReturnLocation,
+    ) {
         if let Some(path) = self
             .state
             .history
@@ -10785,7 +10877,7 @@ impl Browser {
                     path,
                     revision: id,
                     parent: None,
-                    against: Some("HEAD".into()),
+                    against: Some(against),
                 },
                 subject,
                 ctx,
@@ -11130,10 +11222,26 @@ impl Browser {
                         self.step_selection(ctx, distance);
                     }
                 }
-                if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::C))
-                    && let Some(id) = &self.state.selected
-                {
-                    ctx.copy_text(id.clone());
+                // Shift+Up/Down picks the rows from the anchor on.
+                for (key, delta) in [(egui::Key::ArrowUp, -1), (egui::Key::ArrowDown, 1)] {
+                    if self.state.count > 0
+                        && ctx.input_mut(|i| i.consume_key(egui::Modifiers::SHIFT, key))
+                    {
+                        let row = self
+                            .state
+                            .selected_row
+                            .unwrap_or(0)
+                            .saturating_add_signed(delta)
+                            .min(self.state.count - 1);
+                        if self.state.click_row(row, true, false).is_err() {
+                            self.state.clear_picks();
+                        }
+                        self.details_file = 0;
+                        self.scroll_to_selection = true;
+                    }
+                }
+                if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::C)) {
+                    self.copy_selected_commits(ctx);
                 }
             }
         }
@@ -13259,6 +13367,7 @@ impl Browser {
         // A double-clicked branch pill: its name and whether it is remote.
         let mut pill_switch: Option<(String, bool)> = None;
         let mut right_clicked_row: Option<usize> = None;
+        let mut pick_warning = None;
         let mut welcome_command: Option<welcome_view::Command> = None;
         egui::CentralPanel::default().show(ui, |ui| {
             if narrow && self.narrow_details {
@@ -13483,7 +13592,8 @@ impl Browser {
                                                     &refs,
                                                     head_name.as_deref(),
                                                     Some(&commit.id)
-                                                        == self.state.selected.as_ref(),
+                                                        == self.state.selected.as_ref()
+                                                        || self.state.picked.contains_key(&row),
                                                     &mut self.avatars,
                                                     target,
                                                 )
@@ -13526,7 +13636,14 @@ impl Browser {
                                         } else {
                                             if response.clicked() {
                                                 response.surrender_focus();
-                                                self.state.select_row(row);
+                                                let modifiers = ui.input(|i| i.modifiers);
+                                                if let Err(missing) = self.state.click_row(
+                                                    row,
+                                                    modifiers.shift,
+                                                    modifiers.command,
+                                                ) {
+                                                    pick_warning = Some(missing);
+                                                }
                                                 if self.worker.is_none() {
                                                     self.state.details =
                                                         self.state.rows.get(&row).cloned();
@@ -13583,6 +13700,17 @@ impl Browser {
         });
         if let Some(command) = welcome_command {
             self.run_welcome_command(ctx, command);
+        }
+        if let Some(missing) = pick_warning {
+            self.set_outcome(
+                OutcomeSeverity::Warning,
+                format!(
+                    "Pick a shorter range: {} of its commits are not loaded.",
+                    missing
+                ),
+                None,
+                None,
+            );
         }
         if let Some(row) = right_clicked_row {
             self.state.select_row(row);
@@ -15061,6 +15189,87 @@ mod tests {
             "the change is read once the mutation is done"
         );
         Ok(())
+    }
+
+    #[test]
+    fn two_picked_commits_compare_with_each_other_and_copy_as_lines() {
+        let ctx = egui::Context::default();
+        let mut app = Browser::new(std::path::PathBuf::from("."));
+        app.state.history = Some(gg_engine::History {
+            path: "/repo".into(),
+            head: "main".into(),
+            commits: Vec::new(),
+            truncated: false,
+            shallow: false,
+        });
+        for row in 0..3 {
+            app.state.rows.insert(
+                row,
+                gg_engine::Commit {
+                    id: format!("{:040x}", row + 1),
+                    parents: vec![format!("{:040x}", row + 2)],
+                    author: "Ada".into(),
+                    email: "ada@example.org".into(),
+                    time: "2026-11-04".into(),
+                    message: format!("change {row}"),
+                },
+            );
+        }
+        app.state.count = 3;
+        let labels = |app: &Browser| -> Vec<String> {
+            app.commit_menu_entries()
+                .into_iter()
+                .filter_map(|entry| match entry {
+                    menus::Entry::Item(item) => Some(item.label),
+                    _ => None,
+                })
+                .collect()
+        };
+        assert!(labels(&app).contains(&"Compare with HEAD".to_string()));
+        let _ = app.state.click_row(0, false, false);
+        let _ = app.state.click_row(2, false, true);
+        let labels = labels(&app);
+        for label in [
+            "Compare these two",
+            "Copy 2 commits",
+            "Cherry-pick 2 commits onto HEAD",
+        ] {
+            assert!(labels.contains(&label.to_string()), "{label} in {labels:?}");
+        }
+        assert!(
+            app.footer_message(false)
+                .text
+                .starts_with("2 commits selected")
+        );
+
+        // Compare: the newer commit (row 0) against the older (row 2).
+        let id = app.state.selected.clone().unwrap_or_default();
+        app.run_commit_action(&ctx, id, CommitAction::Compare);
+        let request = app.review.as_ref().map(|review| review.request.clone());
+        assert_eq!(
+            request.map(|request| (request.revision, request.against)),
+            Some((format!("{:040x}", 1), Some(format!("{:040x}", 3))))
+        );
+        app.review = None;
+
+        // Copy: one `id subject author date` line per commit, newest first.
+        app.copy_selected_commits(&ctx);
+        let copied = ctx.output(|output| {
+            output.commands.iter().find_map(|command| match command {
+                egui::OutputCommand::CopyText(text) => Some(text.clone()),
+                _ => None,
+            })
+        });
+        assert_eq!(
+            copied.as_deref(),
+            Some(
+                format!(
+                    "{:040x} change 0 Ada 2026-11-04\n{:040x} change 2 Ada 2026-11-04",
+                    1, 3
+                )
+                .as_str()
+            )
+        );
     }
 
     #[test]

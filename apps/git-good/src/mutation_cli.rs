@@ -18,7 +18,7 @@ fn run(
     operation: Operation,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut path = std::env::current_dir()?;
-    let mut commit = None;
+    let mut commits = Vec::new();
     let mut action = None;
     while let Some(arg) = args.next() {
         match arg.to_str() {
@@ -29,8 +29,8 @@ fn run(
             Some(value) if value.starts_with("--") => {
                 return Err(format!("Unknown {} option", operation.as_str()).into());
             }
-            _ if commit.is_none() => {
-                commit = Some(arg.into_string().map_err(|_| "Commit must be UTF-8")?);
+            _ if commits.is_empty() || operation == Operation::CherryPick => {
+                commits.push(arg.into_string().map_err(|_| "Commit must be UTF-8")?);
             }
             _ => {
                 return Err(format!(
@@ -47,15 +47,17 @@ fn run(
         Some("abort") => gg_git::mutation::abort_operation(&path, operation)?,
         Some("skip") => gg_git::mutation::skip_operation(&path, operation)?,
         _ => {
-            let commit = commit.ok_or_else(|| {
-                format!(
+            if commits.is_empty() {
+                return Err(format!(
                     "Usage: git good {} COMMIT [--repo PATH]",
                     operation.as_str()
                 )
-            })?;
+                .into());
+            }
+            let named: Vec<&str> = commits.iter().map(String::as_str).collect();
             match operation {
-                Operation::CherryPick => gg_git::mutation::cherry_pick(&path, &commit)?,
-                Operation::Revert => gg_git::mutation::revert(&path, &commit)?,
+                Operation::CherryPick => gg_git::mutation::cherry_pick_many(&path, &named)?,
+                Operation::Revert => gg_git::mutation::revert(&path, named[0])?,
                 Operation::Merge => return Err("Use git good merge for merge operations.".into()),
                 Operation::Rebase => {
                     return Err("Use git good rebase for rebase operations.".into());

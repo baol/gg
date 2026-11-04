@@ -67,7 +67,7 @@ git good rebase --continue|--skip|--abort [--repo PATH]
 git good rewrite --from COMMIT STEP... [--autostash] [--repo PATH]
 #   STEP: --pick|--edit|--squash|--fixup|--drop COMMIT, or --reword COMMIT MESSAGE
 git good rewrite --continue|--skip|--abort [--repo PATH]
-git good cherry-pick COMMIT [--repo PATH]
+git good cherry-pick COMMIT... [--repo PATH]   # several: oldest first, one git cherry-pick
 git good revert COMMIT [--repo PATH]
 git good cherry-pick|revert --continue|--skip|--abort [--repo PATH]
 git good conflicts [--repo PATH]

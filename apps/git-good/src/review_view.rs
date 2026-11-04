@@ -75,7 +75,7 @@ fn review_source(reference: Option<&str>, id: Option<&str>, absent: &str) -> Str
 }
 
 pub struct Review {
-    request: ReviewRequest,
+    pub(crate) request: ReviewRequest,
     subject: String,
     worker: Option<Worker>,
     staged: Option<Update>,

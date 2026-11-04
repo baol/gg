@@ -87,6 +87,28 @@ fn cherry_pick_applies_a_commit() -> Result {
 }
 
 #[test]
+fn several_commits_are_picked_oldest_first_in_one_cherry_pick() -> Result {
+    let dir = repo()?;
+    let p = dir.path();
+    git(p, &["switch", "-qc", "feature"])?;
+    for name in ["b", "c"] {
+        std::fs::write(p.join(name), format!("{name}\n"))?;
+        git(p, &["add", name])?;
+        git(p, &["commit", "-qm", &format!("add {name}")])?;
+    }
+    git(p, &["switch", "-q", "main"])?;
+    let receipt = gg_git::mutation::cherry_pick_many(p, &["feature~1", "feature"])?;
+    assert!(receipt.applied && !receipt.in_progress);
+    assert_eq!(
+        String::from_utf8(git(p, &["log", "--format=%s", "-3"])?)?,
+        "add c\nadd b\nbase\n"
+    );
+    assert!(gg_git::mutation::cherry_pick_many(p, &[]).is_err());
+    assert!(gg_git::mutation::cherry_pick_many(p, &["feature", "--abort"]).is_err());
+    Ok(())
+}
+
+#[test]
 fn cherry_pick_conflict_can_abort_and_continue() -> Result {
     let dir = repo()?;
     let p = dir.path();

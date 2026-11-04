@@ -82,6 +82,89 @@ impl StageActions {
         }
     }
 
+    /// Stage, unstage, or discard several whole files as one mutation, in
+    /// order: each file is checked against the status it was listed in, and
+    /// the identity is read again after it, as a single file's is. Files
+    /// that cannot take the action (conflicts, intent-to-add, a discard of a
+    /// staged file) are skipped. Refused while another mutation runs.
+    pub fn apply_files(
+        &mut self,
+        repository: StatusIdentity,
+        entries: Vec<StatusEntry>,
+        discard: bool,
+        ctx: &egui::Context,
+    ) {
+        if self.mutation.is_some() {
+            return;
+        }
+        let entries: Vec<_> = entries
+            .into_iter()
+            .filter(|entry| match entry.area {
+                Area::Staged => !discard,
+                Area::Unstaged | Area::Untracked => !matches!(
+                    entry.kind,
+                    gg_engine::status::Kind::IntentToAdd | gg_engine::status::Kind::Conflicted
+                ),
+                Area::Conflict => false,
+            })
+            .collect();
+        if entries.is_empty() {
+            self.error = Some("None of the selected files can take this action.".into());
+            return;
+        }
+        self.error = None;
+        self.label = Some(if discard {
+            "Discarding…"
+        } else if entries.iter().all(|entry| entry.area == Area::Staged) {
+            "Unstaging…"
+        } else {
+            "Staging…"
+        });
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        let repaint = ctx.clone();
+        let result = thread::Builder::new()
+            .name("gg-stage-mutate".into())
+            .spawn(move || {
+                let mut identity = repository;
+                let mut result = Ok(());
+                for entry in entries {
+                    let request = WorkingRequest {
+                        repository: identity.clone(),
+                        entry,
+                    };
+                    let operation = match (request.entry.area, discard) {
+                        (Area::Staged, _) => gg_git::unstage::file(&request),
+                        (_, true) => gg_git::drop::file(&request),
+                        (_, false) => gg_git::stage::file(&request),
+                    };
+                    let next = operation.and_then(|()| {
+                        gg_git::status::Session::open_with_base_tree(
+                            &identity.path,
+                            identity.base_tree.clone(),
+                        )
+                        .map(|session| session.identity)
+                        .map_err(|error| format!("Refresh status: {error}"))
+                    });
+                    match next {
+                        Ok(next) => identity = next,
+                        Err(error) => {
+                            result = Err(error);
+                            break;
+                        }
+                    }
+                }
+                let _ = tx.send(result.map(|()| identity));
+                repaint.request_repaint();
+            });
+        match result {
+            Ok(_) => self.mutation = Some(rx),
+            Err(error) => {
+                self.label = None;
+                self.error = Some(format!("Start mutation: {error}"));
+            }
+        }
+    }
+
     /// Apply one reader edit. Duplicate submissions are refused while pending.
     pub fn apply(&mut self, edit: StageEdit, ctx: &egui::Context) {
         self.apply_all(vec![edit], ctx);
