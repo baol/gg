@@ -319,6 +319,12 @@ pub struct StatusView {
     signing_generation: u64,
     /// [`StatusView::repository_key`], resolved once.
     key: std::cell::OnceCell<PathBuf>,
+    /// The commit HEAD was on before the last commit or amend, for Undo.
+    commit_undo: Option<String>,
+    /// The window holds an Undo for the last commit: show its button.
+    pub(crate) undo_available: bool,
+    /// The Undo button was pressed.
+    undo_requested: bool,
     /// The Sign default to apply once the configuration is known.
     sign_default: Option<crate::settings::SignCommits>,
     sign_commit: bool,
@@ -408,6 +414,9 @@ impl StatusView {
             signing: None,
             signing_cache: Default::default(),
             key: Default::default(),
+            commit_undo: None,
+            undo_available: false,
+            undo_requested: false,
             signing_generation: 0,
             sign_default: Some(crate::settings::SignCommits::Git),
             sign_commit: false,
@@ -1184,6 +1193,27 @@ impl StatusView {
         self.commit_done.take()
     }
 
+    /// Where Undo of the commit just taken moves the branch back to.
+    pub fn take_commit_undo(&mut self) -> Option<String> {
+        self.commit_undo.take()
+    }
+
+    /// Whether the window holds an Undo for the last commit.
+    pub fn set_undo_available(&mut self, available: bool) {
+        self.undo_available = available;
+    }
+
+    /// An Undo took the last commit back: its receipt no longer applies.
+    pub fn forget_commit_receipt(&mut self) {
+        self.last_commit = None;
+        self.commit_undo = None;
+    }
+
+    /// The Undo button was pressed since the last call.
+    pub fn take_undo_request(&mut self) -> bool {
+        std::mem::take(&mut self.undo_requested)
+    }
+
     /// Canonical worktree identity used to keep drafts from crossing repositories.
     pub(crate) fn repository_key(&self) -> PathBuf {
         self.key
@@ -1457,6 +1487,13 @@ impl StatusView {
                     self.amend_base_commit = None;
                     self.amend_subject = None;
                     self.commit_done = Some(receipt.id.clone());
+                    // Where Undo moves the branch back to: the parent of a
+                    // new commit, the commit an amend replaced.
+                    self.commit_undo = if receipt.amended {
+                        receipt.previous.clone()
+                    } else {
+                        receipt.parents.first().cloned()
+                    };
                     self.commit_warning = if receipt.warnings.is_empty() {
                         None
                     } else {
@@ -2505,15 +2542,31 @@ impl StatusView {
                             );
                         },
                     );
-                    // Refresh is automatic; Retry appears after an error and
-                    // otherwise keeps its slot empty.
-                    refresh |= ui
-                        .add_visible(
-                            self.error.is_some(),
-                            egui::Button::new("Retry").min_size(egui::vec2(74.0, 22.0)),
-                        )
-                        .clicked()
-                        && !self.busy();
+                    // Refresh is automatic; Retry appears after an error, and
+                    // Undo after a commit it can take back; otherwise the slot
+                    // stays empty.
+                    if self.error.is_none() && self.undo_available {
+                        if ui
+                            .add_enabled(
+                                !self.mutations_blocked(),
+                                egui::Button::new("Undo").min_size(egui::vec2(74.0, 22.0)),
+                            )
+                            .on_hover_text(
+                                "Move the branch back before this commit; its changes stay staged",
+                            )
+                            .clicked()
+                        {
+                            self.undo_requested = true;
+                        }
+                    } else {
+                        refresh |= ui
+                            .add_visible(
+                                self.error.is_some(),
+                                egui::Button::new("Retry").min_size(egui::vec2(74.0, 22.0)),
+                            )
+                            .clicked()
+                            && !self.busy();
+                    }
                 });
             });
         let wide = ui.available_width() >= WIDE_LAYOUT;
@@ -2682,6 +2735,9 @@ mod tests {
             signing: None,
             signing_cache: Default::default(),
             key: Default::default(),
+            commit_undo: None,
+            undo_available: false,
+            undo_requested: false,
             signing_generation: 0,
             sign_default: Some(crate::settings::SignCommits::Git),
             sign_commit: false,

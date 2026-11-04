@@ -1490,7 +1490,10 @@ enum OperationOutcome {
         recovery_source: Option<return_location::RecoverySource>,
     },
     BranchRenamed,
-    BranchDeleted(String),
+    /// A deleted branch and the tip it had, for Undo.
+    BranchDeleted(String, Option<String>),
+    /// An Undo finished: its receipt.
+    Undone(String),
     TagDeleted(String),
     Reset {
         receipt: gg_engine::reset::Receipt,
@@ -1564,6 +1567,23 @@ enum RecoveryAction {
     Push,
     /// Fetch after a rejected push, to see the remote's new commits.
     Fetch,
+    /// Put back what the last operation changed ([`Browser::undo`]).
+    Undo,
+}
+
+/// What **Undo** on the last operation's receipt puts back. Only the last
+/// operation can be undone: starting another forgets it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Undo {
+    /// A reset, rebase or rewrite: restore the checked-out `branch` to the
+    /// commit its `backup` saved, as Recovery's Restore does (a clean tree;
+    /// the tip it replaces is saved first).
+    Restore { branch: String, backup: String },
+    /// A commit or amend: move the branch back to `commit`, keeping the
+    /// index and the files, so the committed changes are staged again.
+    Soft { commit: String },
+    /// A branch delete: create `branch` at `tip` again.
+    Recreate { branch: String, tip: String },
 }
 
 struct Outcome {
@@ -1591,6 +1611,7 @@ fn recovery_label(action: RecoveryAction) -> &'static str {
         RecoveryAction::ForcePush => "Push with force-with-lease…",
         RecoveryAction::Push => "Push",
         RecoveryAction::Fetch => "Fetch",
+        RecoveryAction::Undo => "Undo",
     }
 }
 
@@ -1980,6 +2001,8 @@ struct Browser {
     track_dialog: Option<String>,
     stash_dialog: Option<StashDialog>,
     stash_notice: Option<String>,
+    /// What Undo on the last operation's receipt puts back.
+    undo: Option<Undo>,
     /// A merge's receipt without its commit count, and the count on its way.
     merge_count: Option<(String, std::sync::mpsc::Receiver<usize>)>,
     mutation: Option<gg_engine::mutation::OperationState>,
@@ -2192,6 +2215,7 @@ impl Browser {
             stash_dialog: None,
             stash_notice: None,
             merge_count: None,
+            undo: None,
             notice_seen: None,
             mutation: None,
             mutation_notice: None,
@@ -6564,6 +6588,7 @@ impl Browser {
         self.network_notice = None;
         self.stash_notice = None;
         self.merge_count = None;
+        self.undo = None;
         self.branch_warning = None;
         self.operation_worker = None;
         self.operation_owner = OperationOwner::Footer;
@@ -6740,9 +6765,17 @@ impl Browser {
             .ok_or("Open a repository before deleting a branch.")?;
         let name = name.to_string();
         let label = format!("Deleting branch {name}…");
+        // The tip it had, from the refs already read, for Undo.
+        let tip = self
+            .state
+            .refs
+            .items
+            .iter()
+            .find(|item| item.kind == gg_engine::refs::RefKind::Branch && item.name == name)
+            .map(|item| item.commit.clone());
         self.start_operation(ctx, label, move || {
             gg_git::branch::delete(&path, &name, force)?;
-            Ok(OperationOutcome::BranchDeleted(name))
+            Ok(OperationOutcome::BranchDeleted(name, tip))
         })?;
         self.operation_owner = OperationOwner::BranchDelete;
         Ok(())
@@ -6793,7 +6826,7 @@ impl Browser {
         mode: gg_engine::reset::Mode,
     ) {
         self.mutation_error = None;
-        self.mutation_notice = Some(format!(
+        let summary = format!(
             "Reset to {}{}{}",
             self.commit_summary(&receipt.commit),
             if mode == gg_engine::reset::Mode::Hard {
@@ -6806,7 +6839,20 @@ impl Browser {
                 .as_ref()
                 .map(|backup| format!(" · backup {backup}"))
                 .unwrap_or_default()
-        ));
+        );
+        self.mutation_notice = Some(summary.clone());
+        if let Some(backup) = receipt.backup.clone() {
+            self.undo = Some(Undo::Restore {
+                branch: self.current_branch_name(),
+                backup,
+            });
+            self.set_outcome(
+                OutcomeSeverity::Info,
+                summary,
+                None,
+                Some(RecoveryAction::Undo),
+            );
+        }
         self.refresh_mutation();
         self.load(ctx);
         self.refresh_reflog();
@@ -7525,6 +7571,47 @@ impl Browser {
         });
     }
 
+    /// Undo the last operation on the operation worker.
+    fn start_undo(&mut self, ctx: &egui::Context) {
+        let (Some(undo), Some(path)) = (self.undo.clone(), self.stash_path()) else {
+            return;
+        };
+        let label = match &undo {
+            Undo::Restore { branch, .. } => format!("Restoring {branch}…"),
+            Undo::Soft { .. } => "Undoing the commit…".to_string(),
+            Undo::Recreate { branch, .. } => format!("Restoring branch {branch}…"),
+        };
+        let started = self.start_operation(ctx, label, move || match undo {
+            Undo::Restore { branch, backup } => gg_git::backup::restore(&path, &backup, &branch)
+                .map(|receipt| {
+                    OperationOutcome::Undone(format!(
+                        "Undone: {} is back at {} · the tip it had is saved as a backup",
+                        receipt.branch,
+                        short_id(&receipt.commit)
+                    ))
+                }),
+            Undo::Soft { commit } => {
+                gg_git::reset::reset(&path, &commit, gg_engine::reset::Mode::Soft).map(|_| {
+                    OperationOutcome::Undone(format!(
+                        "Undone: the branch is back at {} · the commit's changes are staged",
+                        short_id(&commit)
+                    ))
+                })
+            }
+            Undo::Recreate { branch, tip } => {
+                gg_git::branch::create_at(&path, &branch, &tip).map(|_| {
+                    OperationOutcome::Undone(format!(
+                        "Undone: branch {branch} is back at {}",
+                        short_id(&tip)
+                    ))
+                })
+            }
+        });
+        if let Err(error) = started {
+            self.mutation_error = Some(error);
+        }
+    }
+
     fn run_recovery_action(&mut self, ctx: &egui::Context, action: RecoveryAction) {
         match action {
             RecoveryAction::Backups => {
@@ -7555,6 +7642,7 @@ impl Browser {
                 }
             }
             RecoveryAction::Push => self.start_push(ctx),
+            RecoveryAction::Undo => self.start_undo(ctx),
             RecoveryAction::Fetch => {
                 let remote = self
                     .state
@@ -7700,6 +7788,8 @@ impl Browser {
         if self.operation_busy() {
             return Err("Wait for the current operation to finish.".into());
         }
+        // Only the last operation can be undone.
+        self.undo = None;
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         let repaint = ctx.clone();
         std::thread::Builder::new()
@@ -7767,7 +7857,13 @@ impl Browser {
                 } else {
                     let summary = format!("Rebased {branch} onto {}", receipt.reference);
                     self.mutation_notice = Some(summary.clone());
-                    self.set_outcome(OutcomeSeverity::Info, summary, None, None);
+                    let undo = receipt.backup.clone().map(|backup| Undo::Restore {
+                        branch: branch.clone(),
+                        backup,
+                    });
+                    let recovery = undo.is_some().then_some(RecoveryAction::Undo);
+                    self.undo = undo;
+                    self.set_outcome(OutcomeSeverity::Info, summary, None, recovery);
                 }
                 self.conflict_view = None;
                 self.restore_row = restore_row;
@@ -7873,10 +7969,32 @@ impl Browser {
                 self.rename_dialog = None;
                 self.load(ctx);
             }
-            OperationOutcome::BranchDeleted(name) => {
-                self.mutation_notice = Some(format!("Deleted branch {name}"));
+            OperationOutcome::BranchDeleted(name, tip) => {
+                let summary = format!("Deleted branch {name}");
+                self.mutation_notice = Some(summary.clone());
                 self.branch_delete = None;
+                if let Some(tip) = tip {
+                    self.undo = Some(Undo::Recreate { branch: name, tip });
+                    self.set_outcome(
+                        OutcomeSeverity::Info,
+                        summary,
+                        None,
+                        Some(RecoveryAction::Undo),
+                    );
+                }
                 self.load(ctx);
+            }
+            OperationOutcome::Undone(summary) => {
+                if let Some(working) = &mut self.working {
+                    working.forget_commit_receipt();
+                }
+                self.mutation_notice = Some(summary.clone());
+                self.set_outcome(OutcomeSeverity::Info, summary, None, None);
+                self.refresh_mutation();
+                self.load(ctx);
+                self.refresh_reflog();
+                self.refresh_backups();
+                self.refresh_working(ctx);
             }
             OperationOutcome::TagDeleted(name) => {
                 self.mutation_notice = Some(format!("Deleted tag {name}"));
@@ -8530,17 +8648,25 @@ impl Browser {
         if !receipt.conflicts.is_empty() {
             details.push(format!("Conflicts: {}", receipt.conflicts.join(", ")));
         }
-        // A rewrite Git stopped is the band's to report.
+        // A rewrite Git stopped is the band's to report. A push it needs
+        // comes first; otherwise its receipt offers Undo.
         if !conflicts {
+            let mut follow_up =
+                rewrite_follow_up(conflicts, self.prefs.offer_force_lease, relation);
+            if follow_up == RecoveryAction::Backups
+                && let Some(backup) = receipt.backup.clone()
+            {
+                self.undo = Some(Undo::Restore {
+                    branch: self.current_branch_name(),
+                    backup,
+                });
+                follow_up = RecoveryAction::Undo;
+            }
             self.set_outcome(
                 OutcomeSeverity::Info,
                 summary,
                 (!details.is_empty()).then(|| details.join("\n")),
-                Some(rewrite_follow_up(
-                    conflicts,
-                    self.prefs.offer_force_lease,
-                    relation,
-                )),
+                Some(follow_up),
             );
         }
         self.conflict_view = None;
@@ -13199,6 +13325,25 @@ impl Browser {
                 .working
                 .as_mut()
                 .and_then(|working| working.take_commit());
+            if committed.is_some() {
+                // Undo moves the branch back, keeping the commit's changes staged.
+                self.undo = self
+                    .working
+                    .as_mut()
+                    .and_then(|working| working.take_commit_undo())
+                    .map(|commit| Undo::Soft { commit });
+            }
+            if self
+                .working
+                .as_mut()
+                .is_some_and(|working| working.take_undo_request())
+            {
+                self.start_undo(ctx);
+            }
+            let soft = matches!(self.undo, Some(Undo::Soft { .. }));
+            if let Some(working) = &mut self.working {
+                working.set_undo_available(soft);
+            }
             self.keep_draft(ctx, committed.is_some());
             if let Some(id) = committed {
                 self.pending_commit = Some(id);
@@ -19490,6 +19635,170 @@ mod tests {
             shallow: false,
         });
         Ok((dir, app))
+    }
+
+    /// `two_commits` with `main` checked out as HEAD knows it.
+    fn on_main(app: &mut Browser, path: &Path) -> Result<String, Box<dyn std::error::Error>> {
+        let head = git_in(path, &["rev-parse", "HEAD"])?.trim().to_string();
+        app.state.refs.head = Some(gg_engine::refs::Head {
+            name: Some("refs/heads/main".into()),
+            detached: false,
+            commit: Some(head.clone()),
+        });
+        Ok(head)
+    }
+
+    #[test]
+    fn undo_brings_a_deleted_branch_back_at_its_tip() -> Checked {
+        let ctx = egui::Context::default();
+        let (dir, mut app) = two_commits()?;
+        let path = dir.path();
+        git_in(path, &["branch", "merged", "HEAD~1"])?;
+        let tip = git_in(path, &["rev-parse", "merged"])?.trim().to_string();
+        app.state.refs.items.push(gg_engine::refs::RefItem {
+            name: "merged".into(),
+            full_name: "refs/heads/merged".into(),
+            kind: gg_engine::refs::RefKind::Branch,
+            commit: tip.clone(),
+        });
+        app.delete_branch(&ctx, "merged", true)?;
+        app.wait_for_operation(&ctx);
+        assert_eq!(git_in(path, &["branch", "--list", "merged"])?, "");
+        assert_eq!(
+            app.outcome
+                .as_ref()
+                .map(|o| (o.summary.as_str(), o.recovery)),
+            Some(("Deleted branch merged", Some(RecoveryAction::Undo))),
+            "the receipt offers Undo"
+        );
+        app.run_recovery_action(&ctx, RecoveryAction::Undo);
+        app.wait_for_operation(&ctx);
+        assert_eq!(git_in(path, &["rev-parse", "merged"])?.trim(), tip);
+        assert!(
+            app.outcome
+                .as_ref()
+                .is_some_and(|o| o.summary.starts_with("Undone: branch merged is back")),
+            "{:?}",
+            app.outcome.as_ref().map(|o| &o.summary)
+        );
+        assert!(app.undo.is_none(), "an undo is not undone again");
+        Ok(())
+    }
+
+    #[test]
+    fn undo_of_a_reset_needs_a_clean_tree_and_restores_the_tip() -> Checked {
+        let ctx = egui::Context::default();
+        let (dir, mut app) = two_commits()?;
+        let path = dir.path();
+        let before = on_main(&mut app, path)?;
+        let base = git_in(path, &["rev-parse", "HEAD~1"])?.trim().to_string();
+        app.start_reset(&ctx, &base, gg_engine::reset::Mode::Hard)?;
+        app.wait_for_operation(&ctx);
+        assert_eq!(git_in(path, &["rev-parse", "HEAD"])?.trim(), base);
+        assert_eq!(
+            app.outcome.as_ref().and_then(|o| o.recovery),
+            Some(RecoveryAction::Undo)
+        );
+
+        // Refused while the tree has changes; nothing moves.
+        std::fs::write(path.join("b"), b"edited\n")?;
+        app.run_recovery_action(&ctx, RecoveryAction::Undo);
+        app.wait_for_operation(&ctx);
+        assert_eq!(git_in(path, &["rev-parse", "HEAD"])?.trim(), base);
+        assert!(
+            app.outcome
+                .as_ref()
+                .is_some_and(|o| o.severity == OutcomeSeverity::Error),
+            "a dirty tree refuses the undo"
+        );
+
+        // The undo is spent; a reset made again offers it again.
+        git_in(path, &["checkout", "--", "b"])?;
+        assert!(app.undo.is_none(), "a refused undo is spent too");
+        app.start_reset(&ctx, &base, gg_engine::reset::Mode::Hard)?;
+        app.wait_for_operation(&ctx);
+        app.undo = Some(Undo::Restore {
+            branch: "main".into(),
+            backup: before.clone(),
+        });
+        app.run_recovery_action(&ctx, RecoveryAction::Undo);
+        app.wait_for_operation(&ctx);
+        assert_eq!(git_in(path, &["rev-parse", "HEAD"])?.trim(), before);
+        Ok(())
+    }
+
+    #[test]
+    fn a_commit_in_local_changes_offers_undo_to_its_parent() -> Checked {
+        let ctx = egui::Context::default();
+        let (dir, mut app) = two_commits()?;
+        let path = dir.path();
+        git_in(path, &["config", "user.name", "Test"])?;
+        git_in(path, &["config", "user.email", "test@example.org"])?;
+        git_in(path, &["config", "commit.gpgsign", "false"])?;
+        let parent = git_in(path, &["rev-parse", "HEAD"])?.trim().to_string();
+        std::fs::write(path.join("b"), b"three\n")?;
+        git_in(path, &["add", "b"])?;
+        app.open_working(&ctx);
+        if let Some(working) = &mut app.working {
+            working.set_draft("three".into());
+        }
+        let frame = |app: &mut Browser| {
+            let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ui| {
+                app.draw_ui(ui)
+            });
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        };
+        for _ in 0..800 {
+            frame(&mut app);
+            if let Some(working) = &mut app.working {
+                working.commit_now(&ctx);
+            }
+            if app.pending_commit.is_some() {
+                break;
+            }
+        }
+        assert!(app.pending_commit.is_some(), "the commit did not finish");
+        assert_eq!(app.undo, Some(Undo::Soft { commit: parent }));
+        frame(&mut app);
+        assert!(
+            app.working
+                .as_ref()
+                .is_some_and(|working| working.undo_available),
+            "Local Changes shows Undo"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn undo_of_a_commit_keeps_its_changes_staged() -> Checked {
+        let ctx = egui::Context::default();
+        let (dir, mut app) = two_commits()?;
+        let path = dir.path();
+        let head = on_main(&mut app, path)?;
+        let parent = git_in(path, &["rev-parse", "HEAD~1"])?.trim().to_string();
+        app.undo = Some(Undo::Soft {
+            commit: parent.clone(),
+        });
+        app.run_recovery_action(&ctx, RecoveryAction::Undo);
+        app.wait_for_operation(&ctx);
+        assert_eq!(git_in(path, &["rev-parse", "HEAD"])?.trim(), parent);
+        assert_eq!(
+            git_in(path, &["diff", "--cached", "--name-only"])?.trim(),
+            "a"
+        );
+        assert_eq!(
+            std::fs::read(path.join("a"))?,
+            b"two\n",
+            "files are untouched"
+        );
+        let _ = head;
+
+        // Starting another operation forgets an undo not taken.
+        app.undo = Some(Undo::Soft { commit: parent });
+        app.delete_tag(&ctx, "missing").ok();
+        assert!(app.undo.is_none(), "only the last operation can be undone");
+        app.wait_for_operation(&ctx);
+        Ok(())
     }
 
     #[test]
