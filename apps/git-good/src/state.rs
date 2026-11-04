@@ -28,6 +28,12 @@ pub struct State {
     pub generation: u64,
     /// Generation whose replacement history has been accepted into the browser.
     pub loaded_generation: u64,
+    /// Commits picked with Ctrl/Cmd-click or a Shift range, by row; two or
+    /// more turn the Commit menu's Compare, Cherry-pick and Copy into
+    /// several-commit commands. Cleared when the rows are replaced.
+    pub picked: BTreeMap<usize, Commit>,
+    /// Where a Shift range starts: the last row clicked without Shift.
+    pub anchor: Option<usize>,
 }
 
 impl State {
@@ -93,6 +99,7 @@ impl State {
             self.rows.clear();
             self.graphs.clear();
             self.ref_lanes.clear();
+            self.clear_picks();
             self.history = Some(update.identity);
             self.refs = update.refs.clone();
             self.query = update.query;
@@ -148,6 +155,7 @@ impl State {
 
     pub fn start_filter(&mut self) {
         self.filter_revision = self.filter_revision.saturating_add(1);
+        self.clear_picks();
         self.rows.clear();
         self.graphs.clear();
         self.count = 0;
@@ -170,6 +178,60 @@ impl State {
                 .and_then(|row| self.rows.get(&row))
                 .filter(|commit| Some(&commit.id) == self.selected.as_ref())
         })
+    }
+
+    pub fn clear_picks(&mut self) {
+        self.picked.clear();
+        self.anchor = None;
+    }
+
+    /// A click on `row`: with Shift, pick the rows from the anchor to it;
+    /// with Ctrl/Cmd, add it or take it out (the first one also keeps the
+    /// selected commit); a plain click picks nothing. Selects `row`. A range
+    /// reaching rows not loaded picks nothing and returns how many are
+    /// missing.
+    pub fn click_row(&mut self, row: usize, shift: bool, command: bool) -> Result<(), usize> {
+        let mut missing = 0;
+        if shift {
+            let anchor = self.anchor.or(self.selected_row).unwrap_or(row);
+            self.anchor = Some(anchor);
+            let range = anchor.min(row)..anchor.max(row) + 1;
+            missing = range
+                .clone()
+                .filter(|at| !self.rows.contains_key(at))
+                .count();
+            self.picked = if missing == 0 {
+                range
+                    .filter_map(|at| self.rows.get(&at).map(|commit| (at, commit.clone())))
+                    .collect()
+            } else {
+                BTreeMap::new()
+            };
+        } else if command {
+            if self.picked.is_empty()
+                && let Some(current) = self.selected_row
+                && let Some(commit) = self.rows.get(&current)
+            {
+                self.picked.insert(current, commit.clone());
+            }
+            if self.picked.remove(&row).is_none()
+                && let Some(commit) = self.rows.get(&row)
+            {
+                self.picked.insert(row, commit.clone());
+            }
+            self.anchor = Some(row);
+        } else {
+            self.picked.clear();
+            self.anchor = Some(row);
+        }
+        self.select_row(row);
+        if missing > 0 { Err(missing) } else { Ok(()) }
+    }
+
+    /// The picked commits oldest first (the bottom row first), when two or
+    /// more are picked.
+    pub fn picks_oldest_first(&self) -> Option<Vec<&Commit>> {
+        (self.picked.len() >= 2).then(|| self.picked.values().rev().collect())
     }
 
     pub fn select_row(&mut self, row: usize) {
@@ -406,6 +468,48 @@ mod streaming_tests {
             error: None,
         }
     }
+    #[test]
+    fn commits_are_picked_by_ctrl_and_shift_and_listed_oldest_first() {
+        let mut state = State::default();
+        state.accept(update(0, 32), true, true);
+        let id = |state: &State, row: usize| state.rows.get(&row).map(|c| c.id.clone());
+        assert_eq!(state.click_row(3, false, false), Ok(()));
+        assert!(state.picked.is_empty(), "a plain click picks nothing");
+        // Ctrl/Cmd keeps the selected row and adds the clicked one.
+        assert_eq!(state.click_row(5, false, true), Ok(()));
+        assert_eq!(state.picked.keys().copied().collect::<Vec<_>>(), [3, 5]);
+        let oldest = state
+            .picks_oldest_first()
+            .map(|commits| commits.iter().map(|c| c.id.clone()).collect::<Vec<_>>());
+        assert_eq!(
+            oldest,
+            Some(vec![
+                id(&state, 5).unwrap_or_default(),
+                id(&state, 3).unwrap_or_default()
+            ])
+        );
+        // And takes a picked one out again.
+        assert_eq!(state.click_row(3, false, true), Ok(()));
+        assert_eq!(state.picked.keys().copied().collect::<Vec<_>>(), [5]);
+        assert!(state.picks_oldest_first().is_none(), "one is not several");
+        // Shift runs from the anchor (the last row clicked without Shift).
+        assert_eq!(state.click_row(8, true, false), Ok(()));
+        assert_eq!(
+            state.picked.keys().copied().collect::<Vec<_>>(),
+            [3, 4, 5, 6, 7, 8]
+        );
+        assert_eq!(state.selected_row, Some(8));
+        // A range over rows not loaded picks nothing and says how many.
+        state.rows.remove(&10);
+        state.rows.remove(&11);
+        assert_eq!(state.click_row(12, true, false), Err(2));
+        assert!(state.picked.is_empty());
+        // New rows end the picks.
+        assert_eq!(state.click_row(1, false, true), Ok(()));
+        state.start_filter();
+        assert!(state.picked.is_empty() && state.anchor.is_none());
+    }
+
     #[test]
     fn unfilled_slots_fill_in_place_while_the_extent_is_frozen() {
         let mut state = State::default();

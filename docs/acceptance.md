@@ -2104,6 +2104,16 @@ Layer: product
 - Then the exact text and the `c.txt` selection are restored; opening a linked worktree shows an empty draft
 Covered by (interaction): `commit_draft_survives_history_navigation`, `commit_draft_does_not_cross_worktrees` (main.rs); `draft_restores_the_selected_comparison` (status_view.rs)
 
+### HIS-82 Several commits compare, copy and cherry-pick together
+Fixture: `main` with three commits; `feature` with two commits not on `main`
+Layer: interaction
+- When the user clicks a commit and Ctrl/Cmd-clicks another
+- Then both rows are filled, the footer starts `2 commits selected`, and the Commit menu reads **Compare these two**, **Copy 2 commits** and **Cherry-pick 2 commits onto HEAD**
+- And Compare these two opens Review on the newer commit against the older; Copy copies `id subject author date` per commit, newest first
+- And with the two `feature` commits picked, Cherry-pick runs the same Git commands as `git good cherry-pick feature~1 feature` (oldest first, one `git cherry-pick`)
+- And Shift-click and Shift+Up/Down pick from the anchor; a range over rows not loaded picks nothing and the footer names how many are missing; a reload or filter ends the picks
+Covered by (interaction): `two_picked_commits_compare_with_each_other_and_copy_as_lines` (apps/git-good/src/main.rs); `commits_are_picked_by_ctrl_and_shift_and_listed_oldest_first` (apps/git-good/src/state.rs); `cherry_picking_two_picked_commits_runs_the_cli_commands` (apps/git-good/src/parity_tests.rs); `several_commits_are_picked_oldest_first_in_one_cherry_pick` (crates/git/tests/mutation.rs)
+
 ### CHG-74 Several files stage, unstage, discard and copy together
 Fixture: five modified files `a`…`e`
 Layer: interaction

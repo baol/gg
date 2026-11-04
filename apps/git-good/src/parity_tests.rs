@@ -630,6 +630,63 @@ fn cherry_pick_runs_the_cli_commands() -> Result {
     )
 }
 
+/// A second commit on `feature`, so two can be picked.
+fn two_on_feature(fixture: &Fixture) -> Result {
+    git(&fixture.repo, &["switch", "-q", "feature"])?;
+    std::fs::write(fixture.repo.join("c"), b"more\n")?;
+    git(&fixture.repo, &["add", "c"])?;
+    git(&fixture.repo, &["commit", "-qm", "more feature"])?;
+    git(&fixture.repo, &["switch", "-q", "main"])?;
+    Ok(())
+}
+
+#[test]
+fn cherry_picking_two_picked_commits_runs_the_cli_commands() -> Result {
+    let mut gui = Gui::open(two_on_feature)?;
+    let ids = [
+        rev(&gui.fixture, "feature~1")?,
+        rev(&gui.fixture, "feature")?,
+    ];
+    let rows: Vec<usize> = ids
+        .iter()
+        .filter_map(|id| {
+            gui.app
+                .state
+                .rows
+                .iter()
+                .find(|(_, commit)| &commit.id == id)
+                .map(|(row, _)| *row)
+        })
+        .collect();
+    assert_eq!(rows.len(), 2, "both feature commits are listed");
+    // Click the newer, then Ctrl/Cmd-click the older.
+    let _ = gui.app.state.click_row(rows[1], false, false);
+    let _ = gui.app.state.click_row(rows[0], false, true);
+    let picked = gui.app.state.picks_oldest_first().map(|commits| {
+        commits
+            .iter()
+            .map(|commit| commit.id.clone())
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(picked.as_deref(), Some(&ids[..]), "oldest first");
+    let selected = gui.app.state.selected.clone().ok_or("no selection")?;
+    gui.app
+        .run_commit_action(&gui.ctx, selected, CommitAction::CherryPick);
+    assert!(
+        gui.app.mutation_error.is_none(),
+        "{:?}",
+        gui.app.mutation_error
+    );
+    let gui = gui.finish()?;
+    let cli = cli(
+        two_on_feature,
+        |fixture| Ok(vec![rev(fixture, "feature~1")?, rev(fixture, "feature")?]),
+        cherry_pick_cli,
+    )?;
+    assert_parity("cherry-pick two", &gui, &cli);
+    Ok(())
+}
+
 #[test]
 fn revert_runs_the_cli_commands() -> Result {
     commit_action("revert", "HEAD", CommitAction::Revert, revert_cli)

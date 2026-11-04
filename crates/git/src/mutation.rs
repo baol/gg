@@ -256,11 +256,17 @@ fn git_path(path: &Path, name: &str) -> Result<Option<std::path::PathBuf>, Strin
 }
 
 pub fn cherry_pick(path: &Path, commit: &str) -> Result<MutationReceipt, String> {
-    start(path, Operation::CherryPick, commit)
+    start(path, Operation::CherryPick, &[commit])
+}
+
+/// Apply several commits in the order given (oldest first) with one
+/// `git cherry-pick`, which stops at the first conflict as for one commit.
+pub fn cherry_pick_many(path: &Path, commits: &[&str]) -> Result<MutationReceipt, String> {
+    start(path, Operation::CherryPick, commits)
 }
 
 pub fn revert(path: &Path, commit: &str) -> Result<MutationReceipt, String> {
-    start(path, Operation::Revert, commit)
+    start(path, Operation::Revert, &[commit])
 }
 
 pub fn continue_operation(path: &Path, operation: Operation) -> Result<MutationReceipt, String> {
@@ -280,12 +286,19 @@ pub fn skip_operation(path: &Path, operation: Operation) -> Result<MutationRecei
     finish(path, operation, "skip", "Skip")
 }
 
-fn start(path: &Path, operation: Operation, commit: &str) -> Result<MutationReceipt, String> {
-    let commit = commit.trim();
-    if commit.is_empty() || commit.starts_with('-') {
-        return Err("Commit must be a revision that does not start with '-'.".into());
+fn start(path: &Path, operation: Operation, commits: &[&str]) -> Result<MutationReceipt, String> {
+    if commits.is_empty() {
+        return Err("Name at least one commit.".into());
     }
-    let resolved = resolve(path, commit)?;
+    let mut all = Vec::with_capacity(commits.len());
+    for commit in commits {
+        let commit = commit.trim();
+        if commit.is_empty() || commit.starts_with('-') {
+            return Err("Commit must be a revision that does not start with '-'.".into());
+        }
+        all.push(resolve(path, commit)?);
+    }
+    let resolved = all.last().cloned().unwrap_or_default();
     let flag = match operation {
         Operation::CherryPick => "cherry-pick",
         Operation::Revert => "revert",
@@ -296,11 +309,9 @@ fn start(path: &Path, operation: Operation, commit: &str) -> Result<MutationRece
             ));
         }
     };
-    let output = run(
-        path,
-        &[flag.into(), "--no-edit".into(), resolved.clone()],
-        false,
-    )?;
+    let mut args = vec![flag.to_string(), "--no-edit".into()];
+    args.extend(all.iter().cloned());
+    let output = run(path, &args, false)?;
     let conflicts = unmerged(path)?;
     let state = state(path)?;
     if !output.status.success() && conflicts.is_empty() && state.is_none() {
