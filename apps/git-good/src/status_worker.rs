@@ -20,6 +20,10 @@ pub struct Ranges {
     pub staged: Range<usize>,
     /// Selected comparison, searched across the completed scan.
     pub selected: Option<(Vec<u8>, Area)>,
+    /// Rows of one list (0 Unstaged group, 1 Staged) to read whole, for a
+    /// range selection that reaches rows no page holds; answered once the
+    /// scan completes.
+    pub resolve: Option<(usize, Range<usize>)>,
 }
 #[derive(Clone)]
 pub struct Update {
@@ -37,6 +41,9 @@ pub struct Update {
     /// The same path's entry on the other side (Staged for a working entry,
     /// Unstaged or Untracked for a staged one) once the scan reaches it.
     pub counterpart: Option<(usize, usize, StatusEntry)>,
+    /// The entries of `Ranges::resolve`, in row order, once the scan is
+    /// complete.
+    pub resolved: Option<(usize, Range<usize>, Vec<StatusEntry>)>,
 }
 impl Update {
     pub fn unstaged_count(&self) -> usize {
@@ -79,6 +86,7 @@ impl Worker {
             unstaged: 0..64,
             staged: 0..64,
             selected: None,
+            resolve: None,
         }));
         let output = Arc::new(Mutex::new(None));
         let stop = Arc::new(AtomicBool::new(false));
@@ -233,6 +241,30 @@ fn run(
                     .find_map(|other| positions.get(&(path.clone(), *other)).copied())
                     .and_then(&mut locate)
             });
+            // A range selection's rows, read page by page from the store.
+            let resolved = match &ranges.resolve {
+                Some((list, rows)) if done => {
+                    let (base, end) = if *list == 1 {
+                        (0, staged)
+                    } else {
+                        (staged, store.count)
+                    };
+                    let start = base.saturating_add(rows.start).min(end);
+                    let stop = base.saturating_add(rows.end).min(end).max(start);
+                    let mut entries = Vec::with_capacity(stop - start);
+                    let mut at = start;
+                    while at < stop {
+                        let page = store.page(at..stop)?;
+                        if page.is_empty() {
+                            break;
+                        }
+                        at += page.len();
+                        entries.extend(page.into_iter().map(|(_, entry)| entry));
+                    }
+                    Some((*list, rows.clone(), entries))
+                }
+                _ => None,
+            };
             *output.lock().map_err(|e| e.to_string())? = Some(Ok(Update {
                 identity: identity.clone(),
                 rows: [
@@ -250,6 +282,7 @@ fn run(
                 selection,
                 selected: ranges.selected.clone(),
                 counterpart,
+                resolved,
             }));
             ctx.request_repaint();
         } else if let Some(error) = &error {
@@ -301,6 +334,7 @@ mod tests {
             unstaged,
             staged,
             selected: None,
+            ..Default::default()
         };
         let wait = |ranges: Ranges,
                     complete: bool,
@@ -333,6 +367,35 @@ mod tests {
         assert_eq!(far.unstaged_count(), 1000);
         let staged = wait(ranges(0..32, 0..32), true, 0, 0)?;
         assert_eq!(staged.rows[0][0].1, first.rows[0][0].1);
+
+        // A range selection reaching far past any page is read whole.
+        worker.request(Ranges {
+            resolve: Some((0, 10..700)),
+            ..ranges(0..32, 0..32)
+        });
+        let deadline = std::time::Instant::now() + Duration::from_secs(15);
+        let resolved = loop {
+            if let Some(result) = worker.poll()
+                && let Some(resolved) = result?.resolved
+            {
+                break resolved;
+            }
+            if std::time::Instant::now() > deadline {
+                return Err("resolve timed out".into());
+            }
+            thread::sleep(Duration::from_millis(2));
+        };
+        assert_eq!((resolved.0, resolved.1.clone()), (0, 10..700));
+        assert_eq!(resolved.2.len(), 690);
+        let unique: std::collections::HashSet<_> =
+            resolved.2.iter().map(|entry| entry.path.clone()).collect();
+        assert_eq!(unique.len(), 690, "each row once");
+        let page = wait(ranges(10..20, 0..32), true, 0, 10)?;
+        let first = page.rows[0]
+            .iter()
+            .find(|(row, _)| *row == 10)
+            .map(|(_, e)| &e.path);
+        assert_eq!(first, Some(&resolved.2[0].path), "in row order");
         Ok(())
     }
     #[test]
@@ -373,6 +436,7 @@ mod tests {
             unstaged: 0..2,
             staged: 0..1,
             selected: None,
+            ..Default::default()
         });
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
         'outer: loop {
@@ -401,6 +465,7 @@ mod tests {
                     unstaged: 0..1,
                     staged: 0..1,
                     selected: Some((b"new".to_vec(), Area::Untracked)),
+                    ..Default::default()
                 });
                 let deadline = std::time::Instant::now() + Duration::from_secs(5);
                 loop {
@@ -423,6 +488,7 @@ mod tests {
                     unstaged: 0..0,
                     staged: 0..0,
                     selected: Some((b"a".to_vec(), Area::Staged)),
+                    ..Default::default()
                 });
                 let deadline = std::time::Instant::now() + Duration::from_secs(5);
                 loop {

@@ -214,6 +214,13 @@ struct List {
     /// Folded by the narrow group header's ▾/▸; `None` until toggled, when
     /// an empty group starts folded (narrow proposal).
     collapsed: Option<bool>,
+    /// Files picked with Ctrl/Cmd-click or a Shift range, keyed by path and
+    /// area; two or more make the list's actions act on all of them.
+    marked: BTreeMap<(Vec<u8>, Area), StatusEntry>,
+    /// Where a Shift range starts: the last row clicked without Shift.
+    anchor: Option<usize>,
+    /// A Shift range reaching rows no page holds, read whole by the worker.
+    resolving: Option<Range<usize>>,
 }
 impl List {
     fn new() -> Self {
@@ -229,6 +236,9 @@ impl List {
             reveal: false,
             restore: false,
             collapsed: None,
+            marked: BTreeMap::new(),
+            anchor: None,
+            resolving: None,
         }
     }
 
@@ -236,6 +246,25 @@ impl List {
     /// untouched when a finished scan found it empty.
     fn folded(&self, complete: bool) -> bool {
         self.collapsed.unwrap_or(complete && self.count == 0)
+    }
+
+    /// How many files the selection covers: the marked ones, or a range
+    /// still being read.
+    fn picked(&self) -> usize {
+        self.resolving
+            .as_ref()
+            .map_or(self.marked.len(), |range| range.len())
+    }
+
+    /// Whether `row` is part of a multi-file selection.
+    fn is_marked(&self, row: usize) -> bool {
+        self.resolving
+            .as_ref()
+            .is_some_and(|range| range.contains(&row))
+            || self.rows.get(&row).is_some_and(|entry| {
+                self.marked
+                    .contains_key(&(entry.path_bytes.clone(), entry.area))
+            })
     }
 }
 
@@ -520,6 +549,16 @@ impl StatusView {
         for (index, rows) in update.rows.into_iter().enumerate() {
             self.lists[index].rows.extend(rows);
         }
+        if let Some((index, range, entries)) = update.resolved
+            && let Some(list) = self.lists.get_mut(index)
+            && list.resolving.as_ref() == Some(&range)
+        {
+            list.resolving = None;
+            list.marked = entries
+                .into_iter()
+                .map(|entry| ((entry.path_bytes.clone(), entry.area), entry))
+                .collect();
+        }
         if let Some((list, row, entry)) = &selection {
             self.lists[*list].rows.insert(*row, entry.clone());
         }
@@ -758,8 +797,127 @@ impl StatusView {
         }
     }
 
+    /// A click on a row: Shift extends a range from the anchor, Ctrl/Cmd
+    /// adds or removes the row, a plain click selects it alone.
+    fn click_row(&mut self, index: usize, row: usize, ctx: &egui::Context) {
+        let modifiers = ctx.input(|i| i.modifiers);
+        if modifiers.shift {
+            self.extend_to(index, row, ctx);
+        } else if modifiers.command {
+            self.toggle_mark(index, row, ctx);
+        } else {
+            self.clear_marks();
+            self.lists[index].anchor = Some(row);
+            self.select_row(index, row, ctx);
+        }
+    }
+
+    fn clear_marks(&mut self) {
+        for list in &mut self.lists {
+            list.marked.clear();
+            list.resolving = None;
+        }
+    }
+
+    /// Ctrl/Cmd-click: add `row` to the selection or take it out; the first
+    /// one also keeps the file already selected.
+    fn toggle_mark(&mut self, index: usize, row: usize, ctx: &egui::Context) {
+        if self.focus != index || self.lists[1 - index].picked() > 0 {
+            self.clear_marks();
+        }
+        let list = &mut self.lists[index];
+        if list.resolving.is_some() {
+            return;
+        }
+        if list.marked.is_empty()
+            && let Some(current) = list.selected_row.and_then(|row| list.rows.get(&row))
+        {
+            list.marked
+                .insert((current.path_bytes.clone(), current.area), current.clone());
+        }
+        let Some(entry) = list.rows.get(&row).cloned() else {
+            return;
+        };
+        let key = (entry.path_bytes.clone(), entry.area);
+        list.anchor = Some(row);
+        if list.marked.remove(&key).is_none() {
+            list.marked.insert(key, entry);
+            self.select_row(index, row, ctx);
+        } else {
+            self.focus = index;
+        }
+    }
+
+    /// Shift-click or Shift+Up/Down: select the rows from the anchor to
+    /// `row`. Rows no page holds are read by the worker.
+    fn extend_to(&mut self, index: usize, row: usize, ctx: &egui::Context) {
+        if self.focus != index || self.lists[1 - index].picked() > 0 {
+            self.clear_marks();
+        }
+        let list = &mut self.lists[index];
+        let anchor = list.anchor.or(list.selected_row).unwrap_or(row);
+        list.anchor = Some(anchor);
+        let range = anchor.min(row)..anchor.max(row) + 1;
+        list.marked.clear();
+        list.resolving = None;
+        for at in range.clone() {
+            match list.rows.get(&at) {
+                Some(entry) => {
+                    list.marked
+                        .insert((entry.path_bytes.clone(), entry.area), entry.clone());
+                }
+                None => {
+                    list.resolving = Some(range.clone());
+                    break;
+                }
+            }
+        }
+        if list.resolving.is_some() {
+            list.marked.clear();
+        }
+        self.select_row(index, row, ctx);
+    }
+
+    /// Stage, unstage, or discard every file of `index`'s selection when it
+    /// holds two or more; false when it does not, so the caller acts on the
+    /// one file.
+    fn act_on_marked(&mut self, index: usize, discard: bool, ctx: &egui::Context) -> bool {
+        let list = &self.lists[index];
+        if list.picked() < 2 {
+            return false;
+        }
+        if list.resolving.is_some() {
+            self.error = Some("Still reading the selected files. Try again in a moment.".into());
+            return true;
+        }
+        let Some(identity) = self.identity.clone() else {
+            return true;
+        };
+        let entries = list.marked.values().cloned().collect();
+        self.stage_follow = None;
+        self.stage_follow_ready = false;
+        self.stage.apply_files(identity, entries, discard, ctx);
+        self.clear_marks();
+        true
+    }
+
+    /// The selected paths, one per line, for Ctrl/Cmd+C.
+    fn marked_paths(&self) -> Option<String> {
+        let list = &self.lists[self.focus];
+        (list.marked.len() >= 2 && list.resolving.is_none()).then(|| {
+            list.marked
+                .values()
+                .map(|entry| entry.path.as_str())
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+    }
+
     fn toggle_file(&mut self, index: usize, row: usize, ctx: &egui::Context) {
         if self.mutations_blocked() {
+            return;
+        }
+        if self.lists[index].is_marked(row) && self.act_on_marked(index, false, ctx) {
             return;
         }
         let Some(entry) = self.lists[index].rows.get(&row).cloned() else {
@@ -1456,7 +1614,7 @@ impl StatusView {
                     ui.allocate_space(egui::vec2(ui.available_width(), crate::density::row()));
                 let id = egui::Id::unique(("working-row", index, row));
                 let response = ui.interact(rect, id, egui::Sense::click());
-                if list.selected_row == Some(row) {
+                if list.selected_row == Some(row) || list.is_marked(row) {
                     let fill = if active {
                         crate::colors::selection(ui.visuals())
                     } else {
@@ -1636,9 +1794,9 @@ impl StatusView {
                         });
                 }
                 if let Some(row) = first_click {
-                    self.select_row(0, row, ctx);
+                    self.click_row(0, row, ctx);
                 } else if let Some(row) = second_click {
-                    self.select_row(1, row, ctx);
+                    self.click_row(1, row, ctx);
                 }
                 if let Some(row) = first_toggle {
                     self.toggle_file(0, row, ctx);
@@ -1665,9 +1823,9 @@ impl StatusView {
         let (first_click, first_toggle) = self.draw_group(ui, 0, first as f32 * row, true);
         let (second_click, second_toggle) = self.draw_group(ui, 1, second as f32 * row, true);
         if let Some(row) = first_click {
-            self.select_row(0, row, ctx);
+            self.click_row(0, row, ctx);
         } else if let Some(row) = second_click {
-            self.select_row(1, row, ctx);
+            self.click_row(1, row, ctx);
         }
         if let Some(row) = first_toggle {
             self.toggle_file(0, row, ctx);
@@ -1730,6 +1888,13 @@ impl StatusView {
         };
         let mut confirm = self.drop_confirm.take();
         let mut confirmed = false;
+        // A whole-file discard covers every selected file.
+        let picked = self.lists[self.focus].picked();
+        let many = picked >= 2
+            && confirm
+                .as_ref()
+                .and_then(|edits| edits.first())
+                .is_some_and(|edit| edit.scope == StageScope::File);
         if let Some(edit) = confirm.as_ref().and_then(|edits| edits.first()) {
             let scope = match edit.scope {
                 crate::diff_view::StageScope::Selected if !self.drop_blocks.is_empty() => {
@@ -1744,10 +1909,16 @@ impl StatusView {
             ui.horizontal_wrapped(|ui| {
                 ui.colored_label(
                     ui.visuals().error_fg_color,
-                    format!(
-                        "Discard {scope} from {}? The index is unchanged.",
-                        entry.path
-                    ),
+                    if many {
+                        format!(
+                            "Discard {scope} from {picked} selected files? The index is unchanged."
+                        )
+                    } else {
+                        format!(
+                            "Discard {scope} from {}? The index is unchanged.",
+                            entry.path
+                        )
+                    },
                 );
                 if ui
                     .add_enabled(!self.mutations_blocked(), egui::Button::new("Discard"))
@@ -1764,7 +1935,9 @@ impl StatusView {
             });
             ui.weak("Working-tree changes will be lost. The index is unchanged.");
         }
-        if confirmed {
+        if confirmed && many {
+            self.act_on_marked(self.focus, true, ctx);
+        } else if confirmed {
             if let Some(edits) = confirm.take() {
                 if edits
                     .iter()
@@ -1814,6 +1987,8 @@ impl StatusView {
                 // Another view owns the repository; drop the stale edit.
             } else if edit.discard {
                 self.drop_confirm = Some(vec![edit]);
+            } else if edit.scope == StageScope::File && self.act_on_marked(self.focus, false, ctx) {
+                // Stage or Unstage acted on every selected file.
             } else {
                 self.apply_stage_edit(edit, ctx);
             }
@@ -2240,6 +2415,33 @@ impl StatusView {
                 i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)
                     || i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft)
             });
+            // Shift+Up/Down extends the selection; Ctrl/Cmd+C copies its paths.
+            for (key, delta) in [(egui::Key::ArrowUp, -1), (egui::Key::ArrowDown, 1)] {
+                if ctx.input_mut(|i| i.consume_key(egui::Modifiers::SHIFT, key))
+                    && self.lists[self.focus].count > 0
+                {
+                    let list = &self.lists[self.focus];
+                    let row = list
+                        .selected_row
+                        .unwrap_or(0)
+                        .saturating_add_signed(delta)
+                        .min(list.count - 1);
+                    self.extend_to(self.focus, row, ctx);
+                    self.lists[self.focus].reveal = true;
+                }
+            }
+            if let Some(paths) = self.marked_paths()
+                && ctx.input_mut(|i| {
+                    let copied = i
+                        .events
+                        .iter()
+                        .any(|event| matches!(event, egui::Event::Copy));
+                    i.events.retain(|event| !matches!(event, egui::Event::Copy));
+                    copied || i.consume_key(egui::Modifiers::COMMAND, egui::Key::C)
+                })
+            {
+                ctx.copy_text(paths);
+            }
             // S stages the selected Unstaged file; U unstages the selected Staged file.
             for (key, list) in [(egui::Key::S, 0), (egui::Key::U, 1)] {
                 if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, key))
@@ -2281,7 +2483,12 @@ impl StatusView {
                         egui::Layout::left_to_right(egui::Align::Center),
                         |ui| {
                             // The summary, then the mockup's key hints.
-                            let mut text = self.status_text();
+                            let picked = self.lists[self.focus].picked();
+                            let mut text = if picked >= 2 {
+                                format!("{picked} files selected   ·   {}", self.status_text())
+                            } else {
+                                self.status_text()
+                            };
                             if let Some(backup) = &self.stop_backup {
                                 text.push_str(&format!("   ·   Backup: {backup}"));
                             }
@@ -2371,6 +2578,12 @@ impl StatusView {
                 .active
                 .clone()
                 .or_else(|| self.pending_selection.clone()),
+            resolve: (0..2).find_map(|index| {
+                self.lists[index]
+                    .resolving
+                    .clone()
+                    .map(|range| (index, range))
+            }),
         };
         if let Some(worker) = &self.worker {
             worker.request(ranges.clone());
@@ -2540,6 +2753,7 @@ mod tests {
             selection: None,
             selected: None,
             counterpart: None,
+            resolved: None,
         }
     }
     fn frame(ctx: &egui::Context, view: &mut StatusView, width: f32, events: Vec<egui::Event>) {
@@ -3657,6 +3871,141 @@ mod tests {
         assert_eq!(file(p, &["show", ":a"])?, b"a-base\n");
         assert_eq!(file(p, &["show", ":b"])?, staged_b);
         assert_eq!(std::fs::read(p.join("a"))?, b"a-working\n");
+        Ok(())
+    }
+
+    /// A click with `modifiers` held, as the platform reports them.
+    fn click_with(
+        ctx: &egui::Context,
+        view: &mut StatusView,
+        pos: egui::Pos2,
+        modifiers: egui::Modifiers,
+    ) {
+        let button = |pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers,
+        };
+        let held = egui::Event::ModifiersChanged(modifiers);
+        run(
+            ctx,
+            view,
+            1120.0,
+            vec![held.clone(), egui::Event::PointerMoved(pos), button(true)],
+        );
+        run(
+            ctx,
+            view,
+            1120.0,
+            vec![held, button(false), egui::Event::PointerGone],
+        );
+        run(
+            ctx,
+            view,
+            1120.0,
+            vec![egui::Event::ModifiersChanged(egui::Modifiers::NONE)],
+        );
+    }
+
+    #[test]
+    fn several_files_are_picked_and_staged_or_discarded_together()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let p = dir.path();
+        git(p, &["init", "-q"])?;
+        let names = ["a", "b", "c", "d", "e"];
+        for name in names {
+            std::fs::write(p.join(name), b"base\n")?;
+        }
+        git(p, &["add", "."])?;
+        git(p, &["commit", "-qm", "base"])?;
+        for name in names {
+            std::fs::write(p.join(name), format!("{name} working\n"))?;
+        }
+        let ctx = egui::Context::default();
+        let mut view = StatusView::new(p.into(), &ctx);
+        settle(&ctx, &mut view, 1120.0);
+        let at = |view: &mut StatusView, name: &str| -> Result<egui::Pos2, String> {
+            let output = run(&ctx, view, 1120.0, vec![]);
+            row_pos(&output, view, 0, name).ok_or(format!("missing {name} row"))
+        };
+
+        // Ctrl/Cmd-click adds b to a; Shift-click from b reaches d.
+        let a = at(&mut view, "a")?;
+        click(&ctx, &mut view, 1120.0, a);
+        let b = at(&mut view, "b")?;
+        click_with(&ctx, &mut view, b, egui::Modifiers::COMMAND);
+        assert_eq!(view.lists[0].picked(), 2, "a and b");
+        let d = at(&mut view, "d")?;
+        click_with(&ctx, &mut view, d, egui::Modifiers::SHIFT);
+        let picked: Vec<_> = view.lists[0]
+            .marked
+            .values()
+            .map(|e| e.path.clone())
+            .collect();
+        assert_eq!(picked, ["b", "c", "d"], "a range from the anchor b");
+        assert_eq!(
+            view.active.as_ref().map(|key| key.0.as_slice()),
+            Some(&b"d"[..])
+        );
+        assert_eq!(view.marked_paths().as_deref(), Some("b\nc\nd"));
+
+        // S stages all three as one mutation.
+        let key = |key, modifiers| egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        };
+        run(
+            &ctx,
+            &mut view,
+            1120.0,
+            vec![key(egui::Key::S, egui::Modifiers::NONE)],
+        );
+        pump(&ctx, &mut view, 1120.0, |view| {
+            !view.stage.mutating() && view.complete && !view.replacing && view.lists[1].count == 3
+        });
+        assert_eq!(file(p, &["diff", "--cached", "--name-only"])?, b"b\nc\nd\n");
+        assert_eq!(view.lists[0].picked(), 0, "the selection is spent");
+
+        // Shift+Down extends from a to e; discarding asks once for both.
+        let a = at(&mut view, "a")?;
+        click(&ctx, &mut view, 1120.0, a);
+        run(
+            &ctx,
+            &mut view,
+            1120.0,
+            vec![key(egui::Key::ArrowDown, egui::Modifiers::SHIFT)],
+        );
+        assert_eq!(view.lists[0].picked(), 2, "a and e");
+        view.drop_confirm = Some(vec![StageEdit {
+            scope: StageScope::File,
+            discard: true,
+            header: None,
+            changes: Vec::new(),
+        }]);
+        let output = run(&ctx, &mut view, 1120.0, vec![]);
+        let asks = output.shapes.iter().any(|shape| {
+            matches!(&shape.shape, egui::epaint::Shape::Text(text)
+                if text.galley.job.text.contains("from 2 selected files"))
+        });
+        assert!(asks, "the confirmation names the count");
+        let discard =
+            button_pos(&output, "Discard").ok_or("missing Discard button")? + egui::vec2(4.0, 4.0);
+        click(&ctx, &mut view, 1120.0, discard);
+        pump(&ctx, &mut view, 1120.0, |view| {
+            !view.stage.mutating() && view.complete && !view.replacing && view.lists[0].count == 0
+        });
+        assert_eq!(std::fs::read(p.join("a"))?, b"base\n");
+        assert_eq!(std::fs::read(p.join("e"))?, b"base\n");
+        assert_eq!(
+            std::fs::read(p.join("b"))?,
+            b"b working\n",
+            "staged files keep their work"
+        );
         Ok(())
     }
 

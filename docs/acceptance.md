@@ -2104,6 +2104,15 @@ Layer: product
 - Then the exact text and the `c.txt` selection are restored; opening a linked worktree shows an empty draft
 Covered by (interaction): `commit_draft_survives_history_navigation`, `commit_draft_does_not_cross_worktrees` (main.rs); `draft_restores_the_selected_comparison` (status_view.rs)
 
+### CHG-74 Several files stage, unstage, discard and copy together
+Fixture: five modified files `a`…`e`
+Layer: interaction
+- When the user clicks `a`, Ctrl/Cmd-clicks `b`, then Shift-clicks `d`
+- Then `b`, `c` and `d` are selected (the range runs from the anchor `b`), the reader shows `d`, the status line starts `3 files selected`, and Ctrl/Cmd+C copies `b`, `c`, `d` on three lines
+- And `S` stages all three as one mutation and ends the selection; clicking `a` and pressing `Shift+Down` selects `a` and `e`, and Discard file… asks *Discard unstaged changes from 2 selected files?* and restores both, leaving the staged files' work alone
+- And a Shift range past the rows any page holds (1000 files, rows 10–699) is read whole by the status worker, each row once and in row order
+Covered by (interaction): `several_files_are_picked_and_staged_or_discarded_together` (apps/git-good/src/status_view.rs); `large_status_pages_are_complete_bounded_and_revisitable` (apps/git-good/src/status_worker.rs)
+
 ### CHG-73 Drafts survive quit and crash
 Fixture: `fx-dirty`
 Layer: product
