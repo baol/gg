@@ -16,7 +16,8 @@ git good show <commit> [--repo PATH] [--parent N] [--against REF] [--file PATH] 
 git good status [PATH] [--file PATH --area staged|unstaged|untracked|conflict]
 git good reflog [REF] [--repo PATH]
 git good blame PATH [--revision REF] [--lines START,END] [--repo PATH]
-git good signature <config|verify> [REF] [--repo PATH]
+git good signature config [--repo PATH]
+git good signature verify REF [--repo PATH]
 ```
 
 ## Stage and commit
@@ -27,16 +28,20 @@ git good unstage --file PATH [--repo PATH]
 git good commit [--amend] [--sign|--no-sign] -m MESSAGE [--repo PATH]
 ```
 
+`-m` is also `--message` (in `commit`, `tag`, and `stash push`), and `--sign` is also `-s` (in `commit` and `tag`).
+
 ## Branches, tags, and checkout
 
 ```sh
-git good switch [--create] BRANCH [--repo PATH]
+git good switch [--create | --stash [--include-untracked]] BRANCH [--repo PATH]
 git good branch --create NAME [--at REF] [--repo PATH]
 git good branch --delete BRANCH [--force] [--repo PATH]
-git good tag --create TAG --at REF -m MESSAGE [--sign] [--repo PATH]
+git good tag --create TAG --at REF -m MESSAGE [--sign|--no-sign] [--repo PATH]
 git good tag --delete TAG [--repo PATH]
 git good reset --soft|--mixed|--hard COMMIT [--repo PATH]
 ```
+
+`switch --stash` stashes the tracked changes (and untracked files with `--include-untracked`) and then switches to an existing branch. `tag --create` signs as `tag.gpgSign` says unless `--sign` or `--no-sign` is given.
 
 `git good reset --hard` refuses, exiting nonzero with nothing changed, when it would overwrite untracked or ignored files whose paths are tracked in COMMIT; the error lists those paths, one per line, after `Move or delete them, then retry:`. The check reads each path as the bytes Git stores, so a name that is not UTF-8, or a working tree whose folder name ends with a space, is checked like any other (the error shows such a name lossily). Every reset first saves the tip it leaves as a private `refs/gg/backup/reset/…` reference and names it in the receipt's `backup`; when the backup cannot be written, the reset fails with nothing changed.
 
@@ -48,10 +53,12 @@ git good push [REMOTE] [BRANCH] [--set-upstream] [--force-with-lease] [--repo PA
 git good clone URL [PATH]
 git good init [--branch NAME] [--commit] [PATH]
 git good stash list [--repo PATH]
-git good stash push -m MESSAGE [--include-untracked] [--keep-index] [--repo PATH]
+git good stash push [-m MESSAGE] [--include-untracked] [--keep-index] [--repo PATH]
 git good stash apply|pop [STASH] [--index] [--repo PATH]
 git good stash drop [STASH] [--repo PATH]
 ```
+
+`git good clone` clones URL into PATH (default: a folder named after the repository) and prints the receipt `{"operation":"clone","path","head","branch","complete":true}`; it opens no window.
 
 `git good init` creates PATH (default: the current folder) when missing and runs `git init -b NAME` (default `main`); with `--commit` it adds every file not ignored and commits it as `Initial commit`. It refuses, exiting nonzero with nothing changed, when PATH is inside a repository. The receipt is `{"operation":"init","path","branch","head","files","complete":true}`; `head` is `null` and `files` 0 without a commit.
 
@@ -62,9 +69,9 @@ git good stash drop [STASH] [--repo PATH]
 ```sh
 git good merge REF [--no-ff] [--repo PATH]
 git good merge --continue|--abort [--repo PATH]
-git good rebase REF [--autostash] [--repo PATH]
+git good rebase REF [--autostash|--no-autostash] [--repo PATH]
 git good rebase --continue|--skip|--abort [--repo PATH]
-git good rewrite --from COMMIT STEP... [--autostash] [--repo PATH]
+git good rewrite --from COMMIT STEP... [--autostash|--no-autostash] [--repo PATH]
 #   STEP: --pick|--edit|--squash|--fixup|--drop COMMIT, or --reword COMMIT MESSAGE
 git good rewrite --continue|--skip|--abort [--repo PATH]
 git good cherry-pick COMMIT... [--repo PATH]   # several: oldest first, one git cherry-pick
@@ -81,7 +88,11 @@ git good conflict --file PATH [--use ours|theirs|deletion|--stage] [--repo PATH]
 ## Worktrees, submodules, and LFS
 
 ```sh
-git good worktree <list|add|remove> [OPTIONS] [--repo PATH]
-git good submodule <status|update> PATH [OPTIONS] [--repo PATH]
+git good worktree list [--repo PATH]
+git good worktree add DEST --branch BRANCH [--repo PATH]
+git good worktree add DEST --create BRANCH [--at REF] [--repo PATH]
+git good worktree remove PATH [--repo PATH]
+git good submodule status PATH [--recorded COMMIT] [--before COMMIT] [--repo PATH]
+git good submodule update PATH [--repo PATH]
 git good lfs <status|fetch> PATH [--area staged|unstaged|untracked|conflict] [--revision REF] [--before REF] [--repo PATH]
 ```

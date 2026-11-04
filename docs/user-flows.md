@@ -29,7 +29,7 @@ The existing product has a coherent center: history → review → reading, and 
 
 ## Shared screen and interaction model
 
-Keep Repository, Refs, View, and Help in the toolbar; stash and recovery tools live under Repository. Keep Local Changes and History in one stable navigation strip at every width; at wide widths retain grouped refs at the left, and at narrow widths use the Refs toolbar menu. Place file actions and commit actions beside their selected identity. One operation band sits directly beneath navigation, hidden when idle; the fixed-height status line shows severity, summary, Details, and at most one recovery action.
+The menu bar holds Repository, Branch, Commit, Changes, View, and Help. One toolbar keeps, in the same place at every width, the refs sidebar toggle, **Changes** and **History**, Fetch, Pull, and Push, New branch, Stash changes and Stashes, Interactive rebase from here, and Recovery, then the current-branch button and search ([architecture](architecture.md#presentation)). At wide widths grouped refs stay docked at the left; at narrow widths the sidebar toggle opens them as a drawer. Place file actions and commit actions beside their selected identity. One operation band sits directly beneath navigation, hidden when idle; the fixed-height status line shows severity, summary, Details, and at most one recovery action.
 
 Retain selected commit, file, side, reading position, and filters through back navigation where the owning contracts specify them. Keep normal/amend drafts separately per canonical worktree. A pending worker disables duplicate/incompatible writes while browsing stays available; rewrite configuration closes on submission and its progress stays in the operation band. Never publish an old file's result under a new file's label.
 
@@ -68,7 +68,7 @@ flowchart TD
 
 1. Resolve the containing repository and show its path, current branch, refs, and streamed history. Retain stable row slots while more history arrives.
 2. Filter history; select a matching commit by pointer or keyboard. Selection reveals bounded subject/identity metadata; open complete text separately with Copy.
-3. Select a ref pill to inspect its commit. Switching is explicit through the sidebar context menu or the Refs menu's **Switch to branch** command; tags and remotes are read-only inspections.
+3. Select a ref pill to inspect its commit. Switching is explicit through the sidebar context menu or **Branch → Switch to…**; tags and remotes are read-only inspections.
 4. Press Enter to open changed files in F02. Escape restores the original row and viewport. Actions → Compare with current HEAD names Before and After with resolved IDs and the requested HEAD ref.
 
 **Alternatives:** empty history/filter results state why no rows appear; a read error keeps an actionable Details view. Detached HEAD is named as such; no branch is inferred. Narrow layouts retain Refs access. **Completion:** the chosen commit is selected, with no objects, refs, index, or worktree writes. **Mockup:** History → Review.
@@ -130,19 +130,19 @@ flowchart TD
 
 ### F07 · Park and restore work with stash
 
-**Entry:** Repository → Stash changes or Stashes.
+**Entry:** Changes → Stash changes… or Stashes…, the toolbar's Stash changes and Stashes buttons, or a stash row in the refs sidebar.
 
 1. Enter a message; explicitly choose Include untracked and Keep index. A clean worktree reports no changes to stash.
-2. Create the stash on the serialized worker and refresh status. The Stashes window shows the exact stash ref, commit, and message.
-3. Select **Restore…**, then choose **Restore staged state** and/or **Remove stash after successful restore**. Remove maps to pop only after a conflict-free apply.
+2. Create the stash on the serialized worker and refresh status. The Stashes picker lists the exact stash ref, message, branch, age, and file count.
+3. Select an entry, optionally check **Restore staged state**, then choose **Apply** (keeps the entry) or **Pop** (removes it only after a conflict-free apply); **Show changes** opens the stash commit in Review.
 4. On conflict retain the entry and report unmerged paths in the shared conflict workspace. A stash conflict is not a sequencer operation: do not invent Continue/Skip/Abort buttons for it.
-5. Drop confirms the exact stash and leaves working files untouched.
+5. **Drop…** confirms the exact stash in place and leaves working files untouched.
 
 **Completion:** restored work or a preserved recovery entry is visible. **Mockup:** Stash → conflict state, with the retained entry named.
 
 ### F08 · Integrate a branch or selected commit
 
-**Entry:** Refs → Merge/Rebase, or selected commit → Cherry-pick/Revert.
+**Entry:** Branch → Merge into current…/Rebase current onto…, or selected commit → Cherry-pick/Revert.
 
 1. Name current branch, target ref/commit, and direction: merge target **into** current; rebase current **onto** target; cherry-pick applies selected change; revert creates its inverse.
 2. Merge offers Always create a merge commit; rebase explicitly offers Automatically stash working changes and warns about rewritten IDs/private backup. Require clean tracked worktree unless the specific operation permits chosen autostash.
@@ -243,7 +243,7 @@ flowchart TD
 
 ### F17 · Verify signatures and sign deliberately · M7
 
-**Entry:** commit details → **Signature details…**; a tag's ref menu → **Signature details…**; Local Changes → **Sign** next to Amend; Refs → **New tag…**.
+**Entry:** commit details → **Signature details…**; a tag's ref menu → **Signature details…**; Local Changes → **Sign** next to Amend; Branch → **New tag…**.
 
 1. Show signed object identity, signature format, signer/key identifier, verification result, and trust result separately. Unsigned, invalid, unknown key, valid-but-untrusted, and tool unavailable are distinct states.
 2. Opening verification never modifies trust stores or repository signing configuration. Failures name the reason and keep the window open.
