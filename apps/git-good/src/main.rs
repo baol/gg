@@ -11571,8 +11571,11 @@ impl Browser {
             self.open_preferences(section);
         }
         // Ctrl+F opens search with the History filter, whose first result
-        // filters History (there is no separate filter row).
-        let filter = ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::F))
+        // filters History (there is no separate filter row). While Review or
+        // Local Changes shows the reader, Ctrl+F is the reader's find bar.
+        let reader = self.review.is_some() || self.working.is_some();
+        let filter = !reader
+            && ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::F))
             && self.search.is_none();
         if filter {
             self.narrow_details = false;

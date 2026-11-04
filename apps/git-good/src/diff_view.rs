@@ -1,7 +1,7 @@
 //! Virtualized source rows aimed by document line, fixed gutters, and horizontal scrolling.
 use crate::{
     blame_worker, bounded_text,
-    diff_worker::{Mode, Update, Worker},
+    diff_worker::{FindMatch, FindQuery, Mode, Update, Worker},
     reader,
     settings::DiffLayout,
     split_rows,
@@ -229,6 +229,103 @@ impl Aim {
     }
 }
 
+/// What the last request to the worker asked for: generation, rows, mode,
+/// side and find query.
+type SentKey = (u64, Range<usize>, Mode, ReadingSide, Option<FindQuery>);
+
+/// The reader's find bar: what it looks for, the worker's answer, and the
+/// match the user is on.
+#[derive(Default)]
+struct FindBar {
+    query: FindQuery,
+    /// Every match, for `answered`.
+    matches: Arc<Vec<FindMatch>>,
+    /// The document (generation, mode, side) and query `matches` belong to.
+    answered: Option<(u64, Mode, ReadingSide, FindQuery)>,
+    /// Index into `matches`.
+    current: Option<usize>,
+    /// Scroll to `current` once this frame's rows are known.
+    jump: bool,
+    /// Focus the field on the next frame.
+    focus: bool,
+}
+
+impl FindBar {
+    fn ready(&self, generation: u64, mode: Mode, side: ReadingSide) -> bool {
+        self.answered.as_ref() == Some(&(generation, mode, side, self.query.clone()))
+    }
+}
+
+/// Match highlights: the current match strongly, the others lightly.
+fn find_fill(ui: &egui::Ui, current: bool) -> egui::Color32 {
+    let base = ui.visuals().warn_fg_color;
+    if current {
+        base.gamma_multiply(0.55)
+    } else {
+        base.gamma_multiply(0.25)
+    }
+}
+
+/// Paint `marks` (character ranges of `text`, with whether each is the
+/// current match) behind `text` drawn from `origin` (left edge, vertical
+/// centre) in `font`.
+fn paint_find_marks(
+    ui: &egui::Ui,
+    clip: egui::Rect,
+    origin: egui::Pos2,
+    text: &str,
+    marks: &[(Range<usize>, bool)],
+    font: &egui::FontId,
+) {
+    if marks.is_empty() {
+        return;
+    }
+    let widths: Vec<f32> =
+        ui.fonts_mut(|fonts| text.chars().map(|ch| fonts.glyph_width(font, ch)).collect());
+    let x = |chars: usize| widths.iter().take(chars).sum::<f32>();
+    let half = (font.size * 0.5 + 3.0).min(HEIGHT / 2.0);
+    for (chars, current) in marks {
+        let rect = egui::Rect::from_min_max(
+            egui::pos2(origin.x + x(chars.start), origin.y - half),
+            egui::pos2(origin.x + x(chars.end), origin.y + half),
+        );
+        ui.painter()
+            .with_clip_rect(clip)
+            .rect_filled(rect, 2.0, find_fill(ui, *current));
+    }
+}
+
+/// The matches in document row `row`, with whether each is `current`.
+fn marks_in(
+    matches: &[FindMatch],
+    current: Option<usize>,
+    row: usize,
+) -> Vec<(Range<usize>, bool)> {
+    let first = matches.partition_point(|found| found.row < row);
+    matches[first..]
+        .iter()
+        .enumerate()
+        .take_while(|(_, found)| found.row == row)
+        .map(|(offset, found)| (found.chars.clone(), current == Some(first + offset)))
+        .collect()
+}
+
+/// `marks` (character ranges of a whole row) as ranges of the segment
+/// `segment` (characters of that row) shows, relative to the segment.
+fn segment_marks(
+    marks: &[(Range<usize>, bool)],
+    segment: Range<usize>,
+) -> Vec<(Range<usize>, bool)> {
+    marks
+        .iter()
+        .filter_map(|(chars, current)| {
+            let start = chars.start.max(segment.start);
+            let end = chars.end.min(segment.end);
+            (start < end).then(|| (start - segment.start..end - segment.start, *current))
+        })
+        .collect()
+}
+
 pub struct DiffView {
     worker: Option<Worker>,
     export: crate::export::Export,
@@ -250,7 +347,9 @@ pub struct DiffView {
     info: Option<FileDiff>,
     error: Option<String>,
     range: Range<usize>,
-    sent: Option<(u64, Range<usize>, Mode, ReadingSide)>,
+    sent: Option<SentKey>,
+    /// The find bar (`Ctrl+F`), while open.
+    find: Option<FindBar>,
     rect: egui::Rect,
     bounds: egui::Rect,
     aim: Aim,
@@ -353,6 +452,7 @@ impl Default for DiffView {
             error: None,
             range: 0..64,
             sent: None,
+            find: None,
             rect: egui::Rect::NOTHING,
             bounds: egui::Rect::NOTHING,
             aim: Aim::default(),
@@ -1292,7 +1392,18 @@ impl DiffView {
         } else {
             0..64
         };
-        let key = (self.generation, range.clone(), self.mode, self.side);
+        let find = self
+            .find
+            .as_ref()
+            .map(|bar| bar.query.clone())
+            .filter(|query| !query.text.is_empty());
+        let key = (
+            self.generation,
+            range.clone(),
+            self.mode,
+            self.side,
+            find.clone(),
+        );
         if self.sent.as_ref() == Some(&key) {
             return;
         }
@@ -1307,6 +1418,7 @@ impl DiffView {
         }
         if let Some(worker) = &self.worker {
             worker.set_options(self.options);
+            worker.set_find(find);
             // A mode switch or file change centers the first diff page on its line.
             let line = if self.mode == Mode::Diff {
                 self.restore_line
@@ -1343,6 +1455,18 @@ impl DiffView {
             || update.side != self.side
         {
             return;
+        }
+        if let (Some(bar), Some((query, matches))) = (&mut self.find, &update.find)
+            && bar.query == *query
+            && !bar.ready(update.generation, update.mode, update.side)
+        {
+            // A new answer: go to the first match at or after the place.
+            let from = self.cursor.unwrap_or(0);
+            bar.current = (!matches.is_empty())
+                .then(|| matches.partition_point(|found| found.row < from) % matches.len());
+            bar.matches = matches.clone();
+            bar.answered = Some((update.generation, update.mode, update.side, query.clone()));
+            bar.jump = bar.current.is_some();
         }
         self.hunks = update.hunks;
         self.split = update.split;
@@ -1482,6 +1606,175 @@ impl DiffView {
         self.anchor = Some(index);
         self.jump = Some(index);
         self.offset = self.display_row(index) as f32 * HEIGHT;
+    }
+
+    /// The find matches in document row `row`, as character ranges with
+    /// whether each is the current match; none while the answer is for
+    /// another document or query.
+    fn find_marks(&self, row: usize) -> Vec<(Range<usize>, bool)> {
+        let Some(bar) = &self.find else {
+            return Vec::new();
+        };
+        if !bar.ready(
+            self.displayed_generation,
+            self.displayed_mode,
+            self.displayed_side,
+        ) {
+            return Vec::new();
+        }
+        marks_in(&bar.matches, bar.current, row)
+    }
+
+    /// The find answer for what is shown, to look matches up while the
+    /// rows draw.
+    fn shown_find(&self) -> Option<(Arc<Vec<FindMatch>>, Option<usize>)> {
+        self.find
+            .as_ref()
+            .filter(|bar| {
+                bar.ready(
+                    self.displayed_generation,
+                    self.displayed_mode,
+                    self.displayed_side,
+                )
+            })
+            .map(|bar| (bar.matches.clone(), bar.current))
+    }
+
+    /// Move to the next (`step` 1) or previous (-1) match, wrapping.
+    fn step_find(&mut self, step: isize) {
+        if let Some(bar) = &mut self.find
+            && !bar.matches.is_empty()
+        {
+            let count = bar.matches.len() as isize;
+            let current = bar
+                .current
+                .map_or(if step > 0 { -1 } else { 0 }, |at| at as isize);
+            bar.current = Some((current + step).rem_euclid(count) as usize);
+            bar.jump = true;
+        }
+    }
+
+    /// `Ctrl+F` opens the bar, or focuses it again.
+    pub fn open_find(&mut self) {
+        let bar = self.find.get_or_insert_with(FindBar::default);
+        bar.focus = true;
+    }
+
+    /// The find bar under the header: the field, `3 of 12`, case and whole
+    /// word, previous and next, and ×. Enter and Shift+Enter step through
+    /// the matches; Esc closes the bar.
+    fn draw_find_bar(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        let Some(bar) = &mut self.find else {
+            return;
+        };
+        let before = bar.query.clone();
+        let mut step = 0;
+        let mut close = false;
+        let ready = bar.answered.as_ref().map(|(_, _, _, query)| query) == Some(&bar.query);
+        ui.horizontal(|ui| {
+            let field = ui.add(
+                egui::TextEdit::singleline(&mut bar.query.text)
+                    .id_salt("reader-find")
+                    .hint_text("Find in file")
+                    .desired_width(220.0),
+            );
+            if bar.focus {
+                field.request_focus();
+                bar.focus = false;
+            }
+            // A single-line field gives up focus on Enter and Esc.
+            if field.has_focus() || field.lost_focus() {
+                let (enter, shift, escape) = ui.input(|i| {
+                    (
+                        i.key_pressed(egui::Key::Enter),
+                        i.modifiers.shift,
+                        i.key_pressed(egui::Key::Escape),
+                    )
+                });
+                if enter && !escape {
+                    step = if shift { -1 } else { 1 };
+                    // Keep typing after stepping.
+                    field.request_focus();
+                }
+                close |= escape;
+            }
+            let count = bar.matches.len();
+            let label = if bar.query.text.is_empty() {
+                String::new()
+            } else if !ready {
+                "…".to_string()
+            } else if count == 0 {
+                "No matches".to_string()
+            } else {
+                format!(
+                    "{} of {count}{}",
+                    bar.current.map_or(0, |at| at + 1),
+                    if count >= crate::diff_worker::FIND_LIMIT {
+                        "+"
+                    } else {
+                        ""
+                    }
+                )
+            };
+            ui.add_sized(
+                [96.0, 18.0],
+                egui::Label::new(egui::RichText::new(label).weak()),
+            );
+            ui.toggle_value(&mut bar.query.case, "Aa")
+                .on_hover_text("Match case");
+            ui.toggle_value(&mut bar.query.word, "W")
+                .on_hover_text("Whole words only");
+            if ui
+                .add_enabled(count > 0, egui::Button::new("↑").small())
+                .on_hover_text("Previous match · Shift+Enter")
+                .clicked()
+            {
+                step = -1;
+            }
+            if ui
+                .add_enabled(count > 0, egui::Button::new("↓").small())
+                .on_hover_text("Next match · Enter")
+                .clicked()
+            {
+                step = 1;
+            }
+            close |= ui.button("×").on_hover_text("Close · Esc").clicked();
+        });
+        if close {
+            self.find = None;
+            self.sent = None;
+            self.send(ctx);
+            return;
+        }
+        if self.find.as_ref().is_some_and(|bar| bar.query != before) {
+            // A new query: the worker searches the whole document again.
+            if let Some(bar) = &mut self.find {
+                bar.current = None;
+            }
+            self.send(ctx);
+        }
+        if step != 0 {
+            self.step_find(step);
+        }
+        ui.separator();
+    }
+
+    /// Scroll to the current match once it changed.
+    fn follow_find(&mut self, ctx: &egui::Context) {
+        let target = self.find.as_mut().and_then(|bar| {
+            let jump = std::mem::take(&mut bar.jump);
+            jump.then(|| {
+                bar.current
+                    .and_then(|at| bar.matches.get(at))
+                    .map(|found| found.row)
+            })
+            .flatten()
+        });
+        if let Some(row) = target {
+            self.aim.moved = true;
+            self.go_to_row(row, ctx);
+            ctx.request_repaint();
+        }
     }
 
     /// Whether Diff rows are shown in two columns.
@@ -1863,6 +2156,16 @@ impl DiffView {
         self.aim.moved = true;
         if self.mode == Mode::Full {
             self.select_row(target.saturating_sub(1));
+            return;
+        }
+        self.go_to_row(target, ctx);
+    }
+
+    /// Put the place on diff row `target` and scroll to it (Diff mode);
+    /// select line `target` (Full mode).
+    fn go_to_row(&mut self, target: usize, ctx: &egui::Context) {
+        if self.mode == Mode::Full {
+            self.select_row(target);
             return;
         }
         self.restoring = None;
@@ -2626,6 +2929,13 @@ impl DiffView {
             }
         }
         ui.separator();
+        if self.preview.is_none() {
+            if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::F)) {
+                self.open_find();
+            }
+            self.draw_find_bar(ui, &ctx);
+            self.follow_find(&ctx);
+        }
         self.rect = ui.available_rect_before_wrap();
         self.refresh_wrap(ui);
         if let Some(preview) = &self.preview {
@@ -2809,7 +3119,10 @@ impl DiffView {
                 )
                 .intersect(ui.clip_rect());
                 // Shape only visible source characters, including at deep horizontal offsets.
-                paint_row_text(ui, clip, origin, row, chars, &font, color, invisibles);
+                let marks = self.find_marks(index);
+                paint_row_text(
+                    ui, clip, origin, row, chars, &font, color, invisibles, &marks,
+                );
                 let hover = if can_edit {
                     match row.kind {
                         RowKind::Hunk => "Click to select all changed lines in this hunk",
@@ -3194,6 +3507,7 @@ impl DiffView {
                         egui::pos2(cell.right() - 2.0, cell.bottom()),
                     )
                     .intersect(clip);
+                    let marks = self.find_marks(index);
                     paint_row_text(
                         ui,
                         text_clip,
@@ -3203,6 +3517,7 @@ impl DiffView {
                         &font,
                         color,
                         invisibles,
+                        &marks,
                     );
                 }
                 ui.painter()
@@ -3287,6 +3602,7 @@ impl DiffView {
         if keyboard && crate::navigation::available(ctx) {
             self.reading_keys(ctx);
         }
+        let found = self.shown_find();
         let Some(full) = &self.full else {
             // Until the first side arrives the pane stays empty.
             if self.error.is_some() {
@@ -3426,6 +3742,24 @@ impl DiffView {
                 let clip =
                     egui::Rect::from_min_max(rect.min + egui::vec2(58.0 + gutter, 0.0), rect.max)
                         .intersect(ui.clip_rect());
+                let segment = match wrap {
+                    Some(columns) => segment * columns..(segment + 1) * columns,
+                    None => 0..text.chars().count(),
+                };
+                paint_find_marks(
+                    ui,
+                    clip,
+                    origin,
+                    text,
+                    &segment_marks(
+                        &found
+                            .as_ref()
+                            .map(|(matches, current)| marks_in(matches, *current, index))
+                            .unwrap_or_default(),
+                        segment,
+                    ),
+                    &font,
+                );
                 let (start, end, advance) = ui.fonts_mut(|fonts| {
                     visible_text(
                         text,
@@ -3544,7 +3878,21 @@ fn paint_row_text(
     font: &egui::FontId,
     color: egui::Color32,
     invisibles: bool,
+    marks: &[(Range<usize>, bool)],
 ) {
+    // Find matches, behind the segment's text.
+    if !marks.is_empty() {
+        let segment = chars.clone().unwrap_or(0..row.text.chars().count());
+        let span = char_range(&row.text, segment.clone());
+        paint_find_marks(
+            ui,
+            clip,
+            origin,
+            &row.text[span],
+            &segment_marks(marks, segment),
+            font,
+        );
+    }
     if invisibles
         && matches!(row.kind, RowKind::Added | RowKind::Deleted)
         && row.bytes.iter().any(|byte| matches!(byte, b' ' | b'\t'))
@@ -3702,6 +4050,7 @@ mod tests {
             hunks,
             split,
             widths,
+            find: None,
         }
     }
 
@@ -3719,6 +4068,7 @@ mod tests {
             hunks: vec![0],
             split: Arc::default(),
             widths: Arc::default(),
+            find: None,
         }
     }
 
@@ -4371,6 +4721,116 @@ mod tests {
         view.jump_change(-1, &ctx);
         assert_eq!(view.cursor, Some(1));
         assert_eq!(view.change_position(), (1, 2));
+    }
+
+    #[test]
+    fn ctrl_f_finds_steps_highlights_and_closes() {
+        let ctx = egui::Context::default();
+        let mut view = DiffView {
+            change: Some(file("a", true, true)),
+            generation: 1,
+            side: ReadingSide::After,
+            mode: Mode::Full,
+            mode_seeded: true,
+            ..Default::default()
+        };
+        let lines = b"alpha\nbeta alpha\ngamma\nALPHA\n";
+        let text = FileText::from_bytes(ReadingSide::After, lines, &BTreeSet::new());
+        view.accept(full_update(1, ReadingSide::After, text.clone()));
+        let frame = |view: &mut DiffView, events: Vec<egui::Event>| {
+            crate::tests::run_ui(
+                &ctx,
+                crate::tests::frame_input(1120.0, 740.0, events),
+                |ui| view.draw(ui),
+            )
+        };
+        let key = |key, modifiers| egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        };
+        frame(&mut view, vec![key(egui::Key::F, egui::Modifiers::COMMAND)]);
+        assert!(view.find.is_some(), "Ctrl+F opens the find bar");
+
+        // The worker's answer for "alpha", any case.
+        let query = FindQuery {
+            text: "alpha".into(),
+            ..Default::default()
+        };
+        if let Some(bar) = &mut view.find {
+            bar.query = query.clone();
+        }
+        let matches = crate::diff_worker::find_in(
+            text.lines
+                .iter()
+                .enumerate()
+                .map(|(row, line)| (row, line.text.as_str())),
+            &query,
+        );
+        let mut answer = full_update(1, ReadingSide::After, text);
+        answer.find = Some((query, Arc::new(matches)));
+        view.accept(answer);
+        let output = frame(&mut view, vec![]);
+        let shown = |output: &egui::FullOutput, needle: &str| {
+            output.shapes.iter().any(|shape| {
+                matches!(&shape.shape, egui::epaint::Shape::Text(text)
+                    if text.galley.job.text == needle)
+            })
+        };
+        assert!(shown(&output, "1 of 3"), "the count names the match");
+        assert_eq!(view.cursor, Some(0), "the first match is the place");
+        let marks = view.find_marks(1);
+        assert_eq!(marks, [(5..10, false)], "the second line's match");
+
+        // Enter steps forward, wrapping; Shift+Enter steps back.
+        view.step_find(1);
+        frame(&mut view, vec![]);
+        assert_eq!(view.cursor, Some(1));
+        view.step_find(1);
+        view.step_find(1);
+        frame(&mut view, vec![]);
+        assert_eq!(view.cursor, Some(0), "past the last match it wraps");
+        view.step_find(-1);
+        let output = frame(&mut view, vec![]);
+        assert!(shown(&output, "3 of 3"));
+        assert_eq!(view.cursor, Some(3));
+
+        // Enter in the field steps forward.
+        if let Some(bar) = &mut view.find {
+            bar.focus = true;
+        }
+        frame(&mut view, vec![]);
+        frame(
+            &mut view,
+            vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
+        );
+        frame(&mut view, vec![]);
+        assert_eq!(
+            view.cursor,
+            Some(0),
+            "Enter goes from the third match to the first"
+        );
+
+        // Case: "alpha" exactly matches two lines; the answer waits for the worker.
+        if let Some(bar) = &mut view.find {
+            bar.query.case = true;
+        }
+        let output = frame(&mut view, vec![]);
+        assert!(shown(&output, "…"), "a new query waits for its answer");
+        assert!(view.find_marks(0).is_empty(), "old matches are not drawn");
+
+        // Esc in the field closes the bar.
+        if let Some(bar) = &mut view.find {
+            bar.focus = true;
+        }
+        frame(&mut view, vec![]);
+        frame(
+            &mut view,
+            vec![key(egui::Key::Escape, egui::Modifiers::NONE)],
+        );
+        assert!(view.find.is_none(), "Esc closes the bar");
     }
 
     #[test]
