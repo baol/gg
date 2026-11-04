@@ -1700,6 +1700,16 @@ Layer: product
 - `git good show <c> --file big.log --export after --output out.log` → JSON receipt, exact bytes, existing destination refused; `git good blame src/lib.rs --lines 20,30` → bounded attributed JSON; bad range → error
 Covered by (end-to-end): `export_is_exact_beyond_diff_budget_and_preserves_existing_destinations`, `blame_cli_reports_attributed_ranges_and_errors` (tests/cli.rs)
 
+### REV-75 Find in file
+Fixture: a file reading `alpha`, `beta alpha`, `gamma`, `ALPHA`, open in Full file
+Layer: interaction
+- When the user presses `Ctrl/Cmd+F` in the reader and types `alpha`
+- Then the bar reads `1 of 3`, the three matches are highlighted (the current one more strongly), and line 1 is the place
+- And Enter goes to `beta alpha`, then `ALPHA`, then back to line 1; Shift+Enter or ↑ goes back; **Aa** shows `…` until the case-sensitive answer arrives and draws no old highlights meanwhile; Esc closes the bar
+- And the worker searches the whole document, every page and not just those shown, once per query; `total_x` is not the whole word `total`; character ranges hold past wide characters
+- And `Ctrl/Cmd+F` in History still opens search with the History filter
+Covered by (interaction): `ctrl_f_finds_steps_highlights_and_closes` (apps/git-good/src/diff_view.rs); `find_matches_case_whole_words_and_wide_characters`, `the_whole_document_is_searched_once_per_query` (apps/git-good/src/diff_worker.rs)
+
 ### REV-74 Inline by default below 1040 px
 Fixture: `fx-linear` with Preferences › Diff › Default layout **Side by side**
 Layer: interaction

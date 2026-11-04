@@ -28,6 +28,76 @@ fn side_line(row: &DiffRow, side: ReadingSide) -> Option<usize> {
     }
 }
 
+/// What the reader's find bar looks for.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FindQuery {
+    pub text: String,
+    /// Match letter case exactly.
+    pub case: bool,
+    /// Only whole words: no letter, digit or `_` on either side.
+    pub word: bool,
+}
+
+/// One match: a document row (a diff row, or a line in the full file) and
+/// the characters it covers in that row's text.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FindMatch {
+    pub row: usize,
+    pub chars: Range<usize>,
+}
+
+/// At most this many matches are listed; the count then reads `n+`.
+pub const FIND_LIMIT: usize = 10_000;
+
+/// Every match of `query` in `rows` (row index, text), in order, at most
+/// [`FIND_LIMIT`]. Case-insensitive matching compares lowercased characters
+/// one for one, so a match's character range is the same in the original.
+pub fn find_in<'a>(
+    rows: impl Iterator<Item = (usize, &'a str)>,
+    query: &FindQuery,
+) -> Vec<FindMatch> {
+    let needle: Vec<char> = query.text.chars().collect();
+    if needle.is_empty() {
+        return Vec::new();
+    }
+    let fold = |ch: char| {
+        if query.case {
+            ch
+        } else {
+            ch.to_lowercase().next().unwrap_or(ch)
+        }
+    };
+    let needle: Vec<char> = needle.into_iter().map(fold).collect();
+    let word = |ch: Option<&char>| ch.is_some_and(|ch| ch.is_alphanumeric() || *ch == '_');
+    let mut found = Vec::new();
+    for (row, text) in rows {
+        let hay: Vec<char> = text.chars().collect();
+        let mut at = 0;
+        while at + needle.len() <= hay.len() {
+            let hit = hay[at..at + needle.len()]
+                .iter()
+                .zip(&needle)
+                .all(|(a, b)| fold(*a) == *b);
+            let bounded = !query.word
+                || (!word(at.checked_sub(1).and_then(|before| hay.get(before)))
+                    && !word(hay.get(at + needle.len())));
+            if hit && bounded {
+                found.push(FindMatch {
+                    row,
+                    chars: at..at + needle.len(),
+                });
+                if found.len() >= FIND_LIMIT {
+                    return found;
+                }
+                at += needle.len();
+            } else {
+                at += 1;
+            }
+        }
+    }
+    found
+}
+
 #[derive(Clone)]
 struct Request {
     generation: u64,
@@ -41,6 +111,8 @@ struct Request {
     line: Option<usize>,
     /// Context and whitespace; a change comes with a new generation.
     options: gg_engine::diff::Options,
+    /// The find bar's query, searched over the whole document once.
+    find: Option<FindQuery>,
 }
 
 #[derive(Clone)]
@@ -60,6 +132,8 @@ pub struct Update {
     pub split: Arc<crate::split_rows::Layout>,
     /// Displayed characters of every document row, for wrapping unloaded rows.
     pub widths: Arc<Vec<u32>>,
+    /// The find query's matches over the whole document, once searched.
+    pub find: Option<(FindQuery, Arc<Vec<FindMatch>>)>,
 }
 
 pub struct Worker {
@@ -69,6 +143,7 @@ pub struct Worker {
     stop: Arc<AtomicBool>,
     thread: thread::Thread,
     options: std::cell::Cell<gg_engine::diff::Options>,
+    find: std::cell::RefCell<Option<FindQuery>>,
 }
 
 impl Worker {
@@ -130,6 +205,9 @@ impl Worker {
                 let mut widths: Arc<Vec<u32>> = Arc::default();
                 let mut preview = None;
                 let mut full: Option<(u64, ReadingSide, Result<FileText, String>)> = None;
+                // The last search: document, mode, side and query, and its matches.
+                type Found = (u64, Mode, ReadingSide, FindQuery, Arc<Vec<FindMatch>>);
+                let mut found: Option<Found> = None;
                 while !s.load(Ordering::Relaxed) {
                     let request = i.lock().ok().and_then(|mut r| r.take());
                     let Some(request) = request else {
@@ -217,6 +295,7 @@ impl Worker {
                                 hunks: vec![],
                                 split: Arc::default(),
                                 widths: Arc::default(),
+                                find: None,
                             });
                             ctx.request_repaint();
                         }
@@ -226,7 +305,7 @@ impl Worker {
                         Some(Ok(doc)) => doc,
                         _ => continue,
                     };
-                    let update = if request.mode == Mode::Full {
+                    let mut update = if request.mode == Mode::Full {
                         let key_matches = full.as_ref().is_some_and(|(loaded, side, _)| {
                             *loaded == request.generation && *side == request.side
                         });
@@ -278,6 +357,7 @@ impl Worker {
                             hunks: hunks.clone(),
                             split: split.clone(),
                             widths: widths.clone(),
+                            find: None,
                         }
                     } else {
                         let start = match request.line {
@@ -323,8 +403,50 @@ impl Worker {
                             hunks: hunks.clone(),
                             split: split.clone(),
                             widths: widths.clone(),
+                            find: None,
                         }
                     };
+                    // The find query, searched once per document, mode and side.
+                    if let Some(query) = request.find.clone().filter(|query| !query.text.is_empty())
+                    {
+                        let key = (loaded, request.mode, request.side);
+                        let cached =
+                            found
+                                .as_ref()
+                                .filter(|(generation, mode, side, previous, _)| {
+                                    (*generation, *mode, *side) == key && *previous == query
+                                });
+                        let matches = match cached {
+                            Some((_, _, _, _, matches)) => matches.clone(),
+                            None => {
+                                let matches = Arc::new(match request.mode {
+                                    Mode::Full => match full.as_ref() {
+                                        Some((_, _, Ok(text))) => find_in(
+                                            text.lines
+                                                .iter()
+                                                .enumerate()
+                                                .map(|(row, line)| (row, line.text.as_str())),
+                                            &query,
+                                        ),
+                                        _ => Vec::new(),
+                                    },
+                                    Mode::Diff => find_in(
+                                        doc.rows
+                                            .iter()
+                                            .enumerate()
+                                            .filter(|(_, row)| {
+                                                row.kind != gg_engine::diff::RowKind::Hunk
+                                            })
+                                            .map(|(index, row)| (index, row.text.as_str())),
+                                        &query,
+                                    ),
+                                });
+                                found = Some((key.0, key.1, key.2, query.clone(), matches.clone()));
+                                matches
+                            }
+                        };
+                        update.find = Some((query, matches));
+                    }
                     if g.load(Ordering::Relaxed) != request.generation {
                         continue;
                     }
@@ -342,6 +464,7 @@ impl Worker {
             stop,
             thread: handle.thread().clone(),
             options: std::cell::Cell::default(),
+            find: std::cell::RefCell::default(),
         })
     }
 
@@ -349,6 +472,13 @@ impl Worker {
     /// a new generation whenever they change, so a document never mixes them.
     pub fn set_options(&self, options: gg_engine::diff::Options) {
         self.options.set(options);
+    }
+
+    /// The find bar's query for the following requests; `None` when closed.
+    pub fn set_find(&self, find: Option<FindQuery>) {
+        if let Ok(mut slot) = self.find.try_borrow_mut() {
+            *slot = find;
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -417,6 +547,7 @@ impl Worker {
                 side,
                 line,
                 options: self.options.get(),
+                find: self.find.borrow().clone(),
             });
             self.thread.unpark();
         }
@@ -442,6 +573,110 @@ mod tests {
         file::FileKind,
         review::ChangeKind,
     };
+
+    #[test]
+    fn find_matches_case_whole_words_and_wide_characters() {
+        let rows = [
+            "let total = Total + total_x;",
+            "TOTAL",
+            "naïve Ünïcode total",
+        ];
+        let find = |text: &str, case: bool, word: bool| {
+            find_in(
+                rows.iter().enumerate().map(|(row, text)| (row, *text)),
+                &FindQuery {
+                    text: text.into(),
+                    case,
+                    word,
+                },
+            )
+            .into_iter()
+            .map(|found| (found.row, found.chars))
+            .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            find("total", false, false),
+            [(0, 4..9), (0, 12..17), (0, 20..25), (1, 0..5), (2, 14..19)]
+        );
+        assert_eq!(
+            find("total", true, false),
+            [(0, 4..9), (0, 20..25), (2, 14..19)]
+        );
+        assert_eq!(
+            find("total", false, true),
+            [(0, 4..9), (0, 12..17), (1, 0..5), (2, 14..19)],
+            "total_x is not the whole word"
+        );
+        // Character ranges, not bytes, past wide characters.
+        assert_eq!(find("ünï", false, false), [(2, 6..9)]);
+        assert!(find("", false, false).is_empty());
+        assert_eq!(
+            find("aa", false, false),
+            Vec::<(usize, Range<usize>)>::new()
+        );
+    }
+
+    #[test]
+    fn the_whole_document_is_searched_once_per_query() -> Result<(), String> {
+        let worker = Worker::with_readers(
+            eframe::egui::Context::default(),
+            move |_, _| {
+                let mut doc = FileDiff::summary(DiffKind::Text, 0, 2000, "");
+                doc.rows = (0..1000)
+                    .map(|n| DiffRow {
+                        kind: if n % 100 == 0 {
+                            RowKind::Hunk
+                        } else {
+                            RowKind::Added
+                        },
+                        old_line: None,
+                        new_line: Some(n + 1),
+                        text: format!("line {n} needle"),
+                        bytes: vec![],
+                    })
+                    .collect();
+                Ok(doc)
+            },
+            |_, _, _, _| Err("unused".into()),
+        )?;
+        let change = FileChange {
+            path: "file".into(),
+            path_bytes: b"file".to_vec(),
+            kind: ChangeKind::Added,
+            old: None,
+            new: None,
+        };
+        worker.set_find(Some(FindQuery {
+            text: "NEEDLE".into(),
+            ..Default::default()
+        }));
+        worker.request(
+            1,
+            "repo".into(),
+            change,
+            0..64,
+            Mode::Diff,
+            ReadingSide::After,
+            None,
+        );
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let update = loop {
+            if let Some(update) = worker.poll() {
+                break update;
+            }
+            if std::time::Instant::now() > deadline {
+                return Err("worker timed out".into());
+            }
+            thread::sleep(std::time::Duration::from_millis(1));
+        };
+        let (query, matches) = update.find.ok_or("no matches sent")?;
+        assert_eq!(query.text, "NEEDLE");
+        // Every page, not just the one sent; hunk rows are not searched.
+        assert_eq!(matches.len(), 990);
+        assert_eq!(matches[0].row, 1);
+        assert_eq!(matches.last().map(|found| found.row), Some(999));
+        Ok(())
+    }
 
     #[test]
     fn selection_cancels_old_work_and_pages_reuse_the_document() -> Result<(), String> {
