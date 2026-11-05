@@ -986,6 +986,15 @@ Layer: interaction
 - Then `WORKTREES n` lists each folder with its branch, the open one checked; clicking another opens it
 Covered by (interaction): `worktrees_are_listed_when_linked_ones_exist_and_open_on_click` (refs_view.rs)
 
+### HIS-48a Refs sidebar at scale
+Fixture: a repository with 10,000 branches in 100 folders (`team00/topic00000` …)
+Layer: interaction
+- When History opens with the sidebar docked
+- Then only the rows in view are laid out (fewer than 80 texts at 600 px), and frames that change nothing reuse the built list; a new refs read builds it again
+- And clicking the folder `team00` closes it (`team01` moves up) and clicking again opens it
+- And the drawer's cursor on `team90/topic09042` brings that row into view
+Covered by (interaction): `ten_thousand_branches_draw_only_the_rows_in_view_from_one_list`, `a_folder_closes_and_opens_on_click`, `the_keyboard_cursor_scrolls_a_far_branch_into_view` (apps/git-good/src/refs_view.rs)
+
 ### HIS-49 Clicking a sidebar row inspects; never moves HEAD
 Fixture: `fx-remote`
 Layer: product

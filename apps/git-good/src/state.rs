@@ -13,7 +13,8 @@ pub struct State {
     pub graph_lanes: u8,
     /// History lane for each ref tip, keyed by full ref name.
     pub ref_lanes: BTreeMap<String, u8>,
-    pub refs: gg_engine::refs::Snapshot,
+    /// Shared with the history stream; replaced, never edited, when refs change.
+    pub refs: std::sync::Arc<gg_engine::refs::Snapshot>,
     pub count: usize,
     pub viewport: std::ops::Range<usize>,
     pub scanned: usize,
