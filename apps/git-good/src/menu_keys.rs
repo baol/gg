@@ -416,7 +416,14 @@ impl Keys {
         }
         // No menu open: Alt (tapped) or F10 puts the keyboard on the bar or
         // takes it off again.
-        let f10 = consume(Modifiers::NONE, Key::F10);
+        // F10 alone: egui's match would also take Shift+F10, the context
+        // menu key (a11y.rs).
+        let f10 = ctx.input(|i| {
+            i.events.iter().any(|event| {
+                matches!(event, Event::Key { key: Key::F10, pressed: true, modifiers, .. }
+                    if modifiers.is_none())
+            })
+        }) && consume(Modifiers::NONE, Key::F10);
         if tap || f10 {
             self.focus = if self.focus.is_some() { None } else { Some(0) };
             self.underline = false;

@@ -1,3 +1,4 @@
+mod a11y;
 mod avatars;
 mod binary_preview;
 mod blame_cli;
@@ -11723,7 +11724,11 @@ impl Browser {
                         self.details_visible = !self.details_visible;
                     }
                 }
-                if ctx.input_mut(|i| i.consume_key(egui::Modifiers::ALT, egui::Key::A)) {
+                // Alt+A, Shift+F10 and the Menu key: the selected commit's
+                // actions, its context menu.
+                if ctx.input_mut(|i| i.consume_key(egui::Modifiers::ALT, egui::Key::A))
+                    || (crate::navigation::activation_available(ctx) && a11y::context_menu_key(ctx))
+                {
                     self.commit_actions = true;
                 }
                 if crate::navigation::activation_available(ctx)
@@ -12473,6 +12478,15 @@ impl Browser {
             }
         }
         self.stages.mark("refs sidebar", std::time::Instant::now());
+        // F6 and Shift+F6 between the search field, the docked sidebar's
+        // filter and the content.
+        a11y::cycle(
+            ctx,
+            &a11y::Regions {
+                search: search_field.map(|_| search_field_id()),
+                refs: wide_refs.then(refs_view::filter_id),
+            },
+        );
         self.draw_refs_drawer(ctx);
         if go_local {
             let conflicted = self
@@ -19648,6 +19662,63 @@ mod tests {
             )
         );
         assert!(!output.shapes.is_empty());
+    }
+
+    #[test]
+    fn f6_moves_between_search_sidebar_and_content_and_shift_f10_opens_actions() {
+        let ctx = egui::Context::default();
+        crate::phosphor::install(&ctx);
+        let mut app = layout_fixture();
+        let frame = |app: &mut Browser, events| {
+            let _ = crate::tests::run_ui(&ctx, frame_input(1280.0, 740.0, events), |ctx| {
+                app.draw_ui(ctx)
+            });
+        };
+        frame(&mut app, vec![]);
+        let focused = |ctx: &egui::Context| ctx.memory(|m| m.focused());
+        let f6 = |modifiers| vec![key(egui::Key::F6, modifiers)];
+        frame(&mut app, f6(egui::Modifiers::NONE));
+        frame(&mut app, vec![]);
+        assert_eq!(
+            focused(&ctx),
+            Some(search_field_id()),
+            "content, then search"
+        );
+        frame(&mut app, f6(egui::Modifiers::NONE));
+        frame(&mut app, vec![]);
+        assert_eq!(
+            focused(&ctx),
+            Some(refs_view::filter_id()),
+            "then the sidebar"
+        );
+        frame(&mut app, f6(egui::Modifiers::NONE));
+        frame(&mut app, vec![]);
+        assert_eq!(
+            focused(&ctx),
+            None,
+            "then the content, where list keys work"
+        );
+        frame(&mut app, f6(egui::Modifiers::SHIFT));
+        frame(&mut app, vec![]);
+        assert_eq!(
+            focused(&ctx),
+            Some(refs_view::filter_id()),
+            "Shift+F6 goes back"
+        );
+        frame(&mut app, f6(egui::Modifiers::SHIFT));
+        frame(&mut app, f6(egui::Modifiers::SHIFT));
+        frame(&mut app, vec![]);
+        assert_eq!(focused(&ctx), None);
+        let open = |ctx: &egui::Context| {
+            egui::Popup::is_id_open(ctx, details_view::commit_actions_popup_id())
+        };
+        assert!(!open(&ctx));
+        frame(&mut app, vec![key(egui::Key::F10, egui::Modifiers::SHIFT)]);
+        assert!(open(&ctx), "Shift+F10 opens the selected commit's actions");
+        assert!(
+            !crate::menu_keys::is_focused(&ctx),
+            "and does not put the keyboard on the menu bar"
+        );
     }
 
     #[test]

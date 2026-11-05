@@ -617,6 +617,15 @@ Layer: interaction
 - Then Windows shows 46 px full-height buttons at the right, Close red on hover; GNOME shows libadwaita's round buttons in its `button-layout` order (default: Close only, at the right); KDE shows Breeze's in KWin's order; other desktops show plain round buttons in `gtk-decoration-layout` order (Adwaita's or Breeze's under those GTK themes); round buttons also drag the window; `GG_CAPTION_STYLE` and `GG_CAPTION_LAYOUT` override what is found
 Covered by (interaction, partial): `gtk_layouts_pick_the_buttons_and_their_sides`, `linux_buttons_sit_where_the_layout_says_and_drag_the_window`, `only_sides_with_buttons_take_room` (apps/git-good/src/titlebar/tests.rs), `the_desktop_comes_from_the_first_variable_set`, `the_family_follows_the_desktop_then_the_gtk_theme`, `kwin_button_letters_become_a_gtk_layout`, `layouts_and_overrides_resolve_to_a_style`, `settings_files_are_read_from_the_config_dir` (apps/git-good/src/caption_style.rs); reading GNOME's setting from a live desktop is Not automated
 
+### FRM-86a Regions and the context menu key
+Fixture: `fx-linear`, History at 1280 px with the refs sidebar docked
+Layer: interaction
+- When the user presses F6 with no field focused
+- Then the toolbar's search field has the keyboard; F6 again moves it to **Filter refs**, then to the list (no field focused, so `j`/`k` move the selection), then back to search; Shift+F6 walks the other way; below 1120 px the sidebar is skipped
+- And Shift+F10 (or the Menu key) opens the selected commit's actions, as Alt+A does, without putting the keyboard on the menu bar
+- And Help › Keyboard shortcuts lists F6 under **Window** and Shift+F10 beside Alt+A
+Covered by (interaction): `f6_moves_between_search_sidebar_and_content_and_shift_f10_opens_actions` (apps/git-good/src/main.rs), `f6_walks_the_shown_regions_and_wraps` (apps/git-good/src/a11y.rs), `groups_follow_the_menus_then_the_list_scopes` (apps/git-good/src/shortcuts.rs)
+
 ### FRM-87 Use the system title bar
 Fixture: `fx-linear`, Windows or Linux
 Layer: interaction

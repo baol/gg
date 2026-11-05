@@ -21,6 +21,13 @@ pub struct Group {
 /// Keys that act on a focused list rather than through a menu item.
 const SCOPES: &[(&str, &[(&str, &str)])] = &[
     (
+        "Window",
+        &[(
+            "F6  Shift+F6",
+            "Next / previous region: search, sidebar, list",
+        )],
+    ),
+    (
         "History list",
         &[
             ("j k  ↑ ↓", "Move selection"),
@@ -28,7 +35,7 @@ const SCOPES: &[(&str, &[(&str, &str)])] = &[
             ("Home End", "First / last commit"),
             ("Ctrl+K", "Search commits, branches, files, actions"),
             ("Ctrl+F", "Filter history"),
-            ("Alt+A", "Commit actions"),
+            ("Alt+A  Shift+F10", "Commit actions"),
             ("Esc", "Back · clear filter"),
         ],
     ),
@@ -314,6 +321,7 @@ mod tests {
             [
                 "Repository",
                 "Menu bar",
+                "Window",
                 "History list",
                 "Changes list",
                 "Review",
