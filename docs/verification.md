@@ -904,3 +904,8 @@ Linux x86_64 · Rust 1.97.0.
 - `ten_thousand_branches_draw_only_the_rows_in_view_from_one_list`: 10,000 branches in 100 folders lay out fewer than 80 texts at 600 px; a second frame reuses the same list (pointer-equal); a new snapshot builds it again.
 - `a_folder_closes_and_opens_on_click` and `the_keyboard_cursor_scrolls_a_far_branch_into_view` (row 9,042, about 210,000 px down) cover folders and the drawer cursor.
 - The existing sidebar tests (groups and counts, filter, stashes, worktrees, click and double-click on branch and remote rows) pass unchanged.
+
+## Acceptance citations checked · 2026-11-05
+
+- `every_test_acceptance_cites_exists_where_it_says` (apps/git-good/tests/acceptance_cites.rs) reads the 799 test names cited on `Covered by` lines and the functions every `.rs` file under `apps/` and `crates/` defines. On its first run it found three stale citations: `window_toolbar_holds_navigation_and_sync_in_place_across_views_and_widths` (renamed `window_toolbar_keeps_the_owners_buttons_in_place_across_views_and_widths`, cited four times), `version_info_is_four_plain_build_lines` (renamed `version_info_is_plain_build_git_and_os_lines`), and two commit-draft tests cited in main.rs that live in interaction_tests.rs. All are fixed.
+- `a_renamed_or_misplaced_test_is_reported` checks both failures: a test cited in the wrong file, and one that exists nowhere. Renaming a cited test in acceptance.md by hand made the first test fail naming each line and file.
