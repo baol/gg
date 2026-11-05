@@ -53,7 +53,8 @@ pub struct Update {
     pub graphs: Vec<(usize, graph::Row)>,
     /// History lane for each ref tip, keyed by full ref name.
     pub ref_lanes: BTreeMap<String, u8>,
-    pub refs: Snapshot,
+    /// Shared, not copied, by every page: a repository can have thousands.
+    pub refs: std::sync::Arc<Snapshot>,
     pub selection: Option<(usize, Commit)>,
     pub error: Option<String>,
 }
@@ -309,6 +310,7 @@ fn run_session(
     stop: &AtomicBool,
     ctx: &eframe::egui::Context,
 ) -> Result<(), String> {
+    let refs = std::sync::Arc::new(refs);
     let mut spool = Spool::new()?;
     let mut graph_state = graph::Graph::default();
     let mut graph_rows = Vec::new();

@@ -8351,11 +8351,12 @@ impl Browser {
                         .as_ref()
                         .is_some_and(|head| !head.detached && head.commit.is_some());
                     if from_branch && !created {
-                        self.state.refs.head = Some(gg_engine::refs::Head {
-                            name: Some(format!("refs/heads/{}", receipt.branch)),
-                            detached: false,
-                            commit: Some(receipt.head.clone()),
-                        });
+                        std::sync::Arc::make_mut(&mut self.state.refs).head =
+                            Some(gg_engine::refs::Head {
+                                name: Some(format!("refs/heads/{}", receipt.branch)),
+                                detached: false,
+                                commit: Some(receipt.head.clone()),
+                            });
                         self.jump_to_ref(receipt.head);
                         self.scroll_to_selection = true;
                         // The switch's own HEAD change must not make the
@@ -14842,21 +14843,22 @@ mod tests {
             let ctx = egui::Context::default();
             crate::phosphor::install(&ctx);
             let mut app = layout_fixture();
-            app.state.refs.head = Some(gg_engine::refs::Head {
+            std::sync::Arc::make_mut(&mut app.state.refs).head = Some(gg_engine::refs::Head {
                 name: Some("refs/heads/feature/a-long-branch-name".into()),
                 detached: false,
                 commit: Some(format!("{:040x}", 99)),
             });
-            app.state.refs.tracking = vec![gg_engine::refs::Tracking {
-                branch: "feature/a-long-branch-name".into(),
-                full_name: "refs/heads/feature/a-long-branch-name".into(),
-                upstream: "origin/feature/a-long-branch-name".into(),
-                upstream_full_name: "refs/remotes/origin/feature/a-long-branch-name".into(),
-                remote: "origin".into(),
-                remote_branch: "feature/a-long-branch-name".into(),
-                ahead: Some(2),
-                behind: Some(1),
-            }];
+            std::sync::Arc::make_mut(&mut app.state.refs).tracking =
+                vec![gg_engine::refs::Tracking {
+                    branch: "feature/a-long-branch-name".into(),
+                    full_name: "refs/heads/feature/a-long-branch-name".into(),
+                    upstream: "origin/feature/a-long-branch-name".into(),
+                    upstream_full_name: "refs/remotes/origin/feature/a-long-branch-name".into(),
+                    remote: "origin".into(),
+                    remote_branch: "feature/a-long-branch-name".into(),
+                    ahead: Some(2),
+                    behind: Some(1),
+                }];
             let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
                 app.draw_ui(ctx)
             });
@@ -15421,7 +15423,7 @@ mod tests {
     fn new_branch_without_a_commit_explains_the_unborn_head() {
         let ctx = egui::Context::default();
         let mut app = layout_fixture();
-        app.state.refs.head = None;
+        std::sync::Arc::make_mut(&mut app.state.refs).head = None;
         app.state.selected = None;
         app.open_new_branch();
         assert!(app.create_branch.is_none());
@@ -16247,7 +16249,7 @@ mod tests {
             kind,
             commit: commit.repeat(40),
         };
-        app.state.refs = gg_engine::refs::Snapshot {
+        app.state.refs = std::sync::Arc::new(gg_engine::refs::Snapshot {
             head: Some(gg_engine::refs::Head {
                 name: Some("refs/heads/feature".into()),
                 detached: false,
@@ -16260,7 +16262,7 @@ mod tests {
                 item("origin/feature", gg_engine::refs::RefKind::Remote, "a"),
             ],
             ..Default::default()
-        };
+        });
         let dialog = rebase_fixture(&app)?;
         assert_eq!(dialog.branch, "feature");
         assert_eq!(dialog.stay, ["keep", "v1"]);
@@ -19802,7 +19804,7 @@ mod tests {
         let ctx = egui::Context::default();
         let mut app = layout_fixture();
         let tip = format!("{:040x}", 7);
-        app.state.refs.head = Some(gg_engine::refs::Head {
+        std::sync::Arc::make_mut(&mut app.state.refs).head = Some(gg_engine::refs::Head {
             name: Some("refs/heads/main".into()),
             detached: false,
             commit: Some(format!("{:040x}", 0)),
@@ -19843,7 +19845,8 @@ mod tests {
             kind: gg_engine::refs::RefKind::Branch,
             commit: format!("{commit:040x}"),
         };
-        app.state.refs.items = vec![branch("main", 3), branch("topic", 7)];
+        std::sync::Arc::make_mut(&mut app.state.refs).items =
+            vec![branch("main", 3), branch("topic", 7)];
         let run = |app: &mut Browser, events| {
             crate::tests::run_ui(&ctx, frame_input(720.0, 480.0, events), |ctx| {
                 app.draw_ui(ctx)
@@ -19979,7 +19982,7 @@ mod tests {
         let id = format!("{:040x}", 0);
         app.state.selected = Some(id.clone());
         app.state.reconcile_selection();
-        app.state.refs.items = vec![
+        std::sync::Arc::make_mut(&mut app.state.refs).items = vec![
             gg_engine::refs::RefItem {
                 name: "main".into(),
                 full_name: "refs/heads/main".into(),
@@ -19993,7 +19996,7 @@ mod tests {
                 commit: id,
             },
         ];
-        app.state.refs.tracking = vec![gg_engine::refs::Tracking {
+        std::sync::Arc::make_mut(&mut app.state.refs).tracking = vec![gg_engine::refs::Tracking {
             branch: "main".into(),
             full_name: "refs/heads/main".into(),
             upstream: "origin/main".into(),
@@ -20136,7 +20139,7 @@ mod tests {
     /// `two_commits` with `main` checked out as HEAD knows it.
     fn on_main(app: &mut Browser, path: &Path) -> Result<String, Box<dyn std::error::Error>> {
         let head = git_in(path, &["rev-parse", "HEAD"])?.trim().to_string();
-        app.state.refs.head = Some(gg_engine::refs::Head {
+        std::sync::Arc::make_mut(&mut app.state.refs).head = Some(gg_engine::refs::Head {
             name: Some("refs/heads/main".into()),
             detached: false,
             commit: Some(head.clone()),
@@ -20210,12 +20213,14 @@ mod tests {
         let path = dir.path();
         git_in(path, &["branch", "merged", "HEAD~1"])?;
         let tip = git_in(path, &["rev-parse", "merged"])?.trim().to_string();
-        app.state.refs.items.push(gg_engine::refs::RefItem {
-            name: "merged".into(),
-            full_name: "refs/heads/merged".into(),
-            kind: gg_engine::refs::RefKind::Branch,
-            commit: tip.clone(),
-        });
+        std::sync::Arc::make_mut(&mut app.state.refs)
+            .items
+            .push(gg_engine::refs::RefItem {
+                name: "merged".into(),
+                full_name: "refs/heads/merged".into(),
+                kind: gg_engine::refs::RefKind::Branch,
+                commit: tip.clone(),
+            });
         app.delete_branch(&ctx, "merged", true)?;
         app.wait_for_operation(&ctx);
         assert_eq!(git_in(path, &["branch", "--list", "merged"])?, "");
@@ -22694,7 +22699,7 @@ mod tests {
             kind,
             commit: "a".repeat(40),
         };
-        app.state.refs = gg_engine::refs::Snapshot {
+        app.state.refs = std::sync::Arc::new(gg_engine::refs::Snapshot {
             head: Some(gg_engine::refs::Head {
                 name: Some("refs/heads/main".into()),
                 detached: false,
@@ -22707,7 +22712,7 @@ mod tests {
                 branch("v1", gg_engine::refs::RefKind::Tag),
             ],
             ..Default::default()
-        };
+        });
     }
 
     #[test]
@@ -22917,7 +22922,7 @@ mod tests {
     #[test]
     fn search_offers_frame_actions_with_their_readiness_and_refs() {
         let mut app = layout_fixture();
-        app.state.refs.items = vec![gg_engine::refs::RefItem {
+        std::sync::Arc::make_mut(&mut app.state.refs).items = vec![gg_engine::refs::RefItem {
             name: "release".into(),
             full_name: "refs/tags/release".into(),
             kind: gg_engine::refs::RefKind::Tag,
@@ -23158,12 +23163,12 @@ mod tests {
     }
 
     fn tracking_fixture(app: &mut Browser, ahead: u64, behind: u64) {
-        app.state.refs.head = Some(gg_engine::refs::Head {
+        std::sync::Arc::make_mut(&mut app.state.refs).head = Some(gg_engine::refs::Head {
             name: Some("refs/heads/feature".into()),
             detached: false,
             commit: Some("a".repeat(40)),
         });
-        app.state.refs.tracking = vec![gg_engine::refs::Tracking {
+        std::sync::Arc::make_mut(&mut app.state.refs).tracking = vec![gg_engine::refs::Tracking {
             branch: "feature".into(),
             full_name: "refs/heads/feature".into(),
             upstream: "origin/feature".into(),
@@ -23191,7 +23196,7 @@ mod tests {
         let ready = app.frame_readiness();
         assert_eq!(ready.behind, 3, "the badge keeps the cached count");
         assert_eq!(ready.pull_reason, None);
-        app.state.refs.head = Some(gg_engine::refs::Head {
+        std::sync::Arc::make_mut(&mut app.state.refs).head = Some(gg_engine::refs::Head {
             name: None,
             detached: true,
             commit: Some("a".repeat(40)),
@@ -23391,7 +23396,7 @@ mod tests {
         let ctx = egui::Context::default();
         crate::phosphor::install(&ctx);
         let mut app = layout_fixture();
-        app.state.refs = switcher_refs();
+        app.state.refs = std::sync::Arc::new(switcher_refs());
         let frame = |app: &mut Browser, events| {
             crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, events), |ctx| {
                 app.draw_ui(ctx)
@@ -23428,7 +23433,7 @@ mod tests {
         for width in [720.0, 1120.0] {
             let ctx = egui::Context::default();
             let mut app = layout_fixture();
-            app.state.refs = gg_engine::refs::Snapshot {
+            app.state.refs = std::sync::Arc::new(gg_engine::refs::Snapshot {
                 head: Some(gg_engine::refs::Head {
                     name: Some("refs/heads/main".into()),
                     detached: false,
@@ -23449,7 +23454,7 @@ mod tests {
                     },
                 ],
                 ..Default::default()
-            };
+            });
             let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
                 app.draw_ui(ctx)
             });

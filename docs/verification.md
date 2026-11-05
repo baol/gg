@@ -895,3 +895,12 @@ Linux x86_64 · Rust 1.97.0 · WenQuanYi Zen Hei installed (`/usr/share/fonts/tr
 - `wide_characters_wrap_as_two_columns` wraps a 40-word line of ideographs, kana and Hangul in Diff and Full file at 720 px: it takes more rows than its character count would give, no segment is wider than the columns plus the spare one, every segment is painted, and the segments rebuild the line.
 - `wide_characters_take_two_columns_and_start_their_row` (wrap_rows.rs) checks column widths, the reach a row publishes, and that a wide character starting in a row's last column stays in that row.
 - Limitations: a font's CJK advance may differ a little from two Latin columns, so a wrapped row of CJK can end slightly short of or past the column grid; the spare column absorbs the overhang. Emoji count as two columns but draw from the bundled emoji font.
+
+## Refs sidebar at scale · 2026-11-05
+
+Linux x86_64 · Rust 1.97.0.
+
+- The sidebar was laid out whole each frame: every ref matched against the filter, grouped into a tree, and drawn, and the window cloned the whole refs snapshot first; each history page cloned it again. Now the snapshot is shared (`Arc`), and the sidebar draws from a flat list of lines built only when its inputs change.
+- `ten_thousand_branches_draw_only_the_rows_in_view_from_one_list`: 10,000 branches in 100 folders lay out fewer than 80 texts at 600 px; a second frame reuses the same list (pointer-equal); a new snapshot builds it again.
+- `a_folder_closes_and_opens_on_click` and `the_keyboard_cursor_scrolls_a_far_branch_into_view` (row 9,042, about 210,000 px down) cover folders and the drawer cursor.
+- The existing sidebar tests (groups and counts, filter, stashes, worktrees, click and double-click on branch and remote rows) pass unchanged.
