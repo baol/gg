@@ -1,4 +1,5 @@
 //! Inspect an LFS pointer from history or Local Changes and fetch its object explicitly.
+use crate::cli_args::usage_error;
 use gg_engine::{
     review::{ChangeKind, FileChange, FileSide},
     status::{Area, Kind, StatusEntry, WorkingRequest},
@@ -62,46 +63,53 @@ fn parse(
     let mut file = None;
     while let Some(arg) = args.next() {
         match args.option(&arg) {
-            Some("--repo") => repo = PathBuf::from(args.next().ok_or("--repo needs a path")?),
+            Some("--repo") => {
+                repo = PathBuf::from(
+                    args.value()
+                        .ok_or_else(|| usage_error("--repo needs a path"))?,
+                )
+            }
             Some("--revision") => {
                 revision = args
                     .next()
-                    .ok_or("--revision needs a commit")?
+                    .ok_or_else(|| usage_error("--revision needs a commit"))?
                     .into_string()
-                    .map_err(|_| "Revision must be UTF-8")?;
+                    .map_err(|_| usage_error("Revision must be UTF-8"))?;
                 revision_set = true;
             }
             Some("--before") => {
                 before = Some(
-                    args.next()
-                        .ok_or("--before needs a commit")?
+                    args.value()
+                        .ok_or_else(|| usage_error("--before needs a commit"))?
                         .into_string()
-                        .map_err(|_| "Before revision must be UTF-8")?,
+                        .map_err(|_| usage_error("Before revision must be UTF-8"))?,
                 );
             }
             Some("--area") => {
-                let value = args
-                    .next()
-                    .ok_or("--area needs staged|unstaged|untracked|conflict")?;
+                let value = args.next().ok_or_else(|| {
+                    usage_error("--area needs staged|unstaged|untracked|conflict")
+                })?;
                 area = Some(match value.to_str() {
                     Some("staged") => Area::Staged,
                     Some("unstaged") => Area::Unstaged,
                     Some("untracked") => Area::Untracked,
                     Some("conflict") => Area::Conflict,
-                    _ => return Err(usage().into()),
+                    _ => return Err(usage_error(usage())),
                 });
             }
-            Some(value) if value.starts_with("--") => return Err(usage().into()),
+            Some(value) if value.starts_with("--") => return Err(usage_error(usage())),
             _ if file.is_none() => file = Some(arg),
-            _ => return Err(usage().into()),
+            _ => return Err(usage_error(usage())),
         }
     }
-    let file = file.ok_or_else(|| usage().to_string())?;
+    let file = file.ok_or_else(|| usage_error(usage()))?;
     let path_bytes = path_bytes(&file)?;
     let display = String::from_utf8_lossy(&path_bytes).into_owned();
     if let Some(area) = area {
         if revision_set || before.is_some() {
-            return Err("--area cannot be combined with --revision or --before".into());
+            return Err(usage_error(
+                "--area cannot be combined with --revision or --before",
+            ));
         }
         let entry = StatusEntry::new(area, Kind::Modified, &path_bytes);
         let working = WorkingRequest {
@@ -152,7 +160,7 @@ fn path_bytes(path: &std::ffi::OsStr) -> Result<Vec<u8>, Box<dyn std::error::Err
     {
         Ok(path
             .to_str()
-            .ok_or("LFS path must be Unicode on this platform")?
+            .ok_or_else(|| usage_error("LFS path must be Unicode on this platform"))?
             .replace('\\', "/")
             .into_bytes())
     }

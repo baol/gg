@@ -1,4 +1,5 @@
 //! Stream working status as JSON without mutating the repository.
+use crate::cli_args::usage_error;
 use std::{ffi::OsString, io::Write, path::PathBuf, sync::atomic::AtomicBool};
 pub fn run(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::error::Error>> {
     let mut args = crate::cli_args::Args::new(args);
@@ -7,34 +8,44 @@ pub fn run(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::erro
     let mut area = None;
     while let Some(arg) = args.next() {
         match args.option(&arg) {
-            Some("--file") => file = Some(args.next().ok_or("--file needs a path")?),
+            Some("--file") => {
+                file = Some(
+                    args.value()
+                        .ok_or_else(|| usage_error("--file needs a path"))?,
+                )
+            }
             Some("--area") => {
                 area = Some(
-                    match args.next().and_then(|s| s.into_string().ok()).as_deref() {
+                    match args.value().and_then(|s| s.into_string().ok()).as_deref() {
                         Some("staged") => gg_engine::status::Area::Staged,
                         Some("unstaged") => gg_engine::status::Area::Unstaged,
                         Some("untracked") => gg_engine::status::Area::Untracked,
                         Some("conflict") => gg_engine::status::Area::Conflict,
                         _ => {
-                            return Err(
-                                "--area needs staged, unstaged, untracked, or conflict".into()
-                            );
+                            return Err(usage_error(
+                                "--area needs staged, unstaged, untracked, or conflict",
+                            ));
                         }
                     },
                 )
             }
             Some("--repo") if path.is_none() => {
-                path = Some(PathBuf::from(args.next().ok_or("--repo needs a path")?));
+                path = Some(PathBuf::from(
+                    args.value()
+                        .ok_or_else(|| usage_error("--repo needs a path"))?,
+                ));
             }
             _ => {
-                return Err(
-                    "Usage: git good --cli status [--repo PATH] [--file PATH --area AREA]".into(),
-                );
+                return Err(usage_error(
+                    "Usage: git good --cli status [--repo PATH] [--file PATH --area AREA]",
+                ));
             }
         }
     }
     if file.is_some() != area.is_some() {
-        return Err("Selected-file status requires --file and --area".into());
+        return Err(usage_error(
+            "Selected-file status requires --file and --area",
+        ));
     }
     let path = path.unwrap_or(std::env::current_dir()?);
     let session = gg_git::status::Session::open(&path)?;
@@ -96,14 +107,26 @@ pub fn unstage(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::
     let mut file = None;
     while let Some(arg) = args.next() {
         match args.option(&arg) {
-            Some("--repo") => path = PathBuf::from(args.next().ok_or("--repo needs a path")?),
-            Some("--file") if file.is_none() => {
-                file = Some(args.next().ok_or("--file needs a path")?)
+            Some("--repo") => {
+                path = PathBuf::from(
+                    args.value()
+                        .ok_or_else(|| usage_error("--repo needs a path"))?,
+                )
             }
-            _ => return Err("Usage: git good --cli unstage --file PATH [--repo PATH]".into()),
+            Some("--file") if file.is_none() => {
+                file = Some(
+                    args.value()
+                        .ok_or_else(|| usage_error("--file needs a path"))?,
+                )
+            }
+            _ => {
+                return Err(usage_error(
+                    "Usage: git good --cli unstage --file PATH [--repo PATH]",
+                ));
+            }
         }
     }
-    let file = file.ok_or("Unstage requires --file PATH")?;
+    let file = file.ok_or_else(|| usage_error("Unstage requires --file PATH"))?;
     let bytes = path_bytes(&file)?;
     let session = gg_git::status::Session::open(&path)?;
     let mut selected = None;
@@ -132,25 +155,32 @@ pub fn stage(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::er
     let mut hunks = vec![];
     while let Some(arg) = args.next() {
         match args.option(&arg) {
-            Some("--repo") => path = PathBuf::from(args.next().ok_or("--repo needs a path")?),
+            Some("--repo") => {
+                path = PathBuf::from(
+                    args.value()
+                        .ok_or_else(|| usage_error("--repo needs a path"))?,
+                )
+            }
             Some("--file") if file.is_none() => {
-                file = Some(args.next().ok_or("--file needs a path")?)
+                file = Some(
+                    args.value()
+                        .ok_or_else(|| usage_error("--file needs a path"))?,
+                )
             }
             Some("--hunk") => hunks.push(
-                args.next()
-                    .ok_or("--hunk needs an @@ header")?
+                args.value()
+                    .ok_or_else(|| usage_error("--hunk needs an @@ header"))?
                     .into_string()
-                    .map_err(|_| "Hunk header must be Unicode")?,
+                    .map_err(|_| usage_error("Hunk header must be Unicode"))?,
             ),
             _ => {
-                return Err(
-                    "Usage: git good --cli stage --file PATH [--hunk HEADER]... [--repo PATH]"
-                        .into(),
-                );
+                return Err(usage_error(
+                    "Usage: git good --cli stage --file PATH [--hunk HEADER]... [--repo PATH]",
+                ));
             }
         }
     }
-    let file = file.ok_or("Stage requires --file PATH")?;
+    let file = file.ok_or_else(|| usage_error("Stage requires --file PATH"))?;
     let bytes = path_bytes(&file)?;
     let session = gg_git::status::Session::open(&path)?;
     let mut selected = None;
@@ -205,7 +235,7 @@ fn path_bytes(path: &std::ffi::OsStr) -> Result<Vec<u8>, Box<dyn std::error::Err
     {
         Ok(path
             .to_str()
-            .ok_or("File path must be Unicode on this platform")?
+            .ok_or_else(|| usage_error("File path must be Unicode on this platform"))?
             .replace('\\', "/")
             .into_bytes())
     }

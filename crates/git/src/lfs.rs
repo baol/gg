@@ -438,21 +438,33 @@ pub fn head_pointers(repo: &Path) -> Result<HeadPointers, String> {
     })
 }
 
-/// A `git lfs fetch --include` pattern that names one repository path:
-/// anchored at the root, with the glob characters escaped. LFS splits the
-/// list at every comma, escaped or not, so a comma and a byte that is not
-/// UTF-8 each match as `?`; the pattern then also names the paths that
-/// differ from this one only there, and fetches their objects too.
+/// A `git lfs fetch --include` pattern that names one repository path,
+/// anchored at the root. git-lfs has no escape for some characters, so they
+/// match as `?` and the pattern also names the paths that differ from this
+/// one only there (their objects are fetched too):
+/// - a comma, which splits the list escaped or not;
+/// - `!`, `{` and `}`, whose escapes match nothing;
+/// - trailing whitespace, which is trimmed from each entry;
+/// - a byte that is not UTF-8;
+/// - on Windows, every glob character: git-lfs reads `\` there as a path
+///   separator, so escapes cannot work.
+///
+/// Elsewhere `*`, `?`, `[`, `]`, `\` and `#` are escaped and match exactly.
 pub(crate) fn include_pattern(path: &[u8]) -> String {
+    pattern_for(path, !cfg!(windows))
+}
+
+fn pattern_for(path: &[u8], escapes: bool) -> String {
     let mut pattern = String::from("/");
     for chunk in path.utf8_chunks() {
         for character in chunk.valid().chars() {
             match character {
-                ',' => pattern.push('?'),
-                '*' | '?' | '[' | ']' | '\\' | '!' | '#' | '{' | '}' => {
+                ',' | '!' | '{' | '}' => pattern.push('?'),
+                '*' | '?' | '[' | ']' | '\\' | '#' if escapes => {
                     pattern.push('\\');
                     pattern.push(character);
                 }
+                '*' | '?' | '[' | ']' | '\\' => pattern.push('?'),
                 _ => pattern.push(character),
             }
         }
@@ -460,6 +472,13 @@ pub(crate) fn include_pattern(path: &[u8]) -> String {
             pattern.push('?');
         }
     }
+    let trailing = pattern
+        .chars()
+        .rev()
+        .take_while(|c| c.is_whitespace())
+        .count();
+    pattern.truncate(pattern.trim_end().len());
+    pattern.extend(std::iter::repeat_n('?', trailing));
     pattern
 }
 
@@ -530,5 +549,24 @@ fn size_label(value: u64) -> String {
         format!("{:.1} KiB", value as f64 / 1024.0)
     } else {
         format!("{:.1} MiB", value as f64 / (1024.0 * 1024.0))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pattern_for;
+
+    #[test]
+    fn include_patterns_escape_what_lfs_can_and_wildcard_the_rest() {
+        assert_eq!(pattern_for(b"sub/h.bin", true), "/sub/h.bin");
+        assert_eq!(
+            pattern_for(b"a*[1]\\#.bin", true),
+            "/a\\*\\[1\\]\\\\\\#.bin"
+        );
+        assert_eq!(pattern_for(b"q!b{1},c.bin", true), "/q?b?1??c.bin");
+        assert_eq!(pattern_for(b" lead trail. \t", true), "/ lead trail.??");
+        assert_eq!(pattern_for(b"bad\xff.bin", true), "/bad?.bin");
+        // Windows: no backslash reaches git-lfs.
+        assert_eq!(pattern_for(b"a*[1]\\#.bin", false), "/a??1??#.bin");
     }
 }

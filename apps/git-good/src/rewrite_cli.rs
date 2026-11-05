@@ -1,4 +1,5 @@
 //! Rewrite a linear commit range through an interactive rebase todo.
+use crate::cli_args::usage_error;
 use gg_engine::{
     mutation::Operation,
     rewrite::{Action, Step},
@@ -17,13 +18,18 @@ pub fn run(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::erro
     let mut action = None;
     while let Some(arg) = args.next() {
         match args.option(&arg) {
-            Some("--repo") => path = PathBuf::from(args.next().ok_or("--repo needs a path")?),
+            Some("--repo") => {
+                path = PathBuf::from(
+                    args.value()
+                        .ok_or_else(|| usage_error("--repo needs a path"))?,
+                )
+            }
             Some("--from") if action.is_none() => {
                 from = Some(
-                    args.next()
-                        .ok_or("--from needs a commit")?
+                    args.value()
+                        .ok_or_else(|| usage_error("--from needs a commit"))?
                         .into_string()
-                        .map_err(|_| "Commit must be UTF-8")?,
+                        .map_err(|_| usage_error("Commit must be UTF-8"))?,
                 );
             }
             Some(flag @ ("--pick" | "--edit" | "--squash" | "--fixup" | "--drop"))
@@ -36,12 +42,18 @@ pub fn run(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::erro
                     "--fixup" => Action::Fixup,
                     _ => Action::Drop,
                 };
-                let commit = args.next().ok_or(format!("{flag} needs a commit"))?;
+                let commit = args
+                    .value()
+                    .ok_or_else(|| usage_error(format!("{flag} needs a commit")))?;
                 steps.push(Step::new(kind, utf8(commit, "Commit")?));
             }
             Some("--reword") if action.is_none() => {
-                let commit = args.next().ok_or("--reword needs a commit and a message")?;
-                let message = args.next().ok_or("--reword needs a commit and a message")?;
+                let commit = args
+                    .value()
+                    .ok_or_else(|| usage_error("--reword needs a commit and a message"))?;
+                let message = args
+                    .value()
+                    .ok_or_else(|| usage_error("--reword needs a commit and a message"))?;
                 steps.push(Step::reword(
                     utf8(commit, "Commit")?,
                     utf8(message, "Message")?,
@@ -53,10 +65,10 @@ pub fn run(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::erro
             Some("--skip") if action.is_none() => action = Some("skip"),
             Some("--abort") if action.is_none() => action = Some("abort"),
             Some(value) if value.starts_with("--") => {
-                return Err("Unknown rewrite option".into());
+                return Err(usage_error("Unknown rewrite option"));
             }
             _ => {
-                return Err(USAGE.into());
+                return Err(usage_error(USAGE));
             }
         }
     }
@@ -65,7 +77,7 @@ pub fn run(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::erro
             "continue" => gg_git::mutation::continue_operation(&path, Operation::Rebase)?,
             "skip" => gg_git::mutation::skip_operation(&path, Operation::Rebase)?,
             "abort" => gg_git::mutation::abort_operation(&path, Operation::Rebase)?,
-            other => return Err(format!("Unknown action --{other}").into()),
+            other => return Err(usage_error(format!("Unknown action --{other}"))),
         };
         write_receipt(serde_json::json!({
             "operation": "rewrite",
@@ -83,7 +95,7 @@ pub fn run(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::erro
         }))?;
         return Ok(());
     }
-    let from = from.ok_or("Rewrite requires --from COMMIT")?;
+    let from = from.ok_or_else(|| usage_error("Rewrite requires --from COMMIT"))?;
     let receipt = gg_git::rewrite::rewrite(&path, &from, &steps, autostash)?;
     write_receipt(serde_json::json!({
         "operation": "rewrite",
@@ -106,7 +118,7 @@ const USAGE: &str = "Usage: git good --cli rewrite --from COMMIT [--autostash] S
 fn utf8(value: OsString, what: &str) -> Result<String, Box<dyn std::error::Error>> {
     value
         .into_string()
-        .map_err(|_| format!("{what} must be UTF-8").into())
+        .map_err(|_| usage_error(format!("{what} must be UTF-8")))
 }
 
 fn write_receipt(receipt: serde_json::Value) -> Result<(), Box<dyn std::error::Error>> {

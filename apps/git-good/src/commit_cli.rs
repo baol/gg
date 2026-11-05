@@ -1,4 +1,5 @@
 //! Create or amend a commit from the index through the shared commit engine.
+use crate::cli_args::usage_error;
 use std::{ffi::OsString, path::PathBuf};
 
 pub fn run(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::error::Error>> {
@@ -9,27 +10,31 @@ pub fn run(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::erro
     let mut sign = None;
     while let Some(arg) = args.next() {
         match args.option(&arg) {
-            Some("--repo") => path = PathBuf::from(args.next().ok_or("--repo needs a path")?),
+            Some("--repo") => {
+                path = PathBuf::from(
+                    args.value()
+                        .ok_or_else(|| usage_error("--repo needs a path"))?,
+                )
+            }
             Some("--amend") if !amend => amend = true,
             Some("--sign" | "-s") if sign.is_none() => sign = Some(true),
             Some("--no-sign") if sign.is_none() => sign = Some(false),
             Some("-m" | "--message") if message.is_none() => {
                 message = Some(
-                    args.next()
-                        .ok_or("Commit message is missing")?
+                    args.value()
+                        .ok_or_else(|| usage_error("Commit message is missing"))?
                         .into_string()
-                        .map_err(|_| "Commit message must be UTF-8")?,
+                        .map_err(|_| usage_error("Commit message must be UTF-8"))?,
                 );
             }
             _ => {
-                return Err(
-                    "Usage: git good --cli commit [--amend] [--sign|--no-sign] -m MESSAGE [--repo PATH]"
-                        .into(),
-                );
+                return Err(usage_error(
+                    "Usage: git good --cli commit [--amend] [--sign|--no-sign] -m MESSAGE [--repo PATH]",
+                ));
             }
         }
     }
-    let message = message.ok_or("Commit requires -m MESSAGE")?;
+    let message = message.ok_or_else(|| usage_error("Commit requires -m MESSAGE"))?;
     let sign = sign.unwrap_or_else(|| gg_git::signature::config(&path).commit_signing);
     let session = gg_git::status::Session::open(&path)?;
     let receipt = match (amend, sign) {

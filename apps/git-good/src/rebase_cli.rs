@@ -1,4 +1,5 @@
 //! Rebase the current branch and recover from conflicts.
+use crate::cli_args::usage_error;
 use gg_engine::mutation::Operation;
 use std::{
     ffi::OsString,
@@ -13,23 +14,30 @@ pub fn run(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::erro
     let mut action = None;
     while let Some(arg) = args.next() {
         match args.option(&arg) {
-            Some("--repo") => path = PathBuf::from(args.next().ok_or("--repo needs a path")?),
+            Some("--repo") => {
+                path = PathBuf::from(
+                    args.value()
+                        .ok_or_else(|| usage_error("--repo needs a path"))?,
+                )
+            }
             Some("--autostash") if action.is_none() => autostash = true,
             Some("--no-autostash") if action.is_none() => autostash = false,
             Some("--continue") if action.is_none() => action = Some("continue"),
             Some("--skip") if action.is_none() => action = Some("skip"),
             Some("--abort") if action.is_none() => action = Some("abort"),
             Some(value) if value.starts_with("--") => {
-                return Err("Unknown rebase option".into());
+                return Err(usage_error("Unknown rebase option"));
             }
             _ if reference.is_none() => {
-                reference = Some(arg.into_string().map_err(|_| "Reference must be UTF-8")?);
+                reference = Some(
+                    arg.into_string()
+                        .map_err(|_| usage_error("Reference must be UTF-8"))?,
+                );
             }
             _ => {
-                return Err(
-                    "Usage: git good --cli rebase REF [--autostash] [--repo PATH]\n       git good --cli rebase --continue|--skip|--abort [--repo PATH]"
-                        .into(),
-                );
+                return Err(usage_error(
+                    "Usage: git good --cli rebase REF [--autostash] [--repo PATH]\n       git good --cli rebase --continue|--skip|--abort [--repo PATH]",
+                ));
             }
         }
     }
@@ -38,7 +46,7 @@ pub fn run(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::erro
             "continue" => gg_git::mutation::continue_operation(&path, Operation::Rebase)?,
             "skip" => gg_git::mutation::skip_operation(&path, Operation::Rebase)?,
             "abort" => gg_git::mutation::abort_operation(&path, Operation::Rebase)?,
-            other => return Err(format!("Unknown action --{other}").into()),
+            other => return Err(usage_error(format!("Unknown action --{other}"))),
         };
         write_receipt(serde_json::json!({
             "operation": "rebase",
@@ -56,7 +64,7 @@ pub fn run(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::erro
         }))?;
         return Ok(());
     }
-    let reference = reference.ok_or("Rebase requires a reference")?;
+    let reference = reference.ok_or_else(|| usage_error("Rebase requires a reference"))?;
     let receipt = gg_git::rebase::rebase(&path, &reference, autostash)?;
     write_receipt(serde_json::json!({
         "operation": "rebase",

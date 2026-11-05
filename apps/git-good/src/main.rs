@@ -134,7 +134,7 @@ fn main() -> std::process::ExitCode {
         Err(error) => {
             let message = error.to_string();
             eprintln!("Error: {message}");
-            std::process::ExitCode::from(cli_args::failure_code(&message))
+            std::process::ExitCode::from(cli_args::failure_code(error.as_ref()))
         }
     }
 }
@@ -266,7 +266,7 @@ fn run_command(
     let mut sub = |usage: &str| -> Result<String, Box<dyn std::error::Error>> {
         args.next()
             .and_then(|sub| sub.into_string().ok())
-            .ok_or_else(|| usage.into())
+            .ok_or_else(|| cli_args::usage_error(usage))
     };
     let result = match name {
         "history" => cli_args::repo_only(args, "Usage: git good --cli history [--repo PATH]")
@@ -286,26 +286,34 @@ fn run_command(
         "signature" => match sub("Usage: git good --cli signature <config|verify>") {
             Ok(sub) if sub == "config" => signature_cli::config(args),
             Ok(sub) if sub == "verify" => signature_cli::verify(args),
-            Ok(_) => Err("Usage: git good --cli signature <config|verify>".into()),
+            Ok(_) => Err(cli_args::usage_error(
+                "Usage: git good --cli signature <config|verify>",
+            )),
             Err(error) => Err(error),
         },
         "lfs" => match sub("Usage: git good --cli lfs <status|fetch>") {
             Ok(sub) if sub == "status" => lfs_cli::status(args),
             Ok(sub) if sub == "fetch" => lfs_cli::fetch(args),
-            Ok(_) => Err("Usage: git good --cli lfs <status|fetch>".into()),
+            Ok(_) => Err(cli_args::usage_error(
+                "Usage: git good --cli lfs <status|fetch>",
+            )),
             Err(error) => Err(error),
         },
         "submodule" => match sub("Usage: git good --cli submodule <status|update>") {
             Ok(sub) if sub == "status" => submodule_cli::status(args),
             Ok(sub) if sub == "update" => submodule_cli::update(args),
-            Ok(_) => Err("Usage: git good --cli submodule <status|update>".into()),
+            Ok(_) => Err(cli_args::usage_error(
+                "Usage: git good --cli submodule <status|update>",
+            )),
             Err(error) => Err(error),
         },
         "worktree" => match sub("Usage: git good --cli worktree <list|add|remove>") {
             Ok(sub) if sub == "list" => worktree_cli::list(args),
             Ok(sub) if sub == "add" => worktree_cli::add(args),
             Ok(sub) if sub == "remove" => worktree_cli::remove(args),
-            Ok(_) => Err("Usage: git good --cli worktree <list|add|remove>".into()),
+            Ok(_) => Err(cli_args::usage_error(
+                "Usage: git good --cli worktree <list|add|remove>",
+            )),
             Err(error) => Err(error),
         },
         "switch" => branch_cli::run(args),
@@ -349,27 +357,30 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             return Ok(());
         }
         Some("--cli") => {
-            let name = args
-                .next()
-                .ok_or("Name a command after --cli. Use git good --help for the list.")?;
+            let name = args.next().ok_or_else(|| {
+                cli_args::usage_error(
+                    "Name a command after --cli. Use git good --help for the list.",
+                )
+            })?;
             let name = name.to_string_lossy().into_owned();
             return run_command(&name, args).unwrap_or_else(|| {
-                Err(format!("Unknown command {name}. Use git good --help for the list.").into())
+                Err(cli_args::usage_error(format!(
+                    "Unknown command {name}. Use git good --help for the list."
+                )))
             });
         }
         Some("--") => args.next(),
         Some(option) if option.starts_with('-') => {
-            return Err(format!(
+            return Err(cli_args::usage_error(format!(
                 "Unknown option {option}. Commands follow --cli; use git good --help for usage."
-            )
-            .into());
+            )));
         }
         _ => first,
     };
     if args.next().is_some() {
-        return Err(
-            "Open one folder. Commands follow --cli; use git good --help for usage.".into(),
-        );
+        return Err(cli_args::usage_error(
+            "Open one folder. Commands follow --cli; use git good --help for usage.",
+        ));
     }
     let path = match given.map(PathBuf::from) {
         Some(path) => {
@@ -379,9 +390,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 && let Some(name) = path.to_str()
                 && COMMANDS.iter().any(|(command, _)| *command == name)
             {
-                return Err(
-                    format!("No folder {name}. Did you mean git good --cli {name}?").into(),
-                );
+                return Err(cli_args::usage_error(format!(
+                    "No folder {name}. Did you mean git good --cli {name}?"
+                )));
             }
             path
         }
@@ -2161,10 +2172,13 @@ struct Browser {
     #[cfg(debug_assertions)]
     open_local: bool,
     /// Debug: `GG_REBASE=<commit>` opens the interactive rebase from there.
+    #[cfg(debug_assertions)]
     open_rebase: Option<String>,
     /// Debug: `GG_REVIEW=<commit>` opens that commit in Review.
+    #[cfg(debug_assertions)]
     open_review: Option<String>,
     /// Debug: `GG_WORKTREES=1` opens the Worktrees window.
+    #[cfg(debug_assertions)]
     open_worktrees: bool,
     /// The reopened commit Local Changes was last opened for.
     reopen_seen: Option<String>,
@@ -2264,6 +2278,11 @@ struct Browser {
     /// The repository the watcher could not watch: told once, then re-read
     /// whenever the window gets focus back.
     unwatched: Option<PathBuf>,
+    /// The refs of the unwatched repository as last read, so a focus reloads
+    /// history only when a ref moved.
+    unwatched_refs: Option<u64>,
+    /// A background read of those refs, started on focus.
+    refs_probe: Option<std::sync::mpsc::Receiver<Result<u64, String>>>,
     /// When the history last started loading, so a ref change it already
     /// saw does not load it again.
     last_load: Option<std::time::Instant>,
@@ -2376,17 +2395,12 @@ impl Browser {
             #[cfg(debug_assertions)]
             open_local: std::env::var_os("GG_LOCAL_CHANGES").is_some(),
             reopen_seen: None,
-            open_rebase: if cfg!(debug_assertions) {
-                std::env::var("GG_REBASE").ok()
-            } else {
-                None
-            },
-            open_review: if cfg!(debug_assertions) {
-                std::env::var("GG_REVIEW").ok()
-            } else {
-                None
-            },
-            open_worktrees: cfg!(debug_assertions) && std::env::var_os("GG_WORKTREES").is_some(),
+            #[cfg(debug_assertions)]
+            open_rebase: std::env::var("GG_REBASE").ok(),
+            #[cfg(debug_assertions)]
+            open_review: std::env::var("GG_REVIEW").ok(),
+            #[cfg(debug_assertions)]
+            open_worktrees: std::env::var_os("GG_WORKTREES").is_some(),
             operation_worker: None,
             operation_owner: OperationOwner::Footer,
             operation_repo: None,
@@ -2459,6 +2473,8 @@ impl Browser {
             pending: None,
             watcher: None,
             unwatched: None,
+            unwatched_refs: None,
+            refs_probe: None,
             last_load: None,
             rewrite_backup: None,
             rewrite_steps: Default::default(),
@@ -4768,11 +4784,16 @@ impl Browser {
             Ok(watcher) => {
                 self.watcher = Some(watcher);
                 self.unwatched = None;
+                self.unwatched_refs = None;
+                self.refs_probe = None;
             }
             // The history read reports a folder Git cannot read.
             Err(watcher::StartError::NotRepository(_)) => self.watcher = None,
             Err(watcher::StartError::Unwatchable(error)) => {
                 self.watcher = None;
+                // What this load reads is the base the next focus compares with.
+                self.unwatched_refs = None;
+                self.probe_refs(ctx, path);
                 if self.unwatched.as_deref() != Some(path) {
                     self.unwatched = Some(path.to_path_buf());
                     self.set_outcome(
@@ -4783,6 +4804,52 @@ impl Browser {
                     );
                 }
             }
+        }
+    }
+
+    /// Read the refs of `path` off the UI thread; [`Browser::poll_refs_probe`]
+    /// takes the answer.
+    fn probe_refs(&mut self, ctx: &egui::Context, path: &Path) {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let path = path.to_path_buf();
+        let repaint = ctx.clone();
+        let spawned = std::thread::Builder::new()
+            .name("gg-refs-probe".into())
+            .spawn(move || {
+                let _ = sender.send(gg_git::refs::fingerprint(&path));
+                repaint.request_repaint();
+            });
+        self.refs_probe = spawned.is_ok().then_some(receiver);
+    }
+
+    /// An unwatched repository's refs read on focus: history loads again
+    /// only when they differ from the last read. A failed read changes
+    /// nothing; the next focus reads again.
+    fn poll_refs_probe(&mut self, ctx: &egui::Context, mutating: bool) {
+        let Some(probe) = &self.refs_probe else {
+            return;
+        };
+        let found = match probe.try_recv() {
+            Ok(found) => found.ok(),
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => None,
+        };
+        self.refs_probe = None;
+        if self.unwatched.is_none() || mutating {
+            // An operation reloads on its own receipt; keep the old base.
+            return;
+        }
+        let moved =
+            matches!((self.unwatched_refs, found), (Some(known), Some(now)) if known != now);
+        if found.is_some() {
+            self.unwatched_refs = found;
+        }
+        if moved {
+            let refs = watcher::Changes {
+                refs: true,
+                ..Default::default()
+            };
+            self.apply_changes(ctx, refs, std::time::Instant::now());
         }
     }
 
@@ -11462,17 +11529,21 @@ impl Browser {
         }
         self.menu_shortcuts(ctx);
         self.poll_local_summary();
+        self.poll_refs_probe(ctx, mutating);
         let focused = ctx.input(|i| i.focused);
         self.signing_cache.attach(ctx);
         if focused && !self.window_focused {
-            if self.unwatched.is_some() && !mutating {
-                let all = watcher::Changes {
+            if let Some(path) = self.unwatched.clone().filter(|_| !mutating) {
+                // The working files and index re-read now; history only when
+                // a ref moved (the probe answers). The configuration is read
+                // just below.
+                let files = watcher::Changes {
                     worktree: true,
                     index: true,
-                    refs: true,
-                    config: true,
+                    ..Default::default()
                 };
-                self.apply_changes(ctx, all, std::time::Instant::now());
+                self.apply_changes(ctx, files, std::time::Instant::now());
+                self.probe_refs(ctx, &path);
             }
             self.refresh_local_summary(ctx);
             self.reread_signing();
@@ -19642,14 +19713,49 @@ mod tests {
     }
 
     #[test]
-    fn a_repository_that_cannot_be_watched_is_told_once_and_reread_on_focus() {
+    fn a_repository_that_cannot_be_watched_is_told_once_and_reread_on_focus()
+    -> Result<(), Box<dyn std::error::Error>> {
         let ctx = egui::Context::default();
+        let repo = tempfile::tempdir()?;
+        let git = |args: &[&str]| -> Result<(), Box<dyn std::error::Error>> {
+            let status = gg_git::process::git()
+                .arg("-C")
+                .arg(repo.path())
+                .args(["-c", "user.name=T", "-c", "user.email=t@example.org"])
+                .args(args)
+                .status()?;
+            if status.success() {
+                Ok(())
+            } else {
+                Err(format!("git {args:?}").into())
+            }
+        };
+        git(&["init", "-q", "-b", "main"])?;
+        git(&["commit", "-q", "--allow-empty", "-m", "base"])?;
         let mut app = layout_fixture();
-        let path = PathBuf::from("/projects/a-very-long-repository-name");
+        let path = repo.path().to_path_buf();
+        app.path = path.to_string_lossy().into_owned();
         let failing_watch = |app: &mut Browser| {
             WATCH_FAILS.with(|fails| fails.set(true));
             app.watch(&ctx, &path);
             WATCH_FAILS.with(|fails| fails.set(false));
+        };
+        // Frames until the background refs read answers.
+        let settle = |app: &mut Browser| {
+            for _ in 0..500 {
+                let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+                    app.draw_ui(ctx)
+                });
+                if app.refs_probe.is_none() {
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        };
+        let focus = |app: &mut Browser| {
+            app.window_focused = false;
+            app.last_load = None;
+            settle(app);
         };
         failing_watch(&mut app);
         assert!(app.watcher.is_none());
@@ -19668,16 +19774,22 @@ mod tests {
         );
         failing_watch(&mut app);
         assert!(app.outcome.is_none(), "told once per repository");
-        // Focus back: the window reads the repository again.
-        app.window_focused = false;
-        app.last_load = None;
-        let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
-            app.draw_ui(ctx)
-        });
+        settle(&mut app);
+        assert!(app.unwatched_refs.is_some(), "the refs read is the base");
+        // Focus back with no ref moved: files re-read, history does not.
+        focus(&mut app);
+        assert!(
+            app.last_load.is_none(),
+            "no ref moved: history is not read again"
+        );
+        // A branch made outside: the next focus reads history again.
+        git(&["branch", "outside"])?;
+        focus(&mut app);
         assert!(
             app.last_load.is_some(),
-            "focus re-reads an unwatched repository"
+            "focus re-reads an unwatched repository whose refs moved"
         );
+        Ok(())
     }
 
     #[test]

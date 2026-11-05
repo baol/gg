@@ -185,6 +185,57 @@ fn double_dash_ends_options() -> Result {
     Ok(())
 }
 
+#[test]
+fn two_dashes_can_be_an_option_value() -> Result {
+    let repo = tempfile::tempdir()?;
+    init(repo.path(), &["-b", "main"])?;
+    git(repo.path(), &["config", "user.name", "T"])?;
+    git(repo.path(), &["config", "user.email", "t@example.org"])?;
+    std::fs::write(repo.path().join("a.txt"), b"a\n")?;
+    git(repo.path(), &["add", "a.txt"])?;
+    let output = cli(env!("CARGO_BIN_EXE_git-good"))
+        .args(["commit", "-m", "--", "--repo"])
+        .arg(repo.path())
+        .output()?;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let message = git_output(repo.path(), &["log", "-1", "--format=%s"])?;
+    assert_eq!(String::from_utf8_lossy(&message).trim(), "--");
+    Ok(())
+}
+
+#[test]
+fn every_usage_error_exits_2_and_a_git_failure_exits_1() -> Result {
+    let repo = tempfile::tempdir()?;
+    init(repo.path(), &["-b", "main"])?;
+    let binary = env!("CARGO_BIN_EXE_git-good");
+    let code = |args: &[&str]| -> Result<Option<i32>> {
+        Ok(cli(binary)
+            .args(args)
+            .current_dir(repo.path())
+            .output()?
+            .status
+            .code())
+    };
+    for args in [
+        &["switch"][..],
+        &["clone"],
+        &["tag"],
+        &["branch", "--delete", "x", "--create"],
+        &["commit"],
+        &["stash", "push", "-m"],
+        &["reset", "HEAD"],
+        &["lfs", "nope"],
+    ] {
+        assert_eq!(code(args)?, Some(2), "{args:?}");
+    }
+    assert_eq!(code(&["show", "no-such-revision"])?, Some(1));
+    Ok(())
+}
+
 /// `count` commits on main through fast-import.
 fn many_commits(path: &Path, count: usize) -> Result {
     use std::io::Write;

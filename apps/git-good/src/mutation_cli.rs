@@ -1,4 +1,5 @@
 //! Cherry-pick, revert, and their continue/skip/abort recovery.
+use crate::cli_args::usage_error;
 use gg_engine::mutation::Operation;
 use std::{
     ffi::OsString,
@@ -23,23 +24,33 @@ fn run(
     let mut action = None;
     while let Some(arg) = args.next() {
         match args.option(&arg) {
-            Some("--repo") => path = PathBuf::from(args.next().ok_or("--repo needs a path")?),
+            Some("--repo") => {
+                path = PathBuf::from(
+                    args.value()
+                        .ok_or_else(|| usage_error("--repo needs a path"))?,
+                )
+            }
             Some("--continue") if action.is_none() => action = Some("continue"),
             Some("--abort") if action.is_none() => action = Some("abort"),
             Some("--skip") if action.is_none() => action = Some("skip"),
             Some(value) if value.starts_with("--") => {
-                return Err(format!("Unknown {} option", operation.as_str()).into());
+                return Err(usage_error(format!(
+                    "Unknown {} option",
+                    operation.as_str()
+                )));
             }
             _ if commits.is_empty() || operation == Operation::CherryPick => {
-                commits.push(arg.into_string().map_err(|_| "Commit must be UTF-8")?);
+                commits.push(
+                    arg.into_string()
+                        .map_err(|_| usage_error("Commit must be UTF-8"))?,
+                );
             }
             _ => {
-                return Err(format!(
-                    "Usage: git good {} COMMIT [--repo PATH]\n       git good {} --continue|--abort|--skip [--repo PATH]",
+                return Err(usage_error(format!(
+                    "Usage: git good --cli {} COMMIT [--repo PATH]\n       git good --cli {} --continue|--abort|--skip [--repo PATH]",
                     operation.as_str(),
                     operation.as_str()
-                )
-                .into());
+                )));
             }
         }
     }
@@ -49,21 +60,24 @@ fn run(
         Some("skip") => gg_git::mutation::skip_operation(&path, operation)?,
         _ => {
             if commits.is_empty() {
-                return Err(format!(
-                    "Usage: git good {} COMMIT [--repo PATH]",
+                return Err(usage_error(format!(
+                    "Usage: git good --cli {} COMMIT [--repo PATH]",
                     operation.as_str()
-                )
-                .into());
+                )));
             }
             let named: Vec<&str> = commits.iter().map(String::as_str).collect();
             match operation {
                 Operation::CherryPick => gg_git::mutation::cherry_pick_many(&path, &named)?,
                 Operation::Revert => gg_git::mutation::revert(&path, named[0])?,
                 Operation::Merge => {
-                    return Err("Use git good --cli merge for merge operations.".into());
+                    return Err(usage_error(
+                        "Use git good --cli merge for merge operations.",
+                    ));
                 }
                 Operation::Rebase => {
-                    return Err("Use git good --cli rebase for rebase operations.".into());
+                    return Err(usage_error(
+                        "Use git good --cli rebase for rebase operations.",
+                    ));
                 }
             }
         }

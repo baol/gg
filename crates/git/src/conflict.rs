@@ -658,19 +658,36 @@ fn write_working(path: &Path, file: &[u8], bytes: &[u8], mode: &str) -> Result<(
         .parent()
         .ok_or("The conflict path has no parent directory.")?;
     std::fs::create_dir_all(parent).map_err(|error| format!("Create directory: {error}"))?;
-    let temp = parent.join(format!(
-        ".gg-resolution-{}-{}",
-        std::process::id(),
-        TEMP.fetch_add(1, Ordering::Relaxed)
-    ));
+    // A new file only: never follow a link planted at the name. A name
+    // already taken (a stale file from a crash) is left alone; the next is
+    // tried.
+    let (temp, mut file) = (|| -> Result<_, std::io::Error> {
+        let mut attempt = 0;
+        loop {
+            let temp = parent.join(format!(
+                ".gg-resolution-{}-{}",
+                std::process::id(),
+                TEMP.fetch_add(1, Ordering::Relaxed)
+            ));
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&temp)
+            {
+                Ok(file) => return Ok((temp, file)),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists && attempt < 16 => {
+                    attempt += 1;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    })()
+    .map_err(|error| format!("Write working file: {error}"))?;
+    // From here the temporary file is ours to remove on failure.
     let result = (|| -> Result<(), std::io::Error> {
-        // A new file only: never follow a link planted at the name.
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temp)?;
         file.write_all(bytes)?;
         file.sync_all()?;
+        drop(file);
         #[cfg(unix)]
         if mode == "100755" {
             use std::os::unix::fs::PermissionsExt;
@@ -770,5 +787,32 @@ fn failure(label: &str, output: &Output) -> String {
         format!("{label} failed ({}).", output.status)
     } else {
         format!("{label} failed ({}).\n{detail}", output.status)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_stale_temporary_file_is_kept_and_another_name_is_used()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let next = TEMP.load(Ordering::Relaxed);
+        let planted: Vec<_> = (next..next + 4)
+            .map(|n| {
+                dir.path()
+                    .join(format!(".gg-resolution-{}-{n}", std::process::id()))
+            })
+            .collect();
+        for path in &planted {
+            std::fs::write(path, b"not ours")?;
+        }
+        write_working(dir.path(), b"file.txt", b"resolved\n", "100644")?;
+        assert_eq!(std::fs::read(dir.path().join("file.txt"))?, b"resolved\n");
+        for path in &planted {
+            assert_eq!(std::fs::read(path)?, b"not ours", "{}", path.display());
+        }
+        Ok(())
     }
 }

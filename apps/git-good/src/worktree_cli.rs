@@ -1,4 +1,5 @@
 //! List, add, and remove worktrees as JSON.
+use crate::cli_args::usage_error;
 use gg_engine::worktree::AddRequest;
 use std::{ffi::OsString, path::Path, path::PathBuf};
 
@@ -7,8 +8,13 @@ pub fn list(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::err
     let mut path = std::env::current_dir()?;
     while let Some(arg) = args.next() {
         match args.option(&arg) {
-            Some("--repo") => path = PathBuf::from(args.next().ok_or("--repo needs a path")?),
-            _ => return Err(usage().into()),
+            Some("--repo") => {
+                path = PathBuf::from(
+                    args.value()
+                        .ok_or_else(|| usage_error("--repo needs a path"))?,
+                )
+            }
+            _ => return Err(usage_error(usage())),
         }
     }
     let snapshot = gg_git::worktree::list(&path)?;
@@ -29,37 +35,42 @@ pub fn add(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::erro
     let mut at = None;
     while let Some(arg) = args.next() {
         match args.option(&arg) {
-            Some("--repo") => path = PathBuf::from(args.next().ok_or("--repo needs a path")?),
+            Some("--repo") => {
+                path = PathBuf::from(
+                    args.value()
+                        .ok_or_else(|| usage_error("--repo needs a path"))?,
+                )
+            }
             Some("--branch") => {
                 branch = Some(
-                    args.next()
-                        .ok_or("--branch needs a name")?
+                    args.value()
+                        .ok_or_else(|| usage_error("--branch needs a name"))?
                         .into_string()
-                        .map_err(|_| "Branch name must be UTF-8")?,
+                        .map_err(|_| usage_error("Branch name must be UTF-8"))?,
                 );
             }
             Some("--create") => {
                 create = Some(
-                    args.next()
-                        .ok_or("--create needs a name")?
+                    args.value()
+                        .ok_or_else(|| usage_error("--create needs a name"))?
                         .into_string()
-                        .map_err(|_| "Branch name must be UTF-8")?,
+                        .map_err(|_| usage_error("Branch name must be UTF-8"))?,
                 );
             }
             Some("--at") => {
                 at = Some(
-                    args.next()
-                        .ok_or("--at needs a revision")?
+                    args.value()
+                        .ok_or_else(|| usage_error("--at needs a revision"))?
                         .into_string()
-                        .map_err(|_| "Revision must be UTF-8")?,
+                        .map_err(|_| usage_error("Revision must be UTF-8"))?,
                 );
             }
-            Some(value) if value.starts_with("--") => return Err(usage().into()),
+            Some(value) if value.starts_with("--") => return Err(usage_error(usage())),
             _ if destination.is_none() => destination = Some(PathBuf::from(arg)),
-            _ => return Err(usage().into()),
+            _ => return Err(usage_error(usage())),
         }
     }
-    let destination = destination.ok_or_else(|| usage().to_string())?;
+    let destination = destination.ok_or_else(|| usage_error(usage()))?;
     let receipt = gg_git::worktree::add(
         &path,
         &AddRequest {
@@ -85,13 +96,18 @@ pub fn remove(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::e
     let mut destination = None;
     while let Some(arg) = args.next() {
         match args.option(&arg) {
-            Some("--repo") => path = PathBuf::from(args.next().ok_or("--repo needs a path")?),
-            Some(value) if value.starts_with("--") => return Err(usage().into()),
+            Some("--repo") => {
+                path = PathBuf::from(
+                    args.value()
+                        .ok_or_else(|| usage_error("--repo needs a path"))?,
+                )
+            }
+            Some(value) if value.starts_with("--") => return Err(usage_error(usage())),
             _ if destination.is_none() => destination = Some(PathBuf::from(arg)),
-            _ => return Err(usage().into()),
+            _ => return Err(usage_error(usage())),
         }
     }
-    let destination = destination.ok_or_else(|| usage().to_string())?;
+    let destination = destination.ok_or_else(|| usage_error(usage()))?;
     let receipt = gg_git::worktree::remove(&path, &destination)?;
     crate::cli_args::emit(&serde_json::json!({
         "operation": "worktree remove",

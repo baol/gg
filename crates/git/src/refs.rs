@@ -3,6 +3,32 @@ use gg_engine::refs::{Head, RefItem, RefKind, Remote, Snapshot, Tracking};
 use gix::{bstr::ByteSlice, remote::Direction};
 use std::path::Path;
 
+/// A hash of HEAD and every ref with what it points at: equal while no ref
+/// moved, was added or was removed. Read in-process; no Git command runs.
+pub fn fingerprint(path: &Path) -> Result<u64, String> {
+    fingerprint_inner(path).map_err(|e| format!("Read refs {}: {e}", path.display()))
+}
+
+fn fingerprint_inner(path: &Path) -> std::result::Result<u64, Box<dyn std::error::Error>> {
+    use std::hash::{Hash, Hasher};
+    let repo = gix::discover(path)?;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    let head = repo.head()?;
+    head.referent_name()
+        .map(|name| name.as_bstr().to_vec())
+        .hash(&mut hasher);
+    head.id().map(|id| id.detach()).hash(&mut hasher);
+    for reference in repo.references()?.all()? {
+        let reference = reference?;
+        reference.name().as_bstr().hash(&mut hasher);
+        match reference.target() {
+            gix::refs::TargetRef::Object(id) => id.to_owned().hash(&mut hasher),
+            gix::refs::TargetRef::Symbolic(name) => name.as_bstr().hash(&mut hasher),
+        }
+    }
+    Ok(hasher.finish())
+}
+
 pub fn read(path: &Path) -> Result<Snapshot, String> {
     read_inner(path).map_err(|e| format!("Read refs {}: {e}", path.display()))
 }

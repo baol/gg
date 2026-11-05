@@ -1,4 +1,5 @@
 //! Merge a reference and recover from conflicts.
+use crate::cli_args::usage_error;
 use gg_engine::mutation::Operation;
 use std::{
     ffi::OsString,
@@ -13,21 +14,28 @@ pub fn run(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::erro
     let mut action = None;
     while let Some(arg) = args.next() {
         match args.option(&arg) {
-            Some("--repo") => path = PathBuf::from(args.next().ok_or("--repo needs a path")?),
+            Some("--repo") => {
+                path = PathBuf::from(
+                    args.value()
+                        .ok_or_else(|| usage_error("--repo needs a path"))?,
+                )
+            }
             Some("--no-ff") if !no_ff => no_ff = true,
             Some("--continue") if action.is_none() => action = Some("continue"),
             Some("--abort") if action.is_none() => action = Some("abort"),
             Some(value) if value.starts_with("--") => {
-                return Err("Unknown merge option".into());
+                return Err(usage_error("Unknown merge option"));
             }
             _ if reference.is_none() => {
-                reference = Some(arg.into_string().map_err(|_| "Reference must be UTF-8")?);
+                reference = Some(
+                    arg.into_string()
+                        .map_err(|_| usage_error("Reference must be UTF-8"))?,
+                );
             }
             _ => {
-                return Err(
-                    "Usage: git good --cli merge REF [--no-ff] [--repo PATH]\n       git good --cli merge --continue|--abort [--repo PATH]"
-                        .into(),
-                );
+                return Err(usage_error(
+                    "Usage: git good --cli merge REF [--no-ff] [--repo PATH]\n       git good --cli merge --continue|--abort [--repo PATH]",
+                ));
             }
         }
     }
@@ -35,7 +43,7 @@ pub fn run(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::erro
         let receipt = match action {
             "continue" => gg_git::mutation::continue_operation(&path, Operation::Merge)?,
             "abort" => gg_git::mutation::abort_operation(&path, Operation::Merge)?,
-            other => return Err(format!("Unknown action --{other}").into()),
+            other => return Err(usage_error(format!("Unknown action --{other}"))),
         };
         write_receipt(serde_json::json!({
             "operation": "merge",
@@ -49,7 +57,7 @@ pub fn run(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::erro
         }))?;
         return Ok(());
     }
-    let reference = reference.ok_or("Merge requires a reference")?;
+    let reference = reference.ok_or_else(|| usage_error("Merge requires a reference"))?;
     let receipt = gg_git::merge::merge(&path, &reference, no_ff)?;
     write_receipt(serde_json::json!({
         "operation": "merge",
