@@ -1,4 +1,5 @@
 //! Read bounded line attribution as JSON.
+use crate::cli_args::usage_error;
 use std::{ffi::OsString, path::Path, path::PathBuf};
 
 pub fn run(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::error::Error>> {
@@ -9,37 +10,43 @@ pub fn run(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::erro
     let mut file = None;
     while let Some(arg) = args.next() {
         match args.option(&arg) {
-            Some("--repo") => path = PathBuf::from(args.next().ok_or("--repo needs a path")?),
+            Some("--repo") => {
+                path = PathBuf::from(
+                    args.value()
+                        .ok_or_else(|| usage_error("--repo needs a path"))?,
+                )
+            }
             Some("--revision") => {
                 revision = args
                     .next()
-                    .ok_or("--revision needs a commit")?
+                    .ok_or_else(|| usage_error("--revision needs a commit"))?
                     .into_string()
-                    .map_err(|_| "Blame revision must be UTF-8")?;
+                    .map_err(|_| usage_error("Blame revision must be UTF-8"))?;
             }
             Some("--lines") => {
                 let value = args
                     .next()
-                    .ok_or("--lines needs START,END")?
+                    .ok_or_else(|| usage_error("--lines needs START,END"))?
                     .into_string()
-                    .map_err(|_| "Line range must be UTF-8")?;
-                let (start, end) = value.split_once(',').ok_or("--lines needs START,END")?;
+                    .map_err(|_| usage_error("Line range must be UTF-8"))?;
+                let (start, end) = value
+                    .split_once(',')
+                    .ok_or_else(|| usage_error("--lines needs START,END"))?;
                 let start = start.parse::<usize>()?;
                 let end = end.parse::<usize>()?;
                 if start == 0 || end == 0 || start > end {
-                    return Err("--lines needs a positive START,END range".into());
+                    return Err(usage_error("--lines needs a positive START,END range"));
                 }
                 lines = Some((start, end));
             }
             Some(value) if value.starts_with("--") => {
-                return Err("Unknown blame option".into());
+                return Err(usage_error("Unknown blame option"));
             }
             _ if file.is_none() => file = Some(arg),
             _ => {
-                return Err(
-                    "Usage: git good --cli blame PATH [--revision REF] [--lines START,END] [--repo PATH]"
-                        .into(),
-                );
+                return Err(usage_error(
+                    "Usage: git good --cli blame PATH [--revision REF] [--lines START,END] [--repo PATH]",
+                ));
             }
         }
     }
@@ -72,7 +79,7 @@ fn path_bytes(path: &std::ffi::OsStr) -> Result<Vec<u8>, Box<dyn std::error::Err
     {
         Ok(path
             .to_str()
-            .ok_or("File path must be Unicode on this platform")?
+            .ok_or_else(|| usage_error("File path must be Unicode on this platform"))?
             .replace('\\', "/")
             .into_bytes())
     }

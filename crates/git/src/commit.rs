@@ -578,28 +578,74 @@ pub(crate) fn parse_git_version(text: &str) -> Option<(u32, u32)> {
     Some((major, minor))
 }
 
-/// Refuse hooks before running one on a Git without `git hook`, which would
-/// otherwise fail as an unknown command. Read once per process.
-fn check_hook_git() -> Result<()> {
+/// The `git --version` text when that Git is older than `git hook run`;
+/// `None` when it is new enough or its version cannot be read (then the hook
+/// runs and Git reports its own failure). Read once per process.
+fn old_hook_git() -> Option<String> {
     static VERSION: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
     let text = VERSION.get_or_init(|| {
         let output = crate::process::git().arg("--version").output().ok()?;
         Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
     });
-    hook_git_supported(text.as_deref())
+    text.as_deref()
+        .filter(|text| !hook_git_supported(Some(text)))
+        .map(str::to_string)
 }
 
-pub(crate) fn hook_git_supported(version: Option<&str>) -> Result<()> {
-    let Some(text) = version else {
-        // No version to read: run the hook and report Git's own failure.
-        return Ok(());
+pub(crate) fn hook_git_supported(version: Option<&str>) -> bool {
+    version
+        .and_then(parse_git_version)
+        .is_none_or(|found| found >= HOOK_GIT)
+}
+
+/// Why a hook that exists cannot run on `version`, and what to do instead.
+/// `pre-commit` and `commit-msg` are skipped with Run commit hooks off;
+/// `prepare-commit-msg` and `post-commit` run either way, as with Git.
+pub(crate) fn old_hook_git_refusal(version: &str, name: &str) -> Box<dyn std::error::Error> {
+    let instead = if matches!(name, "pre-commit" | "commit-msg") {
+        "Update Git, or turn off Run commit hooks in Preferences, and retry."
+    } else {
+        "Update Git, or remove that hook, and retry."
     };
-    match parse_git_version(text) {
-        Some(found) if found < HOOK_GIT => Err(format!(
-            "{text} cannot run commit hooks: Git Good runs them with git hook run, which needs Git 2.36 or later. Update Git, or turn off Run commit hooks in Preferences, and retry. The index and working tree are preserved."
-        )
-        .into()),
-        _ => Ok(()),
+    format!(
+        "{version} cannot run the {name} hook: Git Good runs hooks with git hook run, which needs Git 2.36 or later. {instead} The index and working tree are preserved."
+    )
+    .into()
+}
+
+/// Whether the hook `name` would run in `worktree`: an executable file at
+/// the hooks path Git resolves (`core.hooksPath` included). Asked only on a
+/// Git without `git hook run --ignore-missing`.
+pub(crate) fn hook_present(worktree: &Path, name: &str) -> bool {
+    let Ok(output) = crate::process::git()
+        .arg("rev-parse")
+        .arg("--git-path")
+        .arg(format!("hooks/{name}"))
+        .current_dir(worktree)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+    else {
+        return false;
+    };
+    if !output.status.success() {
+        return false;
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let path = worktree.join(text.trim_end_matches(['\n', '\r']));
+    let Ok(metadata) = std::fs::metadata(&path) else {
+        return false;
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        metadata.is_file()
     }
 }
 
@@ -613,10 +659,16 @@ fn run_hook_input(
     args: &[&OsStr],
     input: Option<&[u8]>,
 ) -> Result<()> {
-    check_hook_git()?;
+    if let Some(version) = old_hook_git() {
+        // No `git hook run` here: a missing hook is skipped as
+        // `--ignore-missing` would; one that exists cannot run.
+        if !hook_present(worktree, name) {
+            return Ok(());
+        }
+        return Err(old_hook_git_refusal(&version, name));
+    }
     let mut command = crate::process::git();
     command
-        .user_locale()
         .arg("hook")
         .arg("run")
         .arg("--ignore-missing")
@@ -701,14 +753,51 @@ mod tests {
             Some((2, 45))
         );
         assert_eq!(parse_git_version("git version 2.36.0.rc1"), Some((2, 36)));
-        let old = hook_git_supported(Some("git version 2.34.1"))
-            .err()
-            .map(|error| error.to_string())
-            .unwrap_or_default();
-        assert!(old.contains("needs Git 2.36 or later"), "{old}");
-        assert!(old.contains("git version 2.34.1"), "{old}");
-        assert!(hook_git_supported(Some("git version 2.36.0")).is_ok());
-        assert!(hook_git_supported(Some("git version 3.0.0")).is_ok());
-        assert!(hook_git_supported(None).is_ok());
+        assert!(!hook_git_supported(Some("git version 2.34.1")));
+        assert!(hook_git_supported(Some("git version 2.36.0")));
+        assert!(hook_git_supported(Some("git version 3.0.0")));
+        assert!(hook_git_supported(None));
+        let refusal = |name| old_hook_git_refusal("git version 2.34.1", name).to_string();
+        assert!(refusal("pre-commit").contains("needs Git 2.36 or later"));
+        assert!(refusal("pre-commit").contains("git version 2.34.1"));
+        assert!(refusal("commit-msg").contains("turn off Run commit hooks"));
+        // Hooks that run with Run commit hooks off do not suggest turning it off.
+        assert!(!refusal("prepare-commit-msg").contains("turn off Run commit hooks"));
+        assert!(refusal("post-commit").contains("remove that hook"));
+    }
+
+    #[test]
+    fn only_a_hook_that_exists_and_can_run_is_present() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let status = crate::process::git()
+            .arg("init")
+            .arg("-q")
+            .arg(dir.path())
+            .status()?;
+        assert!(status.success());
+        assert!(!hook_present(dir.path(), "prepare-commit-msg"));
+        let hooks = dir.path().join(".git").join("hooks");
+        std::fs::create_dir_all(&hooks)?;
+        let hook = hooks.join("prepare-commit-msg");
+        std::fs::write(&hook, "#!/bin/sh\nexit 0\n")?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            assert!(
+                !hook_present(dir.path(), "prepare-commit-msg"),
+                "not executable: Git skips it"
+            );
+            std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755))?;
+        }
+        assert!(hook_present(dir.path(), "prepare-commit-msg"));
+        // core.hooksPath moves where Git looks.
+        let status = crate::process::git()
+            .arg("-C")
+            .arg(dir.path())
+            .args(["config", "core.hooksPath", "elsewhere"])
+            .status()?;
+        assert!(status.success());
+        assert!(!hook_present(dir.path(), "prepare-commit-msg"));
+        Ok(())
     }
 }

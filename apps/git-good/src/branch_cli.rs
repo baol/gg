@@ -1,4 +1,5 @@
 //! Switch or create one local branch after clean-worktree validation.
+use crate::cli_args::usage_error;
 use std::{ffi::OsString, path::PathBuf};
 
 pub fn run(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::error::Error>> {
@@ -10,30 +11,39 @@ pub fn run(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::erro
     let mut branch = None;
     while let Some(arg) = args.next() {
         match args.option(&arg) {
-            Some("--repo") => path = PathBuf::from(args.next().ok_or("--repo needs a path")?),
+            Some("--repo") => {
+                path = PathBuf::from(
+                    args.value()
+                        .ok_or_else(|| usage_error("--repo needs a path"))?,
+                )
+            }
             Some("--create") if !create => create = true,
             Some("--stash") if !stash => stash = true,
             Some("--include-untracked") if !include_untracked => include_untracked = true,
             Some(value) if value.starts_with("--") => {
-                return Err("Unknown branch option".into());
+                return Err(usage_error("Unknown branch option"));
             }
             _ if branch.is_none() => {
-                branch = Some(arg.into_string().map_err(|_| "Branch name must be UTF-8")?);
+                branch = Some(
+                    arg.into_string()
+                        .map_err(|_| usage_error("Branch name must be UTF-8"))?,
+                );
             }
             _ => {
-                return Err(
-                    "Usage: git good --cli switch [--create] [--stash [--include-untracked]] BRANCH [--repo PATH]"
-                        .into(),
-                );
+                return Err(usage_error(
+                    "Usage: git good --cli switch [--create] [--stash [--include-untracked]] BRANCH [--repo PATH]",
+                ));
             }
         }
     }
-    let branch = branch.ok_or("Branch switch requires a branch name")?;
+    let branch = branch.ok_or_else(|| usage_error("Branch switch requires a branch name"))?;
     if stash && create {
-        return Err("--stash is only valid when switching to an existing branch".into());
+        return Err(usage_error(
+            "--stash is only valid when switching to an existing branch",
+        ));
     }
     if include_untracked && !stash {
-        return Err("--include-untracked requires --stash".into());
+        return Err(usage_error("--include-untracked requires --stash"));
     }
     let receipt = if create {
         gg_git::branch::create(&path, &branch)?
@@ -63,38 +73,48 @@ pub fn manage(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::e
     let mut start = None;
     while let Some(arg) = args.next() {
         match args.option(&arg) {
-            Some("--repo") => path = PathBuf::from(args.next().ok_or("--repo needs a path")?),
+            Some("--repo") => {
+                path = PathBuf::from(
+                    args.value()
+                        .ok_or_else(|| usage_error("--repo needs a path"))?,
+                )
+            }
             Some("--delete") if !delete => delete = true,
             Some("--create") if !create => create = true,
             Some("--force") if !force => force = true,
             Some("--at") if start.is_none() => {
                 start = Some(
-                    args.next()
-                        .ok_or("--at needs a revision")?
+                    args.value()
+                        .ok_or_else(|| usage_error("--at needs a revision"))?
                         .into_string()
-                        .map_err(|_| "Branch start point must be UTF-8")?,
+                        .map_err(|_| usage_error("Branch start point must be UTF-8"))?,
                 );
             }
             Some(value) if value.starts_with("--") => {
-                return Err("Unknown branch option".into());
+                return Err(usage_error("Unknown branch option"));
             }
             _ if branch.is_none() => {
-                branch = Some(arg.into_string().map_err(|_| "Branch name must be UTF-8")?);
+                branch = Some(
+                    arg.into_string()
+                        .map_err(|_| usage_error("Branch name must be UTF-8"))?,
+                );
             }
             _ => {
-                return Err("Usage: git good --cli branch --delete BRANCH [--force] [--repo PATH]\n       git good --cli branch --create NAME [--at REF] [--repo PATH]".into());
+                return Err(usage_error(
+                    "Usage: git good --cli branch --delete BRANCH [--force] [--repo PATH]\n       git good --cli branch --create NAME [--at REF] [--repo PATH]",
+                ));
             }
         }
     }
-    let branch = branch.ok_or("Branch operation requires a branch name")?;
+    let branch = branch.ok_or_else(|| usage_error("Branch operation requires a branch name"))?;
     if delete && create {
-        return Err("Choose either --delete or --create".into());
+        return Err(usage_error("Choose either --delete or --create"));
     }
     if force && !delete {
-        return Err("--force is only valid with --delete".into());
+        return Err(usage_error("--force is only valid with --delete"));
     }
     if start.is_some() && !create {
-        return Err("--at is only valid with --create".into());
+        return Err(usage_error("--at is only valid with --create"));
     }
     if delete {
         let receipt = gg_git::branch::delete(&path, &branch, force)?;
@@ -114,10 +134,9 @@ pub fn manage(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::e
             "complete": true,
         }))?;
     } else {
-        return Err(
-            "Usage: git good --cli branch --delete BRANCH [--force] [--repo PATH]\n       git good --cli branch --create NAME [--at REF] [--repo PATH]"
-                .into(),
-        );
+        return Err(usage_error(
+            "Usage: git good --cli branch --delete BRANCH [--force] [--repo PATH]\n       git good --cli branch --create NAME [--at REF] [--repo PATH]",
+        ));
     }
     Ok(())
 }

@@ -1,13 +1,14 @@
 //! Streaming comparison JSON for terminal consumers.
+use crate::cli_args::usage_error;
 use gg_engine::review::{ReviewReader, ReviewRequest, ReviewStep};
 use std::{ffi::OsString, io::Write, path::PathBuf};
 pub fn run(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::error::Error>> {
     let mut args = crate::cli_args::Args::new(args);
     let revision = args
         .next()
-        .ok_or("Usage: git good --cli show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]")?
+        .ok_or_else(|| usage_error("Usage: git good --cli show <commit> [--repo PATH] [--parent N] [--file PATH] [--export before|after --output PATH]"))?
         .into_string()
-        .map_err(|_| "Commit revision must be UTF-8")?;
+        .map_err(|_| usage_error("Commit revision must be UTF-8"))?;
     let mut request = ReviewRequest {
         path: std::env::current_dir()?,
         revision,
@@ -20,57 +21,66 @@ pub fn run(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::erro
     while let Some(option) = args.next() {
         match args.option(&option) {
             Some("--export") => {
-                export_side = Some(args.next().ok_or("--export needs before or after")?);
+                export_side = Some(
+                    args.value()
+                        .ok_or_else(|| usage_error("--export needs before or after"))?,
+                );
             }
             Some("--output") => {
-                output = Some(PathBuf::from(
-                    args.next().ok_or("--output needs a destination path")?,
-                ));
+                output =
+                    Some(PathBuf::from(args.value().ok_or_else(|| {
+                        usage_error("--output needs a destination path")
+                    })?));
             }
             Some("--repo") => {
-                request.path = PathBuf::from(args.next().ok_or("--repo needs a path")?)
+                request.path = PathBuf::from(
+                    args.value()
+                        .ok_or_else(|| usage_error("--repo needs a path"))?,
+                )
             }
             Some("--file") => {
                 file = Some(
-                    args.next()
-                        .ok_or("--file needs a repository-relative path")?,
+                    args.value()
+                        .ok_or_else(|| usage_error("--file needs a repository-relative path"))?,
                 )
             }
             Some("--parent") => {
                 request.parent = Some(
-                    args.next()
-                        .ok_or("--parent needs a number")?
+                    args.value()
+                        .ok_or_else(|| usage_error("--parent needs a number"))?
                         .to_str()
-                        .ok_or("Invalid parent")?
+                        .ok_or_else(|| usage_error("Invalid parent"))?
                         .parse()?,
                 )
             }
             Some("--against") => {
                 request.against = Some(
-                    args.next()
-                        .ok_or("--against needs a revision")?
+                    args.value()
+                        .ok_or_else(|| usage_error("--against needs a revision"))?
                         .into_string()
-                        .map_err(|_| "Revision must be UTF-8")?,
+                        .map_err(|_| usage_error("Revision must be UTF-8"))?,
                 )
             }
             _ => {
-                return Err(
-                    "Usage: git good --cli show <commit> [--repo PATH] [--parent N] [--against REF] [--file PATH] [--export before|after --output PATH]".into(),
-                );
+                return Err(usage_error(
+                    "Usage: git good --cli show <commit> [--repo PATH] [--parent N] [--against REF] [--file PATH] [--export before|after --output PATH]",
+                ));
             }
         }
     }
     if request.against.is_some() && request.parent.is_some() {
-        return Err("--against cannot be combined with --parent".into());
+        return Err(usage_error("--against cannot be combined with --parent"));
     }
     if export_side.is_some() != output.is_some() || (export_side.is_some() && file.is_none()) {
-        return Err("Export requires --file PATH --export before|after --output PATH".into());
+        return Err(usage_error(
+            "Export requires --file PATH --export before|after --output PATH",
+        ));
     }
     if export_side
         .as_ref()
         .is_some_and(|s| s != "before" && s != "after")
     {
-        return Err("--export needs before or after".into());
+        return Err(usage_error("--export needs before or after"));
     }
     let mut reader = gg_git::review::ReviewSession::open(&request)?;
     if let Some(file) = file {
@@ -82,16 +92,15 @@ pub fn run(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::erro
         #[cfg(not(unix))]
         let bytes = file
             .to_str()
-            .ok_or("File path must be Unicode on this platform")?
+            .ok_or_else(|| usage_error("File path must be Unicode on this platform"))?
             .replace('\\', "/")
             .into_bytes();
         let change = loop {
             match reader.step()? {
                 ReviewStep::Change(change) if change.path_bytes == bytes => break change,
-                ReviewStep::Complete => return Err(
-                    "File is absent from this comparison; use a repository-relative changed path"
-                        .into(),
-                ),
+                ReviewStep::Complete => {
+                    return Err("File is absent from this comparison; use a repository-relative changed path".into());
+                }
                 _ => {}
             }
         };

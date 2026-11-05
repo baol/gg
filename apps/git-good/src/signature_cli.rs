@@ -1,4 +1,5 @@
 //! Verify signatures and read signing configuration as JSON.
+use crate::cli_args::usage_error;
 use std::{ffi::OsString, path::Path, path::PathBuf};
 
 pub fn config(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::error::Error>> {
@@ -6,8 +7,13 @@ pub fn config(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::e
     let mut path = std::env::current_dir()?;
     while let Some(arg) = args.next() {
         match args.option(&arg) {
-            Some("--repo") => path = PathBuf::from(args.next().ok_or("--repo needs a path")?),
-            _ => return Err(usage().into()),
+            Some("--repo") => {
+                path = PathBuf::from(
+                    args.value()
+                        .ok_or_else(|| usage_error("--repo needs a path"))?,
+                )
+            }
+            _ => return Err(usage_error(usage())),
         }
     }
     let config = gg_git::signature::config(&path);
@@ -25,18 +31,23 @@ pub fn verify(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::e
     let mut reference = None;
     while let Some(arg) = args.next() {
         match args.option(&arg) {
-            Some("--repo") => path = PathBuf::from(args.next().ok_or("--repo needs a path")?),
-            Some(value) if value.starts_with("--") => return Err(usage().into()),
+            Some("--repo") => {
+                path = PathBuf::from(
+                    args.value()
+                        .ok_or_else(|| usage_error("--repo needs a path"))?,
+                )
+            }
+            Some(value) if value.starts_with("--") => return Err(usage_error(usage())),
             _ if reference.is_none() => {
                 reference = Some(
                     arg.into_string()
-                        .map_err(|_| "Signature reference must be UTF-8")?,
+                        .map_err(|_| usage_error("Signature reference must be UTF-8"))?,
                 );
             }
-            _ => return Err(usage().into()),
+            _ => return Err(usage_error(usage())),
         }
     }
-    let reference = reference.ok_or_else(|| usage().to_string())?;
+    let reference = reference.ok_or_else(|| usage_error(usage()))?;
     let verification = gg_git::signature::verify(&path, &reference)?;
     crate::cli_args::emit(&serde_json::json!({
         "operation": "signature verify",

@@ -4763,7 +4763,7 @@ Fixture: `fx-linear`
 Layer: product
 - When `git good --cli merge --skip`, `git good --cli worktree list --bogus`, `git good --cli worktree list --repo`, `git good --cli signature`
 - Then stderr names the problem (`Unknown merge option`, usage line, `--repo needs a path`), stdout is empty, nothing changes; exit 2 (CLI-06, CLI-24, CLI-25)
-Covered by (end-to-end, partial): `merge_cli_fast_forwards_conflicts_and_recovers`, `cherry_pick_cli_applies_conflicts_and_recovers` (apps/git-good/tests/cli.rs); `a_failure_prints_the_plain_message` checks exit 2
+Covered by (end-to-end, partial): `merge_cli_fast_forwards_conflicts_and_recovers`, `cherry_pick_cli_applies_conflicts_and_recovers` (apps/git-good/tests/cli.rs); `a_failure_prints_the_plain_message` checks exit 2; `every_usage_error_exits_2_and_a_git_failure_exits_1` covers the other usage errors
 
 ### CLI-C05 Refusal
 Fixture: `fx-dirty` with a branch `other`; `fx-reset-collision`

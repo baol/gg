@@ -33,19 +33,36 @@ pub struct GitCommand {
 /// Start building a `git` command. The only production constructor of a
 /// Git process; a test (`git_processes_start_at_the_chokepoint`) keeps it so.
 ///
-/// Git writes its messages in English whatever the user's locale: Git Good
-/// tells some failures apart by Git's message (a rejected push, nothing to
-/// stash). The user's character set is kept. [`GitCommand::user_locale`]
-/// restores the user's language for commands that run the user's own
-/// programs, such as hooks.
+/// Git writes its own messages in English whatever the user's locale: Git
+/// Good tells some failures apart by Git's message (a rejected push, nothing
+/// to stash). The locale itself is left alone, so the programs Git starts
+/// (hooks, credential helpers, editors) keep the user's language.
 pub fn git() -> GitCommand {
     let mut command = Command::new("git");
-    english_messages(&mut command);
+    if let Some(dir) = no_translations() {
+        command.env("GIT_TEXTDOMAINDIR", dir);
+    } else {
+        english_messages(&mut command);
+    }
     GitCommand { command }
 }
 
-/// `LC_MESSAGES=C` names the message language. `LC_ALL` would override it,
-/// so its value moves to `LC_CTYPE`; `LANGUAGE` is dropped.
+/// Where Git looks for its translations: a folder that cannot exist, inside
+/// Git Good's own executable file, so Git finds none and speaks English.
+/// Only Git reads `GIT_TEXTDOMAINDIR`; Git commands a hook runs speak
+/// English too.
+fn no_translations() -> Option<&'static Path> {
+    static DIR: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| {
+        let exe = std::env::current_exe().ok()?;
+        exe.is_file().then(|| exe.join("no-translations"))
+    })
+    .as_deref()
+}
+
+/// Without that folder: `LC_MESSAGES=C` names the message language for Git
+/// and everything it starts. `LC_ALL` would override it, so its value moves
+/// to `LC_CTYPE`; `LANGUAGE` is dropped.
 fn english_messages(command: &mut Command) {
     if let Some(all) = std::env::var_os("LC_ALL").filter(|value| !value.is_empty()) {
         command.env_remove("LC_ALL").env("LC_CTYPE", all);
@@ -54,19 +71,6 @@ fn english_messages(command: &mut Command) {
 }
 
 impl GitCommand {
-    /// Run with the user's locale as Git Good inherited it, for commands
-    /// whose output is the user's own (hooks): Git Good shows it and reads
-    /// nothing from it.
-    pub fn user_locale(&mut self) -> &mut Self {
-        for name in ["LC_ALL", "LC_CTYPE", "LC_MESSAGES", "LANGUAGE"] {
-            match std::env::var_os(name) {
-                Some(value) => self.command.env(name, value),
-                None => self.command.env_remove(name),
-            };
-        }
-        self
-    }
-
     pub fn arg<S: AsRef<OsStr>>(&mut self, arg: S) -> &mut Self {
         self.command.arg(arg);
         self
@@ -337,18 +341,17 @@ mod tests {
     }
 
     #[test]
-    fn git_speaks_english_and_hooks_keep_the_user_locale() {
+    fn git_speaks_english_and_what_it_starts_keeps_the_user_locale() {
         let command = git();
-        assert_eq!(
-            env_of(&command, "LC_MESSAGES"),
-            Some(Some(std::ffi::OsStr::new("C")))
+        let dir = env_of(&command, "GIT_TEXTDOMAINDIR")
+            .flatten()
+            .map(Path::new);
+        assert!(
+            dir.is_some_and(|dir| !dir.exists() && dir.parent().is_some_and(Path::is_file)),
+            "{dir:?}"
         );
-        assert_eq!(env_of(&command, "LANGUAGE"), Some(None));
-        let mut hook = git();
-        hook.user_locale();
-        assert_eq!(
-            env_of(&hook, "LC_MESSAGES").flatten(),
-            std::env::var_os("LC_MESSAGES").as_deref()
-        );
+        for name in ["LC_ALL", "LC_CTYPE", "LC_MESSAGES", "LANGUAGE", "LANG"] {
+            assert_eq!(env_of(&command, name), None, "{name} is the user's");
+        }
     }
 }

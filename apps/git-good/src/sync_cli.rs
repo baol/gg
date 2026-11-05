@@ -1,4 +1,5 @@
 //! Explicit clone, fetch, and push commands with JSON receipts.
+use crate::cli_args::usage_error;
 use gg_engine::sync::{Operation, Progress};
 use std::{
     ffi::OsString,
@@ -17,13 +18,27 @@ pub fn fetch(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::er
     let mut prune = false;
     while let Some(arg) = args.next() {
         match args.option(&arg) {
-            Some("--repo") => path = PathBuf::from(args.next().ok_or("--repo needs a path")?),
-            Some("--prune") if !prune => prune = true,
-            Some(value) if value.starts_with("--") => return Err("Unknown fetch option".into()),
-            _ if remote.is_none() => {
-                remote = Some(arg.into_string().map_err(|_| "Remote must be UTF-8")?);
+            Some("--repo") => {
+                path = PathBuf::from(
+                    args.value()
+                        .ok_or_else(|| usage_error("--repo needs a path"))?,
+                )
             }
-            _ => return Err("Usage: git good --cli fetch [REMOTE] [--prune] [--repo PATH]".into()),
+            Some("--prune") if !prune => prune = true,
+            Some(value) if value.starts_with("--") => {
+                return Err(usage_error("Unknown fetch option"));
+            }
+            _ if remote.is_none() => {
+                remote = Some(
+                    arg.into_string()
+                        .map_err(|_| usage_error("Remote must be UTF-8"))?,
+                );
+            }
+            _ => {
+                return Err(usage_error(
+                    "Usage: git good --cli fetch [REMOTE] [--prune] [--repo PATH]",
+                ));
+            }
         }
     }
     let mut progress = progress_writer();
@@ -55,20 +70,33 @@ pub fn push(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::err
     let mut force_with_lease = false;
     while let Some(arg) = args.next() {
         match args.option(&arg) {
-            Some("--repo") => path = PathBuf::from(args.next().ok_or("--repo needs a path")?),
+            Some("--repo") => {
+                path = PathBuf::from(
+                    args.value()
+                        .ok_or_else(|| usage_error("--repo needs a path"))?,
+                )
+            }
             Some("--set-upstream") if !set_upstream => set_upstream = true,
             Some("--force-with-lease") if !force_with_lease => force_with_lease = true,
-            Some(value) if value.starts_with("--") => return Err("Unknown push option".into()),
+            Some(value) if value.starts_with("--") => {
+                return Err(usage_error("Unknown push option"));
+            }
             _ if remote.is_none() => {
-                remote = Some(arg.into_string().map_err(|_| "Remote must be UTF-8")?);
+                remote = Some(
+                    arg.into_string()
+                        .map_err(|_| usage_error("Remote must be UTF-8"))?,
+                );
             }
             _ if branch.is_none() => {
-                branch = Some(arg.into_string().map_err(|_| "Branch must be UTF-8")?);
+                branch = Some(
+                    arg.into_string()
+                        .map_err(|_| usage_error("Branch must be UTF-8"))?,
+                );
             }
             _ => {
-                return Err(
-                    "Usage: git good --cli push [REMOTE] [BRANCH] [--set-upstream] [--force-with-lease] [--repo PATH]".into(),
-                );
+                return Err(usage_error(
+                    "Usage: git good --cli push [REMOTE] [BRANCH] [--set-upstream] [--force-with-lease] [--repo PATH]",
+                ));
             }
         }
     }
@@ -115,15 +143,20 @@ pub fn clone(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::er
     let mut args = crate::cli_args::Args::new(args);
     while let Some(arg) = args.next() {
         match args.option(&arg) {
-            Some(value) if value.starts_with("--") => return Err("Unknown clone option".into()),
+            Some(value) if value.starts_with("--") => {
+                return Err(usage_error("Unknown clone option"));
+            }
             _ if url.is_none() => {
-                url = Some(arg.into_string().map_err(|_| "URL must be UTF-8")?);
+                url = Some(
+                    arg.into_string()
+                        .map_err(|_| usage_error("URL must be UTF-8"))?,
+                );
             }
             _ if destination.is_none() => destination = Some(PathBuf::from(arg)),
-            _ => return Err("Usage: git good --cli clone URL [PATH]".into()),
+            _ => return Err(usage_error("Usage: git good --cli clone URL [PATH]")),
         }
     }
-    let url = url.ok_or("Clone requires a repository URL")?;
+    let url = url.ok_or_else(|| usage_error("Clone requires a repository URL"))?;
     let mut progress = progress_writer();
     let receipt = gg_git::sync::clone(
         &url,
