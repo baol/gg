@@ -134,6 +134,9 @@ pub struct Update {
     pub widths: Arc<Vec<u32>>,
     /// The find query's matches over the whole document, once searched.
     pub find: Option<(FindQuery, Arc<Vec<FindMatch>>)>,
+    /// Changed words of this diff page's changed lines: document row and
+    /// character ranges (`gg_engine::diff::word_emphasis`).
+    pub emphasis: Vec<(usize, Vec<Range<usize>>)>,
 }
 
 pub struct Worker {
@@ -296,6 +299,7 @@ impl Worker {
                                 split: Arc::default(),
                                 widths: Arc::default(),
                                 find: None,
+                                emphasis: Vec::new(),
                             });
                             ctx.request_repaint();
                         }
@@ -358,6 +362,7 @@ impl Worker {
                             split: split.clone(),
                             widths: widths.clone(),
                             find: None,
+                            emphasis: Vec::new(),
                         }
                     } else {
                         let start = match request.line {
@@ -390,6 +395,12 @@ impl Worker {
                             rows: vec![],
                         };
                         page.rows = doc.rows.iter().skip(start).take(256).cloned().collect();
+                        // Changed words, for this page only and bounded.
+                        let emphasis = gg_engine::diff::word_emphasis(
+                            &doc.rows,
+                            start..start + page.rows.len(),
+                            256,
+                        );
                         Update {
                             generation: loaded,
                             mode: Mode::Diff,
@@ -404,6 +415,7 @@ impl Worker {
                             split: split.clone(),
                             widths: widths.clone(),
                             find: None,
+                            emphasis,
                         }
                     };
                     // The find query, searched once per document, mode and side.

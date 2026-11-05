@@ -1717,6 +1717,15 @@ Layer: interaction
 - And `Ctrl/Cmd+F` in History still opens search with the History filter
 Covered by (interaction): `ctrl_f_finds_steps_highlights_and_closes` (apps/git-good/src/diff_view.rs); `find_matches_case_whole_words_and_wide_characters`, `the_whole_document_is_searched_once_per_query` (apps/git-good/src/diff_worker.rs)
 
+### REV-76 Changed words inside changed lines
+Fixture: a file whose line `let total = price * count;` becomes `let total = price * amount;`, and a line rewritten throughout
+Layer: interaction
+- When the user opens the file in Diff, inline or side by side
+- Then `count` on the deleted line and `amount` on the added line are painted in a stronger tint than the rest of their lines
+- And the rewritten line keeps only its line color; lines past 1,000 characters are not compared
+- And when the block starts on one page and ends on the next, each line pairs with the same partner on either page; another file shows none of the previous file's emphasis
+Covered by (interaction): `changed_words_are_found_between_paired_lines`, `emphasis_pairs_deleted_and_added_lines_in_order_on_any_page` (crates/engine/src/diff.rs); `changed_words_are_kept_per_row_until_another_document_arrives` (apps/git-good/src/diff_view.rs)
+
 ### REV-74 Inline by default below 1040 px
 Fixture: `fx-linear` with Preferences › Diff › Default layout **Side by side**
 Layer: interaction

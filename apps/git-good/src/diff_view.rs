@@ -295,6 +295,35 @@ fn paint_find_marks(
     }
 }
 
+/// Fill `spans` (character ranges of `text`, drawn from `origin`: left
+/// edge, vertical centre, in `font`) with `fill`, behind the text.
+fn paint_spans(
+    ui: &egui::Ui,
+    clip: egui::Rect,
+    origin: egui::Pos2,
+    text: &str,
+    spans: &[Range<usize>],
+    font: &egui::FontId,
+    fill: egui::Color32,
+) {
+    if spans.is_empty() {
+        return;
+    }
+    let widths: Vec<f32> =
+        ui.fonts_mut(|fonts| text.chars().map(|ch| fonts.glyph_width(font, ch)).collect());
+    let x = |chars: usize| widths.iter().take(chars).sum::<f32>();
+    let half = (font.size * 0.5 + 3.0).min(HEIGHT / 2.0);
+    for chars in spans {
+        let rect = egui::Rect::from_min_max(
+            egui::pos2(origin.x + x(chars.start), origin.y - half),
+            egui::pos2(origin.x + x(chars.end), origin.y + half),
+        );
+        ui.painter()
+            .with_clip_rect(clip)
+            .rect_filled(rect, 2.0, fill);
+    }
+}
+
 /// The matches in document row `row`, with whether each is `current`.
 fn marks_in(
     matches: &[FindMatch],
@@ -350,6 +379,9 @@ pub struct DiffView {
     sent: Option<SentKey>,
     /// The find bar (`Ctrl+F`), while open.
     find: Option<FindBar>,
+    /// Changed words of loaded diff rows, by document row: character
+    /// ranges to emphasise within the line.
+    emphasis: BTreeMap<usize, Vec<Range<usize>>>,
     rect: egui::Rect,
     bounds: egui::Rect,
     aim: Aim,
@@ -453,6 +485,7 @@ impl Default for DiffView {
             range: 0..64,
             sent: None,
             find: None,
+            emphasis: BTreeMap::new(),
             rect: egui::Rect::NOTHING,
             bounds: egui::Rect::NOTHING,
             aim: Aim::default(),
@@ -1544,7 +1577,9 @@ impl DiffView {
                     self.cursor = None;
                     self.anchor = None;
                     self.stage_selected.clear();
+                    self.emphasis.clear();
                 }
+                self.emphasis.extend(update.emphasis);
                 self.preview = update.preview;
                 self.count = update.count;
                 self.columns = update.columns;
@@ -3120,8 +3155,9 @@ impl DiffView {
                 .intersect(ui.clip_rect());
                 // Shape only visible source characters, including at deep horizontal offsets.
                 let marks = self.find_marks(index);
+                let emphasis = self.emphasis.get(&index).map_or(&[][..], Vec::as_slice);
                 paint_row_text(
-                    ui, clip, origin, row, chars, &font, color, invisibles, &marks,
+                    ui, clip, origin, row, chars, &font, color, invisibles, &marks, emphasis,
                 );
                 let hover = if can_edit {
                     match row.kind {
@@ -3518,6 +3554,7 @@ impl DiffView {
                         color,
                         invisibles,
                         &marks,
+                        self.emphasis.get(&index).map_or(&[][..], Vec::as_slice),
                     );
                 }
                 ui.painter()
@@ -3879,8 +3916,33 @@ fn paint_row_text(
     color: egui::Color32,
     invisibles: bool,
     marks: &[(Range<usize>, bool)],
+    emphasis: &[Range<usize>],
 ) {
-    // Find matches, behind the segment's text.
+    // Changed words, then find matches, behind the segment's text.
+    if !emphasis.is_empty() {
+        let segment = chars.clone().unwrap_or(0..row.text.chars().count());
+        let span = char_range(&row.text, segment.clone());
+        let words: Vec<Range<usize>> = segment_marks(
+            &emphasis
+                .iter()
+                .map(|range| (range.clone(), false))
+                .collect::<Vec<_>>(),
+            segment,
+        )
+        .into_iter()
+        .map(|(range, _)| range)
+        .collect();
+        let (_, strong, _) = crate::colors::diff(ui.visuals(), row.kind);
+        paint_spans(
+            ui,
+            clip,
+            origin,
+            &row.text[span],
+            &words,
+            font,
+            strong.gamma_multiply(0.28),
+        );
+    }
     if !marks.is_empty() {
         let segment = chars.clone().unwrap_or(0..row.text.chars().count());
         let span = char_range(&row.text, segment.clone());
@@ -3997,6 +4059,7 @@ impl DiffView {
 }
 
 #[cfg(test)]
+#[allow(clippy::single_range_in_vec_init)] // One changed word is the usual case.
 mod tests {
     use super::*;
     use gg_engine::{
@@ -4051,6 +4114,7 @@ mod tests {
             split,
             widths,
             find: None,
+            emphasis: Vec::new(),
         }
     }
 
@@ -4069,7 +4133,43 @@ mod tests {
             split: Arc::default(),
             widths: Arc::default(),
             find: None,
+            emphasis: Vec::new(),
         }
+    }
+
+    #[test]
+    fn changed_words_are_kept_per_row_until_another_document_arrives() {
+        let ctx = egui::Context::default();
+        let mut view = DiffView::default();
+        view.select("/repo".into(), Some(file("a", true, true)), &ctx);
+        let row = |kind, text: &str| DiffRow {
+            kind,
+            old_line: None,
+            new_line: None,
+            text: text.into(),
+            bytes: text.as_bytes().to_vec(),
+        };
+        let mut doc = FileDiff::summary(DiffKind::Text, 1, 1, "");
+        doc.rows = vec![
+            row(RowKind::Deleted, "let a = 1;"),
+            row(RowKind::Added, "let b = 1;"),
+        ];
+        let mut update = diff_update(view.generation, doc);
+        let changed = || vec![4..5];
+        update.emphasis = vec![(0, changed()), (1, changed())];
+        view.accept(update.clone());
+        assert_eq!(view.emphasis.get(&1), Some(&changed()));
+        // A later page of the same document adds to what is kept.
+        let mut page = update.clone();
+        page.emphasis = Vec::new();
+        view.accept(page);
+        assert_eq!(view.emphasis.len(), 2);
+        view.select("/repo".into(), Some(file("b", true, true)), &ctx);
+        let mut other = update;
+        other.generation = view.generation;
+        other.emphasis = Vec::new();
+        view.accept(other);
+        assert!(view.emphasis.is_empty(), "another file keeps none");
     }
 
     #[test]

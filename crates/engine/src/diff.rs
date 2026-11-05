@@ -293,9 +293,241 @@ pub fn compare_with(
     }
     Ok(result)
 }
+/// Lines longer than this, in characters, get no word emphasis.
+pub const WORD_LINE_LIMIT: usize = 1000;
+/// Nor do lines of more tokens than this.
+pub const WORD_TOKEN_LIMIT: usize = 400;
+
+/// The tokens word emphasis compares: runs of letters, digits and `_`,
+/// runs of white space, and each other character on its own; as character
+/// ranges of `text`.
+fn word_tokens(text: &str) -> Vec<(std::ops::Range<usize>, &str)> {
+    #[derive(PartialEq)]
+    enum Class {
+        Word,
+        Space,
+        Other,
+    }
+    let class = |ch: char| {
+        if ch.is_alphanumeric() || ch == '_' {
+            Class::Word
+        } else if ch.is_whitespace() {
+            Class::Space
+        } else {
+            Class::Other
+        }
+    };
+    let mut tokens = Vec::new();
+    let mut start: Option<(usize, usize, Class)> = None;
+    for (at, (byte, ch)) in text.char_indices().enumerate() {
+        let kind = class(ch);
+        match &start {
+            Some((_, _, previous)) if *previous == kind && kind != Class::Other => {}
+            _ => {
+                if let Some((from, byte_from, _)) = start.take() {
+                    tokens.push((from..at, &text[byte_from..byte]));
+                }
+                start = Some((at, byte, kind));
+            }
+        }
+    }
+    if let Some((from, byte_from, _)) = start {
+        tokens.push((from..text.chars().count(), &text[byte_from..]));
+    }
+    tokens
+}
+
+/// Character ranges within one line.
+pub type Spans = Vec<std::ops::Range<usize>>;
+
+/// The words that differ between a deleted line and the added line paired
+/// with it: character ranges of each, adjacent ranges joined. `None` when a
+/// line is too long or has too many tokens to compare (see
+/// [`WORD_LINE_LIMIT`], [`WORD_TOKEN_LIMIT`]), or when the two share no
+/// word, so a line that changed throughout is not painted twice.
+pub fn word_changes(old: &str, new: &str) -> Option<(Spans, Spans)> {
+    if old.chars().count() > WORD_LINE_LIMIT || new.chars().count() > WORD_LINE_LIMIT {
+        return None;
+    }
+    let (a, b) = (word_tokens(old), word_tokens(new));
+    if a.len() > WORD_TOKEN_LIMIT || b.len() > WORD_TOKEN_LIMIT {
+        return None;
+    }
+    // Longest common subsequence of tokens.
+    let mut table = vec![vec![0u16; b.len() + 1]; a.len() + 1];
+    for i in (0..a.len()).rev() {
+        for j in (0..b.len()).rev() {
+            table[i][j] = if a[i].1 == b[j].1 {
+                table[i + 1][j + 1] + 1
+            } else {
+                table[i + 1][j].max(table[i][j + 1])
+            };
+        }
+    }
+    let shared_word = {
+        let (mut i, mut j, mut any) = (0, 0, false);
+        while i < a.len() && j < b.len() {
+            if a[i].1 == b[j].1 {
+                any |= a[i].1.chars().any(|ch| ch.is_alphanumeric());
+                i += 1;
+                j += 1;
+            } else if table[i + 1][j] >= table[i][j + 1] {
+                i += 1;
+            } else {
+                j += 1;
+            }
+        }
+        any
+    };
+    if !shared_word {
+        return None;
+    }
+    let mut old_changed = Vec::new();
+    let mut new_changed = Vec::new();
+    let push =
+        |ranges: &mut Vec<std::ops::Range<usize>>, range: std::ops::Range<usize>| match ranges
+            .last_mut()
+        {
+            Some(last) if last.end == range.start => last.end = range.end,
+            _ => ranges.push(range),
+        };
+    let (mut i, mut j) = (0, 0);
+    while i < a.len() || j < b.len() {
+        if i < a.len() && j < b.len() && a[i].1 == b[j].1 {
+            i += 1;
+            j += 1;
+        } else if j >= b.len() || (i < a.len() && table[i + 1][j] >= table[i][j + 1]) {
+            push(&mut old_changed, a[i].0.clone());
+            i += 1;
+        } else {
+            push(&mut new_changed, b[j].0.clone());
+            j += 1;
+        }
+    }
+    Some((old_changed, new_changed))
+}
+
+/// Word emphasis for the diff rows `rows` covers: each deleted line paired,
+/// in order, with an added line of the same block (deleted lines then added
+/// lines), and the character ranges [`word_changes`] finds in each. Blocks
+/// reaching outside `rows` are read whole so the pairs are the same on every
+/// page; at most `limit` pairs are compared.
+pub fn word_emphasis(
+    all: &[DiffRow],
+    rows: std::ops::Range<usize>,
+    limit: usize,
+) -> Vec<(usize, Spans)> {
+    let changed = |row: usize| {
+        all.get(row)
+            .is_some_and(|row| matches!(row.kind, RowKind::Deleted | RowKind::Added))
+    };
+    let mut start = rows.start.min(all.len());
+    while start > 0 && changed(start - 1) {
+        start -= 1;
+    }
+    let mut out = Vec::new();
+    let mut pairs = 0;
+    let mut at = start;
+    while at < all.len() && at < rows.end {
+        if !changed(at) {
+            at += 1;
+            continue;
+        }
+        let block = at;
+        while at < all.len() && all[at].kind == RowKind::Deleted {
+            at += 1;
+        }
+        let deleted = block..at;
+        while at < all.len() && all[at].kind == RowKind::Added {
+            at += 1;
+        }
+        let added = deleted.end..at;
+        for (old, new) in deleted.clone().zip(added.clone()) {
+            if pairs >= limit {
+                return out;
+            }
+            pairs += 1;
+            if !rows.contains(&old) && !rows.contains(&new) {
+                continue;
+            }
+            if let Some((old_changed, new_changed)) = word_changes(&all[old].text, &all[new].text) {
+                if rows.contains(&old) && !old_changed.is_empty() {
+                    out.push((old, old_changed));
+                }
+                if rows.contains(&new) && !new_changed.is_empty() {
+                    out.push((new, new_changed));
+                }
+            }
+        }
+        if deleted.is_empty() && added.is_empty() {
+            at += 1;
+        }
+    }
+    out.sort_by_key(|(row, _)| *row);
+    out
+}
+
 #[cfg(test)]
+#[allow(clippy::single_range_in_vec_init)] // One changed word is the usual case.
 mod tests {
     use super::*;
+
+    #[test]
+    fn changed_words_are_found_between_paired_lines() {
+        let found = word_changes("let total = price * count;", "let total = price * amount;");
+        assert_eq!(found, Some((vec![20..25], vec![20..26])));
+        // Character ranges, past wide characters.
+        assert_eq!(
+            word_changes("naïve café ok", "naïve tea ok"),
+            Some((vec![6..10], vec![6..9]))
+        );
+        assert_eq!(word_changes("same", "same"), Some((vec![], vec![])));
+        assert_eq!(
+            word_changes("alpha beta", "gamma delta"),
+            None,
+            "nothing shared"
+        );
+        let long = "x ".repeat(WORD_LINE_LIMIT);
+        assert_eq!(word_changes(&long, "x"), None, "too long to compare");
+    }
+
+    #[test]
+    fn emphasis_pairs_deleted_and_added_lines_in_order_on_any_page() {
+        let row = |kind, text: &str| DiffRow {
+            kind,
+            old_line: None,
+            new_line: None,
+            text: text.into(),
+            bytes: vec![],
+        };
+        let rows = vec![
+            row(RowKind::Hunk, "@@"),
+            row(RowKind::Deleted, "one red"),
+            row(RowKind::Deleted, "two red"),
+            row(RowKind::Added, "one blue"),
+            row(RowKind::Added, "two green"),
+            row(RowKind::Added, "three new"),
+            row(RowKind::Context, "same"),
+        ];
+        let all = word_emphasis(&rows, 0..rows.len(), 100);
+        assert_eq!(
+            all,
+            [
+                (1, vec![4..7]),
+                (2, vec![4..7]),
+                (3, vec![4..8]),
+                (4, vec![4..9])
+            ],
+            "pairs in order; the unpaired third added line gets none"
+        );
+        // A page starting inside the block gives the same pairs.
+        assert_eq!(
+            word_emphasis(&rows, 3..5, 100),
+            [(3, vec![4..8]), (4, vec![4..9])]
+        );
+        // The limit bounds the work.
+        assert_eq!(word_emphasis(&rows, 0..rows.len(), 1).len(), 2);
+    }
     #[test]
     fn a_slow_comparison_still_returns_a_complete_text_diff() -> Result<(), String> {
         // Reversing 20,000 lines makes an exact diff far slower than the

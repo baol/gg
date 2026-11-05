@@ -84,7 +84,7 @@ jobs:
           binary="target/$TARGET/release/git-good"
           if [[ "$RUNNER_OS" == Windows ]]; then binary="$binary.exe"; fi
           test "$("$binary" --version)" = "git-good $VERSION"
-          "$binary" history > history.json
+          "$binary" --cli history > history.json
           python -c 'import json; data=json.load(open("history.json")); assert data["commits"]'
       - name: Package binary
         shell: bash
