@@ -936,3 +936,9 @@ Linux x86_64 · Rust 1.97.0 · Mesa lavapipe (software Vulkan) · no display ser
 
 - `python3 scripts/capture_native_screenshot.py --force` runs `screenshot::readme_screenshot`, which renders the window on this repository through egui_kittest and wgpu in 2.5 s with `DISPLAY` and `WAYLAND_DISPLAY` unset, then stamps and stages the PNG; `--check` matched it. The image shows the same window as the Xvfb capture: custom title bar, toolbar, docked refs sidebar, History with the commit inspector, and the footer.
 - The debug app's own `GG_SCREENSHOT` capture of a real native window stays for reviews on a desktop.
+
+## Rebindable keys · 2026-11-05
+
+- `a_key_changed_in_preferences_labels_the_menu_and_runs_the_command` (main.rs) clicks Fetch's key in Preferences › Keyboard, checks Esc cancels without closing the window, presses `Ctrl+Shift+G`, and finds it in the saved keys and the Repository menu; `Ctrl+Shift+P` is refused naming Push; with Keyboard shortcuts moved to `F9`, `?` does nothing and `F9` opens it.
+- keymap.rs: every default writes back as the menu label it replaced; fixed, taken and bare list keys are refused; saved keys load and a broken or clashing entry keeps the default; a press runs only the chord with exactly its modifiers, plain keys wait while typing, and `?` matches with Shift.
+- The menu tests that read the default labels pass unchanged. The macOS menu bar was not checked on a Mac here (the macOS target cannot be built in this container); its key equivalents come from the same labels.

@@ -638,6 +638,9 @@ pub struct Prefs {
     /// Windows and Linux: keep the system's title bar instead of gg's menu
     /// bar being the title bar; read at launch.
     pub system_title_bar: bool,
+    /// Keys changed in Preferences › Keyboard: command id → chord
+    /// (`keymap.rs`); the defaults are not stored.
+    pub keys: std::collections::BTreeMap<String, String>,
     path: Option<PathBuf>,
     /// The values as last loaded or saved, to tell this window's changes
     /// from another window's.
@@ -696,6 +699,7 @@ impl Default for Prefs {
             show_invisibles: true,
             wrap_lines: false,
             system_title_bar: false,
+            keys: Default::default(),
             path: None,
             saved: Saved::default(),
         }
@@ -761,6 +765,7 @@ impl Prefs {
             show_invisibles: read(path, "show_invisibles").unwrap_or(defaults.show_invisibles),
             wrap_lines: read(path, "wrap_lines").unwrap_or(defaults.wrap_lines),
             system_title_bar: read(path, "system_title_bar").unwrap_or(defaults.system_title_bar),
+            keys: read(path, "keys").unwrap_or(defaults.keys),
             path: Some(path.to_path_buf()),
             saved: Saved::default(),
         };
@@ -810,7 +815,8 @@ impl Prefs {
             diff_whitespace,
             show_invisibles,
             wrap_lines,
-            system_title_bar
+            system_title_bar,
+            keys
         )
         .into_iter()
         .filter_map(|(key, value)| Some((key.to_string(), value?)))

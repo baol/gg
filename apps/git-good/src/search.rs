@@ -38,7 +38,7 @@ pub struct Item<C> {
     /// Secondary text, such as the command's menu home or a ref's commit.
     pub context: String,
     /// Shortcut shown at the right edge, if any.
-    pub key: &'static str,
+    pub key: String,
     /// Why the command cannot run now; shown instead of running it.
     pub disabled: Option<String>,
     pub command: C,
@@ -67,7 +67,7 @@ pub fn results<C: Clone>(query: &str, items: &[Item<C>], filter: C) -> Vec<Item<
             group: Group::Filter,
             label: format!("Filter history by “{query}”"),
             context: "message, author, or ID".into(),
-            key: "Enter",
+            key: "Enter".into(),
             disabled: None,
             command: filter,
         });
@@ -124,7 +124,7 @@ pub fn files<C>(query: &str, paths: &[String], command: impl Fn(&str) -> C) -> V
             group: Group::Files,
             label: path.clone(),
             context: "open its latest change".into(),
-            key: "",
+            key: String::new(),
             disabled: None,
             command: command(path),
         })
@@ -140,7 +140,7 @@ mod tests {
             group,
             label: label.into(),
             context: context.into(),
-            key: "",
+            key: String::new(),
             disabled: None,
             command: label.into(),
         }

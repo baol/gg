@@ -3816,6 +3816,15 @@ Covered by (interaction): `reports_malformed_configuration_as_an_empty_list` (ap
 - And the first save keeps the unreadable file as `settings.json.unreadable` beside the new one, and leaves no temporary file
 Covered by (interaction): `an_unreadable_file_is_set_aside_not_overwritten` (apps/git-good/src/settings.rs)
 
+### PRF-39 Keys can be changed
+Fixture: default preferences
+Layer: interaction
+- When the user opens Preferences › Keyboard, clicks Fetch's `Ctrl+Shift+F` and presses `Ctrl+Shift+G`
+- Then Fetch shows `Ctrl+Shift+G` with **Reset**, the Repository menu labels it so, and the settings file keeps `"keys": {"fetch": "Ctrl+Shift+G"}`
+- And Esc while it waits cancels without closing Preferences; `Ctrl+Shift+P` is refused with *Ctrl+Shift+P is already Repository › Push.*; `Ctrl+K` with *Ctrl+K is kept for Search.*; `J` alone as a list key
+- And with Keyboard shortcuts on `F9`, `F9` opens the window and `?` no longer does
+Covered by (interaction): `a_key_changed_in_preferences_labels_the_menu_and_runs_the_command` (apps/git-good/src/main.rs); `chords_read_and_write_as_the_menus_show_them`, `a_key_is_refused_when_fixed_taken_or_a_bare_list_key`, `a_press_runs_only_the_chord_with_exactly_its_modifiers` (apps/git-good/src/keymap.rs)
+
 ### PRF-38 Two windows keep each other's preferences
 Fixture: `fx-linear` opened in two Git Good windows on one `XDG_CONFIG_HOME`
 Layer: product
