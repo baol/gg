@@ -1535,7 +1535,7 @@ impl DiffView {
                     self.columns = text
                         .lines
                         .iter()
-                        .map(|line| line.text.chars().count())
+                        .map(|line| crate::wrap_rows::columns(&line.text))
                         .max()
                         .unwrap_or(0);
                     self.groups = text.changed_groups();
@@ -1912,7 +1912,9 @@ impl DiffView {
                 width - 116.0 - pick - bar
             }
         };
-        ((text / glyph).floor() as usize).max(8)
+        // One column spare: a wide character starting in a row's last
+        // column overhangs it by one.
+        ((text / glyph).floor() as usize).saturating_sub(1).max(8)
     }
 
     fn measure_wrap(&self, columns: usize) -> Wrap {
@@ -1925,7 +1927,7 @@ impl DiffView {
             Mode::Full => Wrap::new(self.full.iter().flat_map(|full| {
                 full.lines
                     .iter()
-                    .map(|line| Wrap::segments(line.text.chars().count(), columns))
+                    .map(|line| Wrap::segments(crate::wrap_rows::reach(&line.text), columns))
             })),
             Mode::Diff if self.split_active() => {
                 Wrap::new((0..self.split.count(self.count)).map(|display| {
@@ -3080,7 +3082,8 @@ impl DiffView {
                 let Some(row) = self.rows.get(&index) else {
                     continue;
                 };
-                let chars = wrap.map(|columns| segment * columns..(segment + 1) * columns);
+                let chars = wrap
+                    .map(|columns| crate::wrap_rows::segment_chars(&row.text, columns, segment));
                 let (sign, color, fill) = crate::colors::diff(ui.visuals(), row.kind);
                 ui.painter().rect_filled(rect, 0.0, fill);
                 let selected = self.stage_selected.contains_key(&index);
@@ -3401,7 +3404,9 @@ impl DiffView {
                     None => crate::target_guard::Target::STILL,
                 };
                 ui.set_opacity(opacity * target.alpha);
-                let chars = wrap.map(|columns| segment * columns..(segment + 1) * columns);
+                let chars = |text: &str| {
+                    wrap.map(|columns| crate::wrap_rows::segment_chars(text, columns, segment))
+                };
                 let clip = ui.clip_rect();
                 // A full-width row: hunk header or no-newline note.
                 if pair.shared()
@@ -3549,7 +3554,7 @@ impl DiffView {
                         text_clip,
                         egui::pos2(cell.left() + gutter - split_x, cell.center().y),
                         row,
-                        chars.clone(),
+                        chars(&row.text),
                         &font,
                         color,
                         invisibles,
@@ -3711,11 +3716,10 @@ impl DiffView {
                     Line::Full(side, line.number, line.text.clone())
                 });
                 ui.set_opacity(opacity * target.alpha);
-                let text = match wrap {
-                    Some(columns) => {
-                        &line.text
-                            [char_range(&line.text, segment * columns..(segment + 1) * columns)]
-                    }
+                let segment_chars = wrap
+                    .map(|columns| crate::wrap_rows::segment_chars(&line.text, columns, segment));
+                let text = match &segment_chars {
+                    Some(chars) => &line.text[char_range(&line.text, chars.clone())],
                     None => line.text.as_str(),
                 };
                 let (_, color, fill) = if line.changed {
@@ -3779,10 +3783,7 @@ impl DiffView {
                 let clip =
                     egui::Rect::from_min_max(rect.min + egui::vec2(58.0 + gutter, 0.0), rect.max)
                         .intersect(ui.clip_rect());
-                let segment = match wrap {
-                    Some(columns) => segment * columns..(segment + 1) * columns,
-                    None => 0..text.chars().count(),
-                };
+                let segment = segment_chars.unwrap_or(0..text.chars().count());
                 paint_find_marks(
                     ui,
                     clip,
@@ -4097,7 +4098,7 @@ mod tests {
         let widths = Arc::new(
             doc.rows
                 .iter()
-                .map(|row| row.text.chars().count() as u32)
+                .map(|row| crate::wrap_rows::reach(&row.text) as u32)
                 .collect(),
         );
         Update {
@@ -5848,6 +5849,89 @@ mod tests {
                 assert_eq!(view.shown_row(view.display_row(line) + 1), first, "{case}");
                 assert!(wrap.count() >= view.base_count());
             }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn wide_characters_wrap_as_two_columns() -> Result<(), Box<dyn std::error::Error>> {
+        // Ideographs, kana and Hangul between ASCII words.
+        let long = (0..40)
+            .map(|n| format!("漢字{n:02}かな한글"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let row = |kind, text: &str| DiffRow {
+            kind,
+            old_line: None,
+            new_line: Some(1),
+            text: text.into(),
+            bytes: format!("{text}\n").into_bytes(),
+        };
+        let mut doc = FileDiff::summary(DiffKind::Text, 0, 1, "");
+        doc.rows = vec![row(RowKind::Added, &long)];
+        let text = FileText::from_bytes(
+            ReadingSide::After,
+            format!("{long}\n").as_bytes(),
+            &BTreeSet::from([1]),
+        );
+        for mode in [Mode::Diff, Mode::Full] {
+            let case = format!("{mode:?}");
+            let ctx = egui::Context::default();
+            crate::settings::set_diff_layout(&ctx, DiffLayout::Inline);
+            crate::settings::set_diff_wrap(&ctx, true);
+            let mut view = DiffView {
+                change: Some(file("a", true, true)),
+                generation: 1,
+                mode,
+                mode_seeded: true,
+                ..Default::default()
+            };
+            view.accept(match mode {
+                Mode::Diff => diff_update(1, doc.clone()),
+                Mode::Full => full_update(1, ReadingSide::After, text.clone()),
+            });
+            view.change = None;
+            let mut output = None;
+            for _ in 0..3 {
+                output = Some(crate::tests::run_ui(
+                    &ctx,
+                    crate::tests::frame_input(720.0, 480.0, vec![]),
+                    |ctx| {
+                        egui::CentralPanel::default().show(ctx, |ui| view.draw_reading(ui));
+                    },
+                ));
+            }
+            let output = output.ok_or("no frame")?;
+            let columns = view.wrap_key.as_ref().ok_or("no columns")?.columns;
+            let rows = Wrap::segments(crate::wrap_rows::reach(&long), columns);
+            assert!(
+                rows > long.chars().count().div_ceil(columns),
+                "{case}: wide counts twice"
+            );
+            assert_eq!(view.display_count(), rows, "{case}");
+            let texts: Vec<String> = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) => Some(text.galley.job.text.clone()),
+                    _ => None,
+                })
+                .collect();
+            let mut rebuilt = String::new();
+            for segment in 0..rows {
+                let chars = crate::wrap_rows::segment_chars(&long, columns, segment);
+                let piece = &long[char_range(&long, chars)];
+                assert!(
+                    crate::wrap_rows::columns(piece) <= columns + 1,
+                    "{case}: {piece:?} fits {columns} columns"
+                );
+                assert!(
+                    texts.iter().any(|text| text == piece),
+                    "{case}: segment {segment} {piece:?} is painted"
+                );
+                rebuilt.push_str(piece);
+            }
+            assert_eq!(rebuilt, long, "{case}: segments rebuild the line");
         }
         Ok(())
     }
