@@ -762,7 +762,7 @@ impl RecoveryView {
                 delete = true;
             }
             ui.add_enabled_ui(selected.is_some(), |ui| {
-                ui.menu_button("⋯", |ui| {
+                ui.menu_button(crate::phosphor::icon(crate::phosphor::DOTS_THREE), |ui| {
                     use menus::item;
                     let mut list = vec![
                         item("Copy commit ID", "Ctrl+C", More::CopyCommit).entry(),
@@ -1302,6 +1302,27 @@ mod tests {
         }
         assert!(!has(&text, "Refresh"), "refresh is automatic: {text:?}");
         assert!(!has(&text, "Source"), "{text:?}");
+        Ok(())
+    }
+
+    #[test]
+    fn every_drawn_character_has_a_glyph() -> Checked {
+        let (dir, _base, _next) = repository()?;
+        let ctx = egui::Context::default();
+        crate::phosphor::install(&ctx);
+        let mut view = RecoveryView::new(dir.path().into(), &ctx);
+        view.wait();
+        let _ = frame(&ctx, &mut view, vec![]);
+        let (_, text) = frame(&ctx, &mut view, vec![]);
+        assert!(has(&text, crate::phosphor::DOTS_THREE), "{text:?}");
+        let font = egui::FontId::proportional(13.0);
+        let missing: Vec<char> = text
+            .concat()
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .filter(|c| !ctx.fonts_mut(|fonts| fonts.has_glyph(&font, *c)))
+            .collect();
+        assert!(missing.is_empty(), "no glyph for {missing:?}");
         Ok(())
     }
 

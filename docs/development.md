@@ -55,6 +55,10 @@ python3 scripts/capture_native_screenshot.py --force
 
 The PNG carries a `gg-sources` text entry: a fingerprint of the Git object IDs of those UI files in the index at capture time. CI runs `python3 scripts/capture_native_screenshot.py --check`, which recomputes the fingerprint from the commit and fails when the screenshot was not captured from its UI sources. Fix a failure by capturing again from a clean, staged tree and committing the PNG.
 
+### Documentation site
+
+The user documentation at <https://baol.github.io/gg/> is a [Zensical](https://zensical.org) site in `website/`. Its screenshots are rendered from the app and never committed: `python3 scripts/docs_screenshots.py` builds fixture repositories for an example project (`acme-api`: four authors, tags, a merge, a remote that moved, a stash, a backup made by `git good --cli rewrite`, working changes, and a clone stopped in a merge conflict), then runs the ignored test `docs_screens::docs_screenshots`, which opens the window offscreen in each state as the README screenshot does. The `Docs` workflow renders them, builds the site, and publishes it to GitHub Pages from `main`. See [website/README.md](../website/README.md) to preview it or add a shot.
+
 Measure a packed 100,000-commit fixture:
 
 ```sh
