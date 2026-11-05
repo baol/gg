@@ -80,6 +80,8 @@ mod review_cli;
 mod review_view;
 mod review_worker;
 mod rewrite_cli;
+#[cfg(test)]
+mod screenshot;
 mod search;
 mod settings;
 mod shortcuts;

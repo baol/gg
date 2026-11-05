@@ -45,7 +45,7 @@ Enable the tracked pre-commit hook once per clone:
 git config core.hooksPath .githooks
 ```
 
-When staged files under `apps/git-good/src`, `apps/git-good/assets`, or the workspace manifests change, the hook builds the debug app, captures `docs/screenshots/gg-native-wide.png` at 1120×740 on an isolated display, and stages the PNG. It needs Python 3; Linux also needs `xvfb-run`. macOS and Windows use the active desktop session.
+When staged files under `apps/git-good/src`, `apps/git-good/assets`, or the workspace manifests change, the hook renders `docs/screenshots/gg-native-wide.png` offscreen and stages the PNG. It runs the ignored test `screenshot::readme_screenshot` (`apps/git-good/src/screenshot.rs`), which opens the window on this repository in an `egui_kittest` harness at 1120×740, steps it until History and the background reads are in, and draws it through wgpu: no display server, no window on the desktop, and nothing in the way of the session you are working in. It needs Python 3 and a wgpu adapter: the GPU, or on a Linux machine without one Mesa's software Vulkan (lavapipe, in `mesa-vulkan-drivers`).
 
 The hook skips during merge, rebase, cherry-pick, and revert operations and when `GG_SKIP_SCREENSHOT=1` or `CI` is set. It refuses to capture when the staged UI files also have unstaged or untracked edits, so the image matches the commit. Refresh manually with:
 

@@ -929,3 +929,10 @@ Linux x86_64, 4 cores · Rust 1.97.0 · release build · fixture written by `git
 - Refs sidebar: frame p95 0.5 ms; the frame that builds the list again after a new snapshot of 10,000 refs, 5 ms.
 - `apps/git-good/perf/budgets.json` sets limits from these with room for slower CI runners. A second run with the first as `GG_PERF_BASELINE` passed. `numbers_over_their_budget_or_baseline_are_named` and `every_budget_names_a_number_a_benchmark_reports` (perf.rs) check the checker.
 - Limitations: peak memory is read on Linux only (`VmHWM`). The first nightly run on the Timing workflow will show the runner's own numbers.
+
+## README screenshot offscreen · 2026-11-05
+
+Linux x86_64 · Rust 1.97.0 · Mesa lavapipe (software Vulkan) · no display server.
+
+- `python3 scripts/capture_native_screenshot.py --force` runs `screenshot::readme_screenshot`, which renders the window on this repository through egui_kittest and wgpu in 2.5 s with `DISPLAY` and `WAYLAND_DISPLAY` unset, then stamps and stages the PNG; `--check` matched it. The image shows the same window as the Xvfb capture: custom title bar, toolbar, docked refs sidebar, History with the commit inspector, and the footer.
+- The debug app's own `GG_SCREENSHOT` capture of a real native window stays for reviews on a desktop.

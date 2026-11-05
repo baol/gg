@@ -10,7 +10,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import os
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -20,7 +19,6 @@ from ppm_to_png import png_text, ppm_to_png
 
 SCREENSHOT = "docs/screenshots/gg-native-wide.png"
 STAMP = "gg-sources"
-WINDOW_SIZE = "1120x740"
 RELEVANT = (
     "apps/git-good/src",
     "apps/git-good/assets",
@@ -143,53 +141,35 @@ def check(root: Path, tree: str = "HEAD") -> int:
     return 1
 
 
-def build(root: Path) -> Path:
-    subprocess.run(
-        ["cargo", "build", "-p", "git-good", "--locked"], cwd=root, check=True
-    )
-    name = "git-good.exe" if os.name == "nt" else "git-good"
-    binary = root / "target" / "debug" / name
-    if not binary.is_file():
-        raise SystemExit(f"screenshot: missing built binary at {binary}")
-    return binary
-
-
-def capture(root: Path, binary: Path) -> Path:
+def capture(root: Path) -> Path:
+    """Render the window offscreen (`screenshot::readme_screenshot`, through
+    egui_kittest and wgpu): no display server and no window on the desktop."""
     with tempfile.TemporaryDirectory(prefix="gg-screenshot-") as directory:
         ppm = Path(directory) / "gg.ppm"
         environment = os.environ.copy()
-        environment.pop("WAYLAND_DISPLAY", None)
-        environment.update(
-            {
-                "GG_OFFLINE": "1",
-                "GG_SCREENSHOT": str(ppm),
-                "GG_WINDOW_SIZE": WINDOW_SIZE,
-            }
-        )
-        command = [str(binary), str(root)]
-        if sys.platform.startswith("linux"):
-            xvfb = shutil.which("xvfb-run")
-            if xvfb:
-                command = [
-                    xvfb,
-                    "-a",
-                    "-s",
-                    "-screen 0 1280x900x24",
-                    *command,
-                ]
-            elif not environment.get("DISPLAY"):
-                raise SystemExit(
-                    "screenshot: install xvfb-run or set DISPLAY to capture natively"
-                )
+        environment.update({"GG_OFFLINE": "1", "GG_SCREENSHOT": str(ppm)})
         subprocess.run(
-            command,
+            [
+                "cargo",
+                "test",
+                "-q",
+                "-p",
+                "git-good",
+                "--bin",
+                "git-good",
+                "--locked",
+                "--",
+                "--ignored",
+                "--exact",
+                "screenshot::readme_screenshot",
+            ],
             cwd=root,
             env=environment,
             check=True,
-            timeout=180,
+            timeout=1800,
         )
         if not ppm.is_file():
-            raise SystemExit("screenshot: the app did not write a capture")
+            raise SystemExit("screenshot: the renderer did not write a capture")
         target = root / SCREENSHOT
         target.parent.mkdir(parents=True, exist_ok=True)
         # Stamped with the staged sources: the commit that takes this PNG.
@@ -263,8 +243,7 @@ def main(argv: list[str] | None = None) -> int:
             "screenshot: stage them and capture again before committing, or CI will fail",
             file=sys.stderr,
         )
-    binary = build(root)
-    target = capture(root, binary)
+    target = capture(root)
     subprocess.run(["git", "add", "--", SCREENSHOT], cwd=root, check=True)
     print(f"screenshot: updated {target.relative_to(root)}")
     return 0
