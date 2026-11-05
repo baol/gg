@@ -8,7 +8,7 @@ use eframe::egui;
 pub struct Item<C> {
     pub label: String,
     /// Shortcut shown at the right edge, if any.
-    pub key: &'static str,
+    pub key: String,
     /// Why the item cannot run now; the item stays in place, disabled.
     pub disabled: Option<String>,
     /// Tooltip for an enabled item.
@@ -34,10 +34,10 @@ pub struct Menu<C> {
 }
 
 /// An enabled item.
-pub fn item<C>(label: impl Into<String>, key: &'static str, command: C) -> Item<C> {
+pub fn item<C>(label: impl Into<String>, key: impl Into<String>, command: C) -> Item<C> {
     Item {
         label: label.into(),
-        key,
+        key: key.into(),
         disabled: None,
         hint: "",
         danger: false,
@@ -353,7 +353,7 @@ fn item_response<C>(
 ) -> egui::Response {
     let color = (item.danger && item.disabled.is_none()).then(|| ui.visuals().error_fg_color);
     let text = crate::menu_keys::mnemonic_text(ui, &item.label, mnemonic, color);
-    let mut button = row(item.checked == Some(true), text).shortcut_text(item.key);
+    let mut button = row(item.checked == Some(true), text).shortcut_text(item.key.as_str());
     if lit {
         button = button.frame_when_inactive(true);
     }

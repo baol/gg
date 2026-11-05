@@ -40,6 +40,7 @@ mod init_cli;
 mod inspect_ui;
 #[cfg(test)]
 mod interaction_tests;
+mod keymap;
 mod lfs_cli;
 mod lfs_view;
 mod lfs_worker;
@@ -645,6 +646,10 @@ struct FoldersDialog {
     error: Option<String>,
     /// Repository count per clone folder; `None` for a missing folder.
     counts: Vec<(PathBuf, Option<usize>)>,
+    /// Preferences › Keyboard waits for the next key for this command.
+    capturing: Option<keymap::Action>,
+    /// Why the last key could not be taken.
+    key_error: Option<String>,
 }
 
 impl FoldersDialog {
@@ -658,6 +663,8 @@ impl FoldersDialog {
             new_root: String::new(),
             error: None,
             counts: Vec::new(),
+            capturing: None,
+            key_error: None,
         }
     }
 }
@@ -1017,6 +1024,112 @@ impl Default for SearchPalette {
             files_query: String::new(),
             file_items: Vec::new(),
         }
+    }
+}
+
+/// Preferences › Keyboard: each command with its key, a button to press a
+/// new one (Esc cancels; a fixed, taken or bare list key is refused with
+/// the reason) and **Reset** where it is not the default.
+fn keyboard_keys(ui: &mut egui::Ui, prefs: &mut settings::Prefs, dialog: &mut FoldersDialog) {
+    let mut keys = keymap::Keymap::from_saved(&prefs.keys);
+    if let Some(action) = dialog.capturing {
+        // The next key press, taken from everything else this frame.
+        let pressed = ui.input_mut(|input| {
+            let found = input.events.iter().find_map(|event| match event {
+                egui::Event::Key {
+                    key,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } => Some((*key, *modifiers)),
+                _ => None,
+            });
+            if found.is_some() {
+                input.events.retain(|event| {
+                    !matches!(event, egui::Event::Key { .. } | egui::Event::Text(_))
+                });
+            }
+            found
+        });
+        if let Some((key, modifiers)) = pressed {
+            dialog.capturing = None;
+            if key == egui::Key::Escape && modifiers.is_none() {
+                dialog.key_error = None;
+            } else {
+                match keys.bind(action, keymap::Chord::of(key, modifiers)) {
+                    Ok(()) => {
+                        prefs.keys = keys.saved();
+                        dialog.key_error = None;
+                    }
+                    Err(error) => dialog.key_error = Some(error),
+                }
+            }
+        }
+    }
+    egui::Grid::new("prefs-keyboard-commands")
+        .num_columns(3)
+        .striped(true)
+        .spacing([16.0, 4.0])
+        .show(ui, |ui| {
+            for action in keymap::Action::ALL {
+                ui.label(action.label());
+                let waiting = dialog.capturing == Some(action);
+                let text = if waiting {
+                    "Press a key… (Esc cancels)".to_string()
+                } else {
+                    keys.label(action)
+                };
+                let button = ui
+                    .add(egui::Button::new(egui::RichText::new(text).monospace()).selected(waiting))
+                    .on_hover_text("Click, then press the new key");
+                if button.clicked() {
+                    dialog.capturing = (!waiting).then_some(action);
+                    dialog.key_error = None;
+                }
+                if keys.chord(action) != action.default_chord() {
+                    if ui
+                        .small_button("Reset")
+                        .on_hover_text(format!("Back to {}", action.default_chord().label()))
+                        .clicked()
+                    {
+                        keys.reset(action);
+                        prefs.keys = keys.saved();
+                    }
+                } else {
+                    ui.label("");
+                }
+                ui.end_row();
+            }
+        });
+    if let Some(error) = &dialog.key_error {
+        ui.colored_label(ui.visuals().error_fg_color, error);
+    }
+    if !prefs.keys.is_empty() && ui.button("Reset all keys").clicked() {
+        prefs.keys.clear();
+        dialog.capturing = None;
+    }
+}
+
+/// The window command a key in the keymap runs.
+fn frame_command(action: keymap::Action) -> FrameCommand {
+    use keymap::Action;
+    match action {
+        Action::Open => FrameCommand::Open,
+        Action::Quit => FrameCommand::Quit,
+        Action::Fetch => FrameCommand::Fetch,
+        Action::Pull => FrameCommand::Pull,
+        Action::Push => FrameCommand::Push,
+        Action::NewBranch => FrameCommand::NewBranch,
+        Action::SwitchTo => FrameCommand::SwitchTo,
+        Action::Rename => FrameCommand::RenameBranch,
+        Action::Delete => FrameCommand::DeleteBranch,
+        Action::Reword => FrameCommand::RebasePreset(gg_engine::rewrite::Action::Reword),
+        Action::StageAll => FrameCommand::StageAll,
+        Action::UnstageAll => FrameCommand::UnstageAll,
+        Action::Stash => FrameCommand::Stash,
+        Action::Back => FrameCommand::Back,
+        Action::Forward => FrameCommand::Forward,
+        Action::Shortcuts => FrameCommand::Shortcuts,
     }
 }
 
@@ -3008,6 +3121,12 @@ impl Browser {
     }
 
     /// Apply the saved theme, density, and avatar source.
+    /// The window commands' keys: the defaults with Preferences › Keyboard
+    /// over them.
+    fn keymap(&self) -> keymap::Keymap {
+        keymap::Keymap::from_saved(&self.prefs.keys)
+    }
+
     fn apply_prefs(&self, ctx: &egui::Context) {
         ctx.set_theme(match self.prefs.effective_theme() {
             settings::Theme::System => egui::ThemePreference::System,
@@ -3651,12 +3770,22 @@ impl Browser {
                             ui.weak(
                                 "Single letters act on the focused list and never fire while typing; Ctrl chords are global.",
                             );
+                            ui.add_space(4.0);
+                            ui.strong("Commands");
+                            keyboard_keys(ui, &mut prefs, dialog);
+                            ui.add_space(8.0);
+                            ui.strong("Fixed keys");
+                            let rebindable: Vec<&str> =
+                                keymap::Action::ALL.iter().map(|action| action.label()).collect();
                             egui::Grid::new("prefs-keyboard")
                                 .num_columns(2)
                                 .striped(true)
                                 .spacing([16.0, 4.0])
                                 .show(ui, |ui| {
                                     for (action, key) in &shortcuts {
+                                        if rebindable.contains(&action.as_str()) {
+                                            continue;
+                                        }
                                         ui.label(action);
                                         ui.monospace(key);
                                         ui.end_row();
@@ -4392,59 +4521,19 @@ impl Browser {
         if !crate::navigation::available(ctx) {
             return;
         }
-        let shift = egui::Modifiers::COMMAND | egui::Modifiers::SHIFT;
         let typing = ctx.text_edit_focused();
-        let chords = [
-            (shift, egui::Key::F, FrameCommand::Fetch),
-            (shift, egui::Key::L, FrameCommand::Pull),
-            (shift, egui::Key::P, FrameCommand::Push),
-            (shift, egui::Key::B, FrameCommand::SwitchTo),
-            (shift, egui::Key::Z, FrameCommand::Stash),
-            (shift, egui::Key::S, FrameCommand::StageAll),
-            (shift, egui::Key::U, FrameCommand::UnstageAll),
-            (egui::Modifiers::COMMAND, egui::Key::O, FrameCommand::Open),
-            (
-                egui::Modifiers::COMMAND,
-                egui::Key::B,
-                FrameCommand::NewBranch,
-            ),
-            (egui::Modifiers::COMMAND, egui::Key::Q, FrameCommand::Quit),
-            (
-                egui::Modifiers::COMMAND,
-                egui::Key::OpenBracket,
-                FrameCommand::Back,
-            ),
-            (
-                egui::Modifiers::COMMAND,
-                egui::Key::CloseBracket,
-                FrameCommand::Forward,
-            ),
-            (
-                egui::Modifiers::COMMAND,
-                egui::Key::R,
-                FrameCommand::RebasePreset(gg_engine::rewrite::Action::Reword),
-            ),
-        ];
+        let keys = self.keymap();
+        let events = ctx.input(|i| i.events.clone());
         let mut chosen = None;
-        for (modifiers, key, command) in chords {
-            if chosen.is_none() && ctx.input_mut(|i| i.consume_key(modifiers, key)) {
-                chosen = Some(command);
-            }
-        }
-        if chosen.is_none() && !typing {
-            if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::F2)) {
-                chosen = Some(FrameCommand::RenameBranch);
-            } else if !egui::Popup::is_any_open(ctx)
-                && self.working.is_none()
-                && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Delete))
-            {
-                // Del deletes a branch from History; popups and Local Changes
-                // keep the key for their own lists.
-                chosen = Some(FrameCommand::DeleteBranch);
-            } else if ctx
-                .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Questionmark))
-            {
-                chosen = Some(FrameCommand::Shortcuts);
+        if let Some(action) = keys.pressed(&events, typing) {
+            // Del deletes a branch from History; popups and Local Changes
+            // keep the key for their own lists.
+            let mine = action != keymap::Action::Delete
+                || (!egui::Popup::is_any_open(ctx) && self.working.is_none());
+            if mine {
+                let chord = keys.chord(action);
+                ctx.input_mut(|i| i.consume_key(chord.modifiers(), chord.key));
+                chosen = Some(frame_command(action));
             }
         }
         let Some(command) = chosen else {
@@ -5419,6 +5508,7 @@ impl Browser {
 
     fn menu_table(&self, ready: &FrameReadiness) -> Vec<menus::Menu<FrameCommand>> {
         use menus::{Entry, Menu, item};
+        let keys = self.keymap();
         let busy = "Wait for the current operation to finish";
         let no_repo = "Open a repository first";
         let idle = |ok: bool| -> Option<&'static str> {
@@ -5536,14 +5626,18 @@ impl Browser {
             entries
         };
         let quit = if cfg!(target_os = "macos") {
-            "Cmd+Q"
+            "Cmd+Q".to_string()
         } else {
-            "Ctrl+Q"
+            keys.label(keymap::Action::Quit)
         };
         let mut repository = vec![
-            item("Open…", "Ctrl+O", FrameCommand::Open)
-                .unless(self.repository_switch_pending().then_some(busy))
-                .entry(),
+            item(
+                "Open…",
+                keys.label(keymap::Action::Open),
+                FrameCommand::Open,
+            )
+            .unless(self.repository_switch_pending().then_some(busy))
+            .entry(),
             item("Clone…", "", FrameCommand::Clone)
                 .unless(
                     (self.network.is_some() || self.branch.is_some() || self.operation_busy())
@@ -5557,10 +5651,14 @@ impl Browser {
                 .entry(),
             Entry::Submenu("Open recent".into(), recent),
             Entry::Separator,
-            item("Fetch", "Ctrl+Shift+F", FrameCommand::Fetch)
-                .unless(idle(ready.network_idle))
-                .hint("Fetch the default remote without changing local branches")
-                .entry(),
+            item(
+                "Fetch",
+                keys.label(keymap::Action::Fetch),
+                FrameCommand::Fetch,
+            )
+            .unless(idle(ready.network_idle))
+            .hint("Fetch the default remote without changing local branches")
+            .entry(),
             item(
                 if ready.behind > 0 {
                     format!(
@@ -5571,13 +5669,13 @@ impl Browser {
                 } else {
                     format!("Pull ({})", self.prefs.pull_strategy.menu_label())
                 },
-                "Ctrl+Shift+L",
+                keys.label(keymap::Action::Pull),
                 FrameCommand::Pull,
             )
             .unless(ready.pull_reason)
             .hint("Fetch the upstream and rebase the current branch onto it")
             .entry(),
-            item("Push", "Ctrl+Shift+P", FrameCommand::Push)
+            item("Push", keys.label(keymap::Action::Push), FrameCommand::Push)
                 .unless(idle(ready.network_idle))
                 .hint("Push the current branch without force; set upstream when absent")
                 .entry(),
@@ -5605,7 +5703,7 @@ impl Browser {
             repository.extend([
                 Entry::Separator,
                 item("Preferences…", "Ctrl+,", FrameCommand::Preferences).entry(),
-                item("Quit", quit, FrameCommand::Quit).entry(),
+                item("Quit", quit.clone(), FrameCommand::Quit).entry(),
             ]);
         }
         let mut table = Vec::new();
@@ -5626,16 +5724,24 @@ impl Browser {
         table.push(Menu {
             title: "Branch",
             entries: vec![
-                item("New branch…", "Ctrl+B", FrameCommand::NewBranch)
-                    .unless(idle(ready.branch_idle))
-                    .entry(),
+                item(
+                    "New branch…",
+                    keys.label(keymap::Action::NewBranch),
+                    FrameCommand::NewBranch,
+                )
+                .unless(idle(ready.branch_idle))
+                .entry(),
                 item("New tag…", "", FrameCommand::NewTag)
                     .unless(idle(ready.branch_idle))
                     .entry(),
                 // Same readiness as the toolbar's branch button it opens.
-                item("Switch to…", "Ctrl+Shift+B", FrameCommand::SwitchTo)
-                    .unless(idle(ready.has_repo))
-                    .entry(),
+                item(
+                    "Switch to…",
+                    keys.label(keymap::Action::SwitchTo),
+                    FrameCommand::SwitchTo,
+                )
+                .unless(idle(ready.has_repo))
+                .entry(),
                 Entry::Separator,
                 item("Merge into current…", "", FrameCommand::Merge)
                     .unless(on_branch)
@@ -5659,13 +5765,21 @@ impl Browser {
                     .unless(idle(ready.branch_idle))
                     .entry(),
                 Entry::Separator,
-                item("Rename…", "F2", FrameCommand::RenameBranch)
-                    .unless(on_branch)
-                    .entry(),
-                item("Delete…", "Del", FrameCommand::DeleteBranch)
-                    .unless(delete)
-                    .danger()
-                    .entry(),
+                item(
+                    "Rename…",
+                    keys.label(keymap::Action::Rename),
+                    FrameCommand::RenameBranch,
+                )
+                .unless(on_branch)
+                .entry(),
+                item(
+                    "Delete…",
+                    keys.label(keymap::Action::Delete),
+                    FrameCommand::DeleteBranch,
+                )
+                .unless(delete)
+                .danger()
+                .entry(),
             ],
         });
         let picked = self.state.picked.len();
@@ -5722,7 +5836,7 @@ impl Browser {
                 .entry(),
                 item(
                     "Reword…",
-                    "Ctrl+R",
+                    keys.label(keymap::Action::Reword),
                     FrameCommand::RebasePreset(gg_engine::rewrite::Action::Reword),
                 )
                 .unless(rewrite)
@@ -5759,10 +5873,10 @@ impl Browser {
         table.push(Menu {
             title: "Changes",
             entries: vec![
-                item("Stage all", "Ctrl+Shift+S", FrameCommand::StageAll)
+                item("Stage all", keys.label(keymap::Action::StageAll), FrameCommand::StageAll)
                     .unless(changes)
                     .entry(),
-                item("Unstage all", "Ctrl+Shift+U", FrameCommand::UnstageAll)
+                item("Unstage all", keys.label(keymap::Action::UnstageAll), FrameCommand::UnstageAll)
                     .unless(changes.or_else(|| {
                         self.working
                             .as_ref()
@@ -5786,7 +5900,7 @@ impl Browser {
                     .unless(idle(ready.has_repo))
                     .entry(),
                 Entry::Separator,
-                item("Stash changes…", "Ctrl+Shift+Z", FrameCommand::Stash)
+                item("Stash changes…", keys.label(keymap::Action::Stash), FrameCommand::Stash)
                     .unless(ready.stash_reason)
                     .entry(),
                 item("Stashes…", "", FrameCommand::Stashes)
@@ -5823,18 +5937,24 @@ impl Browser {
                     .unless(idle(ready.has_repo))
                     .checked(self.working.is_none() && self.review.is_none())
                     .entry(),
-                item("Back", "Ctrl+[", FrameCommand::Back)
+                item("Back", keys.label(keymap::Action::Back), FrameCommand::Back)
                     .unless(
                         (!ready.has_repo).then_some(no_repo).or_else(|| {
                             (!self.trail.can_back()).then_some("Nothing to go back to")
                         }),
                     )
                     .entry(),
-                item("Forward", "Ctrl+]", FrameCommand::Forward)
-                    .unless((!ready.has_repo).then_some(no_repo).or_else(|| {
+                item(
+                    "Forward",
+                    keys.label(keymap::Action::Forward),
+                    FrameCommand::Forward,
+                )
+                .unless(
+                    (!ready.has_repo).then_some(no_repo).or_else(|| {
                         (!self.trail.can_forward()).then_some("Nothing to go forward to")
-                    }))
-                    .entry(),
+                    }),
+                )
+                .entry(),
                 Entry::Separator,
                 // Narrower than the docked sidebar, it opens the drawer.
                 item("Refs sidebar", "Ctrl+\\", FrameCommand::ToggleRefs)
@@ -5887,7 +6007,12 @@ impl Browser {
         table.push(Menu {
             title: "Help",
             entries: vec![
-                item("Keyboard shortcuts", "?", FrameCommand::Shortcuts).entry(),
+                item(
+                    "Keyboard shortcuts",
+                    keys.label(keymap::Action::Shortcuts),
+                    FrameCommand::Shortcuts,
+                )
+                .entry(),
                 item("Documentation", "", FrameCommand::Documentation)
                     .hint("Open the Git Good README in the browser")
                     .entry(),
@@ -5912,7 +6037,7 @@ impl Browser {
                         .file_name()
                         .map_or(item.label, |name| name.to_string_lossy().into_owned()),
                     context: welcome_view::tilde(folder, home.as_deref()),
-                    key: "",
+                    key: String::new(),
                     disabled: item.disabled,
                     command: item.command,
                 },
@@ -5947,7 +6072,7 @@ impl Browser {
                     if current { " · current" } else { "" },
                     item.commit.chars().take(8).collect::<String>()
                 ),
-                key: "",
+                key: String::new(),
                 disabled: None,
                 command: FrameCommand::Inspect(item.commit.clone()),
             });
@@ -6035,7 +6160,7 @@ impl Browser {
                             item.disabled.is_none(),
                             egui::Button::selectable(palette.selected == index, text)
                                 .truncate()
-                                .right_text(item.key)
+                                .right_text(item.key.as_str())
                                 .min_size(egui::vec2(ui.available_width(), 24.0)),
                         );
                         let response = match &item.disabled {
@@ -19726,6 +19851,111 @@ mod tests {
     }
 
     #[test]
+    fn a_key_changed_in_preferences_labels_the_menu_and_runs_the_command() {
+        let ctx = egui::Context::default();
+        crate::phosphor::install(&ctx);
+        let mut app = layout_fixture();
+        let frame = |app: &mut Browser, events| {
+            crate::tests::run_ui(&ctx, frame_input(1280.0, 800.0, events), |ctx| {
+                app.draw_ui(ctx)
+            })
+        };
+        app.open_preferences(PrefSection::Keyboard);
+        frame(&mut app, vec![]);
+        let output = frame(&mut app, vec![]);
+        let texts: Vec<String> = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) => Some(text.galley.job.text.clone()),
+                _ => None,
+            })
+            .collect();
+        let fetch_key = output.shapes.iter().find_map(|shape| match &shape.shape {
+            egui::epaint::Shape::Text(text) if text.galley.job.text == "Ctrl+Shift+F" => {
+                Some(text.pos + text.galley.size() / 2.0)
+            }
+            _ => None,
+        });
+        let Some(at) = fetch_key else {
+            unreachable!("Fetch's key is listed: {texts:?}")
+        };
+        let click = |at| {
+            vec![
+                egui::Event::PointerMoved(at),
+                egui::Event::PointerButton {
+                    pos: at,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::PointerButton {
+                    pos: at,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]
+        };
+        frame(&mut app, click(at));
+        assert_eq!(
+            app.folders_dialog
+                .as_ref()
+                .and_then(|dialog| dialog.capturing),
+            Some(keymap::Action::Fetch)
+        );
+        // Esc cancels the capture and leaves Preferences open.
+        frame(
+            &mut app,
+            vec![key(egui::Key::Escape, egui::Modifiers::NONE)],
+        );
+        assert!(
+            app.folders_dialog
+                .as_ref()
+                .is_some_and(|dialog| dialog.capturing.is_none())
+        );
+        frame(&mut app, click(at));
+        let shift = egui::Modifiers::COMMAND | egui::Modifiers::SHIFT;
+        frame(&mut app, vec![key(egui::Key::G, shift)]);
+        assert_eq!(
+            app.prefs.keys.get("fetch").map(String::as_str),
+            Some("Ctrl+Shift+G")
+        );
+        let ready = app.frame_readiness();
+        let fetch = menus::flatten(&app.menu_table(&ready))
+            .into_iter()
+            .find(|(_, item)| item.command == FrameCommand::Fetch)
+            .map(|(_, item)| item.key);
+        assert_eq!(
+            fetch.as_deref(),
+            Some("Ctrl+Shift+G"),
+            "the menu shows the new key"
+        );
+        // A taken key is refused with its owner.
+        frame(&mut app, click(at));
+        frame(&mut app, vec![key(egui::Key::P, shift)]);
+        assert_eq!(
+            app.folders_dialog
+                .as_ref()
+                .and_then(|dialog| dialog.key_error.clone())
+                .as_deref(),
+            Some("Ctrl+Shift+P is already Repository › Push.")
+        );
+        // Out of Preferences, the new key runs the command and the old one
+        // does nothing.
+        app.folders_dialog = None;
+        app.prefs.keys.insert("shortcuts".into(), "F9".into());
+        frame(&mut app, vec![]);
+        frame(
+            &mut app,
+            vec![key(egui::Key::Questionmark, egui::Modifiers::SHIFT)],
+        );
+        assert!(!app.help_shortcuts, "? is no longer Keyboard shortcuts");
+        frame(&mut app, vec![key(egui::Key::F9, egui::Modifiers::NONE)]);
+        assert!(app.help_shortcuts, "F9 is");
+    }
+
+    #[test]
     fn ctrl_f_opens_search_with_the_history_filter() {
         let ctx = egui::Context::default();
         let mut app = Browser::new(".".into());
@@ -21891,7 +22121,8 @@ mod tests {
             assert!(
                 found.is_some_and(|n| n.enabled == item.disabled.is_none()
                     && n.checked == item.checked
-                    && n.shortcut.as_deref() == (!item.key.is_empty()).then_some(item.key)),
+                    && n.shortcut.as_deref()
+                        == (!item.key.is_empty()).then_some(item.key.as_str())),
                 "{} differs: {found:?}",
                 item.label
             );
