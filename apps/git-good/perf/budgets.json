@@ -1,0 +1,15 @@
+{
+  "_about": "Upper limits for performance_stays_within_budgets (perf.rs), in milliseconds unless the name says otherwise. Set on 2026-11-05 from a release run on a 4-core Linux machine, with room for slower CI runners: history first rows 130-180, complete 1.7-1.9 s, frame p95 while loading 17-18, idle frame p95 7-10, jump to the last row 17-21, peak memory 70 MiB; sidebar frame p95 0.5, list rebuild for 10,000 refs 5. Raise a limit only with the measurement that justifies it.",
+  "history": {
+    "first_rows_ms": 1000,
+    "complete_ms": 8000,
+    "frame_p95_ms": 40,
+    "idle_frame_p95_ms": 25,
+    "deep_jump_ms": 500,
+    "peak_rss_mib": 200
+  },
+  "refs_sidebar": {
+    "frame_p95_ms": 4,
+    "rebuild_ms": 40
+  }
+}

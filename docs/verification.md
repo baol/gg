@@ -920,3 +920,12 @@ Linux x86_64 · Rust 1.97.0.
 - `f6_moves_between_search_sidebar_and_content_and_shift_f10_opens_actions` (main.rs) drives History at 1280 px: F6 goes content → search → Filter refs → content, Shift+F6 back; Shift+F10 opens the commit actions popup and leaves the menu bar alone. Before the fix in `menu_keys.rs`, egui's logical key match let the menu bar's F10 take Shift+F10 too.
 - `f6_walks_the_shown_regions_and_wraps` (a11y.rs) checks the order with and without the sidebar and with the content alone.
 - AccessKit: eframe's `accesskit` feature adds `accesskit_winit` and, on Linux, AT-SPI over D-Bus (`zbus`); 52 crates in Cargo.lock. Not checked with a screen reader here.
+
+## Performance budgets · 2026-11-05
+
+Linux x86_64, 4 cores · Rust 1.97.0 · release build · fixture written by `git fast-import`: 100,000 commits on `main`, 10,000 branches in 100 folders.
+
+- History: first rows 130–180 ms, complete 1.7–1.9 s, frame p95 while loading 17–18 ms (p50 9–10 ms), idle frame p95 7–10 ms, jump to the last row 17–21 ms, peak resident memory 70 MiB. Frames are drawn headless (layout and tessellation, no GPU).
+- Refs sidebar: frame p95 0.5 ms; the frame that builds the list again after a new snapshot of 10,000 refs, 5 ms.
+- `apps/git-good/perf/budgets.json` sets limits from these with room for slower CI runners. A second run with the first as `GG_PERF_BASELINE` passed. `numbers_over_their_budget_or_baseline_are_named` and `every_budget_names_a_number_a_benchmark_reports` (perf.rs) check the checker.
+- Limitations: peak memory is read on Linux only (`VmHWM`). The first nightly run on the Timing workflow will show the runner's own numbers.

@@ -61,6 +61,8 @@ mod operation_band;
 mod outcome_details;
 #[cfg(test)]
 mod parity_tests;
+#[cfg(test)]
+mod perf;
 mod phosphor;
 mod reader;
 mod rebase_cli;
