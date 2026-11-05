@@ -914,3 +914,9 @@ Linux x86_64 · Rust 1.97.0.
 
 - `a_slow_frame_names_its_slowest_stages_and_command` and `slow_frames_close_together_are_counted_on_the_next_line` (apps/git-good/src/frame_stages.rs) check the line (`76 ms (sidebar 61 ms, views 12 ms, polling 3 ms); command Fetch`), the 50 ms threshold, and the 2 s quiet time with the skipped frames counted.
 - `a_frame_is_timed_in_its_stages_for_the_slow_frame_log` (main.rs) draws a window frame and finds the stages marked in order: polling, toolbar, refs sidebar, dialogs; views closes the frame.
+
+## Regions, context menu key and AccessKit · 2026-11-05
+
+- `f6_moves_between_search_sidebar_and_content_and_shift_f10_opens_actions` (main.rs) drives History at 1280 px: F6 goes content → search → Filter refs → content, Shift+F6 back; Shift+F10 opens the commit actions popup and leaves the menu bar alone. Before the fix in `menu_keys.rs`, egui's logical key match let the menu bar's F10 take Shift+F10 too.
+- `f6_walks_the_shown_regions_and_wraps` (a11y.rs) checks the order with and without the sidebar and with the content alone.
+- AccessKit: eframe's `accesskit` feature adds `accesskit_winit` and, on Linux, AT-SPI over D-Bus (`zbus`); 52 crates in Cargo.lock. Not checked with a screen reader here.
