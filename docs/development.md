@@ -101,3 +101,11 @@ cargo test --release -p git-good --locked -- --ignored --nocapture gui_mutations
 ```
 
 Each of the 19 mutations runs 30 times per side (`GG_TIMING_RUNS`, at least 15) on fresh fixtures, GUI and CLI alternating which goes first. The GUI is timed from the call its button makes until the receipt is applied to the window's state; the background refresh after it is not timed. The test prints CLI and GUI medians, their ratio and the budget, and fails when a GUI median exceeds 1.01 × the CLI median + 2 ms. `GG_TIMING_CASES=stash,reset` keeps the cases whose name contains one of the words. The `Timing` workflow runs it nightly on `ubuntu-24.04` and on demand.
+
+Check the performance budgets:
+
+```sh
+cargo test --release -p git-good --locked --bin git-good -- --ignored --nocapture performance_stays_within_budgets
+```
+
+The benchmark (`perf.rs`) builds its own fixture, 100,000 commits and 10,000 branches in 100 folders written by one `git fast-import`, then times History (first rows, complete, frame p95 while loading and once loaded, a jump to the last row) and the refs sidebar (frame p95, and the frame that builds its list again after a new snapshot). Each part writes `target/perf/<name>.json` (`GG_PERF_OUT` moves it) with the numbers and the peak resident memory (`VmHWM`, Linux only), and fails when a number is over its limit in `apps/git-good/perf/budgets.json` or, with `GG_PERF_BASELINE` naming an earlier run's folder, more than 1.25 × its baseline + 2. The `Timing` workflow runs it nightly and keeps the JSON as the `perf` artifact; pass that folder as the baseline to compare a change with it. Raise a budget only with the measurement that justifies it.

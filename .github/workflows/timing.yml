@@ -26,3 +26,21 @@ jobs:
         with:
           key: timing
       - run: cargo test -p git-good --release --locked -- --ignored --nocapture gui_mutations_cost_what_the_cli_costs
+
+  # perf.rs: history of 100,000 commits and a 10,000-branch sidebar,
+  # checked against apps/git-good/perf/budgets.json.
+  budgets:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: timing
+      - run: cargo test -p git-good --release --locked --bin git-good -- --ignored --nocapture performance_stays_within_budgets
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: perf
+          path: target/perf/*.json

@@ -177,6 +177,7 @@ Goal: take what the ArtCraft apps (photocraft, gridcraft, wordcraft, pdfcraft, c
    - **Part 1 · complete.** A test reads acceptance.md and fails on any cited test that does not exist in the file the line names; the three stale citations it found (two renamed tests, one in another file) are fixed.
    - **Part 2 · complete.** Slow-frame log: each frame is timed in stages; a frame of 50 ms or more logs its total, its three slowest stages and the command it ran, at most once per 2 s with the skipped frames counted.
    - **Part 3 · complete.** AccessKit on; F6 and Shift+F6 move between the search field, the docked sidebar and the list; Shift+F10 and the Menu key open the selected commit's actions; F10 alone, not Shift+F10, takes the keyboard to the menu bar.
+   - **Part 4 · complete.** `performance_stays_within_budgets` builds 100,000 commits and 10,000 branches, times History and the refs sidebar, writes JSON with peak memory, and fails over `apps/git-good/perf/budgets.json` or 1.25 × a baseline run; the Timing workflow runs it nightly and keeps the JSON.
 
 Not taken: docking and rearrangeable panes, tabs, timelines, plugins, translations, toast stacks, and update checks (they would break RULE-08).
 
