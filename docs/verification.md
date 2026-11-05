@@ -942,3 +942,12 @@ Linux x86_64 · Rust 1.97.0 · Mesa lavapipe (software Vulkan) · no display ser
 - `a_key_changed_in_preferences_labels_the_menu_and_runs_the_command` (main.rs) clicks Fetch's key in Preferences › Keyboard, checks Esc cancels without closing the window, presses `Ctrl+Shift+G`, and finds it in the saved keys and the Repository menu; `Ctrl+Shift+P` is refused naming Push; with Keyboard shortcuts moved to `F9`, `?` does nothing and `F9` opens it.
 - keymap.rs: every default writes back as the menu label it replaced; fixed, taken and bare list keys are refused; saved keys load and a broken or clashing entry keeps the default; a press runs only the chord with exactly its modifiers, plain keys wait while typing, and `?` matches with Shift.
 - The menu tests that read the default labels pass unchanged. The macOS menu bar was not checked on a Mac here (the macOS target cannot be built in this container); its key equivalents come from the same labels.
+
+## Documentation site · 2026-11-05
+
+Linux x86_64 · Rust 1.97.0 · Mesa lavapipe · Zensical 0.1.0.
+
+- `python3 scripts/docs_screenshots.py` rendered the 12 shots (welcome, history in dark, light and 760 px, review, local changes, search, stashes, rebase with a fixup, conflict, recovery with a CLI-made backup, Preferences › Keyboard) in 39 s with no display server; each was inspected. `zensical build --clean` in `website/` reported no issues, and the landing and a workflow page were checked in Chromium at 1280 px in both themes and at 390 px.
+- The shots showed two bugs, now fixed. Preferences › Keyboard listed Pull under Fixed keys, because its label carries the behind count; the fixed list now leaves out every rebindable command by command. Recovery's more button drew `⋯` (U+22EF), which no bundled font has, as a box; it uses Phosphor's three dots, and `every_drawn_character_has_a_glyph` (recovery_view.rs) fails on the old button.
+
+- `new_tag_reads_signing_off_the_ui_thread_and_never_tags_unsigned` (main.rs) failed on a machine whose global Git configuration has an SSH signing key: the test read it. Its repository now sets an empty `user.signingkey`, which reads as unset. `fixed_keys_leave_out_rebindable_commands_whose_label_carries_a_count` (main.rs) checks the Fixed keys list. The 653 `git-good` tests pass.

@@ -2,3 +2,7 @@
 /data/
 /gg.psd
 __pycache__/
+# The documentation site's build output and its screenshots, which the
+# Docs workflow renders from the app (see website/README.md).
+/website/site/
+/website/docs/assets/screens/

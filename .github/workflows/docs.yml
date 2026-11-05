@@ -1,0 +1,63 @@
+name: Docs
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - website/**
+      - scripts/docs_screenshots.py
+      - apps/git-good/src/docs_screens.rs
+      - .github/workflows/docs.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-${{ github.event_name == 'pull_request' && github.run_id || 'pages' }}
+  cancel-in-progress: false
+
+env:
+  GG_OFFLINE: "1"
+
+jobs:
+  # Renders the screenshots from the app (offscreen, Mesa's software
+  # Vulkan) and builds the Zensical site in website/.
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+      - name: Software Vulkan for offscreen rendering
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends mesa-vulkan-drivers
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: docs
+      - uses: actions/setup-python@v6
+        with:
+          python-version: 3.x
+      - run: pip install zensical
+      - name: Screenshots
+        run: python3 scripts/docs_screenshots.py
+      - name: Site
+        working-directory: website
+        run: zensical build --clean
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: website/site
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/configure-pages@v6
+      - uses: actions/deploy-pages@v5
+        id: deployment

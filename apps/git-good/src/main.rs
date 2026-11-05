@@ -23,6 +23,8 @@ mod details_view;
 mod diagnostics;
 mod diff_view;
 mod diff_worker;
+#[cfg(test)]
+mod docs_screens;
 mod drafts;
 mod editor;
 mod export;
@@ -1886,6 +1888,23 @@ fn recovery_label(action: RecoveryAction) -> &'static str {
     }
 }
 
+/// The menu commands with a key that cannot be changed, as `Menu › Item`
+/// and key, for Preferences › Keyboard › Fixed keys. Rebindable commands
+/// are left out by command, not by label: some labels carry a count
+/// (`Pull 1 (rebase)`).
+fn fixed_menu_keys(table: &[menus::Menu<FrameCommand>]) -> Vec<(String, String)> {
+    menus::flatten(table)
+        .into_iter()
+        .filter(|(_, item)| !item.key.is_empty())
+        .filter(|(_, item)| {
+            !keymap::Action::ALL
+                .iter()
+                .any(|action| frame_command(*action) == item.command)
+        })
+        .map(|(path, item)| (format!("{path} › {}", item.label), item.key.to_string()))
+        .collect()
+}
+
 /// The follow-up after a rewrite: the push the rewritten branch needs, from
 /// how it now stands against its upstream (local refs only).
 fn rewrite_follow_up(
@@ -3201,11 +3220,7 @@ impl Browser {
         }
         let shortcuts = {
             let ready = self.frame_readiness();
-            let mut list = menus::flatten(&self.menu_table(&ready))
-                .into_iter()
-                .filter(|(_, item)| !item.key.is_empty())
-                .map(|(path, item)| (format!("{path} › {}", item.label), item.key.to_string()))
-                .collect::<Vec<_>>();
+            let mut list = fixed_menu_keys(&self.menu_table(&ready));
             list.extend(
                 [
                     ("Search", "Ctrl+K"),
@@ -3775,17 +3790,12 @@ impl Browser {
                             keyboard_keys(ui, &mut prefs, dialog);
                             ui.add_space(8.0);
                             ui.strong("Fixed keys");
-                            let rebindable: Vec<&str> =
-                                keymap::Action::ALL.iter().map(|action| action.label()).collect();
                             egui::Grid::new("prefs-keyboard")
                                 .num_columns(2)
                                 .striped(true)
                                 .spacing([16.0, 4.0])
                                 .show(ui, |ui| {
                                     for (action, key) in &shortcuts {
-                                        if rebindable.contains(&action.as_str()) {
-                                            continue;
-                                        }
                                         ui.label(action);
                                         ui.monospace(key);
                                         ui.end_row();
@@ -19851,6 +19861,30 @@ mod tests {
     }
 
     #[test]
+    fn fixed_keys_leave_out_rebindable_commands_whose_label_carries_a_count() {
+        let table = vec![menus::Menu {
+            title: "Repository",
+            entries: vec![
+                menus::item(
+                    "Pull 1 (rebase)",
+                    "Ctrl+Shift+L",
+                    frame_command(keymap::Action::Pull),
+                )
+                .entry(),
+                menus::item("Stashes…", "Ctrl+Alt+S", FrameCommand::Stashes).entry(),
+                menus::item("No key", "", FrameCommand::Stashes).entry(),
+            ],
+        }];
+        assert_eq!(
+            fixed_menu_keys(&table),
+            vec![(
+                "Repository › Stashes…".to_string(),
+                "Ctrl+Alt+S".to_string()
+            )]
+        );
+    }
+
+    #[test]
     fn a_key_changed_in_preferences_labels_the_menu_and_runs_the_command() {
         let ctx = egui::Context::default();
         crate::phosphor::install(&ctx);
@@ -20764,6 +20798,9 @@ mod tests {
         let (dir, mut app) = two_commits()?;
         let path = dir.path();
         git_in(path, &["config", "tag.gpgsign", "true"])?;
+        // No key, whatever the machine's global configuration has: an empty
+        // value reads as unset.
+        git_in(path, &["config", "user.signingkey", ""])?;
         app.state.selected = Some(git_in(path, &["rev-parse", "HEAD"])?);
         let recording = gg_git::process::Recording::start(&[(path, "<repo>")]);
         app.open_new_tag();

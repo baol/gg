@@ -1,0 +1,69 @@
+/* Landing page and screenshot styling on top of the Zensical theme. */
+
+.gg-hero {
+  text-align: center;
+  padding: 1.5rem 0 0.5rem;
+}
+.gg-hero h1 {
+  font-size: 2.6rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  margin: 0 0 0.6rem;
+}
+.gg-hero .gg-tagline {
+  font-size: 1.15rem;
+  max-width: 40rem;
+  margin: 0 auto 1.2rem;
+  opacity: 0.85;
+}
+.gg-hero .md-button {
+  margin: 0.25rem;
+}
+
+/* Screenshots: a quiet frame so dark shots sit well on a light page. */
+.md-typeset img.gg-shot,
+.md-typeset figure img {
+  border-radius: 8px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
+}
+.md-typeset figure {
+  margin: 1.2rem auto;
+}
+.md-typeset figcaption {
+  max-width: 44rem;
+  font-size: 0.8rem;
+  opacity: 0.8;
+}
+
+/* Big numbers on the landing and performance pages. */
+.gg-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+  gap: 0.8rem;
+  margin: 1.5rem 0;
+}
+.gg-stat {
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 8px;
+  padding: 0.8rem;
+  text-align: center;
+}
+.gg-stat strong {
+  display: block;
+  font-size: 1.6rem;
+  line-height: 1.2;
+  color: var(--md-accent-fg-color);
+}
+.gg-stat span {
+  font-size: 0.75rem;
+  opacity: 0.8;
+}
+
+@media (max-width: 600px) {
+  .gg-hero h1 {
+    font-size: 1.9rem;
+  }
+  .gg-hero .gg-tagline {
+    font-size: 1rem;
+  }
+}
