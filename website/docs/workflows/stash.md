@@ -7,7 +7,7 @@ description: Put changes aside and bring them back later, on the same branch or 
 
 ## Stash your changes
 
-Click **Stash changes** in the toolbar (++ctrl+shift+z++), write an optional message and choose whether to include untracked files. Stash is disabled when there is nothing to stash.
+Click **Stash changes** in the toolbar (++ctrl+shift+z++), write an optional message, and choose whether to include untracked files and whether to keep staged changes in the index. Stash is disabled when there is nothing to stash.
 
 ## Bring them back
 
@@ -22,4 +22,4 @@ The stash list button next to it shows how many stashes there are. Click it, or 
 
 Each stash shows the branch it was made on and its age. In the example, Linus stashed a half-finished burst size on `feature/rate-limit` a week ago.
 
-If applying conflicts with your current files, Git Good stops with the conflict view, and the stash stays in the list until you are done.
+If applying conflicts with your current files, the files are left with conflict markers, the footer reads, for example, *Restored stash@{0} · 1 conflict*, and the stash stays in the list.

@@ -90,4 +90,4 @@ git good --cli commit -m "Import the orders module"
 | Conflicts | `conflicts`, `conflict --file PATH --use ours \| theirs \| deletion \| --stage` |
 | More | `worktree list \| add \| remove`, `submodule status \| update`, `lfs status \| fetch` |
 
-Every command takes `--repo PATH` (default: the current folder). The full reference, with every option, is [docs/cli.md](https://github.com/baol/gg/blob/main/docs/cli.md) in the repository.
+Every command except `clone` and `init` takes `--repo PATH` (default: the current folder). The full reference, with every option, is [docs/cli.md](https://github.com/baol/gg/blob/main/docs/cli.md) in the repository.

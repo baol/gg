@@ -5,14 +5,14 @@ description: Resolve conflicts block by block and finish or abort the merge.
 
 # Resolve a merge conflict
 
-Grace merged `feature/sorting` into `main`. Both changed the same line of `src/routes.rs`: `main` pages the order list, `feature/sorting` sorts it newest first. Git stopped, and Git Good opens the conflict view:
+Grace merged `feature/sorting` into `main`. Both changed the same line of `src/routes.rs`: `main` pages the order list, `feature/sorting` sorts it newest first. Git stopped, and the band's **Resolve conflicts** (or the Changes tab) opens the conflict view:
 
 ![The conflict view: an amber band names the merge, the conflicted file is listed on the left, the conflict shows Base, Ours and Theirs side by side with buttons to choose, and the result preview is below](../assets/screens/conflict.png){ .gg-shot }
 
 ## Read it
 
 - The **band** says what stopped (*merging feature/sorting into main*), how many conflicts are left, and offers **Continue** and **Abort and restore**.
-- Under it, one sentence says which side is which: *Ours is main, Theirs is feature/sorting*. In a rebase the sides swap, and the sentence says so.
+- Under it, one sentence says which side is which: *Ours is main, Theirs is feature/sorting*. In a rebase the sides swap; the legend under the file list says so.
 - **Conflicted** lists the files still to do; **Resolved, staged** fills as you finish them.
 
 ## Resolve each block
@@ -28,7 +28,7 @@ For each conflict, the three versions sit side by side: **Base** (the common anc
 
 The **Result** below is a preview of the working file. It is written only when you stage. ++bracket-left++ and ++bracket-right++ move between conflicts.
 
-For anything the buttons cannot do (here you might want `page(1, 25)` of the sorted list), click **Open in editor**, edit the file, then **Refresh external edits**. **Whole file** takes one side for the entire file.
+For anything the buttons cannot do (here you might want `page(1, 25)` of the sorted list), click **Open in editor**, edit the file, then **Refresh external edits**. Switch from **Block by block** to **Whole file** to take one side for the entire file.
 
 ## Finish
 

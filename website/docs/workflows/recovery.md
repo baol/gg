@@ -24,7 +24,7 @@ Create branch here…
 :   Make a new branch at the old tip, leaving the current branch alone. The safest choice.
 
 Restore feature/rate-limit…
-:   Move the branch back to the old tip (a hard reset, after confirming). Git Good saves the tip it leaves as another backup first, so a restore can be undone too.
+:   Move the branch back to the old tip (a hard reset, after confirming). The branch must be checked out and the working tree clean. Git Good saves the tip it leaves as another backup first, so a restore can be undone too.
 
 **⋯** has *Reset branch here* (Soft, Mixed or Hard) and copies the commit ID or the ref. Hard reset refuses when it would overwrite untracked files, and lists them.
 
@@ -32,4 +32,4 @@ Restore feature/rate-limit…
 
 The **Reflog** tab lists where `HEAD` and each branch have been, as `git reflog` does, for anything that happened outside Git Good.
 
-Backups are kept until you delete them with **Delete backup…**.
+Backups are kept until you delete them with **Delete backup…**, unless Preferences › Rebase & recovery › Keep private backups is set to 30 or 90 days.

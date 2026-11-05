@@ -39,11 +39,11 @@ git good --cli rewrite --from 2d566e9 \
 
 **In Git Good**
 
-1. The toolbar already says so: `main ↑5 ↓1`, and the Pull button shows *1*. The file watcher and a background fetch keep these counts current.
+1. After a **Fetch** (++ctrl+shift+f++), the toolbar says so: `main ↑5 ↓1`, and the Pull button shows *1*. The counts come from your local refs and stay current as they change; Git Good never fetches on its own.
 2. Press **Pull** (++ctrl+shift+l++). It fetches and rebases Ada's five commits onto Margaret's, the default strategy.
 3. Press **Push** (++ctrl+shift+p++).
 
-If the rebase stops on a conflict, the [conflict view](workflows/conflicts.md) opens with the band naming the step, and **Abort and restore** returns to where you started.
+If the rebase stops on a conflict, the band names the step: **Resolve conflicts** opens the [conflict view](workflows/conflicts.md), and **Abort and restore** returns to where you started.
 
 **What it saves.** You see you are behind before you push, not after a rejection. And if a push is rejected anyway, Git Good offers **Fetch** and stops there: nothing is merged or rebased behind your back.
 
@@ -68,7 +68,7 @@ If the rebase stops on a conflict, the [conflict view](workflows/conflicts.md) o
 
 **In Git Good**
 
-1. The conflict view opens with *Ours is main, Theirs is feature/sorting* spelled out.
+1. The band reads *Ours is main, Theirs is feature/sorting*. Click **Resolve conflicts** to open the conflict view.
 2. Read Base, Ours and Theirs side by side, and choose with ++1++ to ++4++, or open the file in your editor for a hand-made combination.
 3. **Stage resolution** (++ctrl+s++), then **Continue** (++ctrl+enter++).
 
@@ -88,7 +88,7 @@ If the rebase stops on a conflict, the [conflict view](workflows/conflicts.md) o
 
 ![Recovery with the backup of feature/rate-limit](assets/screens/recovery.png){ .gg-shot }
 
-**What it saves.** Without it, the old tip is somewhere in `git reflog feature/rate-limit`, and only until the reflog expires. Git Good's backups are refs with a timestamp and the operation in their name, kept until you delete them.
+**What it saves.** Without it, the old tip is somewhere in `git reflog feature/rate-limit`, and only until the reflog expires. Git Good's backups are refs with a timestamp and the operation in their name, kept until you delete them (or for the period set in Preferences › Rebase & recovery › Keep private backups).
 
 ## Context switch in the middle of work
 
@@ -96,7 +96,7 @@ If the rebase stops on a conflict, the [conflict view](workflows/conflicts.md) o
 
 **In Git Good**
 
-1. Double-click `main` in the sidebar. Git Good sees the uncommitted changes and offers **Stash and switch…**.
+1. Double-click `main` in the sidebar. Changes that do not clash carry over; if Git refuses because they would be overwritten, the footer offers **Stash and switch**.
 2. Fix, commit, push.
 3. Switch back to `feature/rate-limit`, open the stash list and **Pop** *tune the burst size*.
 

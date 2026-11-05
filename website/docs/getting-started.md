@@ -39,7 +39,7 @@ From a terminal inside a repository:
 git good
 ```
 
-Or pass a folder: `git good ~/src/acme-api`. With no repository, the window opens on the welcome view:
+Or pass a folder: `git good ~/src/acme-api`. Outside a repository, Git Good reopens the last repository you used; with none (or with Preferences › General › reopen last repository off) it opens on the welcome view:
 
 ![The welcome view: Open, Clone and New repository buttons above a list of recent repositories with their branch and last-opened date](assets/screens/welcome.png){ .gg-shot }
 

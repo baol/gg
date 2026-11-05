@@ -32,10 +32,10 @@ Click a command's key and press the new one. A key that is already taken is refu
 
 | Section | Settings |
 |---|---|
-| General | Clone folders and the preferred one, pull strategy (rebase, merge, fast-forward only), the editor to open files in, network avatars |
-| Appearance | Theme (system, dark, light), compact or comfortable rows, zoom, code font size, title bar style |
+| General | Clone folders and the preferred one, reopen the last repository, prune deleted remote branches on fetch, the editor to open files in, dialog defaults (stash untracked files, merge with `--no-ff`, switch to a new branch) |
+| Appearance | Theme (system, dark, light), compact or comfortable rows, zoom, code font size, title bar style, avatars in History |
 | Diff | Default layout (inline or side by side), context lines, whitespace, wrapping |
-| Commit | Signing |
-| Rebase & recovery | Stash working changes before a rebase by default |
+| Commit | Identity, subject length guide, run hooks, sign commits and tags |
+| Rebase & recovery | Stash before a rebase, confirm Drop and Reset, pull strategy (rebase, merge, fast-forward only), offer force-with-lease after a rewrite, how long to keep private backups |
 
 Changes apply immediately and are saved to Git Good's settings file in your configuration folder (`~/.config/gg/` on Linux).

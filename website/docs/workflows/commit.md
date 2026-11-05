@@ -20,8 +20,8 @@ Click **Changes** in the toolbar. The badge counts the changed files; here there
 In the example, `src/routes.rs` has two hunks: a new `use crate::orders;` import and the change that makes `list_orders` call it. Both belong to the same commit, but you could commit them separately:
 
 1. Click **Stage hunk** on a hunk header to stage that hunk.
-2. Or tick the boxes on single changed lines and stage just those lines.
-3. ++s++ and ++u++ stage and unstage the selection; ++bracket-left++ and ++bracket-right++ move between hunks.
+2. Or tick the boxes on single changed lines and press **Stage N lines** below the diff.
+3. With a file list focused, ++s++ and ++u++ stage and unstage the selected file; ++bracket-left++ and ++bracket-right++ move between hunks.
 
 **Discard hunk** throws a hunk's working changes away after asking you to confirm.
 

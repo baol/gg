@@ -22,7 +22,7 @@ History is the view Git Good opens on. It streams the log in pages: the first ro
 | ++j++ / ++k++ or arrows | Select the next or previous commit |
 | ++space++ | Show or hide the details |
 | ++enter++ | [Review](review.md) the selected commit |
-| ++alt+a++ | Open the commit's actions: cherry-pick, revert, reset, tag, rebase from here… |
+| ++alt+a++ | Open the commit's actions: cherry-pick, revert, reword, fixup, drop, rebase from here, reset… |
 | ++ctrl+c++ | Copy the commit ID |
 | ++ctrl+f++ | Filter history by message, author or ID |
 
