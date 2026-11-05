@@ -316,9 +316,15 @@ mod tests {
             }))
         }
     }
+    /// The next update `predicate` accepts. A loaded CI runner (macOS on
+    /// Intel runs the suite at a fraction of this machine's speed) can take
+    /// seconds per page of the 10,000-file fixture, so the limit only
+    /// catches a hang; the error names the wait that ran out.
+    #[track_caller]
     fn wait<T>(output: &Mutex<Option<T>>, predicate: impl Fn(&T) -> bool) -> Result<T, String> {
+        let caller = std::panic::Location::caller();
         let start = Instant::now();
-        while start.elapsed() < Duration::from_secs(10) {
+        while start.elapsed() < Duration::from_secs(60) {
             if let Some(update) = output.lock().map_err(error)?.take()
                 && predicate(&update)
             {
@@ -326,8 +332,12 @@ mod tests {
             }
             thread::sleep(Duration::from_millis(1));
         }
-        Err("Timed out waiting for comparison".into())
+        Err(format!(
+            "Timed out waiting for comparison at line {}",
+            caller.line()
+        ))
     }
+    #[track_caller]
     fn wait_page(
         output: &Mutex<Option<Result<Update, String>>>,
         predicate: impl Fn(&Update) -> bool,
