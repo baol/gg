@@ -885,3 +885,13 @@ Linux x86_64 · Rust 1.97.0 · Git 2.43.0 · git-lfs 3.4.1 · disposable Git fix
 - Usage errors are a type, not a message prefix: `switch`, `clone`, `tag` without their value, `branch --delete x --create`, `commit` without `-m`, `stash push -m` and `reset` without a mode now exit 2; `show no-such-revision` exits 1. `every_usage_error_exits_2_and_a_git_failure_exits_1` (apps/git-good/tests/cli.rs), `usage_errors_exit_2_whatever_their_words` (cli_args.rs). Cherry-pick and revert usage lines now name `--cli`.
 - Unwatched repositories: a focus re-read the whole history every time and read the signing configuration twice. Now it re-reads the working files and index, reads the refs in-process off the UI thread (`gg_git::refs::fingerprint`), and loads history only when a ref moved. `a_repository_that_cannot_be_watched_is_told_once_and_reread_on_focus` (main.rs) checks a focus with nothing moved and one after a branch made outside.
 - CI: the release smoke step ran `git-good history`, which the `--cli` change turned into a usage error; it runs `git-good --cli history`. The release build's dead-code warning for the debug-only `GG_REBASE`, `GG_REVIEW` and `GG_WORKTREES` fields is gone.
+
+## CJK font and wide-character wrapping · 2026-11-05
+
+Linux x86_64 · Rust 1.97.0 · WenQuanYi Zen Hei installed (`/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc`).
+
+- `the_first_ideograph_loads_a_system_font` lays out `漢字` with only the bundled fonts installed: the hook starts the background read, and within a few frames `system-cjk` is in the font definitions and the monospace font has 漢 (about 40 ms here). The test skips on a machine with no CJK font.
+- `a_file_that_is_not_a_cjk_font_is_never_installed`: a file named like Noto Sans CJK that is not a font, and the bundled icon font, which parses but has no ideographs, are both refused, so egui never sees them.
+- `wide_characters_wrap_as_two_columns` wraps a 40-word line of ideographs, kana and Hangul in Diff and Full file at 720 px: it takes more rows than its character count would give, no segment is wider than the columns plus the spare one, every segment is painted, and the segments rebuild the line.
+- `wide_characters_take_two_columns_and_start_their_row` (wrap_rows.rs) checks column widths, the reach a row publishes, and that a wide character starting in a row's last column stays in that row.
+- Limitations: a font's CJK advance may differ a little from two Latin columns, so a wrapped row of CJK can end slightly short of or past the column grid; the spare column absorbs the overhang. Emoji count as two columns but draw from the bundled emoji font.

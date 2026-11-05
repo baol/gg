@@ -1726,6 +1726,15 @@ Layer: interaction
 - And when the block starts on one page and ends on the next, each line pairs with the same partner on either page; another file shows none of the previous file's emphasis
 Covered by (interaction): `changed_words_are_found_between_paired_lines`, `emphasis_pairs_deleted_and_added_lines_in_order_on_any_page` (crates/engine/src/diff.rs); `changed_words_are_kept_per_row_until_another_document_arrives` (apps/git-good/src/diff_view.rs)
 
+### REV-77 CJK text draws and wraps by its width
+Fixture: a file whose added line repeats `漢字NNかな한글`, on a machine with a CJK font installed
+Layer: interaction
+- When the user opens it in Diff or Full file
+- Then the ideographs, kana and Hangul draw from the system font, not as boxes; Latin text keeps its fonts
+- And with **Wrap long lines** on, each wide character takes two columns: no wrapped row is wider than the reading area, and the rows rebuild the line in order
+- And a file that is not a font, or a font without ideographs, is never installed
+Covered by (interaction): `the_first_ideograph_loads_a_system_font`, `a_file_that_is_not_a_cjk_font_is_never_installed`, `known_cjk_files_rank_monospace_and_regular_first` (apps/git-good/src/wide_font.rs); `wide_characters_wrap_as_two_columns` (apps/git-good/src/diff_view.rs); `wide_characters_take_two_columns_and_start_their_row` (apps/git-good/src/wrap_rows.rs)
+
 ### REV-74 Inline by default below 1040 px
 Fixture: `fx-linear` with Preferences › Diff › Default layout **Side by side**
 Layer: interaction

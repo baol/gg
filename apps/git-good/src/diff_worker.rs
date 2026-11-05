@@ -255,14 +255,21 @@ impl Worker {
                                     doc.rows
                                         .iter()
                                         .map(|r| {
-                                            u32::try_from(r.text.chars().count())
+                                            u32::try_from(crate::wrap_rows::reach(&r.text))
                                                 .unwrap_or(u32::MAX)
                                         })
                                         .collect()
                                 })
                                 .unwrap_or_default(),
                         );
-                        max_columns = widths.iter().max().copied().unwrap_or(0) as usize;
+                        // Wide characters take two columns.
+                        max_columns = result.as_ref().map_or(0, |doc| {
+                            doc.rows
+                                .iter()
+                                .map(|r| crate::wrap_rows::columns(&r.text))
+                                .max()
+                                .unwrap_or(0)
+                        });
                         if let Ok(doc) = &result {
                             hunks = doc
                                 .rows

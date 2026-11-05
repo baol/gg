@@ -102,6 +102,7 @@ mod titlebar;
 mod trail;
 mod watcher;
 mod welcome_view;
+mod wide_font;
 mod worktree_cli;
 mod worktree_worker;
 mod wrap_rows;
@@ -426,6 +427,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         native_options(custom_titlebar, window_size, icon),
         Box::new(move |cc| {
             phosphor::install(&cc.egui_ctx);
+            wide_font::install(&cc.egui_ctx);
             let mut app = Browser::new(path);
             app.chrome.custom = custom_titlebar;
             // Linux: the desktop's caption buttons on the side its layout puts them.
