@@ -175,6 +175,7 @@ Goal: take what the ArtCraft apps (photocraft, gridcraft, wordcraft, pdfcraft, c
 14. **Refs sidebar at scale · complete.** Draw only the visible rows from a flat cached list rebuilt when refs, the filter or open folders change, instead of laying out every ref each frame. Source: gridcraft `crates/ui-egui/src/outline.rs`.
 15. **Engineering · in progress.** Perf benchmarks emit JSON checked against a budgets file and baseline, with peak RSS; README screenshots rendered offscreen with `egui_kittest` (no Xvfb, no desktop takeover); a slow-frame log naming the stage and command; one shortcut table feeding menus, dispatch and Help, then rebindable keys; AccessKit on, F6 between regions and Shift+F10 for context menus; a lint that every test cited in acceptance.md exists. Sources: photocraft `crates/testkit/src/perf.rs`, `crates/ui-egui/examples/snapshot.rs`, `crates/ui-egui/src/frame_stages.rs`, `crates/ui-egui/src/input/shortcuts.rs`; figcraft `crates/ui-egui/src/a11y.rs`.
    - **Part 1 · complete.** A test reads acceptance.md and fails on any cited test that does not exist in the file the line names; the three stale citations it found (two renamed tests, one in another file) are fixed.
+   - **Part 2 · complete.** Slow-frame log: each frame is timed in stages; a frame of 50 ms or more logs its total, its three slowest stages and the command it ran, at most once per 2 s with the skipped frames counted.
 
 Not taken: docking and rearrangeable panes, tabs, timelines, plugins, translations, toast stacks, and update checks (they would break RULE-08).
 

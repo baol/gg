@@ -30,6 +30,7 @@ mod file_history_worker;
 mod folder_picker;
 mod folders;
 mod footer;
+mod frame_stages;
 mod graph;
 mod history_view;
 #[cfg(test)]
@@ -2280,6 +2281,8 @@ struct Browser {
     /// The repository the watcher could not watch: told once, then re-read
     /// whenever the window gets focus back.
     unwatched: Option<PathBuf>,
+    /// This frame's stages, for the slow-frame log.
+    stages: frame_stages::Stages,
     /// The refs of the unwatched repository as last read, so a focus reloads
     /// history only when a ref moved.
     unwatched_refs: Option<u64>,
@@ -2475,6 +2478,7 @@ impl Browser {
             pending: None,
             watcher: None,
             unwatched: None,
+            stages: Default::default(),
             unwatched_refs: None,
             refs_probe: None,
             last_load: None,
@@ -4171,6 +4175,7 @@ impl Browser {
         go_local: &mut bool,
         go_history: &mut bool,
     ) {
+        self.stages.command(format!("{command:?}"));
         self.refresh_before_command(ctx);
         match command {
             FrameCommand::Fetch => self.start_fetch(ctx, None, self.prefs.fetch_prune),
@@ -11448,6 +11453,7 @@ impl Browser {
     }
 
     fn draw_ui(&mut self, ui: &mut egui::Ui) {
+        self.stages.begin(std::time::Instant::now());
         self.record_place();
         let (back, forward) = ui.input(|i| {
             (
@@ -11612,6 +11618,7 @@ impl Browser {
         }
         self.poll_jobs(ctx);
         self.poll_conflict_view(ctx);
+        self.stages.mark("polling", std::time::Instant::now());
         let narrow = ctx.content_rect().width() < 1040.0;
         let wide_refs = !narrow
             && self.refs_shown()
@@ -12093,6 +12100,7 @@ impl Browser {
                     });
                 });
             });
+        self.stages.mark("toolbar", std::time::Instant::now());
         // Changes › Stashes… and the sidebar's stash rows open the picker
         // centered under the toolbar.
         if let Some(pick) = self.stash_picker(ctx, ui.layer_id()) {
@@ -12464,6 +12472,7 @@ impl Browser {
                 self.apply_refs_action(ctx, action);
             }
         }
+        self.stages.mark("refs sidebar", std::time::Instant::now());
         self.draw_refs_drawer(ctx);
         if go_local {
             let conflicted = self
@@ -13591,6 +13600,7 @@ impl Browser {
         self.draw_tag_create(ctx);
         self.draw_force_push(ctx);
         self.draw_delete_remote(ctx);
+        self.stages.mark("dialogs", std::time::Instant::now());
         if self.conflict_view.is_some() {
             // The workspace's own footer: its keys, as in the conflict mockup.
             // The workspace's own footer: its keys and what Abort restores.
@@ -14353,6 +14363,9 @@ impl eframe::App for Browser {
         #[cfg(debug_assertions)]
         let ctx = ui.ctx().clone();
         self.draw_ui(ui);
+        if let Some(slow) = self.stages.finish("views", std::time::Instant::now()) {
+            diagnostics::log("slow-frame", &slow);
+        }
         #[cfg(debug_assertions)]
         if let Some(path) = std::env::var_os("GG_SCREENSHOT") {
             let settle = std::env::var("GG_SCREENSHOT_DELAY_MS")
@@ -19714,6 +19727,26 @@ mod tests {
             events,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn a_frame_is_timed_in_its_stages_for_the_slow_frame_log() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+            app.draw_ui(ctx)
+        });
+        assert_eq!(
+            app.stages.names(),
+            ["polling", "toolbar", "refs sidebar", "dialogs"],
+            "views is the last stage, closed after the frame"
+        );
+        assert!(
+            app.stages
+                .finish("views", std::time::Instant::now())
+                .is_none_or(|line| line.contains("views")),
+            "a slow test frame names its stages"
+        );
     }
 
     #[test]

@@ -909,3 +909,8 @@ Linux x86_64 · Rust 1.97.0.
 
 - `every_test_acceptance_cites_exists_where_it_says` (apps/git-good/tests/acceptance_cites.rs) reads the 799 test names cited on `Covered by` lines and the functions every `.rs` file under `apps/` and `crates/` defines. On its first run it found three stale citations: `window_toolbar_holds_navigation_and_sync_in_place_across_views_and_widths` (renamed `window_toolbar_keeps_the_owners_buttons_in_place_across_views_and_widths`, cited four times), `version_info_is_four_plain_build_lines` (renamed `version_info_is_plain_build_git_and_os_lines`), and two commit-draft tests cited in main.rs that live in interaction_tests.rs. All are fixed.
 - `a_renamed_or_misplaced_test_is_reported` checks both failures: a test cited in the wrong file, and one that exists nowhere. Renaming a cited test in acceptance.md by hand made the first test fail naming each line and file.
+
+## Slow-frame log · 2026-11-05
+
+- `a_slow_frame_names_its_slowest_stages_and_command` and `slow_frames_close_together_are_counted_on_the_next_line` (apps/git-good/src/frame_stages.rs) check the line (`76 ms (sidebar 61 ms, views 12 ms, polling 3 ms); command Fetch`), the 50 ms threshold, and the 2 s quiet time with the skipped frames counted.
+- `a_frame_is_timed_in_its_stages_for_the_slow_frame_log` (main.rs) draws a window frame and finds the stages marked in order: polling, toolbar, refs sidebar, dialogs; views closes the frame.
