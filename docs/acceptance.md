@@ -7,7 +7,7 @@ Owners: the behavior is specified in [architecture](architecture.md), [final des
 Each case has an ID (area prefix and number), a fixture, a layer, Given/When/Then steps, and a **Covered by** line. Window size is 1440×900 unless a case says otherwise; *narrow* means 720×480. A case reading `— see XXX-NN` is a duplicate kept so its ID stays valid.
 
 - **Layer:** *product* (a task completes, consequences are clear, work is preserved and recoverable), *interaction* (selection, focus, shortcuts, stale results, narrow layouts), or *visual* (sizes, colors, placement, exact copy). Product cases come first when time is short.
-- **Covered by (kind):** the tests that check the case today and where they run: *backend* (Git-level tests in `crates/`), *interaction* (egui input and geometry tests in `apps/git-good/src`), *end-to-end* (the `git good` binary in `apps/git-good/tests/cli.rs`). *(partial)* means the tests check only part of the case, for example a GUI case backed only by Git-level tests, or a dialog that is rendered but not completed. *Not automated* means no test yet.
+- **Covered by (kind):** the tests that check the case today and where they run: *backend* (Git-level tests in `crates/`), *interaction* (egui input and geometry tests in `apps/git-good/src`), *end-to-end* (the `git good` binary in `apps/git-good/tests/cli.rs`). *(partial)* means the tests check only part of the case, for example a GUI case backed only by Git-level tests, or a dialog that is rendered but not completed. *Not automated* means no test yet. A test (`every_test_acceptance_cites_exists_where_it_says`, apps/git-good/tests/acceptance_cites.rs) fails when a cited test does not exist in the file named in the parenthesis after it (`(diff_view.rs)`, `(crates/engine)`), or anywhere when none is named, so a renamed or deleted test cannot leave a case looking covered.
 
 Areas: [Frame and toolbar](#frame-and-toolbar) (FRM) · [History and refs](#history-and-refs) (HIS) · [Review and reader](#review-and-reader) (REV) · [Local Changes](#local-changes) (CHG) · [Network](#network) (NET) · [Stash](#stash) (STA) · [Merge, cherry-pick, revert and conflicts](#merge-cherry-pick-revert-and-conflicts) (INT) · [Rewrite and recovery](#rewrite-and-recovery) (RWR) · [Preferences](#preferences) (PRF) · [Worktrees, submodules and LFS](#worktrees-submodules-and-lfs) (WTR, SUB, LFS) · [Signing](#signing) (SIG) · [Repository dialogs](#repository-dialogs) (DLG) · [CLI](#cli) (CLI) · [Shared rules](#shared-rules) (RULE) · [Cross-cutting scenarios](#cross-cutting-scenarios) (XCT) · [CLI contract](#cli-contract) (CLI-C) · [Spec decisions](#spec-decisions--2026-11-04)
 
@@ -244,7 +244,7 @@ Fixture: `fx-branchy`
 Layer: interaction
 - When shown in History, Local Changes and Review, wide and narrow
 - Then left to right: refs sidebar toggle, **Changes** tab, **History** tab, **Fetch**, **Pull**, **Push**, **New branch**, **Stash changes**, **Stashes**, **Interactive rebase from here**, **Recovery**, then right-aligned branch button and search; New tag, Merge into current and Interactive rebase of the current branch have no buttons (FRM-72); icons never overlap, move between views, or extend past the window edge
-Covered by (interaction, partial): `window_toolbar_holds_navigation_and_sync_in_place_across_views_and_widths`, `local_changes_and_history_share_one_navigation_strip_at_every_width`, `commands_off_the_toolbar_keep_their_menu_home_and_search_entry` (apps/git-good/src/main.rs) (History and Local Changes at 720 and 1120 px; Review not checked)
+Covered by (interaction, partial): `window_toolbar_keeps_the_owners_buttons_in_place_across_views_and_widths`, `local_changes_and_history_share_one_navigation_strip_at_every_width`, `commands_off_the_toolbar_keep_their_menu_home_and_search_entry` (apps/git-good/src/main.rs) (History and Local Changes at 720 and 1120 px; Review not checked)
 
 ### FRM-24 Toolbar tooltips name the command and its menu shortcut
 Fixture: `fx-remote`
@@ -347,7 +347,7 @@ Covered by (interaction): `the_switcher_runs_the_row_under_the_keyboard_cursor` 
 Fixture: `fx-branchy`, 720 px
 Layer: interaction
 - Then below 1040 px the branch button is an icon inside the window; its tooltip and the switcher's current row name the branch with its ↑↓ counts, and it opens the same switcher; every toolbar button (sidebar, Changes | History, Fetch Pull Push, New branch, Stash and Stashes, Interactive rebase from here, Recovery, branch, search) fits at 720 px
-Covered by (interaction): `the_branch_button_opens_the_switcher_at_both_widths`, `window_toolbar_holds_navigation_and_sync_in_place_across_views_and_widths` (apps/git-good/src/main.rs)
+Covered by (interaction): `the_branch_button_opens_the_switcher_at_both_widths`, `window_toolbar_keeps_the_owners_buttons_in_place_across_views_and_widths` (apps/git-good/src/main.rs)
 
 ### Search
 
@@ -579,7 +579,7 @@ Fixture: `fx-remote`
 Layer: visual
 - When Fetch runs and finishes, the Changes badge appears/disappears, and an error arrives in the footer
 - Then menu bar (26 px), toolbar (34 px) and status line keep fixed heights; panes do not move; toolbar icons keep x positions
-Covered by (interaction, partial): `window_toolbar_holds_navigation_and_sync_in_place_across_views_and_widths` (apps/git-good/src/main.rs) — positions only; Not automated for heights
+Covered by (interaction, partial): `window_toolbar_keeps_the_owners_buttons_in_place_across_views_and_widths` (apps/git-good/src/main.rs) — positions only; Not automated for heights
 
 ### FRM-72 Every command is reachable at narrow width through menus and search
 Fixture: `fx-branchy`, `fx-stash`; narrow
@@ -2146,7 +2146,7 @@ Fixture: `fx-dirty`; `fx-worktrees`
 Layer: product
 - When the user types a message, selects `c.txt`, goes to History and back
 - Then the exact text and the `c.txt` selection are restored; opening a linked worktree shows an empty draft
-Covered by (interaction): `commit_draft_survives_history_navigation`, `commit_draft_does_not_cross_worktrees` (main.rs); `draft_restores_the_selected_comparison` (status_view.rs)
+Covered by (interaction): `commit_draft_survives_history_navigation`, `commit_draft_does_not_cross_worktrees` (interaction_tests.rs); `draft_restores_the_selected_comparison` (status_view.rs)
 
 ### HIS-82 Several commits compare, copy and cherry-pick together
 Fixture: `main` with three commits; `feature` with two commits not on `main`
@@ -2616,7 +2616,7 @@ Covered by (end-to-end): `stash_cli_lists_pushes_applies_pops_and_drops` (tests/
 Fixture: `fx-stash`; `fx-linear`
 Layer: interaction
 - Then on `fx-stash` **Changes → Stashes…** is enabled and the refs sidebar shows `STASHES 3`; there is no toolbar Stashes button; on `fx-linear` **Changes → Stashes…** and its search Action are disabled with `No stashes`
-Covered by (interaction): `stash_commands_follow_local_changes_and_entries`, `commands_off_the_toolbar_keep_their_menu_home_and_search_entry`, `window_toolbar_holds_navigation_and_sync_in_place_across_views_and_widths` (apps/git-good/src/main.rs)
+Covered by (interaction): `stash_commands_follow_local_changes_and_entries`, `commands_off_the_toolbar_keep_their_menu_home_and_search_entry`, `window_toolbar_keeps_the_owners_buttons_in_place_across_views_and_widths` (apps/git-good/src/main.rs)
 
 ### STA-08 Picker rows list ref, message, branch, age and file count
 Fixture: `fx-stash`
@@ -4169,7 +4169,7 @@ Fixture: `fx-linear`
 Layer: visual
 - When **Help › About Git Good**
 - Then the dialog frame (title **About Git Good** and × in one row, footer below) shows the logo, version, **Commit** (8 characters), **Built** (`YYYY-MM-DD · <target triple>`), authors (people only), license with link, source link, AI-assistance/no-warranty note; **Copy version info** copies six plain lines (`Git Good <version>`, `commit <id>`, `built <date>`, `target <triple>`, `git <version>` or `git unknown` before Git's version is read, `os <system> (<release>) <architecture>`); **Close** or `Esc` closes
-Covered by (interaction, partial): `about_names_the_license_and_the_human_authors`, `version_info_is_four_plain_build_lines` (apps/git-good/src/branding.rs); the rendered frame is checked by native review
+Covered by (interaction, partial): `about_names_the_license_and_the_human_authors`, `version_info_is_plain_build_git_and_os_lines` (apps/git-good/src/branding.rs); the rendered frame is checked by native review
 
 ### DLG-12 Decision dialogs are modal — see FRM-64
 
