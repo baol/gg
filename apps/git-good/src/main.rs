@@ -21821,6 +21821,13 @@ mod tests {
                 .collect()
         };
         git_in(path, &["init", "-q", "-b", "main"])?;
+        // Commits before the recipe: its absent version is the last of them.
+        std::fs::write(path.join("README.md"), "recipes\n")?;
+        git_in(path, &["add", "."])?;
+        git_in(path, &["commit", "-qm", "Initial commit"])?;
+        std::fs::write(path.join("pancakes.md"), "pancakes\n")?;
+        git_in(path, &["add", "."])?;
+        git_in(path, &["commit", "-qm", "Update pancakes."])?;
         let folder = path.join("Pane e pizza");
         std::fs::create_dir(&folder)?;
         let focaccia = lines("focaccia", 20);
@@ -21839,7 +21846,7 @@ mod tests {
         git_in(path, &["commit", "-qm", "Focaccia con il Bimby"])?;
         let mut app = Browser::new(path.to_path_buf());
         app.load(&ctx);
-        frames_until(&ctx, &mut app, vec![], |app, _| app.state.count == 2)?;
+        frames_until(&ctx, &mut app, vec![], |app, _| app.state.count == 4)?;
         app.open_review_at(&ctx, "HEAD".into(), "Focaccia con il Bimby".into(), None);
         let files = frames_until(&ctx, &mut app, vec![], |_, text| {
             text.iter().any(|line| line == "FILES 2")
@@ -21864,17 +21871,22 @@ mod tests {
                 repeat: false,
                 modifiers: egui::Modifiers::NONE,
             }],
-            |_, text| text.iter().any(|line| line == "FILE HISTORY 2"),
+            |_, text| text.iter().any(|line| line == "FILE HISTORY 3"),
         )?;
         for expected in [
             "Focaccia con il Bimby← Pane e pizza/Focaccia.md",
             "Add Focaccia",
+            "Update pancakes.",
         ] {
             assert!(
                 history.iter().any(|line| line == expected),
                 "missing {expected:?}: {history:?}"
             );
         }
+        assert!(
+            !history.iter().any(|line| line == "Initial commit"),
+            "the absent version is the commit just before the file was added: {history:?}"
+        );
         Ok(())
     }
 

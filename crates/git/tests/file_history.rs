@@ -443,3 +443,65 @@ fn a_new_file_less_than_25_percent_like_a_deleted_one_starts_its_own_versions() 
     );
     Ok(())
 }
+
+#[test]
+fn the_absent_version_before_a_file_is_the_commit_just_before_it_was_added() -> Result {
+    // As in baol/recipes: Focaccia.md was added in d7fb0bb, whose parent is
+    // "Update pancakes."; the absent row named the root "Initial commit".
+    let dir = init()?;
+    write(dir.path(), "README.md", "recipes\n")?;
+    commit(dir.path(), "Initial commit", "2026-01-01T12:00:00+00:00")?;
+    write(dir.path(), "pancakes.md", "pancakes\n")?;
+    commit(dir.path(), "Update pancakes.", "2026-01-02T12:00:00+00:00")?;
+    write(dir.path(), "Focaccia.md", "flour\n")?;
+    commit(dir.path(), "Add Focaccia", "2026-01-03T12:00:00+00:00")?;
+
+    let mut session = open(dir.path(), "HEAD", b"Focaccia.md").map_err(|e| e.to_string())?;
+    collect(&mut session)?;
+    let versions: Vec<_> = session
+        .versions()
+        .iter()
+        .map(|v| (v.subject.as_str(), v.present(), v.kind))
+        .collect();
+    assert_eq!(
+        versions,
+        vec![
+            ("Add Focaccia", true, Some(HistoryKind::Added)),
+            ("Update pancakes.", false, None),
+        ]
+    );
+    Ok(())
+}
+
+#[test]
+fn the_absent_version_after_a_deletion_is_the_commit_that_deleted_it() -> Result {
+    let dir = init()?;
+    write(dir.path(), "README.md", "recipes\n")?;
+    commit(dir.path(), "Initial commit", "2026-01-01T12:00:00+00:00")?;
+    write(dir.path(), "f.txt", "one\n")?;
+    commit(dir.path(), "Add", "2026-01-02T12:00:00+00:00")?;
+    std::fs::remove_file(dir.path().join("f.txt"))?;
+    commit(dir.path(), "Delete", "2026-01-03T12:00:00+00:00")?;
+    write(dir.path(), "other.txt", "x\n")?;
+    commit(dir.path(), "Unrelated", "2026-01-04T12:00:00+00:00")?;
+    write(dir.path(), "f.txt", "two\n")?;
+    commit(dir.path(), "Re-add", "2026-01-05T12:00:00+00:00")?;
+
+    let mut session = open(dir.path(), "HEAD", b"f.txt").map_err(|e| e.to_string())?;
+    collect(&mut session)?;
+    let subjects: Vec<_> = session
+        .versions()
+        .iter()
+        .map(|v| (v.subject.as_str(), v.present()))
+        .collect();
+    assert_eq!(
+        subjects,
+        vec![
+            ("Re-add", true),
+            ("Delete", false),
+            ("Add", true),
+            ("Initial commit", false),
+        ]
+    );
+    Ok(())
+}

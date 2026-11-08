@@ -1636,6 +1636,16 @@ Layer: product
 - And a new file less than 25 % alike to every deleted file starts its own File history (`Added`)
 Covered by (backend, interaction): `a_rewritten_rename_follows_the_most_similar_deleted_file_down_to_25_percent`, `a_new_file_less_than_25_percent_like_a_deleted_one_starts_its_own_versions` (crates/git/tests/file_history.rs), `a_rewritten_rename_reviews_as_a_rename_of_the_most_similar_deleted_file` (crates/git/tests/review_special.rs), `a_renamed_and_rewritten_file_keeps_its_file_history` (apps/git-good/src/main.rs)
 
+
+### REV-79 The absent version names the commit just before the file
+Fixture: as in `baol/recipes`: `Focaccia.md` added in d7fb0bb, whose parent is `d46c131 Update pancakes.`; the repository starts at `Initial commit`
+Layer: product
+- Given a file that did not exist before the commit that added it
+- When the user opens File history on it and reaches its oldest version
+- Then the last row is the absent version at the commit just before the file was added (`Update pancakes.`), not the repository's first commit
+- And for a file that was deleted and later re-added, the absent version between them is the commit that deleted it
+Covered by (backend, interaction): `the_absent_version_before_a_file_is_the_commit_just_before_it_was_added`, `the_absent_version_after_a_deletion_is_the_commit_that_deleted_it` (crates/git/tests/file_history.rs), `a_renamed_and_rewritten_file_keeps_its_file_history` (apps/git-good/src/main.rs)
+
 ### REV-59 Version boundaries never wrap
 Fixture: `fx-file-history`
 Layer: interaction
