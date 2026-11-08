@@ -40,7 +40,7 @@ const SCOPES: &[(&str, &[(&str, &str)])] = &[
         ],
     ),
     (
-        "Changes list",
+        "Local Changes list",
         &[
             ("S  U", "Stage / unstage selection"),
             ("[  ]", "Previous / next hunk"),
@@ -323,7 +323,7 @@ mod tests {
                 "Menu bar",
                 "Window",
                 "History tree",
-                "Changes list",
+                "Local Changes list",
                 "Review",
                 "Rebase list",
                 "Conflicts",

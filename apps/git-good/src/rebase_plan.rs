@@ -170,7 +170,7 @@ impl Plan {
             }
             Action::Drop => return Some(DROPPED.into()),
             Action::Edit => parts.push(format!(
-                "{} stops here · reopens staged in Changes",
+                "{} stops here · reopens staged in Local Changes",
                 crate::phosphor::PAUSE
             )),
             Action::Pick | Action::Reword => {}
@@ -373,7 +373,7 @@ mod tests {
             plan.badge(1).as_deref(),
             Some(
                 format!(
-                    "{} stops here · reopens staged in Changes",
+                    "{} stops here · reopens staged in Local Changes",
                     crate::phosphor::PAUSE
                 )
                 .as_str()

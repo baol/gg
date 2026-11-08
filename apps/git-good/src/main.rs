@@ -14181,7 +14181,7 @@ impl Browser {
                                     if changes > 0 {
                                         go_changes = ui
                                             .button((
-                                                "Go to Changes",
+                                                "Go to Local Changes",
                                                 egui::RichText::new("Ctrl+1").small().weak(),
                                             ))
                                             .clicked();
@@ -18366,7 +18366,7 @@ mod tests {
         assert!(rows.contains(&("Ctrl+R", "Reword…")));
         let titles = groups.iter().map(|g| g.title.as_str()).collect::<Vec<_>>();
         for scope in [
-            "Changes list",
+            "Local Changes list",
             "Review",
             "Rebase list",
             "Conflicts",

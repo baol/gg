@@ -9,7 +9,7 @@ Each case has an ID (area prefix and number), a fixture, a layer, Given/When/The
 - **Layer:** *product* (a task completes, consequences are clear, work is preserved and recoverable), *interaction* (selection, focus, shortcuts, stale results, narrow layouts), or *visual* (sizes, colors, placement, exact copy). Product cases come first when time is short.
 - **Covered by (kind):** the tests that check the case today and where they run: *backend* (Git-level tests in `crates/`), *interaction* (egui input and geometry tests in `apps/git-good/src`), *end-to-end* (the `git good` binary in `apps/git-good/tests/cli.rs`). *(partial)* means the tests check only part of the case, for example a GUI case backed only by Git-level tests, or a dialog that is rendered but not completed. *Not automated* means no test yet. A test (`every_test_acceptance_cites_exists_where_it_says`, apps/git-good/tests/acceptance_cites.rs) fails when a cited test does not exist in the file named in the parenthesis after it (`(diff_view.rs)`, `(crates/engine)`), or anywhere when none is named, so a renamed or deleted test cannot leave a case looking covered.
 
-Areas: [Frame and toolbar](#frame-and-toolbar) (FRM) · [History and refs](#history-and-refs) (HIS) · [Review and reader](#review-and-reader) (REV) · [Local Changes](#local-changes) (CHG) · [Network](#network) (NET) · [Stash](#stash) (STA) · [Merge, cherry-pick, revert and conflicts](#merge-cherry-pick-revert-and-conflicts) (INT) · [Rewrite and recovery](#rewrite-and-recovery) (RWR) · [Preferences](#preferences) (PRF) · [Worktrees, submodules and LFS](#worktrees-submodules-and-lfs) (WTR, SUB, LFS) · [Signing](#signing) (SIG) · [Repository dialogs](#repository-dialogs) (DLG) · [CLI](#cli) (CLI) · [Shared rules](#shared-rules) (RULE) · [Cross-cutting scenarios](#cross-cutting-scenarios) (XCT) · [CLI contract](#cli-contract) (CLI-C) · [Spec decisions](#spec-decisions--2026-11-04)
+Areas: [Frame and toolbar](#frame-and-toolbar) (FRM) · [History tree and refs](#history-tree-and-refs) (HIS) · [Review and reader](#review-and-reader) (REV) · [Local Changes](#local-changes) (CHG) · [Network](#network) (NET) · [Stash](#stash) (STA) · [Merge, cherry-pick, revert and conflicts](#merge-cherry-pick-revert-and-conflicts) (INT) · [Rewrite and recovery](#rewrite-and-recovery) (RWR) · [Preferences](#preferences) (PRF) · [Worktrees, submodules and LFS](#worktrees-submodules-and-lfs) (WTR, SUB, LFS) · [Signing](#signing) (SIG) · [Repository dialogs](#repository-dialogs) (DLG) · [CLI](#cli) (CLI) · [Shared rules](#shared-rules) (RULE) · [Cross-cutting scenarios](#cross-cutting-scenarios) (XCT) · [CLI contract](#cli-contract) (CLI-C) · [Spec decisions](#spec-decisions--2026-11-04)
 
 ## Fixtures
 
@@ -70,7 +70,7 @@ Fixture: `fx-linear`
 Layer: product
 - Given cwd is `<fx-linear>/src` (create the folder in Given if absent)
 - When `git good` is run with no path
-- Then the window opens on History of `fx-linear` and loads rows immediately; the title reads `Git Good — <path of fx-linear>`
+- Then the window opens on the History tree of `fx-linear` and loads rows immediately; the title reads `Git Good — <path of fx-linear>`
 Covered by (end-to-end, partial): `git_dispatch_discovers_current_and_nested_repositories` (apps/git-good/tests/cli.rs, CLI discovery); GUI part Not automated
 
 ### FRM-02 Explicit path overrides cwd
@@ -86,8 +86,8 @@ Fixture: `fx-not-repo`, recent list `[fx-linear, fx-branchy, <missing folder>]`
 Layer: product
 - Given cwd is `fx-not-repo`
 - When `git good` is run
-- Then History is replaced by a centered 640 px welcome column: the 36 px logo, **Open a repository**, the weak line `Git Good <version> · Git <version>`, one amber line `<~path> is not a Git repository.` (warning glyph, truncating; full path and Git's message on hover) with **Initialize here…**, three equal cards **Open…** (filled, `A folder on this computer · Ctrl+O`), **Clone…** (`From a URL into <~preferred clone folder>`), **New repository…** (`git init in a folder`), and RECENT with count `3`: rows name / `~` path / branch / opened / ×, the missing folder dimmed with an amber `missing` chip
-- And the toolbar shows only the search field `Search repositories and actions`: no sidebar toggle, Changes/History tabs, Fetch/Pull/Push or branch button; no refs sidebar, History header or inspector; the footer does not repeat the error and lists the welcome keys
+- Then the History tree is replaced by a centered 640 px welcome column: the 36 px logo, **Open a repository**, the weak line `Git Good <version> · Git <version>`, one amber line `<~path> is not a Git repository.` (warning glyph, truncating; full path and Git's message on hover) with **Initialize here…**, three equal cards **Open…** (filled, `A folder on this computer · Ctrl+O`), **Clone…** (`From a URL into <~preferred clone folder>`), **New repository…** (`git init in a folder`), and RECENT with count `3`: rows name / `~` path / branch / opened / ×, the missing folder dimmed with an amber `missing` chip
+- And the toolbar shows only the search field `Search repositories and actions`: no sidebar toggle, Local Changes/History tree tabs, Fetch/Pull/Push or branch button; no refs sidebar, History tree header or inspector; the footer does not repeat the error and lists the welcome keys
 - And every menu stays complete; repository commands are disabled with *Open a repository first*
 - And `Ctrl+K` lists the recent repositories under REPOSITORIES and **New repository…** under ACTIONS
 - When **Initialize here…**
@@ -115,7 +115,7 @@ Fixture: `fx-linear` with a folder `src/deep` inside it
 Layer: product
 - Given I just opened Git Good (`git good`, no path)
 - When the folder is inside a repository's working tree (`fx-linear/src/deep`)
-- Then `fx-linear` opens in History; no welcome view
+- Then `fx-linear` opens in the History tree; no welcome view
 Covered by (interaction): `a_launch_in_a_repository_subfolder_opens_that_repository` (apps/git-good/src/main.rs)
 
 ### FRM-07 Removed: the Reopen the last repository preference — see FRM-05
@@ -126,7 +126,7 @@ Covered by (interaction): `a_launch_in_a_repository_subfolder_opens_that_reposit
 Fixture: `fx-bare`, `fx-branchy-detached`, `fx-shallow`
 Layer: product
 - When each is opened
-- Then `fx-bare` opens History without Local Changes content and no error; `fx-branchy-detached` shows **detached HEAD** on the branch button; `fx-shallow` loads history to its boundary and the right-aligned window identity ends with `shallow`
+- Then `fx-bare` opens the History tree without Local Changes content and no error; `fx-branchy-detached` shows **detached HEAD** on the branch button; `fx-shallow` loads the History tree to its boundary and the right-aligned window identity ends with `shallow`
 Covered by (Not automated)
 
 ### FRM-10 OS window title shortens the home folder
@@ -196,22 +196,22 @@ Covered by (interaction, partial): `commands_off_the_toolbar_keep_their_menu_hom
 ### FRM-21 View menu switches views and toggles panes
 Fixture: `fx-linear`, 1440 px
 Layer: interaction
-- When `Ctrl+1`, then `Ctrl+2`, then `Ctrl+\`, then `Space` (History focused)
-- Then Local Changes shows, History shows, the refs sidebar hides (toggle unpressed), the commit inspector hides; each View item's checkmark follows
+- When `Ctrl+1`, then `Ctrl+2`, then `Ctrl+\`, then `Space` (the History tree focused)
+- Then Local Changes shows, the History tree shows, the refs sidebar hides (toggle unpressed), the commit inspector hides; each View item's checkmark follows
 Covered by (interaction): `menu_bar_is_one_row_and_view_shortcuts_switch_views` (apps/git-good/src/main.rs)
 
 ### FRM-22 Help › Keyboard shortcuts
 Fixture: `fx-linear`
 Layer: interaction
 - When **Help › Keyboard shortcuts** (`?`, list focused, or Preferences › Keyboard › **Show keyboard shortcuts…**), then `reword` is typed in **Filter shortcuts**, then **Edit keys…** is clicked; reopened, `Esc`
-- Then a non-modal window shows one key | action table generated from the command table, grouped by menu (Repository, Branch, Commit, Changes, View, Help), then the **Menu bar** keys (Alt or F10, each menu's Alt+letter, the open-menu keys), then by list scope (History list, Changes list, Review, Rebase list, Conflicts, Stashes), including `Ctrl+O`, `Ctrl+B`, `Ctrl+Shift+B/F/L/P/S/U/Z`, `Ctrl+1`, `Ctrl+2`, `Ctrl+\`, `F2`, `Ctrl+Enter` and `Ctrl+R` Reword… and no Refresh row; the filter keeps only rows whose key or action matches and hides empty groups; **Edit keys…** closes it and opens Preferences › Keyboard; `Esc` closes it. About Git Good is DLG-11
+- Then a non-modal window shows one key | action table generated from the command table, grouped by menu (Repository, Branch, Commit, Changes, View, Help), then the **Menu bar** keys (Alt or F10, each menu's Alt+letter, the open-menu keys), then by list scope (History tree list, Local Changes list, Review, Rebase list, Conflicts, Stashes), including `Ctrl+O`, `Ctrl+B`, `Ctrl+Shift+B/F/L/P/S/U/Z`, `Ctrl+1`, `Ctrl+2`, `Ctrl+\`, `F2`, `Ctrl+Enter` and `Ctrl+R` Reword… and no Refresh row; the filter keeps only rows whose key or action matches and hides empty groups; **Edit keys…** closes it and opens Preferences › Keyboard; `Esc` closes it. About Git Good is DLG-11
 Covered by (interaction): `help_shortcuts_window_renders`, `keyboard_shortcuts_come_from_the_command_table`, `keyboard_shortcuts_close_on_escape_and_edit_keys_opens_preferences` (apps/git-good/src/main.rs); `groups_follow_the_menus_then_the_list_scopes`, `the_filter_matches_keys_or_actions_and_hides_empty_groups`, `no_row_offers_refresh` (apps/git-good/src/shortcuts.rs)
 
 ### FRM-80 The menu bar from the keyboard
 Fixture: `fx-linear` (Linux/Windows)
 Layer: interaction
 - When Alt is tapped, then Right, then Down; then Esc and `Alt+B`; then Alt is held while a key, a wheel turn, a click or a switch to another window happens; then `F10`, Space
-- Then the tap lights **Repository** with no menu open and the History shortcuts wait; Right lights **Branch** and Down opens it with its first row lit and the mnemonics underlined; `Alt+B` opens Branch at once; Alt with another key, the wheel, a click or a window switch is no tap (`Alt+A` still opens the commit actions, `Alt+V` still pages up: no menu takes A or V, View is `Alt+I`); `F10` lights Repository and Space leaves the bar opening nothing; a second tap, Esc or a click leaves the bar; a command shortcut such as `Ctrl+B` leaves it and runs; a focused text field types none of the letters the bar or an open menu took
+- Then the tap lights **Repository** with no menu open and the History tree shortcuts wait; Right lights **Branch** and Down opens it with its first row lit and the mnemonics underlined; `Alt+B` opens Branch at once; Alt with another key, the wheel, a click or a window switch is no tap (`Alt+A` still opens the commit actions, `Alt+V` still pages up: no menu takes A or V, View is `Alt+I`); `F10` lights Repository and Space leaves the bar opening nothing; a second tap, Esc or a click leaves the bar; a command shortcut such as `Ctrl+B` leaves it and runs; a focused text field types none of the letters the bar or an open menu took
 Covered by (interaction): `alt_focuses_the_bar_arrows_move_and_down_opens_the_lit_menu`, `f10_focuses_the_bar_and_enter_opens_the_lit_menu`, `alt_with_a_key_a_wheel_a_click_or_lost_focus_is_no_tap`, `a_held_alt_repeating_is_still_one_tap`, `a_second_alt_esc_space_or_a_click_takes_the_keyboard_off_the_bar`, `alt_with_a_letter_opens_that_menu_but_never_takes_alt_shortcuts`, `a_command_shortcut_leaves_the_bar_and_runs`, `a_focused_text_field_keeps_its_text_while_the_bar_or_a_menu_has_the_keys` (apps/git-good/src/menu_tests.rs); `top_letters_are_unique_conventional_and_avoid_alt_shortcuts` (apps/git-good/src/menu_keys.rs)
 
 ### FRM-81 Mnemonics in open menus
@@ -240,9 +240,9 @@ Covered by (interaction): `a_menu_taller_than_the_window_scrolls_by_keys_wheel_a
 ### FRM-23 Toolbar holds its commands in one order everywhere
 Fixture: `fx-branchy`
 Layer: interaction
-- When shown in History, Local Changes and Review, wide and narrow
-- Then left to right: refs sidebar toggle, **Changes** tab, **History** tab, **Fetch**, **Pull**, **Push**, **New branch**, **Stash changes**, **Stashes**, **Interactive rebase from here**, **Recovery**, then right-aligned branch button and search; New tag, Merge into current and Interactive rebase of the current branch have no buttons (FRM-72); icons never overlap, move between views, or extend past the window edge
-Covered by (interaction, partial): `window_toolbar_keeps_the_owners_buttons_in_place_across_views_and_widths`, `local_changes_and_history_share_one_navigation_strip_at_every_width`, `commands_off_the_toolbar_keep_their_menu_home_and_search_entry` (apps/git-good/src/main.rs) (History and Local Changes at 720 and 1120 px; Review not checked)
+- When shown in the History tree, Local Changes and Review, wide and narrow
+- Then left to right: refs sidebar toggle, **Local Changes** tab, **History tree** tab, **Fetch**, **Pull**, **Push**, **New branch**, **Stash changes**, **Stashes**, **Interactive rebase from here**, **Recovery**, then right-aligned branch button and search; New tag, Merge into current and Interactive rebase of the current branch have no buttons (FRM-72); icons never overlap, move between views, or extend past the window edge
+Covered by (interaction, partial): `window_toolbar_keeps_the_owners_buttons_in_place_across_views_and_widths`, `local_changes_and_history_share_one_navigation_strip_at_every_width`, `commands_off_the_toolbar_keep_their_menu_home_and_search_entry` (apps/git-good/src/main.rs) (History tree and Local Changes at 720 and 1120 px; Review not checked)
 
 ### FRM-24 Toolbar tooltips name the command and its menu shortcut
 Fixture: `fx-remote`
@@ -268,10 +268,10 @@ Layer: product
 - Then Git Good fetches `origin` first; with nothing to integrate (even, or only ahead) the footer reads `Already up to date with origin/main.` and HEAD, index and worktree are unchanged; when the fetch brings commits, Pull integrates them by the **Pull strategy** (NET-17, NET-18)
 Covered by (interaction, partial): `pull_reports_already_up_to_date_after_fetching`, `pull_is_ready_whenever_the_current_branch_has_an_upstream` (apps/git-good/src/main.rs) (fetch outcome simulated; no Git run)
 
-### FRM-28 Changes tab badge counts changed paths
+### FRM-28 Local Changes tab badge counts changed paths
 Fixture: `fx-dirty`, then `fx-linear`
 Layer: interaction
-- Then in `fx-dirty` the **Changes** tab badge equals the number of distinct changed paths (staged, unstaged, untracked or conflicted, each path once; `a.txt` partially staged counts once; ignored `build/out.o` not counted); in `fx-linear` the tab is present with no badge
+- Then in `fx-dirty` the **Local Changes** tab badge equals the number of distinct changed paths (staged, unstaged, untracked or conflicted, each path once; `a.txt` partially staged counts once; ignored `build/out.o` not counted); in `fx-linear` the tab is present with no badge
 Covered by (Not automated)
 
 ### FRM-29 Stash changes disabled on a clean worktree — see STA-01
@@ -344,7 +344,7 @@ Covered by (interaction): `the_switcher_runs_the_row_under_the_keyboard_cursor` 
 ### FRM-42 Branch button at narrow width
 Fixture: `fx-branchy`, 720 px
 Layer: interaction
-- Then below 1040 px the branch button is an icon inside the window; its tooltip and the switcher's current row name the branch with its ↑↓ counts, and it opens the same switcher; every toolbar button (sidebar, Changes | History, Fetch Pull Push, New branch, Stash and Stashes, Interactive rebase from here, Recovery, branch, search) fits at 720 px
+- Then below 1040 px the branch button is an icon inside the window; its tooltip and the switcher's current row name the branch with its ↑↓ counts, and it opens the same switcher; every toolbar button (sidebar, Local Changes | History tree, Fetch Pull Push, New branch, Stash and Stashes, Interactive rebase from here, Recovery, branch, search) fits at 720 px
 Covered by (interaction): `the_branch_button_opens_the_switcher_at_both_widths`, `window_toolbar_keeps_the_owners_buttons_in_place_across_views_and_widths` (apps/git-good/src/main.rs)
 
 ### Search
@@ -390,11 +390,11 @@ Layer: interaction
 - Then no **Filter** row; Actions are listed
 Covered by (interaction): `empty_query_lists_actions_without_a_filter_item` (apps/git-good/src/search.rs)
 
-### FRM-49 Enter on Filter filters History
+### FRM-49 Enter on Filter filters the History tree
 Fixture: `fx-linear`
 Layer: interaction
 - When `Ctrl+K`, type `docs`, `Enter`
-- Then the popup closes and History is filtered by `docs`; the column header reads `Commit · <count>` (`+` while counting) with a `docs` chip and clear button
+- Then the popup closes and the History tree is filtered by `docs`; the column header reads `Commit · <count>` (`+` while counting) with a `docs` chip and clear button
 Covered by (interaction): `search_filters_history_or_runs_the_chosen_action` (apps/git-good/src/main.rs)
 
 ### FRM-50 Actions run through the same dispatch and show menu home and reason
@@ -408,7 +408,7 @@ Covered by (interaction): `search_filters_history_or_runs_the_chosen_action`, `s
 Fixture: `fx-branchy`
 Layer: product
 - When choosing `feature/login` (Branches) and `v0.2.0` (Tags)
-- Then History selects that ref's commit; HEAD, index and worktree are unchanged; branch button still `main`
+- Then the History tree selects that ref's commit; HEAD, index and worktree are unchanged; branch button still `main`
 Covered by (interaction, partial): `search_offers_frame_actions_with_their_readiness_and_refs` (apps/git-good/src/main.rs) — dispatch to Inspect; HEAD unchanged Not automated
 
 ### FRM-52 File result opens Review on the latest change
@@ -418,8 +418,8 @@ Layer: interaction
 - Then Review opens the latest commit that changed `src/lib.rs` with that file selected
 Covered by (Not automated)
 
-### FRM-53 Ctrl+F opens search from the current History filter
-Fixture: `fx-linear` with History filter `docs`
+### FRM-53 Ctrl+F opens search from the current History tree filter
+Fixture: `fx-linear` with History tree filter `docs`
 Layer: interaction
 - When `Ctrl+F`
 - Then search opens with `docs` and Filter first; Enter keeps/applies it; there is no separate filter row
@@ -437,7 +437,7 @@ Covered by (Not automated)
 ### FRM-55 Idle hints shorten at narrow widths instead of clipping
 Fixture: `fx-linear`
 Layer: interaction
-- Then at 1440 px the footer reads `j k: select · Enter: review · Alt+A: actions · R: rebase from here · Ctrl+K: search · Ctrl/Cmd+F: filter · Ctrl/Cmd+C: copy ID`; below 1040 px `j/k: select · Enter: review · Space: details · Esc: history · Ctrl/Cmd+F: filter` (no `copy ID`)
+- Then at 1440 px the footer reads `j k: select · Enter: review · Alt+A: actions · R: rebase from here · Ctrl+K: search · Ctrl/Cmd+F: filter · Ctrl/Cmd+C: copy ID`; below 1040 px `j/k: select · Enter: review · Space: details · Esc: History tree · Ctrl/Cmd+F: filter` (no `copy ID`)
 Covered by (interaction): `status_hints_shorten_at_narrow_widths` (apps/git-good/src/main.rs)
 
 ### FRM-56 Receipts fade after 8 seconds
@@ -484,9 +484,9 @@ Covered by (interaction): `a_blocked_switch_offers_stash_and_switch_in_amber`, `
 ### FRM-76 Refs drawer below the docked sidebar width
 Fixture: `fx-branchy`, narrow
 Layer: interaction
-- Given History at 720 px
+- Given the History tree at 720 px
 - When the user clicks the toolbar's sidebar toggle (or presses `Ctrl+\`)
-- Then the refs sidebar's content opens as a 248 px drawer at the left over the dimmed list, with focus in **Filter refs**; Up/Down move an outline over the branches (any matching ref while filtering); `Enter` selects that ref's commit in History and closes the drawer; `Esc`, `Ctrl+\`, or a click outside closes it; right-click rows keep the branch actions
+- Then the refs sidebar's content opens as a 248 px drawer at the left over the dimmed list, with focus in **Filter refs**; Up/Down move an outline over the branches (any matching ref while filtering); `Enter` selects that ref's commit in the History tree and closes the drawer; `Esc`, `Ctrl+\`, or a click outside closes it; right-click rows keep the branch actions
 Covered by (interaction): `narrow_refs_drawer_opens_over_the_list_jumps_and_closes` (apps/git-good/src/main.rs)
 
 ### Automatic refresh
@@ -501,21 +501,21 @@ Covered by (interaction, partial): `menus_follow_the_final_design_mockup` (apps/
 Fixture: `fx-linear`
 Layer: interaction
 - When `a.txt` is edited by another process, with the window idle and no input
-- Then about 300 ms after the last event the Changes badge shows `1` and Local Changes lists `a.txt`, without waiting for the next input; History is not reloaded; the previous content stays until the new content arrives
+- Then about 300 ms after the last event the Local Changes badge shows `1` and Local Changes lists `a.txt`, without waiting for the next input; the History tree is not reloaded; the previous content stays until the new content arrives
 Covered by (interaction): `a_real_repository_reports_a_changed_file`, `a_batch_reports_after_it_settles_or_when_flushed` (apps/git-good/src/watcher.rs); `changes_made_outside_show_in_an_idle_window` (apps/git-good/src/idle_tests.rs)
 
 ### FRM-61a A repository that cannot be watched says so
 Fixture: `fx-linear`
 Layer: interaction
 - When the watcher cannot start for the open repository (inotify out of instances)
-- Then a warning reads *Outside changes are not shown automatically: Git Good cannot watch this repository. It re-reads when the window gets focus.* with the system's reason in Details…, once per repository; each time the window gets focus back it reloads the history and status
+- Then a warning reads *Outside changes are not shown automatically: Git Good cannot watch this repository. It re-reads when the window gets focus.* with the system's reason in Details…, once per repository; each time the window gets focus back it reloads the History tree and status
 Covered by (interaction): `a_repository_that_cannot_be_watched_is_told_once_and_reread_on_focus` (apps/git-good/src/main.rs)
 
-### FRM-62 External ref change reloads history; objects, logs, locks ignored
+### FRM-62 External ref change reloads the History tree; objects, logs, locks ignored
 Fixture: `fx-linear`
 Layer: interaction
 - When `git commit --allow-empty -m ext` runs outside Git Good; separately `git gc` runs
-- Then the commit appears in History after settling with selection preserved by ID, also in an idle window with no input (as does a branch made with `git branch`); `git gc` alone (objects/packs, logs, locks) triggers no history reload
+- Then the commit appears in the History tree after settling with selection preserved by ID, also in an idle window with no input (as does a branch made with `git branch`); `git gc` alone (objects/packs, logs, locks) triggers no History tree reload
 Covered by (interaction): `paths_are_sorted_into_worktree_index_and_refs` (apps/git-good/src/watcher.rs); `changes_made_outside_show_in_an_idle_window` (apps/git-good/src/idle_tests.rs) — `git branch`
 
 ### FRM-63 Commands flush unsettled changes first
@@ -530,7 +530,7 @@ Covered by (interaction, partial): `a_batch_reports_after_it_settles_or_when_flu
 ### FRM-64 Decision dialogs are modal
 Fixture: `fx-branchy`
 Layer: interaction
-- When **Branch › New branch…** is open and a History row is clicked and Down pressed
+- When **Branch › New branch…** is open and a History tree row is clicked and Down pressed
 - Then a dimmed backdrop absorbs the click; selection does not change; after closing the dialog, clicks and keys work again
 Covered by (interaction): `decision_dialogs_block_the_window_behind_them` (apps/git-good/src/main.rs), `a_modal_window_blocks_clicks_and_navigation_behind_it` (apps/git-good/src/navigation.rs)
 
@@ -538,7 +538,7 @@ Covered by (interaction): `decision_dialogs_block_the_window_behind_them` (apps/
 Fixture: `fx-stash`
 Layer: interaction
 - When the Stashes picker, Recovery, Worktrees, Details… and Keyboard shortcuts windows are open in turn
-- Then History rows remain clickable and Up/Down still move selection beside them
+- Then the History tree rows remain clickable and Up/Down still move selection beside them
 Covered by (Not automated)
 
 ### FRM-77 Full-text windows are titled by their field
@@ -548,11 +548,11 @@ Layer: interaction
 - Then a non-modal window titled **Commit subject** shows the exact text, selectable, then `212 characters · text is selectable`, **Close** `Esc` and the primary **Copy** `Ctrl+C`; `Ctrl+C` copies the text and `Esc` closes it; a path, the parents, a commit message, File details and an error open the same window titled **Path**, **Parents**, **Commit message**, **File details**, **Error**, with paths and IDs in mono
 Covered by (interaction, partial): `the_full_text_window_is_titled_by_its_field_with_copy_primary`, `overflow_opens_exact_text_without_changing_the_slot` (bounded_text.rs)
 
-### FRM-66 History keys respect text focus and open menus
+### FRM-66 History tree keys respect text focus and open menus
 Fixture: `fx-linear`
 Layer: interaction
 - When focus is in the search field, `j`/`k` and Ctrl+V are typed; then `Esc`
-- Then text is edited/pasted, History selection unchanged; Esc leaves the field; a focused toolbar button still allows Up/Down list navigation
+- Then text is edited/pasted, the History tree selection is unchanged; Esc leaves the field; a focused toolbar button still allows Up/Down list navigation
 Covered by (interaction): `focused_buttons_allow_navigation_and_text_editors_keep_keys` (apps/git-good/src/navigation.rs), `navigation_bindings_preserve_text_focus_and_empty_selection` (apps/git-good/src/interaction_tests.rs)
 
 ### FRM-67 Copy full ID with Ctrl+C — see HIS-34
@@ -560,10 +560,10 @@ Covered by (interaction): `focused_buttons_allow_navigation_and_text_editors_kee
 ### FRM-68 Compact density is the default
 Fixture: `fx-linear`, default preferences; then `fx-prefs-custom`
 Layer: visual
-- Then History rows are 22 px and diff rows 19 px, **View › Compact density** is checked; with `fx-prefs-custom` (comfortable) rows are taller and the item is unchecked
+- Then the History tree rows are 22 px and diff rows 19 px, **View › Compact density** is checked; with `fx-prefs-custom` (comfortable) rows are taller and the item is unchecked
 Covered by (interaction): `densities_name_their_row_heights` (apps/git-good/src/density.rs)
 
-### FRM-69 Narrow width: details replace History reversibly — see HIS-42
+### FRM-69 Narrow width: details replace the History tree reversibly — see HIS-42
 
 ### FRM-70 Panes never show loading text; a pending read is visible in the footer
 Fixture: `fx-linear` then `fx-branchy` (slow read simulated; `fx-large` opt-in)
@@ -589,7 +589,7 @@ Covered by (interaction, partial): `commands_off_the_toolbar_keep_their_menu_hom
 ### FRM-73 Pane identity and content always match
 Fixture: `fx-file-history`, `fx-linear`, `fx-branchy` (slow reads simulated)
 Layer: interaction
-- When the user selects file B while file A's diff is shown, switches repository while History shows `fx-linear`, and moves the History selection quickly
+- When the user selects file B while file A's diff is shown, switches repository while the History tree shows `fx-linear`, and moves the History tree selection quickly
 - Then in every frame each pane's label (file path and endpoints, window title and identity, commit header) names the content shown: the old label with the old content until the new content arrives, then both change in the same frame; never a new label over old rows
 Covered by (interaction, partial): `selection_keeps_displayed_diff_until_replacement_arrives`, `pending_endpoint_labels_wait_for_matching_content` (apps/git-good/src/diff_view.rs), `failed_switch_keeps_displayed_identity_and_retry_adopts_new_repository` (apps/git-good/src/interaction_tests.rs); the hold during a successful repository switch is Not automated
 
@@ -616,7 +616,7 @@ Layer: interaction
 Covered by (interaction, partial): `gtk_layouts_pick_the_buttons_and_their_sides`, `linux_buttons_sit_where_the_layout_says_and_drag_the_window`, `only_sides_with_buttons_take_room` (apps/git-good/src/titlebar/tests.rs), `the_desktop_comes_from_the_first_variable_set`, `the_family_follows_the_desktop_then_the_gtk_theme`, `kwin_button_letters_become_a_gtk_layout`, `layouts_and_overrides_resolve_to_a_style`, `settings_files_are_read_from_the_config_dir` (apps/git-good/src/caption_style.rs); reading GNOME's setting from a live desktop is Not automated
 
 ### FRM-86a Regions and the context menu key
-Fixture: `fx-linear`, History at 1280 px with the refs sidebar docked
+Fixture: `fx-linear`, the History tree at 1280 px with the refs sidebar docked
 Layer: interaction
 - When the user presses F6 with no field focused
 - Then the toolbar's search field has the keyboard; F6 again moves it to **Filter refs**, then to the list (no field focused, so `j`/`k` move the selection), then back to search; Shift+F6 walks the other way; below 1120 px the sidebar is skipped
@@ -649,36 +649,36 @@ Layer: interaction
 - And a dialog closed and opened again on the next frame takes the keyboard again
 Covered by (interaction): `a_dialog_takes_typing_at_once_and_enter_or_esc_answer_it` (apps/git-good/src/navigation.rs), `dialogs_take_typing_at_once_and_answer_enter_and_esc` (apps/git-good/src/main.rs), `delete_backup_confirms_then_removes_only_that_ref` (apps/git-good/src/recovery_view.rs)
 
-## History and refs
+## History tree and refs
 
 ### HIS-01 First page streams before traversal finishes
 Fixture: `fx-large` (opt-in performance) (size 1440×900 unless stated)
 Layer: interaction
 - Given Git Good is launched in the repository
-- When the window first paints History
+- When the window first paints the History tree
 - Then the first visible rows show subject, author, short hash and date before the count completes; the column header reads `Commit · N+` while counting, and the UI stays responsive (scrolling, menus) during traversal
 Covered by (interaction): `packed_history_first_frame_and_deep_navigation` (apps/git-good/src/main.rs), `real_repository_history_first_frame_and_deep_navigation` (main.rs)
 
 ### HIS-02 Count header reaches an exact total
 Fixture: `fx-linear`
 Layer: visual
-- Given History is open
+- Given the History tree is open
 - When traversal and counting complete
-- Then the History column header reads `Commit · 30` with no `+`
+- Then the History tree column header reads `Commit · 30` with no `+`
 Covered by (Not automated)
 
-### HIS-03 History includes commits reachable only from other refs
+### HIS-03 History tree includes commits reachable only from other refs
 Fixture: `fx-branchy`
 Layer: product
 - Given HEAD is on `main`
-- When History loads
+- When the History tree loads
 - Then the 4 `feature/login` commits appear in the graph (union of HEAD, every local branch, remote branch and tag), each exactly once, with parents after all children
-Covered by (backend, partial): `history_includes_commits_from_all_local_remote_and_tag_refs` (crates/git/tests/history.rs), `pinned_head_and_skewed_merge_order_are_stable` (crates/git/tests/history.rs); GUI path not automated
+Covered by (backend, partial): `history_includes_commits_from_all_local_remote_and_tag_refs` (`crates/git/tests/history.rs`), `pinned_head_and_skewed_merge_order_are_stable` (`crates/git/tests/history.rs`); GUI path not automated
 
 ### HIS-04 Every commit beyond the page budget is reachable
 Fixture: `fx-large` (opt-in)
 Layer: interaction
-- Given History is open
+- Given the History tree is open
 - When the user presses End-equivalent paging (Page Down repeatedly) or drags the scrollbar to the bottom
 - Then fixed-height empty slots show while uncached rows stream, then fill in place; the oldest commit is reachable; no loading text appears in the pane
 Covered by (interaction, end-to-end): `json_includes_every_commit_beyond_the_former_cap` (apps/git-good/tests/cli.rs), `pages_evict_and_reload_without_losing_identity_or_selection` (apps/git-good/src/state.rs)
@@ -707,19 +707,19 @@ Layer: interaction
 - Then the commit's row fades in over 0.25 s and a press within 0.3 s of its arrival does nothing; a press after that selects it; a press and release act only on the same row, so a row that swaps while the button is down is not clicked
 Covered by (interaction): `a_row_arriving_under_the_pointer_fades_in_and_refuses_an_early_click`, `moving_onto_a_row_or_scrolling_never_starts_the_grace`, `a_replacement_under_a_press_shows_at_once_and_the_release_clicks_nothing` (interaction_tests.rs)
 
-### HIS-08 External ref change refreshes history and keeps selection
+### HIS-08 External ref change refreshes the History tree and keeps selection
 Fixture: `fx-branchy`
 Layer: interaction
 - Given c27 is selected and scrolled to a fractional offset
 - When `git branch extra c05` runs outside Git Good and 300 ms pass
-- Then History reloads (no Refresh command exists); c27 stays selected at the same pixel offset; the new ref appears
+- Then the History tree reloads (no Refresh command exists); c27 stays selected at the same pixel offset; the new ref appears
 Covered by (interaction): `refresh_preserves_commit_anchor_and_fractional_row_offset` (interaction_tests.rs)
 
 ### HIS-09 A refresh replacement under a press shows at once and clicks nothing
 Fixture: `fx-branchy`
 Layer: interaction
 - Given the user is pressing a row
-- When a replacement history session becomes ready
+- When a replacement History tree session becomes ready
 - Then it shows at once; the release does not click the row that replaced the pressed one (RULE-17); a retired worker never overwrites the adopted rows
 Covered by (interaction): `a_replacement_under_a_press_shows_at_once_and_the_release_clicks_nothing` (interaction_tests.rs)
 
@@ -727,7 +727,7 @@ Covered by (interaction): `a_replacement_under_a_press_shows_at_once_and_the_rel
 Fixture: `fx-branchy`
 Layer: interaction
 - Given the `feature/login` tip is selected
-- When `git branch -D feature/login` runs outside Git Good (commits now unreachable) and history refreshes
+- When `git branch -D feature/login` runs outside Git Good (commits now unreachable) and the History tree refreshes
 - Then the first visible row is selected and details follow it
 Covered by (Not automated)
 
@@ -737,7 +737,7 @@ Covered by (Not automated)
 Fixture: `fx-linear`
 Layer: product
 - Given a word that appears only in the second paragraph of c10
-- When History is filtered by that word
+- When the History tree is filtered by that word
 - Then c10 is the single match
 Covered by (backend, partial): `search_covers_identity_and_full_message` (crates/engine); GUI path not automated
 
@@ -752,7 +752,7 @@ Covered by (interaction): `filtering_preserves_visible_selection_and_clears_empt
 ### HIS-14 Filter with no matches
 Fixture: `fx-linear`
 Layer: interaction
-- Given History is open
+- Given the History tree is open
 - When filtering by `zzzz-nomatch`
 - Then the pane reads *No commits match “zzzz-nomatch”* with **Clear filter**; selection and details are empty; Up/Down select nothing; **Clear filter** restores all 30 rows
 Covered by (interaction): `filtering_preserves_visible_selection_and_clears_empty_details` (state.rs), `renders_empty_error_and_filtered_snapshots` (main.rs)
@@ -778,20 +778,20 @@ Fixture: `fx-linear` then `fx-branchy`
 Layer: interaction
 - Given a filter and selection in `fx-linear`
 - When the user opens `fx-branchy` via **Repository › Open…**
-- Then History shows unfiltered with the first row selected
+- Then the History tree shows unfiltered with the first row selected
 Covered by (interaction): `switching_repository_resets_filter_and_selection` (state.rs)
 
-### HIS-18 Graph: linear history stays in one lane; column 56 px
+### HIS-18 Graph: a linear History tree stays in one lane; column 56 px
 Fixture: `fx-linear`
 Layer: visual
-- Given History is open
+- Given the History tree is open
 - Then every dot is in lane 0 and the graph column is 56 px wide
 Covered by (interaction): `linear_history_stays_in_lane_zero`, `the_column_fits_four_lanes_at_56_px_and_grows_to_92` (apps/git-good/src/graph.rs)
 
 ### HIS-19 Graph: merges, colors, and ring
 Fixture: `fx-branchy`
 Layer: visual
-- Given History is open
+- Given the History tree is open
 - Then `Merge branch 'topic'` has a ring dot and its second parent occupies a distinct lane in the parent lane's color; `feature/login` keeps its own lane color until it joins; only the row's own lane draws a downward segment from the dot
 Covered by (interaction): `merge_parents_get_distinct_lanes`, `merge_parents_keep_the_color_of_the_lane_they_start`, `a_single_parent_branch_keeps_its_color_until_it_joins_an_existing_lane`, `only_the_rows_own_lane_starts_below_the_commit` (graph.rs)
 
@@ -806,7 +806,7 @@ Covered by (interaction, partial): `the_column_fits_four_lanes_at_56_px_and_grow
 ### HIS-21 Graph lanes stay coherent under a filter
 Fixture: `fx-branchy`
 Layer: visual
-- Given History is filtered by `login`
+- Given the History tree is filtered by `login`
 - Then remaining rows keep the lane and color they have unfiltered
 Covered by (Not automated)
 
@@ -835,14 +835,14 @@ Covered by (interaction): `clicking_a_branch_pill_selects_and_double_clicking_sw
 ### HIS-25 Show tags in rows off
 Fixture: `fx-branchy`
 Layer: visual
-- Given Preferences › Appearance › History › **Show tags in rows** is turned off
+- Given Preferences › Appearance › History tree › **Show tags in rows** is turned off
 - Then tag pills disappear from rows; branch pills remain
 Covered by (Not automated)
 
 ### HIS-26 Avatars off by default
 Fixture: `fx-linear` (default prefs)
 Layer: visual
-- Then history rows show no avatar image; the commit inspector keeps its avatar slot showing initials (`AL`, `GH`); no network request is made; **Show avatars** is unchecked in Preferences
+- Then the History tree rows show no avatar image; the commit inspector keeps its avatar slot showing initials (`AL`, `GH`); no network request is made; **Show avatars** is unchecked in Preferences
 Covered by (Not automated)
 
 ### HIS-27 Avatars on: cached, bounded, deferred while interacting
@@ -864,7 +864,7 @@ Covered by (interaction, partial): `relative_dates_read_git_times_with_offsets` 
 ### HIS-30 Keyboard: next/previous commit in three styles
 Fixture: `fx-linear`
 Layer: interaction
-- Given c30 selected, History focused, no editor focused
+- Given c30 selected, the History tree focused, no editor focused
 - When the user presses Down, then `j`, then Ctrl+N (physical Control, also on macOS), then Up, `k`, Ctrl+P
 - Then selection moves to c29, c28, c27, then back to c30; at the top Up does nothing (no wrap); viewport moves only by a minimal reveal
 Covered by (interaction): `keyboard_moves_through_all_matches_and_stops_at_edges` (state.rs), `keyboard_on_visible_rows_preserves_viewport` (interaction_tests.rs)
@@ -879,8 +879,8 @@ Covered by (interaction): `navigation_bindings_share_page_size_bounds_and_stable
 ### HIS-81 Keyboard: Home and End
 Fixture: `fx-linear`
 Layer: interaction
-- When End, then Home, then Ctrl+End (Command+End on macOS), then Ctrl+Home in History; and End then Home in a focused Local Changes list
-- Then History selects c01, then c30, then c01, then c30 and reveals each; the Local Changes list selects its last file, then its first, and the other list keeps its selection; while counting continues End selects the last row found so far
+- When End, then Home, then Ctrl+End (Command+End on macOS), then Ctrl+Home in the History tree; and End then Home in a focused Local Changes list
+- Then the History tree selects c01, then c30, then c01, then c30 and reveals each; the Local Changes list selects its last file, then its first, and the other list keeps its selection; while counting continues End selects the last row found so far
 Covered by (interaction): `home_and_end_go_to_the_first_and_last_commit` (main.rs), `home_and_end_go_to_the_first_and_last_file_of_the_focused_list` (status_view.rs), `home_and_end_step_past_either_end_and_page_keys_by_a_page` (navigation.rs)
 
 ### HIS-32 Ctrl+V is paste, keys stay with focused editors — see FRM-66
@@ -958,7 +958,7 @@ Fixture: `fx-linear`, narrow
 Layer: interaction
 - Given c20 selected; the inspector under the list shows **Details** `Space`, **Review** `Enter`, and **Actions** `Alt+A`
 - When Space (or **Details**)
-- Then the commit details replace the list (not a side pane): **‹ History** `Esc`, the subject, and newer/older buttons; Commit (copy button), Author with email, Date, Parent, Refs, Signature **Verify…**; the message; `FILES n` with `+x −y` and per-file counts; **Actions** `Alt+A` and the filled primary **Review** `Enter` at the bottom. `j`/`k` show the older/newer commit with the details still open; Up/Down choose a file without moving the history selection; `Enter`, **Review**, or a double click opens Review on the chosen file and Esc there returns to the details; Alt+A opens the details first then the popup; Escape/Left returns to History with c20 selected at the same pixel offset
+- Then the commit details replace the list (not a side pane): **‹ History tree** `Esc`, the subject, and newer/older buttons; Commit (copy button), Author with email, Date, Parent, Refs, Signature **Verify…**; the message; `FILES n` with `+x −y` and per-file counts; **Actions** `Alt+A` and the filled primary **Review** `Enter` at the bottom. `j`/`k` show the older/newer commit with the details still open; Up/Down choose a file without moving the History tree selection; `Enter`, **Review**, or a double click opens Review on the chosen file and Esc there returns to the details; Alt+A opens the details first then the popup; Escape/Left returns to the History tree with c20 selected at the same pixel offset
 Covered by (interaction): `narrow_details_navigation_preserves_hidden_history_and_back_anchor`, `narrow_details_step_commits_with_j_and_k`, `narrow_details_returns_to_the_same_selected_history_row`, `history_strip_leaves_the_narrow_details_overlay` (interaction_tests.rs, main.rs); `narrow_details_review_opens_on_the_chosen_file`, `scoped_commit_actions_menu_lists_grouped_actions` (main.rs)
 
 ### HIS-43 Enter opens Review and Back restores place — see REV-02
@@ -968,7 +968,7 @@ Covered by (interaction): `narrow_details_navigation_preserves_hidden_history_an
 ### HIS-45 Refs sidebar groups and counts
 Fixture: `fx-remote`
 Layer: visual
-- Given 1440 px wide History
+- Given 1440 px wide History tree
 - Then the sidebar shows `BRANCHES  n` expanded, `REMOTES`, `TAGS` collapsed (`▸ n`), `STASHES`; the current branch is bold with a HEAD checkmark; branch rows start with a dot in their graph lane color; `main` ends with dimmed `↑2 ↓3`; `local-only` has no counts; no tracking line or Pull button
 Covered by (interaction): `shows_grouped_sections_and_current_branch` (apps/git-good/src/refs_view.rs)
 
@@ -996,7 +996,7 @@ Covered by (interaction): `worktrees_are_listed_when_linked_ones_exist_and_open_
 ### HIS-48a Refs sidebar at scale
 Fixture: a repository with 10,000 branches in 100 folders (`team00/topic00000` …)
 Layer: interaction
-- When History opens with the sidebar docked
+- When the History tree opens with the sidebar docked
 - Then only the rows in view are laid out (fewer than 80 texts at 600 px), and frames that change nothing reuse the built list; a new refs read builds it again
 - And clicking the folder `team00` closes it (`team01` moves up) and clicking again opens it
 - And the drawer's cursor on `team90/topic09042` brings that row into view
@@ -1012,7 +1012,7 @@ Covered by (interaction): `clicking_a_branch_row_inspects_its_commit`, `clicking
 ### HIS-50 Ref selection clears a hiding filter
 Fixture: `fx-branchy`
 Layer: interaction
-- Given History filtered by `docs` (hiding `feature/login`'s tip)
+- Given the History tree filtered by `docs` (hiding `feature/login`'s tip)
 - When the user clicks `feature/login` in the sidebar
 - Then the filter clears and the tip is selected and revealed
 Covered by (interaction): `ref_jump_clears_filters_and_retargets_selection` (main.rs)
@@ -1020,7 +1020,7 @@ Covered by (interaction): `ref_jump_clears_filters_and_retargets_selection` (mai
 ### HIS-51 Sidebar visibility and width
 Fixture: `fx-branchy`
 Layer: interaction
-- Then the sidebar is open by default in History; `Ctrl+\` hides/shows it for History only (session-long); below the sidebar breakpoint the toolbar toggle is disabled with a reason; a dragged width stays fixed on idle frames
+- Then the sidebar is open by default in the History tree; `Ctrl+\` hides/shows it for the History tree only (session-long); below the sidebar breakpoint the toolbar toggle is disabled with a reason; a dragged width stays fixed on idle frames
 Covered by (interaction): `refs_sidebar_appears_only_when_there_is_room`, `resized_refs_and_details_keep_their_width_on_idle_frames` (main.rs)
 
 ### HIS-52 Local branch context menu entries
@@ -1040,8 +1040,8 @@ Covered by (Not automated)
 ### HIS-54 Switch branch (clean)
 Fixture: `fx-branchy`
 Layer: product
-- When **Switch to feature/login** from the ref menu (or double-click the row or its History pill)
-- Then HEAD moves to `feature/login`, filter clears, the new HEAD is selected, refs/history reload, the current branch row is bold/checked
+- When **Switch to feature/login** from the ref menu (or double-click the row or its History tree pill)
+- Then HEAD moves to `feature/login`, filter clears, the new HEAD is selected, refs and the History tree reload, the current branch row is bold/checked
 Covered by (backend, interaction, end-to-end): `double_clicking_a_branch_row_switches` (refs_view.rs), `clicking_a_branch_pill_selects_and_double_clicking_switches` (history_view.rs), `switches_branches_only_when_clean` (crates/git/tests/branch.rs), `switch_cli_changes_branches_and_reports_dirty_worktrees` (cli.rs)
 
 ### HIS-55 Switch to the current branch is disabled/no-op
@@ -1082,7 +1082,7 @@ Fixture: `fx-branchy`
 Layer: product
 - Given c25 selected
 - When **New branch here…** (or **Branch › New branch…** `Ctrl+B`) with name `fix`, **Switch after creation** on, **Create**
-- Then the dialog reads `Create a branch at <selector>`; `fix` is created at c25 and HEAD switches to it; the refs sidebar lists `fix` as the current branch, also when the pointer rests on the history while the switch runs
+- Then the dialog reads `Create a branch at <selector>`; `fix` is created at c25 and HEAD switches to it; the refs sidebar lists `fix` as the current branch, also when the pointer rests on the History tree while the switch runs
 Covered by (backend, interaction, GUI): `creates_and_switches_to_a_new_branch`, `creates_a_branch_at_a_revision_without_switching` (branch.rs), `branch_creation_window_renders_at_supported_widths`, `new_branch_switches_after_creation` (main.rs)
 
 ### HIS-60 Create rejects invalid and colliding names
@@ -1174,7 +1174,7 @@ Covered by (backend, end-to-end, partial): `deletes_a_tag_and_rejects_invalid_na
 ### HIS-73 Unborn branch
 Fixture: `fx-unborn`
 Layer: product
-- Then History reads *No commits yet on main* with **Go to Changes**; the sidebar lists `main` with *no commits*; New branch explains the unborn HEAD; Copy ID/Actions are disabled
+- Then the History tree reads *No commits yet on main* with **Go to Local Changes**; the sidebar lists `main` with *no commits*; New branch explains the unborn HEAD; Copy ID/Actions are disabled
 Covered by (backend, interaction): `empty_history_explains_itself_only_after_the_scan`, `new_branch_without_a_commit_explains_the_unborn_head` (main.rs), `unborn_and_detached_heads_are_explicit` (refs.rs)
 
 ### HIS-74 Detached HEAD
@@ -1183,17 +1183,17 @@ Layer: product
 - Then no branch row is checked or bold; c28 is HEAD in the graph; switching to `main` from the ref menu works
 Covered by (backend, partial): `unborn_and_detached_heads_are_explicit` (refs.rs), `rejects_dirty_missing_and_unborn_branches_and_switches_from_detached_head` (branch.rs); GUI path not automated
 
-### HIS-75 Shallow history boundary
+### HIS-75 Shallow History tree boundary
 Fixture: `fx-shallow`
 Layer: product
-- Then History shows 5 commits, `Commit · 5`, the oldest has no parent row beyond the boundary, and the window identity ends with `shallow`
-Covered by (backend, partial): `shallow_history_stops_at_the_available_boundary` (history.rs); GUI path not automated
+- Then the History tree shows 5 commits, `Commit · 5`, the oldest has no parent row beyond the boundary, and the window identity ends with `shallow`
+Covered by (backend, partial): `shallow_history_stops_at_the_available_boundary` (`history.rs`); GUI path not automated
 
 ### HIS-76 Bare repository
 Fixture: `fx-bare`
 Layer: product
-- Then History and refs load (30 commits, tags); switch/create-and-switch and Local Changes report the working-tree requirement instead of acting
-Covered by (backend, partial): `merge_bare_and_linked_worktree` (history.rs); GUI path not automated
+- Then the History tree and refs load (30 commits, tags); switch/create-and-switch and Local Changes report the working-tree requirement instead of acting
+Covered by (backend, partial): `merge_bare_and_linked_worktree` (`history.rs`); GUI path not automated
 
 ### HIS-77 Refs CLI is read-only
 Fixture: `fx-remote`
@@ -1213,29 +1213,29 @@ Covered by (interaction, partial): `guard_confirms_only_what_the_dialog_showed` 
 ### HIS-80 Narrow columns and one pill for an in-sync branch
 Fixture: `fx-remote-even`, narrow then 1120 px
 Layer: visual
-- Then at 720 px the History header reads `Commit · n`, `Hash`, `Date` (no Author), and below a 600 px list Date drops too, so subjects never truncate before them; `main` at the tip shows one pill `main ⇄ origin`; at 1120 px Author is back and the pills read `main` and `origin/main`
+- Then at 720 px the History tree header reads `Commit · n`, `Hash`, `Date` (no Author), and below a 600 px list Date drops too, so subjects never truncate before them; `main` at the tip shows one pill `main ⇄ origin`; at 1120 px Author is back and the pills read `main` and `origin/main`
 Covered by (interaction): `narrow_history_drops_author_and_merges_in_sync_pills` (main.rs); `author_drops_first_then_date_below_600`, `a_branch_in_sync_with_its_upstream_shows_one_pill` (history_view.rs)
 
 ### HIS-78 Status hint at narrow width — see FRM-55
 
 ## Review and reader
 
-Narrow (720×480) is below the 1040 px details/history break. "Reader" is the shared `DiffView` on the right of the 300 px file list.
+Narrow (720×480) is below the 1040 px details/History tree break. "Reader" is the shared `DiffView` on the right of the 300 px file list.
 
 ### REV-01 Enter opens Review for the selected commit
 Fixture: `fx-linear`
 Layer: interaction
-- Given History with `c29` selected
+- Given the History tree with `c29` selected
 - When the user presses `Enter` (or **Commit → Review changes**)
-- Then Review opens: header row holds the back pill `‹ History` with dimmed `Esc`, the `c29` subject (truncated first, full text on hover), its 8-character ID in a pill, and `author · YYYY-MM-DD`; the file list header reads `FILES n`; the first file is selected and shown in the reader
+- Then Review opens: header row holds the back pill `‹ History tree` with dimmed `Esc`, the `c29` subject (truncated first, full text on hover), its 8-character ID in a pill, and `author · YYYY-MM-DD`; the file list header reads `FILES n`; the first file is selected and shown in the reader
 Covered by (interaction): `enter_opens_selected_commit_at_both_widths` (main.rs), `commit_identity_shares_one_line_with_back` (review_view.rs)
 
-### REV-02 Back restores the exact History place
+### REV-02 Back restores the exact History tree place
 Fixture: `fx-linear`
 Layer: interaction
-- Given History filtered by `Update`, scrolled so the selected row `c20` sits mid-viewport, then Review opened on it
-- When the user presses `Esc` from the file list (or clicks `‹ History`)
-- Then History shows the same filter, `c20` selected, and the same pixel offset; history results that arrived while Review was open are applied only after the place is restored
+- Given the History tree filtered by `Update`, scrolled so the selected row `c20` sits mid-viewport, then Review opened on it
+- When the user presses `Esc` from the file list (or clicks `‹ History tree`)
+- Then the History tree shows the same filter, `c20` selected, and the same pixel offset; the History tree results that arrived while Review was open are applied only after the place is restored
 Covered by (interaction): `review_close_restores_the_recorded_history_location` (main.rs), `review_navigation_and_late_history_preserve_history_until_back` (interaction_tests.rs)
 
 ### REV-03 Back pill names its caller
@@ -1248,17 +1248,17 @@ Covered by (interaction): `recovery_caller_names_its_back_target` (review_view.r
 ### REV-04 Root commit compares with the empty tree
 Fixture: `fx-linear`
 Layer: product
-- Given History with `c01 Initial commit` selected
+- Given the History tree with `c01 Initial commit` selected
 - When Review opens
 - Then every file is listed as added (`+`); the Before endpoint reads `Empty tree`; **Compare with** lists no parent, only **HEAD**
-Covered by (backend, partial): `changed_files_match_git_for_root_nested_and_type_changes` (crates/git/tests/history.rs); GUI path not automated
+Covered by (backend, partial): `changed_files_match_git_for_root_nested_and_type_changes` (`crates/git/tests/history.rs`); GUI path not automated
 
 ### REV-05 Merge defaults to first parent
 Fixture: `fx-branchy`
 Layer: product
 - Given Review on `Merge branch 'topic'`
 - Then the comparison is against parent 1; **Compare with** lists `parent 1 <short>` and `parent 2 <short>` in stored order with one-based numbers and full IDs in tooltips, plus **HEAD**
-Covered by (backend, partial): `review_merge_defaults_to_first_parent_and_can_select_second` (crates/git/tests/history.rs); GUI path not automated
+Covered by (backend, partial): `review_merge_defaults_to_first_parent_and_can_select_second` (`crates/git/tests/history.rs`); GUI path not automated
 
 ### REV-06 Switching parent keeps the displayed comparison until the replacement arrives
 Fixture: `fx-branchy`
@@ -1272,7 +1272,7 @@ Covered by (interaction): `parent_replacement_keeps_labelled_content_until_it_ar
 Fixture: `fx-linear`
 Layer: product
 - Given Review on `c25`
-- When the user chooses **HEAD** in **Compare with** (or **Commit → Compare with HEAD** from History)
+- When the user chooses **HEAD** in **Compare with** (or **Commit → Compare with HEAD** from the History tree)
 - Then the comparison reloads in place; the Before/After header shows `HEAD` with the resolved commit; parents stay listed; choosing a parent switches back
 Covered by (interaction): `compare_with_switches_between_head_and_a_parent` (review_view.rs), `against_comparison_names_before_and_after_sources` (review_view.rs)
 
@@ -1308,13 +1308,13 @@ Covered by (Not automated)
 Fixture: `fx-file-history` (Review on the rename commit of `src/old.rs` → `src/lib.rs`)
 Layer: visual
 - Then rows are 22 px with one-character markers (`+ ~ − T R`), the path elided at its start (`…/folder/file.rs`) so the file name stays visible, full path and change kind on hover; the rename is one row, `R` `src/lib.rs`, its hover `R Renamed from src/old.rs`, and `src/old.rs` is not listed; rows are in Git tree order
-Covered by (backend, interaction): `compact_rows_and_placeholder_identity_survive_arrival` (review_view.rs), `comparison_is_pinned_and_reads_trees_without_blobs` (crates/git/tests/history.rs)
+Covered by (backend, interaction): `compact_rows_and_placeholder_identity_survive_arrival` (review_view.rs), `comparison_is_pinned_and_reads_trees_without_blobs` (`crates/git/tests/history.rs`)
 
 ### REV-13 Type change marker
 Fixture: `fx-file-history` (Given: a commit replacing `link` symlink with a regular file)
 Layer: visual
 - Then the row shows `T` with "type changed" on hover; its line count includes every line of both sides
-Covered by (backend, partial): `changed_files_match_git_for_root_nested_and_type_changes` (crates/git/tests/history.rs); GUI path not automated
+Covered by (backend, partial): `changed_files_match_git_for_root_nested_and_type_changes` (`crates/git/tests/history.rs`); GUI path not automated
 
 ### REV-14 Per-file line counts in a fixed slot
 Fixture: `fx-file-history`
@@ -1383,7 +1383,7 @@ Covered by (interaction): `retry_same_comparison_keeps_selection_anchor_and_diff
 Fixture: `fx-linear`
 Layer: visual
 - Given Review wide
-- Then one reader header row holds the path and exact endpoints (e.g. `main (a1b2c3d)` / parent), then **Diff | Full file**, **Inline | Side by side**, **Blame**, **History**, ‹ ›, ⋯; no Stage button; the path and endpoints are not repeated above the reader; modes, blob IDs, and sizes are in the opt-in **File details** row (⋯ › File details ✓, off by default); ⋯ lists 24 px rows: Open in editor, Reveal in folder, Copy path, Export before…, Export after…, File details, LFS / Submodule details… when they apply, then **Discard file…** last in red (Local Changes, unstaged)
+- Then one reader header row holds the path and exact endpoints (e.g. `main (a1b2c3d)` / parent), then **Diff | Full file**, **Inline | Side by side**, **Blame**, **File history**, ‹ ›, ⋯; no Stage button; the path and endpoints are not repeated above the reader; modes, blob IDs, and sizes are in the opt-in **File details** row (⋯ › File details ✓, off by default); ⋯ lists 24 px rows: Open in editor, Reveal in folder, Copy path, Export before…, Export after…, File details, LFS / Submodule details… when they apply, then **Discard file…** last in red (Local Changes, unstaged)
 Covered by (interaction): `the_reader_header_names_both_exact_endpoints` (diff_view.rs), `header_controls_keep_their_place_across_states` (review_view.rs), `file_actions_are_menu_rows_with_discard_last_in_red`, `workspace_uses_one_reader_header_with_on_demand_details` (status_view.rs)
 
 ### REV-24 Byte sizes per side
@@ -1396,7 +1396,7 @@ Covered by (interaction): `byte_sizes_identify_each_side_in_the_rendered_header`
 Fixture: `fx-linear` (Given: commit editing a file without a final newline)
 Layer: product
 - Then rows are fixed-height with old/new line numbers, `+`/`−`/context symbols and colors, hunk headers, and a missing-final-newline marker; bytes match `git diff`
-Covered by (backend, partial): `byte_exact_lines_context_and_missing_newline` (crates/engine/src/diff.rs), `selected_file_diff_matches_git_and_preserves_original_bytes` (crates/git/tests/history.rs); GUI path not automated
+Covered by (backend, partial): `byte_exact_lines_context_and_missing_newline` (crates/engine/src/diff.rs), `selected_file_diff_matches_git_and_preserves_original_bytes` (`crates/git/tests/history.rs`); GUI path not automated
 
 ### REV-26 Context lines 3 · 5 · 10
 Fixture: `fx-file-history`
@@ -1489,7 +1489,7 @@ Fixture: `fx-file-history`
 Layer: product
 - Given a commit changing `big.log` (> 2 MiB) and `long.txt` (> 100,000 combined lines)
 - Then each reader shows an explicit incomplete summary naming the budget with a completion state and per-side export; the UI stays responsive
-Covered by (backend, partial): `selected_file_binary_and_large_object_return_explicit_summaries` (crates/git/tests/history.rs), `empty_binary_limits_and_cancellation_are_explicit` (crates/engine/src/diff.rs); GUI path not automated
+Covered by (backend, partial): `selected_file_binary_and_large_object_return_explicit_summaries` (`crates/git/tests/history.rs`), `empty_binary_limits_and_cancellation_are_explicit` (crates/engine/src/diff.rs); GUI path not automated
 
 ### REV-40 Mode-only, symlink, gitlink presentations
 Fixture: `fx-submodule` (submodule bump), `fx-linear` (Given: commit `chmod +x run.sh`; commit retargeting a symlink)
@@ -1566,15 +1566,15 @@ Covered by (interaction): `reading_mode_exposes_file_and_change_navigation_at_bo
 ### REV-51 Narrow layout: list then reader
 Fixture: `fx-linear`, narrow
 Layer: interaction
-- Given Review narrow showing the file list over MESSAGE (the commit body and `author · date`); the identity row reads **‹ History** `Esc`, the subject, the ID pill, and `vs parent <id>` (choosing HEAD there compares with HEAD)
+- Given Review narrow showing the file list over MESSAGE (the commit body and `author · date`); the identity row reads **‹ History tree** `Esc`, the subject, the ID pill, and `vs parent <id>` (choosing HEAD there compares with HEAD)
 - When the user presses `Enter` on a file
-- Then a full-width reading view opens whose one header row reads **‹ Files** `1/3`, the path (start elided), Diff | Full file, Inline | Side by side, ‹ ›, ⋯ (Blame and File history inside; `B` and `H` still work); there are no Prev/Next file buttons (`Alt+Up/Down` change files) and no endpoint text; `F`, **‹ Files**, or Left return to the list with the same file selected and the list offset preserved; `Esc` returns to History
+- Then a full-width reading view opens whose one header row reads **‹ Files** `1/3`, the path (start elided), Diff | Full file, Inline | Side by side, ‹ ›, ⋯ (Blame and File history inside; `B` and `H` still work); there are no Prev/Next file buttons (`Alt+Up/Down` change files) and no endpoint text; `F`, **‹ Files**, or Left return to the list with the same file selected and the list offset preserved; `Esc` returns to the History tree
 Covered by (interaction): `enter_and_left_open_and_return_to_files_at_both_widths`, `narrow_files_key_returns_to_the_list_and_escape_to_the_caller`, `reading_mode_exposes_file_and_change_navigation_at_both_widths` (review_view.rs)
 
 ### REV-52 Narrow reader folds tools
 Fixture: `fx-linear`, reader width < 760 px
 Layer: interaction
-- Then **Blame** and **History** move into the ⋯ menu; when the path does not fit, controls wrap to a second line
+- Then **Blame** and **File history** move into the ⋯ menu; when the path does not fit, controls wrap to a second line
 Covered by (interaction): `a_narrow_reader_folds_blame_into_the_file_actions_menu` (diff_view.rs)
 
 ### REV-53 Blame in Full file
@@ -1604,8 +1604,8 @@ Covered by (Not automated)
 Fixture: `fx-file-history`
 Layer: interaction
 - Given Review on the newest commit with `src/lib.rs` selected
-- When the user presses `H` (or **History**)
-- Then the file-list pane shows the version list: header `FILE HISTORY 12+` with ×, 22 px rows of kind · short ID · subject (a rename adds `← old path`) · date, the selected row being the comparison; **History** stays pressed; scrolling to the end loads the next page with its slot blank (no loading text); `H` again does not stack another source; × or `Esc` closes it
+- When the user presses `H` (or **File history**)
+- Then the file-list pane shows the version list: header `FILE HISTORY 12+` with ×, 22 px rows of kind · short ID · subject (a rename adds `← old path`) · date, the selected row being the comparison; **File history** stays pressed; scrolling to the end loads the next page with its slot blank (no loading text); `H` again does not stack another source; × or `Esc` closes it
 Covered by (interaction): `history_opens_from_the_wide_reader_and_never_stacks` (review_view.rs), `the_version_list_names_each_version_and_its_old_path` (file_history_view.rs)
 
 ### REV-57 Versions skip unchanged commits
@@ -1614,13 +1614,13 @@ Layer: product
 - Then the counter totals 12 content versions, not the number of commits; **Diff** shows previous → current, **Full file** the current version; Before/After never navigates versions
 Covered by (backend, interaction): `linear_history_skips_commits_that_carry_the_same_content` (crates/git/tests/file_history.rs), `the_edge_uses_before_and_after_sides_and_an_unknown_edge_has_no_diff` (file_history_view.rs)
 
-### REV-58 History follows the rename
+### REV-58 File history follows the rename
 Fixture: `fx-file-history`
 Layer: product
 - Given a file was renamed in a commit (`Pane e pizza/Focaccia.md` → `Pane e pizza/Focaccia genovese.md`)
 - When the user reviews that commit
 - Then the file list shows one row, `R` at the new path, not a deleted and an added file
-- When the user opens History on it (`H`)
+- When the user opens File history on it (`H`)
 - Then the version list runs past the rename: the rename version reads `← Pane e pizza/Focaccia.md` and the older versions follow the old path down to the commit that added it
 - And in `fx-file-history`, `Alt+Left` past version 6 labels the version a rename naming `src/old.rs`; older versions read `src/old.rs`
 Covered by (backend, interaction): `renames_are_followed_and_name_the_old_path` (crates/git/tests/file_history.rs), `renames_are_one_change_with_the_old_path_as_git_pairs_them` (crates/git/tests/review_special.rs), `a_renamed_file_reviews_as_one_rename_and_its_history_crosses_it` (apps/git-good/src/main.rs)
@@ -1661,47 +1661,47 @@ Covered by (backend, interaction): `delete_and_readd_produce_an_explicit_absent_
 ### REV-61 Ambiguous predecessor asks
 Fixture: `fx-file-history-merge` (proposed; Given: two branches each independently commit the same content of `x.txt`, then merge)
 Layer: product
-- Then history stops and nests the candidates under the merge row (`CHOOSE EARLIER VERSION 2`, then 22 px rows of kind · short ID · subject and `← old path` · author and date); Up/Down and Enter pick one; it never takes the first parent; Full file shows the current content and Diff is disabled until chosen
+- Then File history stops and nests the candidates under the merge row (`CHOOSE EARLIER VERSION 2`, then 22 px rows of kind · short ID · subject and `← old path` · author and date); Up/Down and Enter pick one; it never takes the first parent; Full file shows the current content and Diff is disabled until chosen
 Covered by (interaction): `an_ambiguous_predecessor_requires_a_choice`, `the_strip_offers_every_predecessor_choice` (file_history_view.rs), `an_ambiguous_history_edge_keeps_full_content_and_disables_diff` (review_view.rs)
 
-### REV-62 Closing history restores entry context once
+### REV-62 Closing File history restores entry context once
 Fixture: `fx-file-history`
 Layer: interaction
-- Given history opened at line 25, stepped 3 versions back
-- When the user presses `Esc` (or Close history)
-- Then the original comparison, path, presentation, side, cursor, and pixel place are restored exactly once; version steps added no Back history; the next `Esc` leaves the reader
+- Given File history opened at line 25, stepped 3 versions back
+- When the user presses `Esc` (or Close File history)
+- Then the original comparison, path, presentation, side, cursor, and pixel place are restored exactly once; version steps added no Back entries; the next `Esc` leaves the reader
 Covered by (interaction): `history_opens_in_the_reader_and_escape_restores_the_entry_context_once` (review_view.rs), `saved_reader_context_restores_place_and_endpoints` (diff_view.rs)
 
-### REV-63 Selecting another file resets history
+### REV-63 Selecting another file resets File history
 Fixture: `fx-file-history`
 Layer: interaction
-- Given history active on `src/lib.rs`
+- Given File history active on `src/lib.rs`
 - When the user selects another file
-- Then history stays open at that file's newest version; Close returns to `src/lib.rs` entry context
+- Then File history stays open at that file's newest version; Close returns to `src/lib.rs` entry context
 Covered by (interaction): `selecting_another_file_resets_history_and_keeps_the_return_context` (review_view.rs)
 
-### REV-64 Switching parent leaves history
+### REV-64 Switching parent leaves File history
 Fixture: `fx-branchy`
 Layer: interaction
-- Given history open in Review of the merge
+- Given File history open in Review of the merge
 - When the user picks `parent 2`
-- Then history closes because the comparison changed
+- Then File history closes because the comparison changed
 Covered by (Not automated)
 
-### REV-65 Narrow history
+### REV-65 Narrow File history
 Fixture: `fx-file-history`, narrow
 Layer: interaction
-- Then the version list sits in a seven-row pane above the full-width reader; `Esc` closes history first, then leaves Review (`F` returns to the file list)
+- Then the version list sits in a seven-row pane above the full-width reader; `Esc` closes File history first, then leaves Review (`F` returns to the file list)
 Covered by (interaction): `narrow_history_uses_the_reading_layout_and_escape_closes_it_first` (review_view.rs)
 
-### REV-66 Failed history page keeps loaded versions
+### REV-66 Failed File history page keeps loaded versions
 Fixture: `fx-file-history`
 Layer: product
 - Given a failure while paging older versions
-- Then loaded versions stay, the last list row is one red row `History page failed · <error>` with **Retry**, the boundary stays pending, and Retry resumes
+- Then loaded versions stay, the last list row is one red row `File history page failed · <error>` with **Retry**, the boundary stays pending, and Retry resumes
 Covered by (backend, interaction): `a_failed_page_retry_keeps_the_loaded_timeline`, `a_failed_page_is_one_red_row_with_retry` (file_history_view.rs), `cancellation_and_a_failed_step_keep_the_loaded_versions` (crates/git/tests/file_history.rs)
 
-### REV-67 Line-range history
+### REV-67 Line history of a range
 Fixture: `fx-file-history`
 Layer: product
 - Given Full file with lines 20–30 selected (Shift-click)
@@ -1717,10 +1717,10 @@ Layer: interaction
 - Then the cursor starts at the older version and its Newer edge reports the deletion
 Covered by (interaction): `initial_line_history_index_selects_the_before_version` (file_history_view.rs)
 
-### REV-69 History and blame are read-only
+### REV-69 File history and Blame are read-only
 Fixture: `fx-file-history`
 Layer: product
-- After browsing history and blame, `HEAD`, refs, index, and working files are unchanged
+- After browsing File history and Blame, `HEAD`, refs, index, and working files are unchanged
 Covered by (interaction): `reading_versions_preserves_the_repository` (file_history_worker.rs)
 
 ### REV-70 Open in editor
@@ -1755,7 +1755,7 @@ Layer: interaction
 - Then the bar reads `1 of 3`, the three matches are highlighted (the current one more strongly), and line 1 is the place
 - And Enter goes to `beta alpha`, then `ALPHA`, then back to line 1; Shift+Enter or ↑ goes back; **Aa** shows `…` until the case-sensitive answer arrives and draws no old highlights meanwhile; Esc closes the bar
 - And the worker searches the whole document, every page and not just those shown, once per query; `total_x` is not the whole word `total`; character ranges hold past wide characters
-- And `Ctrl/Cmd+F` in History still opens search with the History filter
+- And `Ctrl/Cmd+F` in the History tree still opens search with the History tree filter
 Covered by (interaction): `ctrl_f_finds_steps_highlights_and_closes` (apps/git-good/src/diff_view.rs); `find_matches_case_whole_words_and_wide_characters`, `the_whole_document_is_searched_once_per_query` (apps/git-good/src/diff_worker.rs)
 
 ### REV-76 Changed words inside changed lines
@@ -1794,12 +1794,12 @@ Expected `fx-dirty` rows (renames appear as deletion + addition, untracked folde
 ### CHG-01 Opening Local Changes hides the refs sidebar
 Fixture: `fx-dirty`
 Layer: interaction
-- Given Git Good opened on History with the refs sidebar visible
-- When the user chooses **View › Local Changes** (`Ctrl+1`) or the **Changes** tab
+- Given Git Good opened on the History tree with the refs sidebar visible
+- When the user chooses **View › Local Changes** (`Ctrl+1`) or the **Local Changes** tab
 - Then the toolbar stays visible, the refs sidebar is hidden, and the Local Changes workspace fills the main area; **View › Refs sidebar** (`Ctrl+\`) shows it again on demand
 Covered by (interaction): `menu_bar_is_one_row_and_view_shortcuts_switch_views` (apps/git-good/src/main.rs)
 
-### CHG-02 Changes tab count badge — see FRM-28
+### CHG-02 Local Changes tab count badge — see FRM-28
 
 ### CHG-03 Stacked Unstaged/Staged lists in one 300 px column (wide)
 Fixture: `fx-dirty` (1440×900)
@@ -2107,11 +2107,11 @@ Layer: product
 - Then a commit with the staged tree (a.txt staged hunk, b.txt, e→e2) is created; unstaged edits remain; status line reads **Committed <id7> · 4 files** followed by remaining counts; draft cleared; status hints read `S / U: stage / unstage · [ ]: hunks · Ctrl+Enter: commit`
 Covered by (interaction, end-to-end): `commit_panel_commits_the_index_and_reports_hook_failures` (status_view.rs); `commit_cli_commits_the_index_and_preserves_working_changes` (apps/git-good/tests/cli.rs)
 
-### CHG-44 After commit, **History** selects the new commit
+### CHG-44 After commit, **History tree** selects the new commit
 Fixture: `fx-dirty`
 Layer: interaction
-- When the user commits, then clicks **History** (`Ctrl+2`)
-- Then history refreshes and the new commit is selected at the top
+- When the user commits, then clicks **History tree** (`Ctrl+2`)
+- Then the History tree refreshes and the new commit is selected at the top
 Covered by (Not automated)
 
 ### CHG-45 Commit on an unborn branch creates the root commit
@@ -2186,7 +2186,7 @@ Covered by (Not automated)
 ### CHG-55 Drafts survive navigation and do not cross worktrees
 Fixture: `fx-dirty`; `fx-worktrees`
 Layer: product
-- When the user types a message, selects `c.txt`, goes to History and back
+- When the user types a message, selects `c.txt`, goes to History tree and back
 - Then the exact text and the `c.txt` selection are restored; opening a linked worktree shows an empty draft
 Covered by (interaction): `commit_draft_survives_history_navigation`, `commit_draft_does_not_cross_worktrees` (interaction_tests.rs); `draft_restores_the_selected_comparison` (status_view.rs)
 
@@ -2273,7 +2273,7 @@ Covered by (interaction): `the_sign_checkbox_starts_from_the_commit_preference`,
 ### CHG-64 Clean worktree view
 Fixture: `fx-linear`; `fx-remote` (behind 3); `fx-remote` after a pull leaving ahead only
 Layer: product
-- Then Local Changes replaces lists, reader and form with *Working tree clean*, *Last commit <id8> · Update docs*, one primary step: **Open History** (`Ctrl+2`) in `fx-linear`, **Pull 3** when behind, **Push n** when only ahead, and *Changed files appear here as soon as they are saved.*; not shown while amending
+- Then Local Changes replaces lists, reader and form with *Working tree clean*, *Last commit <id8> · Update docs*, one primary step: **Open History tree** (`Ctrl+2`) in `fx-linear`, **Pull 3** when behind, **Push n** when only ahead, and *Changed files appear here as soon as they are saved.*; not shown while amending
 Covered by (interaction): `empty_groups_say_so_after_the_scan_and_stack` (status_view.rs)
 
 ### CHG-65 Empty group messages and blank during scan
@@ -2331,7 +2331,7 @@ Layer: product
 - Gap: the per-file **Discard unstaged changes…** confirmation does not revalidate yet (decided: [spec decisions](#spec-decisions--2026-11-04))
 Covered by (interaction, partial): `discard_all_rereads_and_asks_again_after_an_outside_change` (apps/git-good/src/main.rs), `guard_confirms_only_what_the_dialog_showed` (apps/git-good/src/consequence.rs) (Discard all only)
 
-Sources: architecture.md §Remote tracking and network mutations · M4, §History mutations and recovery · M5, operation area / outcome paragraphs (~79–81), Stashes picker (~91), refs context menu (~180), Pull (~184), Preferences (~358–364); final-design.md §Stashes and command table; cli.md §Sync and stash, §Merge, rebase, rewrite, and conflicts; user-flows.md F06–F09. Rebase/interactive rebase and the Recovery/backups/reflog windows are out of scope here.
+Sources: architecture.md §Remote tracking and network mutations · M4, §History tree mutations and recovery · M5, operation area / outcome paragraphs (~79–81), Stashes picker (~91), refs context menu (~180), Pull (~184), Preferences (~358–364); final-design.md §Stashes and command table; cli.md §Sync and stash, §Merge, rebase, rewrite, and conflicts; user-flows.md F06–F09. Rebase/interactive rebase and the Recovery/backups/reflog windows are out of scope here.
 
 ## Network
 
@@ -2418,7 +2418,7 @@ Covered by (interaction): `clone_enter_requires_a_focused_field` (src/main.rs)
 Fixture: `fx-remote` (clone source `file://…/origin.git`), launched from `fx-not-repo`
 Layer: product
 - When Clone runs with valid fields
-- Then the dialog closes, the status line shows progress with **Cancel**, and on success the new repository opens in History and the footer reports `Cloned <path>`
+- Then the dialog closes, the status line shows progress with **Cancel**, and on success the new repository opens in the History tree and the footer reports `Cloned <path>`
 Covered by (interaction, end-to-end): `finish_network_clone_opens_the_new_repository` (src/main.rs); `sync_cli_clones_fetches_pushes_and_reports_failures` (tests/cli.rs)
 
 ### NET-12 Clone into an existing nonempty folder fails without touching it
@@ -2431,7 +2431,7 @@ Covered by (end-to-end, partial): `sync_cli_clones_fetches_pushes_and_reports_fa
 ### NET-13 Fetch updates remote-tracking refs only
 Fixture: `fx-remote`, with a new commit pushed to `origin.git` `main` from another clone after setup
 Layer: product
-- Given a History row is selected
+- Given a History tree row is selected
 - When toolbar **Fetch** (tooltip `Fetch  Ctrl+Shift+F`) is clicked
 - Then `origin/main` moves to the new commit, local `main` and the worktree are unchanged, the branch button's behind count rises by 1, the selection is kept, and the footer reports `Fetched origin`
 Covered by (backend, partial): `clone_fetch_push_upstream_and_non_fast_forward` (crates/git/tests/sync.rs); GUI path not automated
@@ -2461,7 +2461,7 @@ Covered by (interaction, partial): `pull_is_ready_whenever_the_current_branch_ha
 Fixture: `fx-remote`
 Layer: product
 - When **Repository → Pull (rebase)** runs
-- Then Git fetches `origin`, then Git Good reads `main` against `origin/main` from local refs and, because it is behind, rebases `main` onto `origin/main` on the operation worker: 2 local commits now sit above the 3 remote ones; History refreshes once
+- Then Git fetches `origin`, then Git Good reads `main` against `origin/main` from local refs and, because it is behind, rebases `main` onto `origin/main` on the operation worker: 2 local commits now sit above the 3 remote ones; the History tree refreshes once
 Covered by (backend, partial): `upstream_relation_reads_local_refs_only` (crates/git/tests/sync.rs), `upstream_relation_follows_ahead_and_behind_counts` (crates/engine/src/sync.rs) (relation only; the GUI fetch-then-rebase is Not automated)
 
 ### NET-18 Pull strategy Merge and Fast-forward only
@@ -2566,7 +2566,7 @@ Covered by (backend, interaction): `parses_bounded_progress_phases_and_percentag
 Fixture: `fx-remote-slow`
 Layer: product
 - When **Cancel** is clicked (a) while the Fetch is queued, before Git starts; (b) during transfer; (c) after Git has updated refs, as the job finishes
-- Then the label changes to `Cancelling fetch…` and the Git child is killed and reaped; in every case (Git Good does not tell them apart) Git Good re-reads refs, history and status (refs that moved are shown as moved; no rollback is attempted or implied) and the footer reads `Fetch from origin cancelled. Git Good re-read the repository; check what changed before retrying.`; **Retry fetch** is offered once the re-read finishes
+- Then the label changes to `Cancelling fetch…` and the Git child is killed and reaped; in every case (Git Good does not tell them apart) Git Good re-reads refs, the History tree and status (refs that moved are shown as moved; no rollback is attempted or implied) and the footer reads `Fetch from origin cancelled. Git Good re-read the repository; check what changed before retrying.`; **Retry fetch** is offered once the re-read finishes
 Covered by (backend, interaction, partial): `cancelled_fetch_rereads_the_repository_before_offering_retry` (apps/git-good/src/main.rs); `cancellation_reports_cancel_without_a_receipt` (crates/git/tests/sync.rs) (the three cancel timings are not driven)
 
 ### NET-33 Network operations are serialized
@@ -2683,7 +2683,7 @@ Covered by (Not automated)
 Fixture: `fx-stash`
 Layer: product
 - When `stash@{0}` is selected and **Apply** (tooltip `Restore the changes and keep the stash entry`) is clicked, or Enter is pressed
-- Then `a.txt` is modified in the worktree, the picker still lists 3 entries, the footer reads `Restored stash@{0}`, and the status/history refresh
+- Then `a.txt` is modified in the worktree, the picker still lists 3 entries, the footer reads `Restored stash@{0}`, and the status and History tree refresh
 Covered by (interaction): `stash_picker_keys_select_ask_to_drop_and_apply` (src/main.rs); `stash_restore_reports_the_restore_action` (src/main.rs)
 
 ### STA-12 Pop restores then removes the entry
@@ -2791,9 +2791,9 @@ Covered by (Not automated)
 ### STA-26 A stash shows its result at once, at CLI speed
 Fixture: `fx-dirty`
 Layer: interaction
-- Given the pointer resting over History, where the Stash dialog sat
+- Given the pointer resting over the History tree, where the Stash dialog sat
 - When the user stashes
-- Then the stash runs one Git process, as `git stash push` does, and the history, refs and sidebar show the result as soon as Git returns, without waiting for the pointer to leave; the top row and scroll position hold (RULE-16)
+- Then the stash runs one Git process, as `git stash push` does, and the History tree, refs and sidebar show the result as soon as Git returns, without waiting for the pointer to leave; the top row and scroll position hold (RULE-16)
 Covered by (interaction): `a_stash_shows_its_history_at_once_under_the_pointer` (main.rs), `a_reload_under_the_pointer_shows_once_its_old_top_row_is_found`, `a_branch_switch_shows_its_first_page_at_once_under_the_pointer` (interaction_tests.rs), `push_receipt_names_the_newest_entry_as_git_lists_it` (stash.rs)
 
 ## Merge, cherry-pick, revert and conflicts
@@ -2802,7 +2802,7 @@ Covered by (interaction): `a_stash_shows_its_history_at_once_under_the_pointer` 
 Fixture: `fx-branchy`
 Layer: product
 - When **Branch → Merge into current…** opens the modal **Merge branch**, `feature/login` is chosen, and **Merge** is pressed
-- Then the dialog closes immediately, `main` gains a two-parent merge commit, History refreshes once, and the footer reads `Merged feature/login as a merge commit`
+- Then the dialog closes immediately, `main` gains a two-parent merge commit, the History tree refreshes once, and the footer reads `Merged feature/login as a merge commit`
 Covered by (backend, interaction, partial): `diverged_merge_creates_a_merge_commit` (crates/git/tests/merge.rs); `merge_dialog_and_banner_render_at_supported_widths` (src/main.rs)
 
 ### INT-02 Merge fast-forwards by default and reports already up to date
@@ -2854,13 +2854,13 @@ Layer: product
 - Given all three paths are resolved and staged
 - Then the band is purple: `Merge ready · merging <ref> <id> into main`, `All files staged`, `Continue writes the merge commit of <ref> into main.`, **Continue** the filled primary with `Ctrl+Enter`
 - When **Continue** (or `Ctrl+Enter`) is pressed
-- Then a merge commit is created, the band disappears, history/refs/status refresh once, and the footer reads `Continued merge`
+- Then a merge commit is created, the band disappears, the History tree/refs/status refresh once, and the footer reads `Continued merge`
 Covered by (backend, interaction, partial): `conflict_can_abort_and_continue` (crates/git/tests/merge.rs); `continue_is_the_primary_only_once_nothing_is_conflicted` (apps/git-good/src/operation_band.rs); GUI continue not driven
 
 ### INT-09 Cherry-pick onto HEAD applies the selected commit
 Fixture: `fx-branchy`
 Layer: product
-- When the second-newest `feature/login` commit is selected in History and **Commit → Cherry-pick onto HEAD** runs
+- When the second-newest `feature/login` commit is selected in the History tree and **Commit → Cherry-pick onto HEAD** runs
 - Then `main` gains one new commit with the same message and change, and the footer reads `Cherry-picked <id>`
 Covered by (backend, partial): `cherry_pick_applies_a_commit` (crates/git/tests/mutation.rs); GUI path not automated
 
@@ -2907,8 +2907,8 @@ Covered by (Not automated)
 ### INT-16 The conflict workspace is the Changes view; Esc returns to the plain list
 Fixture: `fx-merge-conflict`, Local Changes open
 Layer: interaction
-- When the band's **Resolve conflicts** (or **Changes → Resolve conflicts…**, or the Changes tab while conflicts exist) is clicked
-- Then the conflict workspace replaces Local Changes under the band with the Changes tab selected, the band hides **Resolve conflicts**, there is no Close and no heading, and the refs sidebar hides (its toggle still works)
+- When the band's **Resolve conflicts** (or **Changes → Resolve conflicts…**, or the Local Changes tab while conflicts exist) is clicked
+- Then the conflict workspace replaces Local Changes under the band with the Local Changes tab selected, the band hides **Resolve conflicts**, there is no Close and no heading, and the refs sidebar hides (its toggle still works)
 - When Esc is pressed
 - Then the plain changes list shows; the band's **Resolve conflicts** brings the workspace back; sizes do not change when switching files
 Covered by (interaction): `conflicts_open_in_the_main_workspace_and_hold_still`, `conflict_window_leaves_continuation_to_the_operation_area`, `conflict_view_renders_at_supported_widths` (apps/git-good/src/main.rs); `resolve_conflicts_hides_while_the_workspace_is_open` (apps/git-good/src/operation_band.rs)
@@ -3112,14 +3112,14 @@ Layer: product
 Covered by (backend, partial): `amend_hooks_receive_the_old_commit_and_post_rewrite_warnings_are_kept` (crates/git/tests/commit.rs); GUI path not automated
 
 ### RWR-08 Commit menu lists the rewrite commands
-Fixture: `fx-linear`, History focused, `c25` selected
+Fixture: `fx-linear`, the History tree focused, `c25` selected
 Layer: interaction
 - When the user opens **Commit**
 - Then it lists **Interactive rebase from here…** (`R`), **Reword…** (`Ctrl+R`), **Reopen for editing…** (`E`), **Fixup into…** (`F`), **Drop…** (`D`), **Reset current branch to here…**
 Covered by (interaction): `menus_follow_the_final_design_mockup` (apps/git-good/src/main.rs)
 
 ### RWR-09 Reword/Reopen/Fixup/Drop open the plan with the commit preset
-Fixture: `fx-rebase`, the 2nd-newest commit selected in History
+Fixture: `fx-rebase`, the 2nd-newest commit selected in the History tree
 Layer: interaction
 - When the user presses `Ctrl+R` (then repeats with `E`, `F`, and `D` with **Confirm before Drop and Reset** on)
 - Then the interactive rebase dialog opens with that row selected and its action chip set to **Reword** / **Reopen** / **Fixup** / **Drop**; a reword focuses the message field seeded with the original
@@ -3132,18 +3132,18 @@ Layer: product
 - Then the dialog shows the row as Pick and the reason `No kept commit below to combine into.`; **Start rebase** stays disabled with that reason
 Covered by (interaction): `commit_menu_presets_select_the_commit_in_the_rebase_plan` (apps/git-good/src/main.rs)
 
-### RWR-11 Interactive rebase opens from History with R
-Fixture: `fx-rebase`, the 4th-newest commit selected, History focused
+### RWR-11 Interactive rebase opens from History tree with R
+Fixture: `fx-rebase`, the 4th-newest commit selected, the History tree focused
 Layer: visual
 - When the user presses `R`
-- Then a large modal opens 12 px below the toolbar, centered, over dimmed History; menu bar and toolbar stay visible; header reads **Interactive rebase**, the branch `main`, the range `<from>…HEAD onto <base>` with 7-char IDs, **Cancel** `Esc`, and **Start rebase** `Ctrl+Enter`
+- Then a large modal opens 12 px below the toolbar, centered, over the dimmed History tree; menu bar and toolbar stay visible; header reads **Interactive rebase**, the branch `main`, the range `<from>…HEAD onto <base>` with 7-char IDs, **Cancel** `Esc`, and **Start rebase** `Ctrl+Enter`
 Covered by (interaction, partial): `rewrite_dialog_renders_at_supported_widths` (apps/git-good/src/main.rs)
 
 ### RWR-12 Interactive rebase of current branch covers the branch's own commits
-Fixture: `fx-rebase`, `c20` selected in History
+Fixture: `fx-rebase`, `c20` selected in the History tree
 Layer: product
 - When the user runs **Branch › Interactive rebase of current branch…** or its search Action
-- Then its hint reads *Rewrite the commits the upstream, or else the default branch, lacks*; the plan opens centered 12 px below the toolbar (RWR-11) and lists exactly the 6 commits not on `origin/main`, regardless of the History selection, which stays on `c20`
+- Then its hint reads *Rewrite the commits the upstream, or else the default branch, lacks*; the plan opens centered 12 px below the toolbar (RWR-11) and lists exactly the 6 commits not on `origin/main`, regardless of the History tree selection, which stays on `c20`
 Covered by (backend, interaction, partial): `branch_menu_rewrite_covers_the_branch_and_keeps_the_selection`, `commands_off_the_toolbar_keep_their_menu_home_and_search_entry` (apps/git-good/src/main.rs); `branch_start_prefers_unpushed_commits_then_the_default_branch` (crates/git/tests/rewrite.rs) (menu route; the hint and the search route not driven)
 
 ### RWR-13 Interactive rebase of current branch is disabled when the branch has no own commits
@@ -3155,7 +3155,7 @@ Covered by (interaction): `stash_commands_follow_local_changes_and_entries` (rea
 ### RWR-14 Plan lists newest first and starts unchanged
 Fixture: `fx-rebase`, dialog from **Interactive rebase of current branch…**
 Layer: visual
-- Then the plan header reads `PLAN · NEWEST FIRST, LIKE HISTORY` with `j k select · Alt+↑↓ move · P R E S F D`; rows are in History order; every chip reads **Pick**; the last row names the base (`<id> base · unchanged`); under the list: `Keys on the selected row: P pick · R reword · E reopen · S squash · F fixup · D drop`; **Start rebase** is disabled with `The plan matches the current history.`
+- Then the plan header reads `PLAN · NEWEST FIRST, LIKE THE HISTORY TREE` with `j k select · Alt+↑↓ move · P R E S F D`; rows are in History tree order; every chip reads **Pick**; the last row names the base (`<id> base · unchanged`); under the list: `Keys on the selected row: P pick · R reword · E reopen · S squash · F fixup · D drop`; **Start rebase** is disabled with `The plan matches the History tree.`
 Covered by (interaction): `lists_newest_first_and_starts_unchanged` (apps/git-good/src/rebase_plan.rs)
 
 ### RWR-15 Plan rows have two lines, pills, and Pick has no badge
@@ -3267,7 +3267,7 @@ Covered by (Not automated)
 Fixture: `fx-rebase`
 Layer: visual
 - When the user sets a row to **E**
-- Then its chip reads **Reopen** and its badge `⏸ stops here · reopens staged in Changes`; the result count includes `1 stop`
+- Then its chip reads **Reopen** and its badge `⏸ stops here · reopens staged in Local Changes`; the result count includes `1 stop`
 Covered by (interaction): `reopen_stops_and_the_last_kept_commit_cannot_be_dropped` (apps/git-good/src/rebase_plan.rs)
 
 ### RWR-31 Reword edits the message on the right
@@ -3325,7 +3325,7 @@ Layer: product
 - Then the plan is not offered; the reason names merge commits as unsupported; no rewrite runs
 Covered by (backend, partial): `rewrite_rejects_merge_commits` (crates/git/tests/rewrite.rs); GUI path not automated
 
-### RWR-39 Cancel / Esc leaves history untouched
+### RWR-39 Cancel / Esc leaves the commits untouched
 Fixture: `fx-rebase`, plan edited
 Layer: product
 - When the user presses `Esc`
@@ -3336,7 +3336,7 @@ Covered by (interaction): `rebase_dialog_keys_choose_actions_and_start_only_when
 Fixture: `fx-rebase`, a reorder plan
 Layer: interaction
 - When the user presses `Ctrl+Enter`
-- Then the dialog closes at once; the purple band alone reads `Rewriting <branch> · step <n> of <m> · picking <8-char id>` with a spinner, `Browsing stays available; the old history is labelled until the new one is accepted.`, the step strip, and no buttons; the footer reads `Backup: refs/gg/backup/…`; then the band reads `Refreshing history…` (every step ✓) and the footer `Rewrote <n> commits · backup <ref>`; History stays browsable; duplicate rewrites are disabled; the band clears when the new history is adopted without the viewport jumping
+- Then the dialog closes at once; the purple band alone reads `Rewriting <branch> · step <n> of <m> · picking <8-char id>` with a spinner, `Browsing stays available; the old History tree is labelled until the new one is accepted.`, the step strip, and no buttons; the footer reads `Backup: refs/gg/backup/…`; then the band reads `Refreshing the History tree…` (every step ✓) and the footer `Rewrote <n> commits · backup <ref>`; the History tree stays browsable; duplicate rewrites are disabled; the band clears when the new History tree is adopted without the viewport jumping
 Covered by (interaction): `rewrite_progress_lives_once_in_the_operation_area`, `rewrite_refresh_clears_the_operation_area` (apps/git-good/src/main.rs); `the_rewrite_band_names_the_step_git_is_applying` (apps/git-good/src/operation_band.rs); `rewrite_reorders_commits_and_records_the_previous_tip` (crates/git/tests/rewrite.rs)
 
 ### RWR-41 A rewrite creates a private backup before Git runs
@@ -3416,7 +3416,7 @@ Covered by (interaction): `window_title_names_the_folder_and_a_stopped_rebase` (
 Fixture: `fx-rebase-conflict`
 Layer: product
 - When the user clicks **Skip commit**
-- Then Git skips step 4 and continues; on completion the commit is absent from History, the band clears, history/refs/status/backups refresh
+- Then Git skips step 4 and continues; on completion the commit is absent from the History tree, the band clears, History tree/refs/status/backups refresh
 Covered by (backend, partial): `rewrite_conflict_can_abort_or_skip` (crates/git/tests/rewrite.rs); GUI path not automated
 
 ### RWR-53 Abort and restore returns the branch to its pre-rewrite tip
@@ -3524,7 +3524,7 @@ Covered by (Not automated)
 Fixture: `fx-backups`, size 720×480
 Layer: interaction
 - When the user opens **Repository › Recovery…** (or its search Action)
-- Then a non-modal window titled *Recovery* with a **Backups <n> | Reflog** switch in its header opens fully inside the viewport with no clipped controls, on Backups the first time and on the last chosen source after that; History stays usable beside it; there are no separate **Backups…** or **Reflog…** commands and no Refresh button
+- Then a non-modal window titled *Recovery* with a **Backups <n> | Reflog** switch in its header opens fully inside the viewport with no clipped controls, on Backups the first time and on the last chosen source after that; the History tree stays usable beside it; there are no separate **Backups…** or **Reflog…** commands and no Refresh button
 Covered by (interaction, partial): `recovery_window_switches_backups_and_reflog_in_its_header`, `recovery_window_stays_inside_the_narrow_viewport`, `repository_recovery_opens_one_window_on_the_last_source`, `commands_off_the_toolbar_keep_their_menu_home_and_search_entry` (apps/git-good/src/main.rs)
 
 ### RWR-69 Backups list and actions
@@ -3539,7 +3539,7 @@ Layer: product
 - When the user opens **Repository › Recovery…** and on the newest backup presses **Restore main…** (or `Enter`)
 - Then the confirmation asks *Move main from <tip> back to <id> <subject>?* with *✓ Files are checked out to match the backup.* and *✓ The current tip <tip> is saved as a new backup, so this can be undone.*, Cancel `Esc` and **Restore branch** `Enter`
 - When confirmed
-- Then a `restore` backup of the rewritten tip is created first, then `main` is hard reset to the pre-rewrite tip with the dropped commit; the old backup still exists; the status strip reads *Restored main to <id> · the previous tip <tip> is saved as a backup*; refs, history, status and the Backups list refresh
+- Then a `restore` backup of the rewritten tip is created first, then `main` is hard reset to the pre-rewrite tip with the dropped commit; the old backup still exists; the status strip reads *Restored main to <id> · the previous tip <tip> is saved as a backup*; refs, the History tree, status and the Backups list refresh
 Covered by (backend, interaction): `restore_is_one_confirmed_hard_reset_that_saves_the_tip_first` (apps/git-good/src/recovery_view.rs), `restore_saves_the_current_tip_then_hard_resets_a_clean_branch` (crates/git/tests/backup.rs)
 
 ### RWR-71 Create branch here from a backup does not switch
@@ -3617,7 +3617,7 @@ Sources: docs/architecture.md (Preferences, Worktrees, Submodules, Git LFS, Sign
 ### PRF-01 Open Preferences from the menu, shortcut and search
 Fixture: `fx-linear`
 Layer: interaction
-- Given Git Good is open on History
+- Given Git Good is open on the History tree
 - When the user chooses **Repository › Preferences…**, then closes it and presses `Ctrl+,` (`Cmd+,` on macOS), then closes it and types `Preferences` in search (`Ctrl+K`) and runs the action
 - Then each route opens the same window: title row with **Search preferences** and ×, sections listed on the left (**General**, **Appearance**, **Diff**, **Commit**, **Rebase & recovery**, **Keyboard**), the selected section on the right, footer naming the settings file path and **Close**
 Covered by (interaction, partial): `preferences_list_sections_folders_and_save_changes_at_once` (apps/git-good/src/main.rs) (menu/search routes not automated)
@@ -3626,7 +3626,7 @@ Covered by (interaction, partial): `preferences_list_sections_folders_and_save_c
 Fixture: `fx-linear`
 Layer: interaction
 - Given Preferences is open
-- When the user clicks a History row behind it
+- When the user clicks a History tree row behind it
 - Then the click closes Preferences and does not select the row; the window cannot be resized
 - When reopened and the user presses `Esc` / clicks × / clicks **Close**
 - Then each closes the window
@@ -3709,7 +3709,7 @@ Covered by (interaction, partial): `lookups_follow_the_enabled_sources_in_order`
 ### PRF-13 GG_OFFLINE disables network avatars without changing the saved value
 Fixture: `fx-prefs-custom` (avatars on, `network_avatars` true), launched with `GG_OFFLINE=1`
 Layer: product
-- Given Preferences › Appearance › History is open
+- Given Preferences › Appearance › History tree is open
 - Then **Load avatars from the network** is checked but disabled, with tooltip `GG_OFFLINE is set for this launch.`; no avatar network request is made
 - When Git Good is quit and relaunched without `GG_OFFLINE`
 - Then the option is enabled and still on; the settings file still has `"network_avatars": true`
@@ -3823,7 +3823,7 @@ Covered by (interaction): `dialogs_open_with_remembered_choices_and_save_them_on
 Fixture: `fx-prefs-custom`
 Layer: product
 - When Git Good launches
-- Then the theme is light, rows are 28 px, diffs open side by side, History shows avatar slots, and Clone lists the two folders
+- Then the theme is light, rows are 28 px, diffs open side by side, the History tree shows avatar slots, and Clone lists the two folders
 Covered by (interaction, partial): `round_trips_and_keeps_unknown_keys` (apps/git-good/src/settings.rs); UI not automated
 
 ### PRF-35 Malformed value resets only that key
@@ -4247,7 +4247,7 @@ Covered by (interaction): `a_missing_recent_folder_is_marked_and_offers_remove_a
 Fixture: `fx-not-repo` (cwd), an empty `XDG_CONFIG_HOME`; then a recent list of 12
 Layer: visual
 - Given no recent repositories
-- Then the title reads **Welcome to Git Good** with *Open a repository to see its history and changes.*; RECENT is absent; the lines *Repositories you open are listed here. Drop a folder on this window to open it.* and `Clone folder: <~folder> · Change in Preferences…` show; the link opens Preferences › General
+- Then the title reads **Welcome to Git Good** with *Open a repository to see its History tree and Local Changes.*; RECENT is absent; the lines *Repositories you open are listed here. Drop a folder on this window to open it.* and `Clone folder: <~folder> · Change in Preferences…` show; the link opens Preferences › General
 - Given 12 recent repositories
 - When `repo-1` is typed while the list has the keyboard
 - Then only matching rows show (every word must match the name or path), the count reads `1 of 10`, and the list keeps its height; `Esc` clears; with six or fewer entries typing does not filter
@@ -4270,7 +4270,7 @@ Layer: product
 - When **Repository › New repository…** (or the welcome card, or **Initialize here…**)
 - Then a modal *New repository* shows **Folder** with **Choose…**, **First branch** `main`, checked **Commit the existing files as “Initial commit”**, and the weak line `<~folder> has 14 files (3 ignored by .gitignore).` (read in the background; `will be created.` for a missing folder), **Cancel** (`Esc`) and the filled **Create repository** (`Enter`)
 - When **Create repository**
-- Then the repository is created on `main`, the 11 files are committed as `Initial commit`, and it opens in History and joins the recent list; unchecked, it opens in Local Changes with nothing committed
+- Then the repository is created on `main`, the 11 files are committed as `Initial commit`, and it opens in the History tree and joins the recent list; unchecked, it opens in Local Changes with nothing committed
 - When the folder is `<fx-linear>/docs`
 - Then the line reads `<~fx-linear>/docs is inside the repository <~fx-linear>. Open it instead?` with **Open <~fx-linear>**, and **Create repository** stays disabled, also when the repository's folder name ends with a space
 Covered by (backend, interaction): `init_commits_the_existing_files_except_ignored_ones`, `init_refuses_inside_an_existing_repository`, `enclosing_repository_keeps_a_folder_name_ending_with_a_space`, `init_creates_the_folder_on_the_named_branch_without_committing` (crates/git/tests/init.rs), `the_new_repository_dialog_creates_and_opens_the_repository` (apps/git-good/src/main.rs)
@@ -4306,7 +4306,7 @@ Layer: product
 - Then JSON for `fx-linear` (30 commits) is streamed
 Covered by (end-to-end): `git_dispatch_discovers_current_and_nested_repositories` (apps/git-good/tests/cli.rs)
 
-### CLI-04 history: explicit path wins; non-repo fails
+### CLI-04 history-tree: explicit path wins; non-repo fails
 Fixture: cwd `fx-linear`, path `fx-branchy`; then `fx-not-repo`
 Layer: product
 - When `git good --cli history --repo ../fx-branchy`
@@ -4315,7 +4315,7 @@ Layer: product
 - Then status nonzero, stdout empty, stderr contains `Could not read`
 Covered by (end-to-end): `explicit_path_overrides_cwd_and_failure_uses_stderr` (apps/git-good/tests/cli.rs)
 
-### CLI-05 history includes all commits, no cap; read-only
+### CLI-05 history-tree includes all commits, no cap; read-only
 Fixture: `fx-dirty`; and a 501-commit repo
 Layer: product
 - Then every commit is listed with `complete: true`; index, refs and dirty files are byte-identical afterwards
@@ -4551,7 +4551,7 @@ Covered by (Not automated)
 Fixture: `fx-rebase`, a reorder plan that takes long enough to interrupt (slow `GIT_SEQUENCE_EDITOR` hook or many steps)
 Layer: product
 - When Git Good is killed while the band reads **Rewriting commits…**, then reopened
-- Then Git Good shows what Git left, never a stale idle state: either the finished history, or a stop band with **Continue** / **Skip commit** / **Abort and restore**; the private backup written before Git started exists and Recovery lists it; no second backup is written on reopen
+- Then Git Good shows what Git left, never a stale idle state: either the rewritten commits, or a stop band with **Continue** / **Skip commit** / **Abort and restore**; the private backup written before Git started exists and Recovery lists it; no second backup is written on reopen
 Covered by (Not automated)
 
 ### XCT-03 Quit during conflict resolution and reopen
@@ -4599,7 +4599,7 @@ Covered by (interaction, partial): `discard_all_rereads_and_asks_again_after_an_
 Fixture: `fx-rebase-autostash`, a plan that rewords and drops the commit touching `folder_picker.rs`; **Stash working changes first** on
 Layer: product
 - When the rewrite finishes and the stash is re-applied
-- Then the new history is in place with its backup; the footer warns that the rewrite finished but restoring the stashed changes conflicted, with **Resolve conflicts…** and **Stashes…**; the stash entry is kept until the user drops it; the staged and unstaged edits are recoverable from it (**Show changes**); untracked `scratch.txt` is present; no operation band with Continue/Skip/Abort appears
+- Then the rewritten commits are in place with their backup; the footer warns that the rewrite finished but restoring the stashed changes conflicted, with **Resolve conflicts…** and **Stashes…**; the stash entry is kept until the user drops it; the staged and unstaged edits are recoverable from it (**Show changes**); untracked `scratch.txt` is present; no operation band with Continue/Skip/Abort appears
 Covered by (Not automated)
 
 ### XCT-09 Abort and restore when restoring the stash conflicts
@@ -4672,8 +4672,8 @@ Covered by (Not automated)
 ### XCT-18 Focus returns after a dialog closes
 Fixture: `fx-branchy`
 Layer: interaction
-- When **New branch…** is opened from a History row and closed with `Esc`, **Reset here** from the Commit menu is confirmed, and **Discard unstaged changes** is cancelled from a file row
-- Then focus returns to the History row, the History list and the file row respectively, so the next key acts there
+- When **New branch…** is opened from a History tree row and closed with `Esc`, **Reset here** from the Commit menu is confirmed, and **Discard unstaged changes** is cancelled from a file row
+- Then focus returns to the History tree row, the History tree list and the file row respectively, so the next key acts there
 Covered by (Not automated)
 
 ### XCT-19 Icon-only buttons have accessible names
@@ -4685,7 +4685,7 @@ Covered by (Not automated)
 ### XCT-20 Accessible names for list rows and state
 Fixture: `fx-dirty`, `fx-rebase-conflict`
 Layer: interaction
-- Then file rows expose path plus kind and area (e.g. `a.txt, modified, unstaged`), history rows subject, author and short ID, and the operation band its full first line
+- Then file rows expose path plus kind and area (e.g. `a.txt, modified, unstaged`), History tree rows subject, author and short ID, and the operation band its full first line
 Covered by (Not automated)
 
 ### XCT-21 Status is never conveyed by color alone
@@ -4749,7 +4749,7 @@ Covered by (Not automated)
 ### XCT-29 An idle window draws no frames
 Fixture: a five-commit repository with one unstaged edit
 Layer: interaction
-- Given History, Local Changes, Review and Preferences in turn, each with the pointer resting on it and no text field focused
+- Given the History tree, Local Changes, Review and Preferences in turn, each with the pointer resting on it and no text field focused
 - When its reads finish and its animations end
 - Then no frame asks for a repaint sooner than 1 s; a failure names what asked (RULE-16). Only a pending watcher batch schedules a frame, for the moment it settles (FRM-61)
 Covered by (interaction): `every_view_is_idle_once_settled` (apps/git-good/src/idle_tests.rs)
@@ -4779,7 +4779,7 @@ Covered by (interaction): `a_dialog_mutation_runs_on_the_worker_and_its_dialog_w
 Fixture: `main` with two commits
 Layer: interaction
 - When the user selects the first commit (scrolled 40 px), then a commit that is later gone, then the second commit, and opens it in Review
-- Then View › Back (`Ctrl+[`, or the mouse's back button) leaves Review for History on the second commit; Back again skips the gone commit and selects the first, scrolled as it was; Back is then disabled (*Nothing to go back to*)
+- Then View › Back (`Ctrl+[`, or the mouse's back button) leaves Review for the History tree on the second commit; Back again skips the gone commit and selects the first, scrolled as it was; Back is then disabled (*Nothing to go back to*)
 - And View › Forward (`Ctrl+]`) returns to the second commit, then to Review on it
 - And moving the selection with the keys moves the current place without adding one; jumping elsewhere drops the places forward of it; at most 256 places are kept, the oldest going first; without a repository both items say *Open a repository first*
 Covered by (interaction): `back_and_forward_return_to_commits_and_reviews_jumped_to`, `menus_follow_the_final_design_mockup` (apps/git-good/src/main.rs); `back_and_forward_walk_the_places_jumped_to`, `stepping_moves_the_current_place_without_adding_one`, `gone_places_are_skipped_and_dropped`, `at_most_the_limit_is_kept` (apps/git-good/src/trail.rs)
@@ -4801,6 +4801,17 @@ Layer: product
 - And a launch that fails with no terminal attached shows a native error dialog with the error and the log's path
 - And the window starts with no OpenGL backend on Windows and no wgpu indirect-call validation unless `WGPU_BACKEND` or `WGPU_VALIDATION_INDIRECT_CALL` say otherwise
 Covered by (interaction): `a_launch_keeps_the_previous_log_and_redacts_and_caps`, `url_passwords_are_redacted_and_the_rest_kept`, `times_are_utc_dates`, `the_os_names_the_system_and_architecture` (apps/git-good/src/diagnostics.rs); `version_info_is_plain_build_git_and_os_lines` (apps/git-good/src/branding.rs)
+
+### XCT-35 The domain language names each thing once
+Fixture: `fx-linear` with a modified file
+Layer: product
+- Given the terms in [domain.md](domain.md)
+- When the user goes through the History tree, its menus and search, Review with File history, Local Changes, and every Preferences section
+- Then "history" never appears on its own: only as **History tree**, **File history**, **Line history** or **Rewrite history**, spelled in full (the History tree tab, `‹ History tree`, the reader's **File history** button, `H: File history`, *Select a commit in the History tree first*)
+- And the working-tree view is **Local Changes** on its tab, in the View menu and in messages (**Go to Local Changes**)
+- And no string the app can show uses "history" on its own, whatever state shows it
+- And `git good --cli history-tree` prints the History tree; `git good --cli history` still prints the same document, and `--help` lists only `history-tree`
+Covered by (interaction, end-to-end): `the_word_history_is_always_part_of_a_full_domain_term`, `no_shown_string_uses_history_outside_the_full_domain_terms` (apps/git-good/src/main.rs), `history_is_a_hidden_alias_of_history_tree` (apps/git-good/tests/cli.rs)
 
 ## CLI contract
 
@@ -4904,11 +4915,11 @@ The owner decided the open spec questions found while writing these cases. Each 
 1. **Docs follow shipped code (questions 1–4, 10, 12).** View › **Commit details** (`Space`); the Search Files group ships; network Cancel sits where the code puts it; branch delete, rename, tracking and tag creation ship; cli.md lists every parsed flag; user-flows F07 and the toolbar list match the stash picker and the shipped toolbar.
 2. **Destructive confirmations (5).** Every destructive action lists what it removes before its primary and reads the repository again on confirm: hunk discard, per-file discard, stash drop, **Delete tag** and **Delete on origin…** join Discard all, Reset and Delete branch (RULE-05). A confirmation never loses an outside edit made while it was open.
 3. **Rebase band (6).** The result reads `6 commits → 4 · 1 dropped · 1 stop` when a step stopped. At a reopened stop with unstaged files, the primary stays **Continue rebase**, with a note that unstaged files stay out of the commit.
-4. **Reader names (7).** Git's short words everywhere: **Blame**, **History**, **Compare with HEAD**.
+4. **Reader names (7).** Git's short words everywhere: **Blame**, **File history**, **Compare with HEAD**.
 5. **Preferences (8).** A modal, as built. The `settings.json` key list in architecture.md is completed.
 6. **CLI parity (9).** Every GUI mutation has a CLI form: `worktree prune|lock|unlock`, `pull`, and hunk and line discard are added, and the GUI/CLI parity tests cover each.
 7. **Signing (11).** Git Good keeps no signing setting of its own. Preferences shows and edits Git's `commit.gpgSign` and `tag.gpgSign` (global or this repository); the Sign checkbox in Commit and New tag stays a per-action choice. Git Good and plain `git` always sign alike.
-8. **Bare repositories (13).** Open read-only: History, refs, Review, blame and file history work; Local Changes, stash, commit, switch, merge and rebase are disabled with *A bare repository has no working files.*
+8. **Bare repositories (13).** Open read-only: History tree, refs, Review, Blame and File history work; Local Changes, stash, commit, switch, merge and rebase are disabled with *A bare repository has no working files.*
 9. **Refs filter (13).** Groups keep their headers with a count of 0 so the sidebar holds still; when nothing matches anywhere, one *No matching refs* line shows.
 10. **Recovery (14).** No Refresh buttons: Backups and Reflog re-read on focus and on watcher changes, like every other tool window.
 11. **Restart at a stop (15).** Reopening after quitting at a reopened stop opens Local Changes with the reopened commit's message as the draft. Unstaged conflict-block choices are saved like drafts and restored for the same conflict; they are dropped when the file changed outside.
@@ -4918,6 +4929,6 @@ The owner decided the open spec questions found while writing these cases. Each 
 15. **Command line shape (19).** A bare argument is always a folder: `git good [PATH]` opens the GUI. Commands come after `--cli`: `git good --cli status --repo .`. The repository is always `--repo PATH`; positionals are only a command's own subject (a ref, a file, a URL), and `--` ends options. When PATH does not exist and names a command, Git Good opens no window and exits 2 with *No folder status. Did you mean git good --cli status?* The old forms are not kept.
 16. **JSON stability (20).** Additive only: keys are never renamed or removed; new keys may appear. Every path field comes as `path` (escaped for display) beside `path_bytes` (exact).
 17. **Zoom (21).** 125 % zoom is required from a 900×600 window up (720×480 logical); smaller windows use 100–110 %.
-18. **Accessibility (21).** Through AccessKit every control and row has a name (a history row: subject, author, date; a diff row: line kind and text), and every disabled control gives its disabled reason as its description. A screen-reader user can complete every workflow the keyboard can.
+18. **Accessibility (21).** Through AccessKit every control and row has a name (a History tree row: subject, author, date; a diff row: line kind and text), and every disabled control gives its disabled reason as its description. A screen-reader user can complete every workflow the keyboard can.
 
 Still open (13): the missing-parent incomplete comparison label; the operation band's first line for merge, cherry-pick and revert; pending labels during Continue and Abort; disabled reasons for Fetch, Push, Merge and Recovery.

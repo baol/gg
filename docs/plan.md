@@ -6,7 +6,7 @@ Purpose: sequence milestone delivery and acceptance.
 
 Goal: make the selected file a first-class reading surface, then follow a file or line through history before adding the remaining large-repository features. Reading stays read-only, bounded, cancellable, and independent of the history selection.
 
-Contracts: [file reading and history](architecture.md#file-reading-and-history--m7).
+Contracts: [file reading and File history](architecture.md#file-reading-and-file-history--m7).
 
 ### Increments
 
@@ -303,7 +303,7 @@ Implementation and verification: [commit drafts](verification.md#pre-m7-commit-d
 
 Goal: rewrite history deliberately and recover previous tips without weakening read-only browsing, clean-worktree checks, or existing mutations. Every rewrite records a private backup ref before publication.
 
-Contracts: [history rewrites and recovery](architecture.md#history-rewrites-and-recovery--m6), [M5 recovery](architecture.md#history-mutations-and-recovery--m5). M5 is complete; [evidence](verification.md#m5-recovery-and-operation-state--2026-10-22).
+Contracts: [Rewrite history and recovery](architecture.md#rewrite-history-and-recovery--m6), [M5 recovery](architecture.md#history-tree-mutations-and-recovery--m5). M5 is complete; [evidence](verification.md#m5-recovery-and-operation-state--2026-10-22).
 
 ### Increments
 
@@ -336,7 +336,7 @@ Record native wide/narrow captures and verification in [verification](verificati
 
 Goal: integrate, undo, and temporarily park commits with conflict-aware views and recoverable in-progress operations, without weakening read-only browsing or existing mutations.
 
-Contracts: [history mutations and recovery](architecture.md#history-mutations-and-recovery--m5). M4 is complete; [evidence](verification.md#m4-clone-fetch-push-tracking-and-credentials--2026-10-22).
+Contracts: [History tree mutations and recovery](architecture.md#history-tree-mutations-and-recovery--m5). M4 is complete; [evidence](verification.md#m4-clone-fetch-push-tracking-and-credentials--2026-10-22).
 
 ### Increments
 

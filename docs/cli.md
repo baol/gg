@@ -8,7 +8,7 @@ A missing folder named like a command (`git good status`) opens no window: it fa
 
 ## Results and exit codes
 
-Every receipt carries `status`: `completed`, `stopped` (an operation paused as planned, such as a rewrite `--edit` stop), `conflict`, or `partial` (the receipt says `complete: false`: the result was cut short, as a blame past its limits). `history`, `status` and `show` stream one document and end it with `complete` and `status`; a read that fails part way ends it with `complete: false`, `status: "failed"` and `error`. Keys are only ever added, never renamed or removed; paths come as `path` (escaped for display) beside `path_bytes` (exact).
+Every receipt carries `status`: `completed`, `stopped` (an operation paused as planned, such as a rewrite `--edit` stop), `conflict`, or `partial` (the receipt says `complete: false`: the result was cut short, as a blame past its limits). `history-tree`, `status` and `show` stream one document and end it with `complete` and `status`; a read that fails part way ends it with `complete: false`, `status: "failed"` and `error`. Keys are only ever added, never renamed or removed; paths come as `path` (escaped for display) beside `path_bytes` (exact).
 
 | Exit | Meaning |
 |---|---|
@@ -28,7 +28,7 @@ git good [FOLDER]
 git good -- FOLDER
 git good --version
 git good --help | -h
-git good --cli history [--repo PATH]
+git good --cli history-tree [--repo PATH]
 git good --cli refs [--repo PATH]
 git good --cli show <commit> [--repo PATH] [--parent N] [--against REF] [--file PATH] [--export before|after --output PATH]
 git good --cli status [--repo PATH] [--file PATH --area staged|unstaged|untracked|conflict]
@@ -37,6 +37,8 @@ git good --cli blame FILE [--revision REF] [--lines START,END] [--repo PATH]
 git good --cli signature config [--repo PATH]
 git good --cli signature verify REF [--repo PATH]
 ```
+
+`history-tree` streams the History tree's commits; the older name `history` still works as a hidden alias and is not listed in `--help`.
 
 `show` lists each changed file with `kind` (`added`, `deleted`, `modified`, `type_changed`, `renamed`) and its `old` and `new` sides. A rename is one entry at the new path with `old_path` and `old_path_bytes`, paired as `git diff -M` pairs them; `--file` accepts either path of a rename.
 

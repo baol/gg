@@ -29,4 +29,4 @@ Retain the labeled displayed diff while a newly selected file loads. Replace ide
 
 ## Commits are never a bare hash
 
-Wherever Git Good names a commit in a dialog, an operation area, or a status message, it shows more than the hash: `0f99a42b · subject · author · date`, from the loaded history. Only a commit that is not loaded falls back to the 8-character ID.
+Wherever Git Good names a commit in a dialog, an operation area, or a status message, it shows more than the hash: `0f99a42b · subject · author · date`, from the loaded History tree. Only a commit that is not loaded falls back to the 8-character ID.
