@@ -38,6 +38,8 @@ git good --cli signature config [--repo PATH]
 git good --cli signature verify REF [--repo PATH]
 ```
 
+`show` lists each changed file with `kind` (`added`, `deleted`, `modified`, `type_changed`, `renamed`) and its `old` and `new` sides. A rename is one entry at the new path with `old_path` and `old_path_bytes`, paired as `git diff -M` pairs them; `--file` accepts either path of a rename.
+
 ## Stage and commit
 
 ```sh

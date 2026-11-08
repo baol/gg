@@ -19409,6 +19409,8 @@ mod tests {
                     kind: gg_engine::review::ChangeKind::Modified,
                     old: None,
                     new: None,
+                    old_path: None,
+                    old_path_bytes: None,
                 },
             ));
             window.details = Some(details.clone());
@@ -21796,6 +21798,72 @@ mod tests {
             "the last repository is offered in RECENT: {texts:?}"
         );
         assert_eq!(app.state.count, 0, "no repository opened");
+        Ok(())
+    }
+
+    #[test]
+    fn a_renamed_file_reviews_as_one_rename_and_its_history_crosses_it()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir()?;
+        let path = dir.path();
+        git_in(path, &["init", "-q", "-b", "main"])?;
+        std::fs::create_dir(path.join("Pane e pizza"))?;
+        let recipe = path.join("Pane e pizza").join("Focaccia.md");
+        std::fs::write(&recipe, "flour\nwater\n")?;
+        git_in(path, &["add", "."])?;
+        git_in(path, &["commit", "-qm", "Add Focaccia"])?;
+        std::fs::write(&recipe, "flour\nwater\nsalt\n")?;
+        git_in(path, &["commit", "-qam", "Salt the Focaccia"])?;
+        git_in(
+            path,
+            &[
+                "mv",
+                "Pane e pizza/Focaccia.md",
+                "Pane e pizza/Focaccia genovese.md",
+            ],
+        )?;
+        git_in(path, &["commit", "-qm", "Rename Focaccia"])?;
+        let mut app = Browser::new(path.to_path_buf());
+        app.load(&ctx);
+        frames_until(&ctx, &mut app, vec![], |app, _| app.state.count == 3)?;
+        app.open_review_at(&ctx, "HEAD".into(), "Rename Focaccia".into(), None);
+        let files = frames_until(&ctx, &mut app, vec![], |_, text| {
+            text.iter().any(|line| line == "FILES 1")
+        })?;
+        assert!(
+            !files.iter().any(|line| line.contains("Focaccia.md")),
+            "the old path is not listed as a deleted file: {files:?}"
+        );
+        assert!(files.iter().any(|line| line == "R"), "{files:?}");
+        if let Some(review) = app.review.take() {
+            app.review = Some(review.select_path("Pane e pizza/Focaccia genovese.md".into()));
+        }
+        frames_until(&ctx, &mut app, vec![], |_, text| {
+            text.iter().any(|line| line.contains("H: history"))
+        })?;
+        let history = frames_until(
+            &ctx,
+            &mut app,
+            vec![egui::Event::Key {
+                key: egui::Key::H,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            |_, text| text.iter().any(|line| line == "FILE HISTORY 3"),
+        )?;
+        for expected in [
+            "Rename Focaccia← Pane e pizza/Focaccia.md",
+            "Salt the Focaccia",
+            "Add Focaccia",
+        ] {
+            assert!(
+                history.iter().any(|line| line == expected),
+                "missing {expected:?}: {history:?}"
+            );
+        }
         Ok(())
     }
 

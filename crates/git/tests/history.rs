@@ -395,6 +395,7 @@ fn changed_files_match_git_for_root_nested_and_type_changes() -> Result {
             ChangeKind::Deleted => "D",
             ChangeKind::Modified => "M",
             ChangeKind::TypeChanged => "T",
+            ChangeKind::Renamed => "R",
         };
         assert_eq!(status, values[4]);
     }

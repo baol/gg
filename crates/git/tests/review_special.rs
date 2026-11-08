@@ -182,6 +182,8 @@ fn cancellation_stops_before_the_next_object_header() -> Result {
             id: "f".repeat(40),
             mode: 0o100644,
         }),
+        old_path: None,
+        old_path_bytes: None,
     };
     let calls = Cell::new(0);
     let result = gg_git::diff::read(dir.path(), &file, || {
@@ -425,5 +427,82 @@ fn line_stats_match_git_numstat() -> Result {
         actual.get("edit.txt"),
         Some(LineStat::Lines { added, deleted }) if *added > 0 && *deleted > 0
     ));
+    Ok(())
+}
+
+#[test]
+fn renames_are_one_change_with_the_old_path_as_git_pairs_them() -> Result {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path();
+    git(path, &["init", "-q"], b"")?;
+    let recipe = "flour\nwater\nyeast\nsalt\noil\nknead\nrest\nbake\n";
+    let edited = recipe.replace("bake", "bake at 220");
+    let blob = |text: &str| git(path, &["hash-object", "-w", "--stdin"], text.as_bytes());
+    let (focaccia, notes, notes_edited, gone, new) = (
+        blob(recipe)?,
+        blob(&recipe.replace("flour", "semola"))?,
+        blob(&edited.replace("flour", "semola"))?,
+        blob("old\n")?,
+        blob("unrelated\n")?,
+    );
+    let before = tree(
+        path,
+        &[
+            (b"Focaccia.md", "100644", &focaccia),
+            (b"gone.txt", "100644", &gone),
+            (b"notes.md", "100644", &notes),
+        ],
+    )?;
+    let after = tree(
+        path,
+        &[
+            (b"Focaccia genovese.md", "100644", &focaccia),
+            (b"new.txt", "100644", &new),
+            (b"semola.md", "100644", &notes_edited),
+        ],
+    )?;
+    let files = changes(path, &before, &after)?;
+    let summary: Vec<_> = files
+        .iter()
+        .map(|file| {
+            (
+                file.kind.clone(),
+                file.path.as_str(),
+                file.old_path.as_deref(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        summary,
+        vec![
+            (
+                ChangeKind::Renamed,
+                "Focaccia genovese.md",
+                Some("Focaccia.md")
+            ),
+            (ChangeKind::Deleted, "gone.txt", None),
+            (ChangeKind::Added, "new.txt", None),
+            (ChangeKind::Renamed, "semola.md", Some("notes.md")),
+        ]
+    );
+    let exact = &files[0];
+    assert_eq!(
+        exact.old.as_ref().map(|side| side.id.as_str()),
+        Some(focaccia.as_str())
+    );
+    assert_eq!(
+        exact.new.as_ref().map(|side| side.id.as_str()),
+        Some(focaccia.as_str())
+    );
+    assert_eq!(exact.old_path_bytes.as_deref(), Some(&b"Focaccia.md"[..]));
+    let edit = &files[3];
+    assert_eq!(
+        edit.old.as_ref().map(|side| side.id.as_str()),
+        Some(notes.as_str())
+    );
+    assert_eq!(
+        edit.new.as_ref().map(|side| side.id.as_str()),
+        Some(notes_edited.as_str())
+    );
     Ok(())
 }

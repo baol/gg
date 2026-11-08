@@ -74,6 +74,8 @@ fn change(path: &Path, old: Option<&str>, new: Option<&str>) -> Result<FileChang
         kind: ChangeKind::Modified,
         old: old.map(side).transpose()?,
         new: new.map(side).transpose()?,
+        old_path: None,
+        old_path_bytes: None,
     })
 }
 
@@ -130,6 +132,8 @@ fn before_and_after_pointers_and_plain_text_are_distinguished() -> Result {
             id: output(dir.path(), &["rev-parse", "HEAD:a"])?,
             mode: 0o100644,
         }),
+        old_path: None,
+        old_path_bytes: None,
     };
     let details = gg_git::lfs::read(dir.path(), &plain)?;
     assert!(details.before.is_none() && details.after.is_none());
