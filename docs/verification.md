@@ -951,3 +951,8 @@ Linux x86_64 · Rust 1.97.0 · Mesa lavapipe · Zensical 0.1.0.
 - The shots showed two bugs, now fixed. Preferences › Keyboard listed Pull under Fixed keys, because its label carries the behind count; the fixed list now leaves out every rebindable command by command. Recovery's more button drew `⋯` (U+22EF), which no bundled font has, as a box; it uses Phosphor's three dots, and `every_drawn_character_has_a_glyph` (recovery_view.rs) fails on the old button.
 
 - `new_tag_reads_signing_off_the_ui_thread_and_never_tags_unsigned` (main.rs) failed on a machine whose global Git configuration has an SSH signing key: the test read it. Its repository now sets an empty `user.signingkey`, which reads as unset. `fixed_keys_leave_out_rebindable_commands_whose_label_carries_a_count` (main.rs) checks the Fixed keys list. The 653 `git-good` tests pass.
+
+## Launch outside a repository · 2026-11-08
+
+- FRM-05 is now the GWT scenario *Given I just opened Git Good, when the folder is not a Git repository and not inside one, then Git Good opens on the welcome view*. The **Reopen the last repository when launched outside one** preference and its launch fallback are removed; an old `"reopen_last"` key in `settings.json` is ignored. `launch_folder` (main.rs) returns the given folder or the working folder as it is.
+- `a_launch_outside_a_repository_shows_the_welcome_view_not_the_last_repository` (main.rs) launches in an empty folder with an existing repository in the recent list and finds the welcome view with `<path> is not a Git repository.`, the repository only in RECENT, and no history loaded. `a_launch_in_a_repository_subfolder_opens_that_repository` (FRM-06) launches in `src/deep` of a repository and finds its two commits and no welcome view.

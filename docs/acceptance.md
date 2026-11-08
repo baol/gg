@@ -46,7 +46,7 @@ Every fixture is a disposable directory built from scratch by a script with fixe
 | `fx-prefs-*` | An `XDG_CONFIG_HOME` holding a `gg/settings.json`: `fx-prefs-custom` (light theme, comfortable density, side-by-side diffs, avatars on, two clone folders), `fx-prefs-malformed` (one key with an invalid value and one unknown key from a newer Git Good). |
 | `fx-reset-collision` | `fx-dirty` plus untracked `later.txt`, a path that is tracked in c05 and absent at HEAD (a Hard reset to c05 would overwrite it). |
 | `fx-rebase-autostash` | `fx-rebase` with a staged edit and an unstaged edit to `folder_picker.rs` that conflict with the rewritten commits when the stash is restored, plus untracked `scratch.txt`. |
-| `fx-recent` | An `XDG_CONFIG_HOME` whose `gg/settings.json` holds 12 recent repositories (10 existing fixture paths, 1 deleted folder, 1 not-a-repo folder) with **Reopen the last repository** on. |
+| `fx-recent` | An `XDG_CONFIG_HOME` whose `gg/settings.json` holds 12 recent repositories (10 existing fixture paths, 1 deleted folder, 1 not-a-repo folder). |
 | `fx-clone-root` | A folder holding two repositories and one plain folder, for clone-folder repository counts. |
 | `fx-wide-commit` | `fx-linear` plus one commit touching 2,500 files (the `2000+ files` stats cap). |
 | `fx-many-lanes` | `fx-branchy` plus 6 unmerged branches off c05 with interleaved dates (graph widening, pill overflow on one commit). |
@@ -82,7 +82,7 @@ Layer: product
 Covered by (end-to-end, partial): `explicit_path_overrides_cwd_and_failure_uses_stderr` (apps/git-good/tests/cli.rs, CLI); GUI part Not automated
 
 ### FRM-03 Launch in a folder that is not a repository shows the welcome view
-Fixture: `fx-not-repo`, Preference **Reopen the last repository when launched outside one** off, recent list `[fx-linear, fx-branchy, <missing folder>]`
+Fixture: `fx-not-repo`, recent list `[fx-linear, fx-branchy, <missing folder>]`
 Layer: product
 - Given cwd is `fx-not-repo`
 - When `git good` is run
@@ -101,26 +101,24 @@ Layer: interaction
 - Then the welcome view lists exactly ten recent entries, most recent first, no duplicates, and **Repository › Open recent** and the Open… dialog list the same ten (one limit, `RECENT_LIMIT`); clicking one opens it
 Covered by (interaction): `one_recent_limit_for_the_welcome_list_open_recent_and_open` (apps/git-good/src/main.rs), `recent_repositories_move_to_the_front_without_duplicates` (apps/git-good/src/settings.rs)
 
-### FRM-05 Reopen the last repository when launched outside one
-Fixture: `fx-not-repo`; recent list `[<missing folder>, <fx-linear>]` (most recent first); Preference **Reopen the last repository when launched outside one** on
+### FRM-05 Opened outside a repository, Git Good shows the welcome view
+Fixture: `fx-not-repo`, recent list `[<fx-linear>]` (a repository that still exists); a settings file from an older version may still hold `"reopen_last": true`
 Layer: product
-- When Git Good launches with cwd `fx-not-repo` and no path
-- Then `fx-linear` opens (the missing folder is skipped as no longer a repository); no welcome view
-Covered by (interaction): `launch_opens_the_working_folder_or_the_last_repository` (apps/git-good/src/main.rs)
+- Given I just opened Git Good (`git good`, no path)
+- When the folder is not a Git repository and not inside one
+- Then Git Good opens on the welcome view we designed (FRM-03), with `fx-linear` offered only in RECENT
+- And no other repository, such as the last one opened, opens in its place
+Covered by (interaction): `a_launch_outside_a_repository_shows_the_welcome_view_not_the_last_repository` (apps/git-good/src/main.rs)
 
-### FRM-06 Working folder wins over the last repository
-Fixture: `fx-linear` (cwd), recent list `[<fx-branchy>]`, reopen preference on
+### FRM-06 Opened in a repository's subfolder, Git Good opens that repository
+Fixture: `fx-linear` with a folder `src/deep` inside it
 Layer: product
-- When Git Good launches with no path in `fx-linear`
-- Then `fx-linear` opens, not `fx-branchy`
-Covered by (interaction): `launch_opens_the_working_folder_or_the_last_repository` (apps/git-good/src/main.rs)
+- Given I just opened Git Good (`git good`, no path)
+- When the folder is inside a repository's working tree (`fx-linear/src/deep`)
+- Then `fx-linear` opens in History; no welcome view
+Covered by (interaction): `a_launch_in_a_repository_subfolder_opens_that_repository` (apps/git-good/src/main.rs)
 
-### FRM-07 Reopen preference off keeps the launch folder
-Fixture: `fx-not-repo`, recent list `[<fx-linear>]`, reopen preference off
-Layer: product
-- When Git Good launches in `fx-not-repo`
-- Then the welcome view (FRM-03) shows; `fx-linear` is only offered in the recent list
-Covered by (interaction): `launch_opens_the_working_folder_or_the_last_repository` (apps/git-good/src/main.rs)
+### FRM-07 Removed: the Reopen the last repository preference — see FRM-05
 
 ### FRM-08 Unborn branch empty state — see HIS-73
 
@@ -3737,7 +3735,7 @@ Covered by (Not automated)
 
 ### PRF-25 General: Name the clone after the repository — see NET-04, NET-06
 
-### PRF-26 General: Reopen the last repository when launched outside one — see FRM-05, FRM-06, FRM-07
+### PRF-26 Removed: Reopen the last repository when launched outside one — see FRM-05
 
 ### PRF-27 General: Fetch prune — see NET-14
 

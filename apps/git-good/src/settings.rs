@@ -609,8 +609,6 @@ pub struct Prefs {
     pub pull_strategy: PullStrategy,
     /// Clone fills the folder name from the URL (`~/dev/gg`).
     pub clone_named_after_repo: bool,
-    /// Launched without a path outside a repository: open the last one.
-    pub reopen_last: bool,
     /// Drop… and Reset current branch to here… ask first; off runs them at
     /// once (Soft and Mixed reset as chosen; Hard still asks), still saving
     /// a backup.
@@ -685,7 +683,6 @@ impl Default for Prefs {
             subject_guide: 72,
             pull_strategy: PullStrategy::default(),
             clone_named_after_repo: true,
-            reopen_last: true,
             offer_force_lease: true,
             backup_days: 0,
             confirm_destructive: true,
@@ -743,7 +740,6 @@ impl Prefs {
             pull_strategy: read(path, "pull_strategy").unwrap_or(defaults.pull_strategy),
             clone_named_after_repo: read(path, "clone_named_after_repo")
                 .unwrap_or(defaults.clone_named_after_repo),
-            reopen_last: read(path, "reopen_last").unwrap_or(defaults.reopen_last),
             offer_force_lease: read(path, "offer_force_lease")
                 .unwrap_or(defaults.offer_force_lease),
             backup_days: read(path, "backup_days")
@@ -803,7 +799,6 @@ impl Prefs {
             subject_guide,
             pull_strategy,
             clone_named_after_repo,
-            reopen_last,
             offer_force_lease,
             backup_days,
             confirm_destructive,
@@ -967,7 +962,6 @@ mod tests {
         prefs.avatar_sources = vec![AvatarSource::Gitlab, AvatarSource::Libravatar];
         prefs.pull_strategy = PullStrategy::FastForward;
         prefs.clone_named_after_repo = false;
-        prefs.reopen_last = false;
         prefs.offer_force_lease = false;
         prefs.backup_days = 30;
         prefs.confirm_destructive = false;
