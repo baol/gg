@@ -506,3 +506,80 @@ fn renames_are_one_change_with_the_old_path_as_git_pairs_them() -> Result {
     );
     Ok(())
 }
+
+#[test]
+fn a_rewritten_rename_reviews_as_a_rename_of_the_most_similar_deleted_file() -> Result {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path();
+    git(path, &["init", "-q"], b"")?;
+    let lines = |tag: &str, count: usize| -> Vec<String> {
+        (0..count)
+            .map(|n| format!("{tag} line {n:03} of the recipe....\n"))
+            .collect()
+    };
+    let focaccia = lines("focaccia", 20);
+    let notes = lines("notes", 20);
+    let mut bimby: Vec<String> = focaccia[..6].to_vec();
+    bimby.extend(notes[..2].iter().cloned());
+    bimby.extend(lines("bimby", 12));
+    let pizza: String = [focaccia[..3].to_vec(), lines("pizza", 17)]
+        .concat()
+        .concat();
+    let blob = |text: &str| git(path, &["hash-object", "-w", "--stdin"], text.as_bytes());
+    let before = tree(
+        path,
+        &[
+            (b"Focaccia.md", "100644", &blob(&focaccia.concat())?),
+            (b"notes.md", "100644", &blob(&notes.concat())?),
+        ],
+    )?;
+    let after = tree(
+        path,
+        &[(
+            b"Focaccia con il Bimby.md",
+            "100644",
+            &blob(&bimby.concat())?,
+        )],
+    )?;
+    let files = changes(path, &before, &after)?;
+    let summary: Vec<_> = files
+        .iter()
+        .map(|file| {
+            (
+                file.kind.clone(),
+                file.path.as_str(),
+                file.old_path.as_deref(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        summary,
+        vec![
+            (
+                ChangeKind::Renamed,
+                "Focaccia con il Bimby.md",
+                Some("Focaccia.md")
+            ),
+            (ChangeKind::Deleted, "notes.md", None),
+        ],
+        "30 % alike is a rename; the 10 % file stays deleted"
+    );
+    // Below 25 % the files stay apart.
+    let after = tree(path, &[(b"Pizza.md", "100644", &blob(&pizza)?)])?;
+    let before = tree(
+        path,
+        &[(b"Focaccia.md", "100644", &blob(&focaccia.concat())?)],
+    )?;
+    let summary: Vec<_> = changes(path, &before, &after)?
+        .iter()
+        .map(|file| (file.kind.clone(), file.path.clone()))
+        .collect();
+    assert_eq!(
+        summary,
+        vec![
+            (ChangeKind::Deleted, "Focaccia.md".to_string()),
+            (ChangeKind::Added, "Pizza.md".to_string()),
+        ]
+    );
+    Ok(())
+}

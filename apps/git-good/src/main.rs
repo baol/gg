@@ -21807,6 +21807,78 @@ mod tests {
     }
 
     #[test]
+    fn a_renamed_and_rewritten_file_keeps_its_file_history()
+    -> Result<(), Box<dyn std::error::Error>> {
+        // baol/recipes 935e221: Focaccia.md renamed to "Focaccia con il
+        // Bimby.md" and mostly rewritten (27 % alike), as here (30 %), with a
+        // second, less similar file deleted in the same commit.
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir()?;
+        let path = dir.path();
+        let lines = |tag: &str, count: usize| -> Vec<String> {
+            (0..count)
+                .map(|n| format!("{tag} line {n:03} of the recipe....\n"))
+                .collect()
+        };
+        git_in(path, &["init", "-q", "-b", "main"])?;
+        let folder = path.join("Pane e pizza");
+        std::fs::create_dir(&folder)?;
+        let focaccia = lines("focaccia", 20);
+        let notes = lines("notes", 20);
+        std::fs::write(folder.join("Focaccia.md"), focaccia.concat())?;
+        std::fs::write(folder.join("notes.md"), notes.concat())?;
+        git_in(path, &["add", "."])?;
+        git_in(path, &["commit", "-qm", "Add Focaccia"])?;
+        std::fs::remove_file(folder.join("Focaccia.md"))?;
+        std::fs::remove_file(folder.join("notes.md"))?;
+        let mut bimby: Vec<String> = focaccia[..6].to_vec();
+        bimby.extend(notes[..2].iter().cloned());
+        bimby.extend(lines("bimby", 12));
+        std::fs::write(folder.join("Focaccia con il Bimby.md"), bimby.concat())?;
+        git_in(path, &["add", "-A"])?;
+        git_in(path, &["commit", "-qm", "Focaccia con il Bimby"])?;
+        let mut app = Browser::new(path.to_path_buf());
+        app.load(&ctx);
+        frames_until(&ctx, &mut app, vec![], |app, _| app.state.count == 2)?;
+        app.open_review_at(&ctx, "HEAD".into(), "Focaccia con il Bimby".into(), None);
+        let files = frames_until(&ctx, &mut app, vec![], |_, text| {
+            text.iter().any(|line| line == "FILES 2")
+        })?;
+        assert!(
+            files.iter().any(|line| line == "R"),
+            "one rename: {files:?}"
+        );
+        if let Some(review) = app.review.take() {
+            app.review = Some(review.select_path("Pane e pizza/Focaccia con il Bimby.md".into()));
+        }
+        frames_until(&ctx, &mut app, vec![], |_, text| {
+            text.iter().any(|line| line.contains("H: history"))
+        })?;
+        let history = frames_until(
+            &ctx,
+            &mut app,
+            vec![egui::Event::Key {
+                key: egui::Key::H,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            |_, text| text.iter().any(|line| line == "FILE HISTORY 2"),
+        )?;
+        for expected in [
+            "Focaccia con il Bimby← Pane e pizza/Focaccia.md",
+            "Add Focaccia",
+        ] {
+            assert!(
+                history.iter().any(|line| line == expected),
+                "missing {expected:?}: {history:?}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn a_renamed_file_reviews_as_one_rename_and_its_history_crosses_it()
     -> Result<(), Box<dyn std::error::Error>> {
         let ctx = egui::Context::default();

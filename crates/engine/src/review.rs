@@ -29,6 +29,12 @@ pub struct FileSide {
     pub id: String,
     pub mode: u16,
 }
+/// A file added in a commit continues the most similar file that commit
+/// deleted when at least this share of its content matches, as
+/// `git diff -M25%` scores it. Git's default is 50 %; a rename that also
+/// rewrites most of the file (a recipe renamed and rewritten, 27 % alike)
+/// still continues the old file's versions.
+pub const RENAME_SIMILARITY_PERCENT: u8 = 25;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ChangeKind {

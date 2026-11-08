@@ -424,14 +424,11 @@ impl Session {
     ) -> Result<Vec<Vec<u8>>, String> {
         let output = crate::process::git()
             .current_dir(&self.repo_path)
-            .args([
-                "diff-tree",
-                "--no-commit-id",
-                "-r",
-                "-M",
-                "-z",
-                "--name-status",
-            ])
+            .args(["diff-tree", "--no-commit-id", "-r", "-z", "--name-status"])
+            .arg(format!(
+                "-M{}%",
+                gg_engine::review::RENAME_SIMILARITY_PERCENT
+            ))
             .arg(parent.to_string())
             .arg(child.to_string())
             .stdin(Stdio::null())

@@ -1625,6 +1625,17 @@ Layer: product
 - And in `fx-file-history`, `Alt+Left` past version 6 labels the version a rename naming `src/old.rs`; older versions read `src/old.rs`
 Covered by (backend, interaction): `renames_are_followed_and_name_the_old_path` (crates/git/tests/file_history.rs), `renames_are_one_change_with_the_old_path_as_git_pairs_them` (crates/git/tests/review_special.rs), `a_renamed_file_reviews_as_one_rename_and_its_history_crosses_it` (apps/git-good/src/main.rs)
 
+
+### REV-78 File history follows a renamed and rewritten file
+Fixture: as in `baol/recipes` 935e221: `Pane e pizza/Focaccia.md` renamed to `Pane e pizza/Focaccia con il Bimby.md` in a commit that also rewrote most of it (27 % alike there, 30 % in the test) and deleted `notes.md` (10 % alike)
+Layer: product
+- Given a file was added in a commit that deleted one or more files
+- When the user opens File history on it (`H`)
+- Then File history continues with the most similar deleted file, if at least 25 % of the content matches (`git diff -M25%`): the rename version reads `← Pane e pizza/Focaccia.md` and the older versions follow `Focaccia.md` down to the commit that added it
+- And Review of that commit shows one `R` row for the rename, and `notes.md` as deleted
+- And a new file less than 25 % alike to every deleted file starts its own File history (`Added`)
+Covered by (backend, interaction): `a_rewritten_rename_follows_the_most_similar_deleted_file_down_to_25_percent`, `a_new_file_less_than_25_percent_like_a_deleted_one_starts_its_own_versions` (crates/git/tests/file_history.rs), `a_rewritten_rename_reviews_as_a_rename_of_the_most_similar_deleted_file` (crates/git/tests/review_special.rs), `a_renamed_and_rewritten_file_keeps_its_file_history` (apps/git-good/src/main.rs)
+
 ### REV-59 Version boundaries never wrap
 Fixture: `fx-file-history`
 Layer: interaction
