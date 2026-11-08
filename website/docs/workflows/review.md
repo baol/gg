@@ -25,7 +25,7 @@ Find when a line changed
 :   Open Blame on the file, then follow the line to the commit that introduced it.
 
 Follow a file across a rename
-:   Review the commit that renamed it and press ++h++ on the **R** row: File history continues under the old name, back to the commit that added it.
+:   Review the commit that renamed it and press ++h++ on the **R** row: File history continues under the old name, back to the commit that added it. A file renamed and rewritten in the same commit still counts as renamed if at least a quarter of it stayed the same.
 
 Copy an old version
 :   Switch to **Full file** to read the whole file as it was in that commit.

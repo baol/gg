@@ -187,7 +187,17 @@ impl Session {
         limit: usize,
     ) -> Result<(FileVersion, Option<Boundary>), String> {
         let trace = self.trace(anchor, state.clone(), cancelled, limit)?;
-        let commit = trace.introducer.unwrap_or(anchor);
+        // Before a file first appears, its absent version is the commit
+        // just before the one that added it (the anchor), not the commit
+        // where the absence began, which is the repository's first commit.
+        // After a deletion, the commit that deleted it introduced the state.
+        let never_existed =
+            state.side.is_none() && trace.boundaries.is_empty() && trace.limited.is_none();
+        let commit = if never_existed {
+            anchor
+        } else {
+            trace.introducer.unwrap_or(anchor)
+        };
         let meta = self.meta(commit)?;
         let (previous, pending, kind, old_path_bytes) = if let Some(reason) = trace.limited {
             (Predecessor::Limited { reason }, None, None, None)
@@ -424,14 +434,11 @@ impl Session {
     ) -> Result<Vec<Vec<u8>>, String> {
         let output = crate::process::git()
             .current_dir(&self.repo_path)
-            .args([
-                "diff-tree",
-                "--no-commit-id",
-                "-r",
-                "-M",
-                "-z",
-                "--name-status",
-            ])
+            .args(["diff-tree", "--no-commit-id", "-r", "-z", "--name-status"])
+            .arg(format!(
+                "-M{}%",
+                gg_engine::review::RENAME_SIMILARITY_PERCENT
+            ))
             .arg(parent.to_string())
             .arg(child.to_string())
             .stdin(Stdio::null())

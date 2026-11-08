@@ -28,7 +28,7 @@ pub struct ReviewSession {
     repo: gix::Repository,
     comparison: Comparison,
     pending: Vec<Node>,
-    /// Renames as `git diff -M` pairs them, read once the first added or
+    /// Renames as `git diff -M25%` pairs them, read once the first added or
     /// deleted file shows up; `None` until then.
     renames: Option<Renames>,
 }
@@ -214,8 +214,9 @@ impl ReviewSession {
         }
         Ok(())
     }
-    /// The comparison's renames, paired as `git diff -M` pairs them (50 %
-    /// similarity, at most 1000 candidates), the first time an added or
+    /// The comparison's renames, paired as `git diff -M25%` pairs them (the
+    /// most similar deleted file at least [`RENAME_SIMILARITY_PERCENT`] alike,
+    /// at most 1000 candidates), the first time an added or
     /// deleted file needs them. Read in process: no Git command runs, so a
     /// review started beside a mutation never adds to its commands. A root
     /// commit has none; a read that fails (a blob missing from a partial
@@ -241,7 +242,10 @@ impl ReviewSession {
         let mut options = gix::diff::Options::default();
         options
             .track_path()
-            .track_rewrites(Some(gix::diff::Rewrites::default()));
+            .track_rewrites(Some(gix::diff::Rewrites {
+                percentage: Some(f32::from(RENAME_SIMILARITY_PERCENT) / 100.0),
+                ..gix::diff::Rewrites::default()
+            }));
         let mut renames = Renames::default();
         for change in self.repo.diff_tree_to_tree(&old, &new, options)? {
             if let gix::object::tree::diff::ChangeDetached::Rewrite {

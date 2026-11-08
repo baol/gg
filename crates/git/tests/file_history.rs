@@ -334,3 +334,174 @@ fn cancellation_and_a_failed_step_keep_the_loaded_versions() -> Result {
     assert_eq!(session.versions().len(), 2);
     Ok(())
 }
+
+/// `count` distinct 30-byte lines tagged `tag`.
+fn lines(tag: &str, count: usize) -> Vec<String> {
+    (0..count)
+        .map(|n| format!("{tag} line {n:03} of the recipe....\n"))
+        .collect()
+}
+
+/// A new 20-line file that keeps `kept` lines of `old` (about kept × 5 %
+/// alike, as Git scores it) and is new otherwise.
+fn rewrite(old: &[String], kept: usize, tag: &str) -> String {
+    let mut text: Vec<String> = old[..kept].to_vec();
+    text.extend(lines(tag, 20 - kept));
+    text.concat()
+}
+
+#[test]
+fn a_rewritten_rename_follows_the_most_similar_deleted_file_down_to_25_percent() -> Result {
+    // As in baol/recipes 935e221: Focaccia.md renamed and rewritten (27 %
+    // alike there), here with a second, less similar file deleted too.
+    let dir = init()?;
+    let focaccia = lines("focaccia", 20);
+    let notes = lines("notes", 20);
+    write(dir.path(), "Focaccia.md", &focaccia.concat())?;
+    write(dir.path(), "notes.md", &notes.concat())?;
+    commit(dir.path(), "Add Focaccia", "2026-01-01T12:00:00+00:00")?;
+    let mut salted = focaccia.clone();
+    salted[19] = "salt to taste, then bake.......\n".into();
+    write(dir.path(), "Focaccia.md", &salted.concat())?;
+    commit(dir.path(), "Salt the Focaccia", "2026-01-02T12:00:00+00:00")?;
+    std::fs::remove_file(dir.path().join("Focaccia.md"))?;
+    std::fs::remove_file(dir.path().join("notes.md"))?;
+    // 6 of 20 lines from Focaccia.md (30 %), 2 from notes.md (10 %).
+    let mut bimby: Vec<String> = salted[..6].to_vec();
+    bimby.extend(notes[..2].iter().cloned());
+    bimby.extend(lines("bimby", 12));
+    write(dir.path(), "Focaccia con il Bimby.md", &bimby.concat())?;
+    commit(
+        dir.path(),
+        "Focaccia con il Bimby",
+        "2026-01-03T12:00:00+00:00",
+    )?;
+
+    let mut session =
+        open(dir.path(), "HEAD", b"Focaccia con il Bimby.md").map_err(|e| e.to_string())?;
+    collect(&mut session)?;
+    let versions: Vec<_> = session
+        .versions()
+        .iter()
+        .map(|v| {
+            (
+                v.subject.as_str(),
+                v.path.as_str(),
+                v.kind,
+                v.old_path.as_deref(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        versions,
+        vec![
+            (
+                "Focaccia con il Bimby",
+                "Focaccia con il Bimby.md",
+                Some(HistoryKind::Renamed),
+                Some("Focaccia.md"),
+            ),
+            (
+                "Salt the Focaccia",
+                "Focaccia.md",
+                Some(HistoryKind::Modified),
+                None
+            ),
+            (
+                "Add Focaccia",
+                "Focaccia.md",
+                Some(HistoryKind::Added),
+                None
+            ),
+        ]
+    );
+    Ok(())
+}
+
+#[test]
+fn a_new_file_less_than_25_percent_like_a_deleted_one_starts_its_own_versions() -> Result {
+    let dir = init()?;
+    let focaccia = lines("focaccia", 20);
+    write(dir.path(), "Focaccia.md", &focaccia.concat())?;
+    commit(dir.path(), "Add Focaccia", "2026-01-01T12:00:00+00:00")?;
+    std::fs::remove_file(dir.path().join("Focaccia.md"))?;
+    // 3 of 20 lines (15 %): a different file, not a rename.
+    write(dir.path(), "Pizza.md", &rewrite(&focaccia, 3, "pizza"))?;
+    commit(
+        dir.path(),
+        "Replace Focaccia with Pizza",
+        "2026-01-02T12:00:00+00:00",
+    )?;
+
+    let mut session = open(dir.path(), "HEAD", b"Pizza.md").map_err(|e| e.to_string())?;
+    collect(&mut session)?;
+    let versions = session.versions();
+    assert_eq!(versions[0].kind, Some(HistoryKind::Added));
+    assert!(
+        versions.iter().all(|v| v.path == "Pizza.md"),
+        "never follows Focaccia.md"
+    );
+    Ok(())
+}
+
+#[test]
+fn the_absent_version_before_a_file_is_the_commit_just_before_it_was_added() -> Result {
+    // As in baol/recipes: Focaccia.md was added in d7fb0bb, whose parent is
+    // "Update pancakes."; the absent row named the root "Initial commit".
+    let dir = init()?;
+    write(dir.path(), "README.md", "recipes\n")?;
+    commit(dir.path(), "Initial commit", "2026-01-01T12:00:00+00:00")?;
+    write(dir.path(), "pancakes.md", "pancakes\n")?;
+    commit(dir.path(), "Update pancakes.", "2026-01-02T12:00:00+00:00")?;
+    write(dir.path(), "Focaccia.md", "flour\n")?;
+    commit(dir.path(), "Add Focaccia", "2026-01-03T12:00:00+00:00")?;
+
+    let mut session = open(dir.path(), "HEAD", b"Focaccia.md").map_err(|e| e.to_string())?;
+    collect(&mut session)?;
+    let versions: Vec<_> = session
+        .versions()
+        .iter()
+        .map(|v| (v.subject.as_str(), v.present(), v.kind))
+        .collect();
+    assert_eq!(
+        versions,
+        vec![
+            ("Add Focaccia", true, Some(HistoryKind::Added)),
+            ("Update pancakes.", false, None),
+        ]
+    );
+    Ok(())
+}
+
+#[test]
+fn the_absent_version_after_a_deletion_is_the_commit_that_deleted_it() -> Result {
+    let dir = init()?;
+    write(dir.path(), "README.md", "recipes\n")?;
+    commit(dir.path(), "Initial commit", "2026-01-01T12:00:00+00:00")?;
+    write(dir.path(), "f.txt", "one\n")?;
+    commit(dir.path(), "Add", "2026-01-02T12:00:00+00:00")?;
+    std::fs::remove_file(dir.path().join("f.txt"))?;
+    commit(dir.path(), "Delete", "2026-01-03T12:00:00+00:00")?;
+    write(dir.path(), "other.txt", "x\n")?;
+    commit(dir.path(), "Unrelated", "2026-01-04T12:00:00+00:00")?;
+    write(dir.path(), "f.txt", "two\n")?;
+    commit(dir.path(), "Re-add", "2026-01-05T12:00:00+00:00")?;
+
+    let mut session = open(dir.path(), "HEAD", b"f.txt").map_err(|e| e.to_string())?;
+    collect(&mut session)?;
+    let subjects: Vec<_> = session
+        .versions()
+        .iter()
+        .map(|v| (v.subject.as_str(), v.present()))
+        .collect();
+    assert_eq!(
+        subjects,
+        vec![
+            ("Re-add", true),
+            ("Delete", false),
+            ("Add", true),
+            ("Initial commit", false),
+        ]
+    );
+    Ok(())
+}
