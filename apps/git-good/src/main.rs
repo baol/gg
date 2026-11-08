@@ -392,30 +392,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             "Open one folder. Commands follow --cli; use git good --help for usage.",
         ));
     }
-    let path = match given.map(PathBuf::from) {
-        Some(path) => {
-            // A folder named like a command is still a folder, but a missing
-            // one is an old command line or a typo: no window for it.
-            if !path.exists()
-                && let Some(name) = path.to_str()
-                && COMMANDS.iter().any(|(command, _)| *command == name)
-            {
-                return Err(cli_args::usage_error(format!(
-                    "No folder {name}. Did you mean git good --cli {name}?"
-                )));
-            }
-            path
-        }
-        None => launch_folder(
-            std::env::current_dir()?,
-            settings::Prefs::load().reopen_last,
-            &settings::recent()
-                .into_iter()
-                .map(|entry| entry.path)
-                .collect::<Vec<_>>(),
-            is_repository,
-        ),
-    };
+    let path = launch_folder(given.map(PathBuf::from), std::env::current_dir()?)?;
     let mut window_size = egui::vec2(1120.0, 740.0);
     if cfg!(debug_assertions)
         && let Ok(size) = std::env::var("GG_WINDOW_SIZE")
@@ -1243,23 +1220,30 @@ fn window_title(
     title
 }
 
-/// The folder gg opens when launched without a path: the working directory,
-/// or, outside a repository and with Reopen last repository on, the most
-/// recent repository that still is one.
+/// The folder the window opens: the one given, else the working folder as
+/// it is. Outside a repository (and outside any repository's subfolder) the
+/// window shows the welcome view (FRM-03, FRM-05); no other repository, such
+/// as the last one opened, takes its place.
 fn launch_folder(
+    given: Option<PathBuf>,
     cwd: PathBuf,
-    reopen_last: bool,
-    recent: &[PathBuf],
-    is_repository: impl Fn(&Path) -> bool,
-) -> PathBuf {
-    if !reopen_last || is_repository(&cwd) {
-        return cwd;
-    }
-    recent
-        .iter()
-        .find(|path| is_repository(path))
-        .cloned()
-        .unwrap_or(cwd)
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    Ok(match given {
+        Some(path) => {
+            // A folder named like a command is still a folder, but a missing
+            // one is an old command line or a typo: no window for it.
+            if !path.exists()
+                && let Some(name) = path.to_str()
+                && COMMANDS.iter().any(|(command, _)| *command == name)
+            {
+                return Err(cli_args::usage_error(format!(
+                    "No folder {name}. Did you mean git good --cli {name}?"
+                )));
+            }
+            path
+        }
+        None => cwd,
+    })
 }
 
 fn is_repository(path: &Path) -> bool {
@@ -3465,13 +3449,6 @@ impl Browser {
                                 &mut prefs.clone_named_after_repo,
                                 "Name the clone after the repository (e.g. ~/dev/gg)",
                             );
-                            ui.separator();
-                            ui.strong("Launch");
-                            ui.checkbox(
-                                &mut prefs.reopen_last,
-                                "Reopen the last repository when launched outside one",
-                            );
-                            ui.weak("Without a path Git Good opens the current folder; when that is not a repository, the most recent one opens instead.");
                             ui.separator();
                             ui.strong("Fetch");
                             ui.checkbox(
@@ -15160,7 +15137,6 @@ mod tests {
                 "Clone folders",
                 "1 repository",
                 "missing",
-                "Reopen the last repository when launched outside one",
             ] {
                 assert!(
                     text.iter().any(|line| line.contains(expected)),
@@ -21406,26 +21382,6 @@ mod tests {
     }
 
     #[test]
-    fn launch_opens_the_working_folder_or_the_last_repository() {
-        let repos = [PathBuf::from("/gone"), PathBuf::from("/repo")];
-        let is_repo = |path: &Path| path == Path::new("/repo") || path == Path::new("/here");
-        assert_eq!(
-            launch_folder("/here".into(), true, &repos, is_repo),
-            PathBuf::from("/here"),
-            "a repository working folder wins"
-        );
-        assert_eq!(
-            launch_folder("/tmp".into(), true, &repos, is_repo),
-            PathBuf::from("/repo"),
-            "outside a repository the last one that still is one opens"
-        );
-        assert_eq!(
-            launch_folder("/tmp".into(), false, &repos, is_repo),
-            PathBuf::from("/tmp")
-        );
-    }
-
-    #[test]
     fn preferences_search_keeps_sections_with_a_match() {
         let shown = |query: &str| {
             PrefSection::ALL
@@ -21804,6 +21760,56 @@ mod tests {
                 .map(|dialog| PathBuf::from(&dialog.folder)),
             Some(dir.path().to_path_buf())
         );
+        Ok(())
+    }
+
+    #[test]
+    fn a_launch_outside_a_repository_shows_the_welcome_view_not_the_last_repository()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        // A recent repository that still exists: nothing opens it instead.
+        let (recent, _) = two_commits()?;
+        let outside = tempfile::tempdir()?;
+        let folder = launch_folder(None, outside.path().to_path_buf())?;
+        assert_eq!(folder, outside.path(), "the working folder, as it is");
+        let mut app = Browser::new(folder);
+        app.recent = vec![settings::Recent {
+            path: recent.path().to_path_buf(),
+            opened: Some(1_793_000_000),
+        }];
+        app.recent_base = app.recent.clone();
+        app.load(&ctx);
+        let texts = welcome_until(&ctx, &mut app, |app, _| app.welcome.launch.is_some());
+        let shown = format!("{} is not a Git repository.", outside.path().display());
+        assert!(texts.contains(&shown), "{texts:?}");
+        assert!(
+            texts.iter().any(|text| text == "Open a repository"),
+            "{texts:?}"
+        );
+        let name = recent
+            .path()
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or("no name")?;
+        assert!(
+            texts.iter().any(|text| text == name),
+            "the last repository is offered in RECENT: {texts:?}"
+        );
+        assert_eq!(app.state.count, 0, "no repository opened");
+        Ok(())
+    }
+
+    #[test]
+    fn a_launch_in_a_repository_subfolder_opens_that_repository()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        let (repository, _) = two_commits()?;
+        let inside = repository.path().join("src").join("deep");
+        std::fs::create_dir_all(&inside)?;
+        let mut app = Browser::new(launch_folder(None, inside)?);
+        app.load(&ctx);
+        frames_until(&ctx, &mut app, vec![], |app, _| app.state.count == 2)?;
+        assert!(app.welcome.launch.is_none(), "no welcome view");
         Ok(())
     }
 

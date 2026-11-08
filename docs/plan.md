@@ -138,7 +138,7 @@ Still to build (medium):
 2. Conflict workspace: done (files panel with resolved list and blocks left, line numbers, Open in editor with an editor setting).
 3. Rebase stop: done (**Commits made at this stop** in Local Changes).
 4. Stash picker: done (two-line rows and keys).
-5. Preferences: done (modal, footer, search, keyboard list, zoom, code font, History display options, pull strategy, force-with-lease offer, clone naming, reopen last repository, commit hooks, backup retention, confirm before Drop and Reset, identity, subject guide, sign tags, and Diff context lines, whitespace, wrap, and invisibles).
+5. Preferences: done (modal, footer, search, keyboard list, zoom, code font, History display options, pull strategy, force-with-lease offer, clone naming, reopen last repository (since removed: a launch outside a repository always shows the welcome view, FRM-05), commit hooks, backup retention, confirm before Drop and Reset, identity, subject guide, sign tags, and Diff context lines, whitespace, wrap, and invisibles).
 6. Refs sidebar: done (Worktrees group and branch tracking counts).
 
 Small differences left for the review: none. F10 (and an Alt tap) puts the keyboard on the menu bar, as the architecture specifies. The reader's one-row header, indented combined rebase rows, the short stop explanation, and the backup named on Abort are done.
