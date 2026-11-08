@@ -21142,7 +21142,11 @@ mod tests {
                 .as_ref()
                 .is_some_and(|window| window.snapshot.is_some() && window.busy.is_none())
         };
-        let text = frames_until(&ctx, &mut app, vec![], listed)?;
+        // The list can arrive after the window drew its frame: wait until a
+        // frame shows it, not just until it is loaded.
+        let text = frames_until(&ctx, &mut app, vec![], |app, text| {
+            listed(app, text) && text.iter().any(|line| line == "Missing")
+        })?;
         for pill in ["Current", "Clean", "Missing"] {
             assert!(text.iter().any(|line| line == pill), "{pill}: {text:?}");
         }
@@ -21175,8 +21179,9 @@ mod tests {
             text.iter().any(|line| line == "Lock worktree")
         })?;
         click_label(&ctx, &mut app, "Lock")?;
-        let text = frames_until(&ctx, &mut app, vec![], |app, _| {
-            listed(app, &[])
+        let text = frames_until(&ctx, &mut app, vec![], |app, text| {
+            listed(app, text)
+                && text.iter().any(|line| line == "Locked")
                 && app
                     .worktree_window
                     .as_ref()
