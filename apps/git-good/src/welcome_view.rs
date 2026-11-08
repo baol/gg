@@ -256,7 +256,7 @@ impl Welcome {
                 };
                 ui.label(egui::RichText::new(title).size(20.0).strong());
                 if first_run {
-                    ui.weak("Open a repository to see its history and changes.");
+                    ui.weak("Open a repository to see its History tree and Local Changes.");
                 } else if !compact {
                     // The Git part fills in when read; the line is always there.
                     let mut line = format!("Git Good {}", env!("CARGO_PKG_VERSION"));

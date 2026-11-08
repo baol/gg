@@ -230,7 +230,7 @@ impl Plan {
     /// Engine steps, oldest first, or the first reason the plan cannot start.
     pub fn steps(&self) -> Result<Vec<Step>, String> {
         if !self.changed() {
-            return Err("The plan matches the current history.".into());
+            return Err("The plan matches the History tree.".into());
         }
         if self.rows.iter().all(|row| row.action == Action::Drop) {
             return Err(LAST_KEPT.into());
@@ -298,7 +298,7 @@ mod tests {
         assert!(!plan.changed());
         assert_eq!(
             plan.steps(),
-            Err("The plan matches the current history.".into())
+            Err("The plan matches the History tree.".into())
         );
         assert_eq!(
             plan.summary(),

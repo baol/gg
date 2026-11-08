@@ -59,7 +59,7 @@ fn git_dispatch_discovers_current_and_nested_repositories() -> Result {
     ))?;
     for cwd in [repo.path(), nested.as_path()] {
         let output = Command::new("git")
-            .args(["good", "--cli", "history"])
+            .args(["good", "--cli", "history-tree"])
             .current_dir(cwd)
             .env("PATH", &path)
             .output()?;
@@ -87,7 +87,7 @@ fn explicit_path_overrides_cwd_and_failure_uses_stderr() -> Result {
     init(repo.path(), &["-b", "explicit"])?;
     let binary = env!("CARGO_BIN_EXE_git-good");
     let output = cli(binary)
-        .args(["history", "--repo"])
+        .args(["history-tree", "--repo"])
         .arg(repo.path())
         .current_dir(other.path())
         .output()?;
@@ -95,7 +95,7 @@ fn explicit_path_overrides_cwd_and_failure_uses_stderr() -> Result {
     let json: serde_json::Value = serde_json::from_slice(&output.stdout)?;
     assert_eq!(json["head"], "explicit");
     let error = cli(binary)
-        .arg("history")
+        .arg("history-tree")
         .current_dir(other.path())
         .output()?;
     assert!(!error.status.success());
@@ -108,14 +108,14 @@ fn explicit_path_overrides_cwd_and_failure_uses_stderr() -> Result {
 fn a_failure_prints_the_plain_message() -> Result {
     let dir = tempfile::tempdir()?;
     let output = cli(env!("CARGO_BIN_EXE_git-good"))
-        .args(["history", "extra"])
+        .args(["history-tree", "extra"])
         .current_dir(dir.path())
         .output()?;
     assert_eq!(output.status.code(), Some(2), "a usage error exits 2");
     assert!(output.stdout.is_empty());
     assert_eq!(
         String::from_utf8_lossy(&output.stderr),
-        "Error: Usage: git good --cli history [--repo PATH]\n"
+        "Error: Usage: git good --cli history-tree [--repo PATH]\n"
     );
     Ok(())
 }
@@ -277,7 +277,7 @@ fn a_closed_stdout_ends_quietly() -> Result {
     init(repo.path(), &["-b", "main"])?;
     many_commits(repo.path(), 3000)?;
     let mut child = cli(env!("CARGO_BIN_EXE_git-good"))
-        .arg("history")
+        .arg("history-tree")
         .current_dir(repo.path())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -339,7 +339,7 @@ fn history_that_fails_mid_stream_ends_with_an_error_member() -> Result {
         )?;
     }
     let output = cli(env!("CARGO_BIN_EXE_git-good"))
-        .arg("history")
+        .arg("history-tree")
         .current_dir(repo.path())
         .output()?;
     assert_eq!(output.status.code(), Some(1));
@@ -393,7 +393,7 @@ fn json_includes_every_commit_beyond_the_former_cap() -> Result {
         String::from_utf8_lossy(&import.stderr)
     );
     let output = cli(env!("CARGO_BIN_EXE_git-good"))
-        .arg("history")
+        .arg("history-tree")
         .current_dir(repo.path())
         .output()?;
     assert!(
@@ -462,7 +462,7 @@ fn browsing_preserves_repository_index_and_dirty_worktree() -> Result {
     let exports = tempfile::tempdir()?;
     for pass in 0..2 {
         let output = cli(env!("CARGO_BIN_EXE_git-good"))
-            .arg("history")
+            .arg("history-tree")
             .current_dir(repo.path())
             .output()?;
         assert!(
@@ -545,7 +545,7 @@ fn help_lists_every_cli_command() -> Result {
     assert!(output.stderr.is_empty());
     let help = String::from_utf8(output.stdout)?;
     for usage in [
-        "git good --cli history",
+        "git good --cli history-tree",
         "git good --cli refs",
         "git good --cli status",
         "git good --cli stage",
@@ -3405,5 +3405,37 @@ fn init_cli_creates_commits_and_refuses_inside_a_repository() -> Result {
     assert!(refused.stdout.is_empty());
     assert!(String::from_utf8_lossy(&refused.stderr).contains("is inside the repository"));
     assert!(!target.join("docs/.git").exists());
+    Ok(())
+}
+
+#[test]
+fn history_is_a_hidden_alias_of_history_tree() -> Result {
+    let repo = tempfile::tempdir()?;
+    init(repo.path(), &["-b", "main"])?;
+    let binary = env!("CARGO_BIN_EXE_git-good");
+    let run = |command: &str| -> Result<serde_json::Value> {
+        let output = cli(binary)
+            .args([command, "--repo"])
+            .arg(repo.path())
+            .output()?;
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(serde_json::from_slice(&output.stdout)?)
+    };
+    assert_eq!(
+        run("history")?,
+        run("history-tree")?,
+        "the old name still works"
+    );
+    let help = Command::new(binary).arg("--help").output()?;
+    let help = String::from_utf8_lossy(&help.stdout);
+    assert!(help.contains("git good --cli history-tree"), "{help}");
+    assert!(
+        !help.contains("--cli history "),
+        "the alias stays out of --help: {help}"
+    );
     Ok(())
 }

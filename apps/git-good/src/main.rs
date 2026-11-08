@@ -149,9 +149,16 @@ fn main() -> std::process::ExitCode {
     }
 }
 
+/// Command words kept from before the domain language, not listed in
+/// `--help`: `history` is `history-tree`.
+const HIDDEN_ALIASES: [&str; 1] = ["history"];
+
 /// The command words after `--cli`, in `--help` order, with their usage.
 const COMMANDS: &[(&str, &str)] = &[
-    ("history", "[--repo PATH]   Print history as JSON"),
+    (
+        "history-tree",
+        "[--repo PATH]   Print the History tree as JSON",
+    ),
     (
         "refs",
         "[--repo PATH]   Print branches, remotes, tags, and HEAD as JSON",
@@ -279,13 +286,18 @@ fn run_command(
             .ok_or_else(|| cli_args::usage_error(usage))
     };
     let result = match name {
-        "history" => cli_args::repo_only(args, "Usage: git good --cli history [--repo PATH]")
-            .and_then(|path| {
-                write_history_json(
-                    &path,
-                    &mut std::io::BufWriter::new(std::io::stdout().lock()),
-                )
-            }),
+        // `history` is the name before the domain language (docs/domain.md),
+        // kept working for scripts and left out of --help.
+        "history-tree" | "history" => {
+            cli_args::repo_only(args, "Usage: git good --cli history-tree [--repo PATH]").and_then(
+                |path| {
+                    write_history_json(
+                        &path,
+                        &mut std::io::BufWriter::new(std::io::stdout().lock()),
+                    )
+                },
+            )
+        }
         "refs" => refs_cli::run(args),
         "status" => status_cli::run(args),
         "stage" => status_cli::stage(args),
@@ -1234,7 +1246,8 @@ fn launch_folder(
             // one is an old command line or a typo: no window for it.
             if !path.exists()
                 && let Some(name) = path.to_str()
-                && COMMANDS.iter().any(|(command, _)| *command == name)
+                && (COMMANDS.iter().any(|(command, _)| *command == name)
+                    || HIDDEN_ALIASES.contains(&name))
             {
                 return Err(cli_args::usage_error(format!(
                     "No folder {name}. Did you mean git good --cli {name}?"
@@ -3208,12 +3221,12 @@ impl Browser {
             list.extend(
                 [
                     ("Search", "Ctrl+K"),
-                    ("Search, starting from the History filter", "Ctrl+F"),
+                    ("Search, starting from the History tree filter", "Ctrl+F"),
                     ("Commit actions", "Alt+A"),
-                    ("History: move · page", "j k / Up Down · PgUp PgDn"),
+                    ("History tree: move · page", "j k / Up Down · PgUp PgDn"),
                     ("Local Changes: stage · unstage the selected file", "S · U"),
                     (
-                        "Reader: change · file · history · blame",
+                        "Reader: change · file · File history · blame",
                         "[ ] · Alt+Up/Down · H · B",
                     ),
                     ("Conflict blocks: choose · move", "1–4 · [ ]"),
@@ -3513,7 +3526,7 @@ impl Browser {
                                             }
                                         });
                                     ui.end_row();
-                                    ui.label("History");
+                                    ui.label("History tree");
                                     ui.vertical(|ui| {
                                         ui.checkbox(&mut prefs.history_avatars, "Show avatars");
                                         ui.add_enabled(
@@ -5039,7 +5052,7 @@ impl Browser {
     }
 
     /// Copy ID: the selected commit's ID, or with two or more picked one
-    /// `id subject author date` line each, newest first, as History lists them.
+    /// `id subject author date` line each, newest first, as History trees them.
     fn copy_selected_commits(&self, ctx: &egui::Context) {
         if self.state.picked.len() >= 2 {
             let lines: Vec<String> = self
@@ -5156,7 +5169,7 @@ impl Browser {
                 }
             }
             Ok(None) => {
-                self.mutation_error = Some(format!("No commit in this history changes {file}."))
+                self.mutation_error = Some(format!("No commit in the History tree changes {file}."))
             }
             Err(error) => self.mutation_error = Some(error),
         }
@@ -5391,9 +5404,11 @@ impl Browser {
                             });
                             ui.add(
                                 egui::Label::new(
-                                    egui::RichText::new("Enter: show in history · Esc: close")
-                                        .small()
-                                        .weak(),
+                                    egui::RichText::new(
+                                        "Enter: show in the History tree · Esc: close",
+                                    )
+                                    .small()
+                                    .weak(),
                                 )
                                 .truncate(),
                             );
@@ -5512,7 +5527,7 @@ impl Browser {
         } else if self.state.selected.is_some() {
             None
         } else {
-            Some("Select a commit in History first")
+            Some("Select a commit in the History tree first")
         };
         let mutate = |ok: bool| if ok { selected } else { Some(busy) };
         let head = self.state.refs.head.as_ref();
@@ -5920,7 +5935,7 @@ impl Browser {
                     .unless(idle(ready.has_repo))
                     .checked(self.working.is_some())
                     .entry(),
-                item("History", "Ctrl+2", FrameCommand::History)
+                item("History tree", "Ctrl+2", FrameCommand::History)
                     .unless(idle(ready.has_repo))
                     .checked(self.working.is_none() && self.review.is_none())
                     .entry(),
@@ -7062,7 +7077,7 @@ impl Browser {
     ) -> Result<(), String> {
         let path = self
             .stash_path()
-            .ok_or("Open a repository before changing history.")?;
+            .ok_or("Open a repository before you rewrite history.")?;
         let commit = self
             .state
             .selected
@@ -7477,9 +7492,9 @@ impl Browser {
     /// Operations that make Local Changes mutations incompatible.
     fn external_operation_reason(&self) -> Option<String> {
         if self.rewrite_job.is_some() {
-            Some("Wait for the history rewrite to finish".into())
+            Some("Wait for the interactive rebase to finish".into())
         } else if self.rewrite_refresh.is_some() {
-            Some("Wait for history to refresh".into())
+            Some("Wait for the History tree to refresh".into())
         } else if self.operation_worker.is_some() {
             Some("Wait for the current operation to finish".into())
         } else if self.network.is_some() {
@@ -7776,9 +7791,9 @@ impl Browser {
                 format!(
                     "{} · {} commits examined",
                     if self.state.query.is_empty() {
-                        "Counting history"
+                        "Counting the History tree"
                     } else {
-                        "Searching history"
+                        "Searching the History tree"
                     },
                     self.state.scanned
                 ),
@@ -7804,7 +7819,7 @@ impl Browser {
         } else if self.state.history.is_none() {
             "Ctrl+O: open   ·   Ctrl+K: search   ·   ?: shortcuts"
         } else if narrow {
-            "j/k: select · Enter: review · Space: details · Esc: history · Ctrl/Cmd+F: filter"
+            "j/k: select · Enter: review · Space: details · Esc: History tree · Ctrl/Cmd+F: filter"
         } else {
             "j k: select   ·   Enter: review   ·   Alt+A: actions   ·   R: rebase from here   ·   Ctrl+K: search   ·   Ctrl/Cmd+F: filter   ·   Ctrl/Cmd+C: copy ID"
         };
@@ -8830,7 +8845,7 @@ impl Browser {
     ) -> Result<(), String> {
         let path = self
             .stash_path()
-            .ok_or("Open a repository before recovering history.")?;
+            .ok_or("Open a repository before using Recovery.")?;
         let command = match action {
             MutationAction::Continue => operation_band::Command::Continue,
             MutationAction::Skip => operation_band::Command::Skip,
@@ -8913,9 +8928,9 @@ impl Browser {
     fn open_rewrite_dialog(&mut self, from: &str) -> Result<(), String> {
         let path = self
             .stash_path()
-            .ok_or("Open a repository before rewriting history.")?;
+            .ok_or("Open a repository before you rewrite history.")?;
         if self.mutation.is_some() {
-            return Err("Recover the operation in progress before rewriting history.".into());
+            return Err("Recover the operation in progress before you rewrite history.".into());
         }
         let (commits, base) = gg_git::rewrite::plan_range(&path, from)?;
         let mut dialog = rebase_dialog::Dialog::new(path, commits, base, &self.state.refs)?;
@@ -8935,14 +8950,14 @@ impl Browser {
             return Err("A rewrite is already running.".into());
         }
         if self.mutation.is_some() {
-            return Err("Recover the operation in progress before rewriting history.".into());
+            return Err("Recover the operation in progress before you rewrite history.".into());
         }
         if self.operation_worker.is_some() || self.network.is_some() || self.branch.is_some() {
             return Err("Wait for the current operation to finish before rewriting.".into());
         }
         let path = self
             .stash_path()
-            .ok_or("Open a repository before rewriting history.")?;
+            .ok_or("Open a repository before you rewrite history.")?;
         let restore_row = self.state.selected_row;
         let operation_path = path.clone();
         // The band shows the plan until Git reports its own steps.
@@ -9164,7 +9179,7 @@ impl Browser {
             behind,
             pull_reason,
             rewrite_reason: if self.state.selected.is_none() {
-                Some("Select a commit in History first")
+                Some("Select a commit in the History tree first")
             } else {
                 self.mutation_reason()
             },
@@ -12014,7 +12029,7 @@ impl Browser {
                             has_repo,
                             egui::Button::selectable(
                                 local_selected,
-                                ("Changes", count_badge(ready.changes as u64)),
+                                ("Local Changes", count_badge(ready.changes as u64)),
                             )
                             .min_size(egui::vec2(96.0, 24.0)),
                         )
@@ -12029,13 +12044,13 @@ impl Browser {
                     if ui
                         .add_enabled(
                             has_repo && !working_mutation_pending,
-                            egui::Button::selectable(!local_selected, "History")
+                            egui::Button::selectable(!local_selected, "History tree")
                                 .min_size(egui::vec2(84.0, 24.0)),
                         )
                         .on_hover_text(if working_mutation_pending {
                             "Wait for the current Local Changes operation to finish"
                         } else {
-                            "Browse commit history"
+                            "Browse the History tree"
                         })
                         .clicked()
                     {
@@ -13503,7 +13518,7 @@ impl Browser {
             let blocked = if rewrite_busy {
                 Some("A rewrite is already running.")
             } else if rewrite_refreshing {
-                Some("Wait for history to refresh after the last rewrite.")
+                Some("Wait for the History tree to refresh after the last rewrite.")
             } else {
                 None
             };
@@ -14137,7 +14152,7 @@ impl Browser {
                             self.state.count,
                             if self.state.finished { "" } else { "+" },
                             if self.rewrite_refresh.is_some() {
-                                " · refreshing, showing previous history"
+                                " · refreshing, showing the previous History tree"
                             } else {
                                 ""
                             }
@@ -16907,15 +16922,15 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             text.iter()
-                .filter(|line| line.contains("Refreshing history"))
+                .filter(|line| line.contains("Refreshing the History tree"))
                 .count(),
             1,
             "one operation area reports the refresh: {text:?}"
         );
         assert!(
             text.iter()
-                .any(|line| line.contains("showing previous history")),
-            "the retained history is labeled: {text:?}"
+                .any(|line| line.contains("showing the previous History tree")),
+            "the retained History tree is labeled: {text:?}"
         );
 
         app.state.loaded_generation = app.rewrite_refresh.unwrap_or_default();
@@ -16926,7 +16941,7 @@ mod tests {
         assert!(!output.shapes.iter().any(|shape| matches!(
             &shape.shape,
             egui::epaint::Shape::Text(text)
-                if text.galley.job.text.contains("Refreshing history")
+                if text.galley.job.text.contains("Refreshing the History tree")
         )));
     }
 
@@ -21501,7 +21516,7 @@ mod tests {
         // Changes is only the menu title; the toolbar tab is gone.
         let count = |label: &str| texts.iter().filter(|text| *text == label).count();
         assert_eq!(count("Changes"), 1, "{texts:?}");
-        for hidden in ["History", "no branch", "COMMITS"] {
+        for hidden in ["History tree", "no branch", "COMMITS"] {
             assert_eq!(count(hidden), 0, "{hidden} shown: {texts:?}");
         }
         assert!(
@@ -21572,7 +21587,7 @@ mod tests {
         let texts = welcome_texts(&ctx, &mut app, vec![]);
         for shown in [
             "Welcome to Git Good",
-            "Open a repository to see its history and changes.",
+            "Open a repository to see its History tree and Local Changes.",
             "Repositories you open are listed here. Drop a folder on this window to open it.",
             "Clone folder:",
             "Change in Preferences…",
@@ -21806,6 +21821,208 @@ mod tests {
         Ok(())
     }
 
+    /// Shown text that uses "history" outside the domain's full terms:
+    /// History tree, File history, Line history, Rewrite history
+    /// (docs/domain.md).
+    fn bare_history(texts: &[String]) -> Vec<String> {
+        const TERMS: [&str; 4] = [
+            "history tree",
+            "file history",
+            "line history",
+            "rewrite history",
+        ];
+        texts
+            .iter()
+            .filter(|text| {
+                // What the user typed, echoed between “ ”, is theirs.
+                let mut rest = String::new();
+                let mut quoted = false;
+                for c in text.to_lowercase().chars() {
+                    match c {
+                        '“' => quoted = true,
+                        '”' => quoted = false,
+                        c if !quoted => rest.push(c),
+                        _ => {}
+                    }
+                }
+                for term in TERMS {
+                    rest = rest.replace(term, "");
+                }
+                // `gg-history` and `history_tags` are identifiers, not words.
+                rest.split(|c: char| !(c.is_alphanumeric() || c == '-' || c == '_'))
+                    .any(|word| word == "history")
+            })
+            .cloned()
+            .collect()
+    }
+
+    /// The string literals of the app's own (non-test) sources, with their
+    /// file and line.
+    fn source_strings() -> Vec<(String, usize, String)> {
+        // Modules compiled only for tests.
+        const TEST_ONLY: [&str; 7] = [
+            "docs_screens.rs",
+            "idle_tests.rs",
+            "interaction_tests.rs",
+            "menu_tests.rs",
+            "parity_tests.rs",
+            "perf.rs",
+            "screenshot.rs",
+        ];
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut found = Vec::new();
+        let mut files: Vec<_> = std::fs::read_dir(&dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "rs"))
+            .collect();
+        files.sort();
+        for path in files {
+            let name = path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            if TEST_ONLY.contains(&name.as_str()) {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).unwrap_or_default();
+            let mut lines = text.lines().enumerate().peekable();
+            while let Some((index, line)) = lines.next() {
+                // The rest of the file is a test module.
+                if line.trim() == "#[cfg(test)]"
+                    && lines.peek().is_some_and(|(_, next)| {
+                        next.trim_start().starts_with("mod ") && next.contains('{')
+                    })
+                {
+                    break;
+                }
+                if line.trim_start().starts_with("//") {
+                    continue;
+                }
+                let mut chars = line.chars();
+                let mut current: Option<String> = None;
+                while let Some(c) = chars.next() {
+                    match (&mut current, c) {
+                        (None, '"') => current = Some(String::new()),
+                        (Some(literal), '\\') => {
+                            if let Some(next) = chars.next() {
+                                literal.push(next);
+                            }
+                        }
+                        (Some(literal), '"') => {
+                            found.push((name.clone(), index + 1, std::mem::take(literal)));
+                            current = None;
+                        }
+                        (Some(literal), c) => literal.push(c),
+                        (None, _) => {}
+                    }
+                }
+            }
+        }
+        found
+    }
+
+    #[test]
+    fn no_shown_string_uses_history_outside_the_full_domain_terms() {
+        let strings = source_strings();
+        assert!(strings.len() > 1000, "the sources were read");
+        let offending: Vec<String> = strings
+            .into_iter()
+            // Command words are not shown text; `history` is an alias.
+            .filter(|(_, _, literal)| !HIDDEN_ALIASES.contains(&literal.as_str()))
+            .filter(|(_, _, literal)| !bare_history(std::slice::from_ref(literal)).is_empty())
+            .map(|(file, line, literal)| format!("{file}:{line}: {literal}"))
+            .collect();
+        assert!(
+            offending.is_empty(),
+            "\"history\" outside History tree, File history, Line history, Rewrite history:\n{}",
+            offending.join("\n")
+        );
+    }
+
+    #[test]
+    fn the_word_history_is_always_part_of_a_full_domain_term()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        let (dir, mut app) = two_commits()?;
+        let path = dir.path().to_path_buf();
+        std::fs::write(path.join("a"), b"three\n")?;
+        app.load(&ctx);
+        frames_until(&ctx, &mut app, vec![], |app, _| app.state.count == 2)?;
+        let mut shown = Vec::new();
+        // History tree, its menus, and search for "history".
+        shown.extend(frames_until(&ctx, &mut app, vec![], |_, _| true)?);
+        let ready = app.frame_readiness();
+        shown.extend(
+            menus::flatten(&app.menu_table(&ready))
+                .into_iter()
+                .flat_map(|(menu, item)| [menu, item.label, item.disabled.unwrap_or_default()]),
+        );
+        let k = egui::Event::Key {
+            key: egui::Key::K,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::COMMAND,
+        };
+        frames_until(&ctx, &mut app, vec![k], |app, _| app.search.is_some())?;
+        shown.extend(frames_until(
+            &ctx,
+            &mut app,
+            vec![egui::Event::Text("history".into())],
+            |_, _| true,
+        )?);
+        let esc = egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frames_until(&ctx, &mut app, vec![esc], |app, _| app.search.is_none())?;
+        // Review, File history.
+        app.open_review_at(&ctx, "HEAD".into(), "two".into(), None);
+        if let Some(review) = app.review.take() {
+            app.review = Some(review.select_path("a".into()));
+        }
+        shown.extend(frames_until(&ctx, &mut app, vec![], |_, text| {
+            text.iter().any(|line| line.contains("Blame"))
+        })?);
+        let h = egui::Event::Key {
+            key: egui::Key::H,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        shown.extend(frames_until(&ctx, &mut app, vec![h], |_, text| {
+            text.iter().any(|line| line.starts_with("FILE HISTORY"))
+        })?);
+        app.review = None;
+        // Local Changes.
+        app.open_working(&ctx);
+        shown.extend(frames_until(&ctx, &mut app, vec![], |app, _| {
+            app.working.is_some()
+        })?);
+        app.working = None;
+        // Every Preferences section.
+        for section in PrefSection::ALL {
+            app.open_preferences(section);
+            shown.extend(frames_until(&ctx, &mut app, vec![], |_, _| true)?);
+        }
+        let mut offending = bare_history(&shown);
+        offending.sort();
+        offending.dedup();
+        assert!(
+            offending.is_empty(),
+            "\"history\" outside History tree, File history, Line history, Rewrite history:\n{}",
+            offending.join("\n")
+        );
+        Ok(())
+    }
+
     #[test]
     fn a_renamed_and_rewritten_file_keeps_its_file_history()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -21859,7 +22076,7 @@ mod tests {
             app.review = Some(review.select_path("Pane e pizza/Focaccia con il Bimby.md".into()));
         }
         frames_until(&ctx, &mut app, vec![], |_, text| {
-            text.iter().any(|line| line.contains("H: history"))
+            text.iter().any(|line| line.contains("H: File history"))
         })?;
         let history = frames_until(
             &ctx,
@@ -21929,7 +22146,7 @@ mod tests {
             app.review = Some(review.select_path("Pane e pizza/Focaccia genovese.md".into()));
         }
         frames_until(&ctx, &mut app, vec![], |_, text| {
-            text.iter().any(|line| line.contains("H: history"))
+            text.iter().any(|line| line.contains("H: File history"))
         })?;
         let history = frames_until(
             &ctx,
@@ -22185,7 +22402,7 @@ mod tests {
             labels("View"),
             [
                 "Local Changes",
-                "History",
+                "History tree",
                 "Back",
                 "Forward",
                 "-",
@@ -22602,8 +22819,8 @@ mod tests {
                     _ => None,
                 })
             };
-            let local = nav("Changes").ok_or("missing Local Changes")?;
-            let history = nav("History").ok_or("missing History")?;
+            let local = nav("Local Changes").ok_or("missing Local Changes")?;
+            let history = nav("History tree").ok_or("missing History")?;
             assert!(
                 local.x < history.x,
                 "Local Changes must stay first at {width}: {local:?} {history:?}"
@@ -22661,7 +22878,7 @@ mod tests {
                     .iter()
                     .filter_map(|shape| match &shape.shape {
                         egui::epaint::Shape::Text(text)
-                            if text.galley.job.text == "Changes"
+                            if text.galley.job.text == "Local Changes"
                                 && text.pos.y > MENU_BAR_HEIGHT =>
                         {
                             Some(text.pos.x)
@@ -22681,7 +22898,7 @@ mod tests {
                 .iter()
                 .find_map(|shape| match &shape.shape {
                     egui::epaint::Shape::Text(text)
-                        if text.galley.job.text == "History" && text.pos.y < 80.0 =>
+                        if text.galley.job.text == "History tree" && text.pos.y < 80.0 =>
                     {
                         Some(text.pos)
                     }
@@ -23853,7 +24070,7 @@ mod tests {
             |ctx| app.draw_ui(ctx),
         );
         assert!(app.narrow_details);
-        click_navigation("History", &mut app, &ctx, 720.0);
+        click_navigation("History tree", &mut app, &ctx, 720.0);
         assert!(
             !app.narrow_details,
             "the History destination must leave the details overlay"
@@ -23874,7 +24091,7 @@ mod tests {
         let offset = app.scroll_offset;
         app.run_commit_action(&ctx, format!("{:040x}", 10), CommitAction::Review);
         assert!(app.review.is_some());
-        click_navigation("History", &mut app, &ctx, 1120.0);
+        click_navigation("History tree", &mut app, &ctx, 1120.0);
         assert!(app.review.is_none());
         assert_eq!(app.state.selected, selected);
         assert_eq!(app.state.query, query);

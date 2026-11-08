@@ -4,7 +4,7 @@
 
 [project]
 site_name = "Git Good"
-site_description = "A fast, native Git desktop app: history, review, hunk and line staging, interactive rebase and recovery."
+site_description = "A fast, native Git desktop app: the History tree, review, hunk and line staging, interactive rebase and recovery."
 site_url = "https://baol.github.io/gg/"
 repo_url = "https://github.com/baol/gg"
 repo_name = "baol/gg"
@@ -17,7 +17,7 @@ nav = [
   { "Get started" = "getting-started.md" },
   { "Workflows" = [
     "workflows/index.md",
-    { "Find your way in history" = "workflows/history.md" },
+    { "Find your way in the History tree" = "workflows/history.md" },
     { "Review a commit" = "workflows/review.md" },
     { "Commit part of your work" = "workflows/commit.md" },
     { "Branches, fetch, pull and push" = "workflows/sync.md" },

@@ -11,7 +11,7 @@ Before pushing, Linus wants to fold *WIP fix db typo* into the commit it fixes. 
 
 ## Build the plan
 
-The plan lists the commits newest first, like History. For each one choose an action from its menu, or press its key:
+The plan lists the commits newest first, like the History tree. For each one choose an action from its menu, or press its key:
 
 | Key | Action | Result |
 |---|---|---|

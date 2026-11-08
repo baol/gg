@@ -5,7 +5,7 @@ description: Stage files, hunks or single lines and write the commit.
 
 # Commit part of your work
 
-Click **Changes** in the toolbar. The badge counts the changed files; here there are three.
+Click **Local Changes** in the toolbar. The badge counts the changed files; here there are three.
 
 ![Local Changes: two unstaged files and one staged file on the left, the diff of src/routes.rs with Stage hunk and Discard hunk on each hunk, and the commit box at the bottom](../assets/screens/local-changes.png){ .gg-shot }
 

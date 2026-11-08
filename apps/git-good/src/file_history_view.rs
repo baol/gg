@@ -763,7 +763,7 @@ impl FileHistory {
         }
         if ui
             .put(close.shrink(2.0), egui::Button::new("×").small())
-            .on_hover_text("Close history (Esc)")
+            .on_hover_text("Close File history (Esc)")
             .clicked()
         {
             self.close = true;
@@ -828,7 +828,7 @@ impl FileHistory {
                             ui,
                             text,
                             &format!(
-                                "History page failed · {}",
+                                "File history page failed · {}",
                                 self.error.as_deref().unwrap_or_default()
                             ),
                             egui::FontId::proportional(12.0),
@@ -1453,7 +1453,7 @@ mod tests {
         );
         let failed = output.shapes.iter().find_map(|shape| match &shape.shape {
             egui::epaint::Shape::Text(text)
-                if text.galley.job.text.starts_with("History page failed") =>
+                if text.galley.job.text.starts_with("File history page failed") =>
             {
                 Some(text.fallback_color)
             }
@@ -1482,7 +1482,7 @@ mod tests {
         );
         let mut history = view(timeline);
         history.worker = Some(Worker::start(ctx.clone())?);
-        history.error = Some("History page failed".into());
+        history.error = Some("File history page failed".into());
         let before = history.timeline.as_ref().map(|t| t.versions.len());
         history.retry(&ctx);
         assert_eq!(history.timeline.as_ref().map(|t| t.versions.len()), before);

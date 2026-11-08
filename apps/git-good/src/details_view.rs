@@ -11,7 +11,7 @@ pub fn commit_actions_popup_id() -> egui::Id {
 
 /// What the narrow commit details asked for.
 pub enum PageAction {
-    /// `‹ History` (Esc): back to the list.
+    /// `‹ History tree` (Esc): back to the list.
     Back,
     /// Newer (`-1`, k) or older (`1`, j) commit.
     Step(i32),
@@ -33,7 +33,7 @@ pub struct PageInfo<'a> {
 pub const PAGE_BAR_HEIGHT: f32 = 34.0;
 
 /// The narrow commit details (narrow proposal): Space replaces the history
-/// list with this page. `‹ History Esc`, the subject, and newer/older on top;
+/// list with this page. `‹ History tree Esc`, the subject, and newer/older on top;
 /// a label grid, the message, and the FILES list (Enter or a double click
 /// reviews the chosen file); **Actions** and the primary **Review** at the
 /// bottom.
@@ -52,7 +52,7 @@ pub fn page(
         .show(ui, |ui| {
             ui.horizontal_centered(|ui| {
                 if ui
-                    .button(("‹ History", egui::RichText::new("Esc").small().weak()))
+                    .button(("‹ History tree", egui::RichText::new("Esc").small().weak()))
                     .clicked()
                 {
                     action = Some(PageAction::Back);

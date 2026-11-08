@@ -5,7 +5,7 @@ description: Resolve conflicts block by block and finish or abort the merge.
 
 # Resolve a merge conflict
 
-Grace merged `feature/sorting` into `main`. Both changed the same line of `src/routes.rs`: `main` pages the order list, `feature/sorting` sorts it newest first. Git stopped, and the band's **Resolve conflicts** (or the Changes tab) opens the conflict view:
+Grace merged `feature/sorting` into `main`. Both changed the same line of `src/routes.rs`: `main` pages the order list, `feature/sorting` sorts it newest first. Git stopped, and the band's **Resolve conflicts** (or the Local Changes tab) opens the conflict view:
 
 ![The conflict view: an amber band names the merge, the conflicted file is listed on the left, the conflict shows Base, Ours and Theirs side by side with buttons to choose, and the result preview is below](../assets/screens/conflict.png){ .gg-shot }
 

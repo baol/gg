@@ -341,7 +341,7 @@ impl Dialog {
 
     fn draw_plan(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            ui.weak("PLAN · NEWEST FIRST, LIKE HISTORY");
+            ui.weak("PLAN · NEWEST FIRST, LIKE THE HISTORY TREE");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.weak(format!(
                     "j k select · Alt+{}{} move · P R E S F D",

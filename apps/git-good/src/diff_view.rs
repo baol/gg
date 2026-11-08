@@ -2847,14 +2847,14 @@ impl DiffView {
                 let response = ui
                     .add_enabled(
                         available,
-                        egui::Button::new("History").selected(self.history_open),
+                        egui::Button::new("File history").selected(self.history_open),
                     )
                     .on_hover_text(if self.history_open {
-                        "Close history · Esc"
+                        "Close File history · Esc"
                     } else {
                         "File history · H"
                     })
-                    .on_disabled_hover_text("Select a file to follow its history");
+                    .on_disabled_hover_text("Select a file to see its File history");
                 if response.clicked() {
                     self.history_request = true;
                 }

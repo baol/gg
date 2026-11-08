@@ -65,7 +65,7 @@ pub fn results<C: Clone>(query: &str, items: &[Item<C>], filter: C) -> Vec<Item<
     if !query.is_empty() {
         out.push(Item {
             group: Group::Filter,
-            label: format!("Filter history by “{query}”"),
+            label: format!("Filter the History tree by “{query}”"),
             context: "message, author, or ID".into(),
             key: "Enter".into(),
             disabled: None,
@@ -168,7 +168,10 @@ mod tests {
         assert_eq!(
             labels,
             vec![
-                (Group::Filter, "Filter history by “reb”".to_string()),
+                (
+                    Group::Filter,
+                    "Filter the History tree by “reb”".to_string()
+                ),
                 (Group::Actions, "Rebase current onto…".to_string()),
                 (Group::Actions, "Pull (rebase)".to_string()),
                 (Group::Branches, "rebase-ui".to_string()),
