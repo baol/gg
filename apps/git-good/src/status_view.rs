@@ -4911,6 +4911,98 @@ mod tests {
     }
 
     #[test]
+    fn an_untracked_and_a_modified_image_show_their_pictures()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let p = dir.path();
+        git(p, &["init", "-q"])?;
+        let png = |width: u32, height: u32| -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+            let image =
+                image::RgbaImage::from_pixel(width, height, image::Rgba([200, 120, 40, 255]));
+            let mut bytes = std::io::Cursor::new(Vec::new());
+            image.write_to(&mut bytes, image::ImageFormat::Png)?;
+            Ok(bytes.into_inner())
+        };
+        std::fs::write(p.join("logo.png"), png(3, 2)?)?;
+        git(p, &["add", "logo.png"])?;
+        git(
+            p,
+            &[
+                "-c",
+                "user.name=T",
+                "-c",
+                "user.email=t@t",
+                "commit",
+                "-qm",
+                "Add logo",
+            ],
+        )?;
+        std::fs::write(p.join("logo.png"), png(6, 4)?)?;
+        std::fs::write(p.join("muffin-farro.jpeg"), png(5, 5)?)?;
+        let ctx = egui::Context::default();
+        let mut view = StatusView::new(p.into(), &ctx);
+        settle(&ctx, &mut view, 1120.0);
+        let shown = |view: &mut StatusView| -> Vec<String> {
+            run(&ctx, view, 1120.0, vec![])
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) => Some(text.galley.job.text.clone()),
+                    _ => None,
+                })
+                .collect()
+        };
+        let wait = |view: &mut StatusView, expected: &[&str]| -> Vec<String> {
+            let mut text = Vec::new();
+            for _ in 0..300 {
+                text = shown(view);
+                if expected
+                    .iter()
+                    .all(|want| text.iter().any(|line| line.contains(want)))
+                {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            text
+        };
+        select_path(&mut view, &ctx, "muffin-farro.jpeg", Area::Untracked);
+        let text = wait(&mut view, &["After working · 5 × 5"]);
+        assert!(
+            text.iter()
+                .any(|line| line.contains("After working · 5 × 5")),
+            "the untracked image is shown: {text:?}"
+        );
+        assert!(
+            !text.iter().any(|line| line.contains("No inline preview")),
+            "{text:?}"
+        );
+        select_path(&mut view, &ctx, "logo.png", Area::Unstaged);
+        let text = wait(
+            &mut view,
+            &["Before index · 3 × 2", "After working · 6 × 4"],
+        );
+        for expected in ["Before index · 3 × 2", "After working · 6 × 4"] {
+            assert!(
+                text.iter().any(|line| line.contains(expected)),
+                "missing {expected:?}: {text:?}"
+            );
+        }
+        git(p, &["add", "logo.png"])?;
+        view.refresh(&ctx);
+        settle(&ctx, &mut view, 1120.0);
+        select_path(&mut view, &ctx, "logo.png", Area::Staged);
+        let text = wait(&mut view, &["Before HEAD · 3 × 2", "After index · 6 × 4"]);
+        for expected in ["Before HEAD · 3 × 2", "After index · 6 × 4"] {
+            assert!(
+                text.iter().any(|line| line.contains(expected)),
+                "missing {expected:?}: {text:?}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn staged_away_untracked_entry_keeps_an_empty_comparison()
     -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempfile::tempdir()?;

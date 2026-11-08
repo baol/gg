@@ -229,21 +229,25 @@ impl Worker {
                         };
                         let result = read(&request, &cancelled);
                         preview = None;
-                        if request.working.is_none()
-                            && result.as_ref().is_ok_and(|diff| {
-                                matches!(
-                                    diff.kind,
-                                    gg_engine::diff::DiffKind::Binary
-                                        | gg_engine::diff::DiffKind::Limited
-                                )
-                            })
-                            && !cancelled()
+                        if result.as_ref().is_ok_and(|diff| {
+                            matches!(
+                                diff.kind,
+                                gg_engine::diff::DiffKind::Binary
+                                    | gg_engine::diff::DiffKind::Limited
+                            )
+                        }) && !cancelled()
                         {
-                            preview = Some(Arc::new(crate::binary_preview::read(
-                                &request.path,
-                                &request.change,
-                                &cancelled,
-                            )));
+                            preview = Some(Arc::new(match &request.working {
+                                // Local Changes: the index and the working file.
+                                Some(working) => {
+                                    crate::binary_preview::read_working(working, &cancelled)
+                                }
+                                None => crate::binary_preview::read(
+                                    &request.path,
+                                    &request.change,
+                                    &cancelled,
+                                ),
+                            }));
                         }
                         if cancelled() {
                             continue;

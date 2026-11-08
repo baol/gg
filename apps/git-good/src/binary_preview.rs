@@ -174,6 +174,46 @@ pub fn read(path: &Path, change: &FileChange, cancelled: &dyn Fn() -> bool) -> P
     }
 }
 
+/// The preview sides of a working comparison in Local Changes: the index
+/// or base-tree blob, and the working file as it is on disk.
+pub fn read_working(
+    request: &gg_engine::status::WorkingRequest,
+    cancelled: &dyn Fn() -> bool,
+) -> Pair {
+    use gg_engine::file::ReadingSide;
+    use gg_git::working_diff::PreviewBytes;
+    let load = |side: ReadingSide| {
+        let label = side.label();
+        match gg_git::working_diff::preview_bytes(request, side, ENCODED_LIMIT, cancelled) {
+            Ok(PreviewBytes::Bytes(bytes)) => {
+                let mut preview = decode(&bytes);
+                // No object ID yet: the header names the side instead.
+                preview.id = Some(match (request.entry.area, side) {
+                    (gg_engine::status::Area::Staged, ReadingSide::After) => "index".into(),
+                    (gg_engine::status::Area::Staged, ReadingSide::Before) => "HEAD".into(),
+                    (_, ReadingSide::Before) => "index".into(),
+                    (_, ReadingSide::After) => "working".into(),
+                });
+                preview.bytes = bytes.len() as u64;
+                preview
+            }
+            Ok(PreviewBytes::Absent(_)) => Preview::note(format!("{label} absent")),
+            Ok(PreviewBytes::OverLimit(size)) => {
+                let mut preview =
+                    Preview::note("Preview budget: 16 MiB per side · export for complete content");
+                preview.bytes = size;
+                preview
+            }
+            Ok(PreviewBytes::Gitlink) => Preview::note("Gitlink · referenced commit"),
+            Err(error) => Preview::note(error),
+        }
+    };
+    Pair {
+        before: load(ReadingSide::Before),
+        after: load(ReadingSide::After),
+    }
+}
+
 fn bytes(value: u64) -> String {
     match value {
         0 => "0 B".into(),
