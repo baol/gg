@@ -36,6 +36,9 @@ pub enum ChangeKind {
     Deleted,
     Modified,
     TypeChanged,
+    /// Moved from `FileChange::old_path`, as `git diff -M` pairs a deleted
+    /// path with an added one; the content may also have changed.
+    Renamed,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FileChange {
@@ -44,6 +47,12 @@ pub struct FileChange {
     pub kind: ChangeKind,
     pub old: Option<FileSide>,
     pub new: Option<FileSide>,
+    /// For a rename, the path `old` was read from (escaped for display).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub old_path: Option<String>,
+    /// For a rename, the exact bytes of the old path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub old_path_bytes: Option<Vec<u8>>,
 }
 /// Added and deleted line counts for one changed file, as `git diff --numstat`
 /// reports them, or why the file is not counted.

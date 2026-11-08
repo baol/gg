@@ -418,6 +418,8 @@ impl FileHistory {
                 MapDirection::Older => version.side.clone(),
                 MapDirection::Newer => other.side.clone(),
             },
+            old_path: None,
+            old_path_bytes: None,
         };
         if change.old.is_none() || change.new.is_none() {
             return;
@@ -515,6 +517,8 @@ impl FileHistory {
             kind,
             old,
             new,
+            old_path: None,
+            old_path_bytes: None,
         };
         match &version.previous {
             Predecessor::Linked => {

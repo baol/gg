@@ -690,6 +690,8 @@ pub fn request(pointer: &HeadPointer) -> crate::diff_view::LfsRequest {
             id: pointer.blob.clone(),
             mode: 0o100644,
         }),
+        old_path: None,
+        old_path_bytes: None,
     })
 }
 

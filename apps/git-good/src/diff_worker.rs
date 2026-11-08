@@ -529,6 +529,8 @@ impl Worker {
             kind: gg_engine::review::ChangeKind::Modified,
             old: None,
             new: None,
+            old_path: None,
+            old_path_bytes: None,
         };
         self.submit(
             generation,
@@ -664,6 +666,8 @@ mod tests {
             kind: ChangeKind::Added,
             old: None,
             new: None,
+            old_path: None,
+            old_path_bytes: None,
         };
         worker.set_find(Some(FindQuery {
             text: "NEEDLE".into(),
@@ -733,6 +737,8 @@ mod tests {
             kind: ChangeKind::Added,
             old: None,
             new: None,
+            old_path: None,
+            old_path_bytes: None,
         };
         worker.request(
             1,
@@ -837,6 +843,8 @@ mod tests {
             kind: ChangeKind::Modified,
             old: None,
             new: None,
+            old_path: None,
+            old_path_bytes: None,
         };
         worker.request(
             1,
