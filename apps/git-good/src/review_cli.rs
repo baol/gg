@@ -97,7 +97,12 @@ pub fn run(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::erro
             .into_bytes();
         let change = loop {
             match reader.step()? {
-                ReviewStep::Change(change) if change.path_bytes == bytes => break change,
+                ReviewStep::Change(change)
+                    if change.path_bytes == bytes
+                        || change.old_path_bytes.as_deref() == Some(&bytes[..]) =>
+                {
+                    break change;
+                }
                 ReviewStep::Complete => {
                     return Err("File is absent from this comparison; use a repository-relative changed path".into());
                 }

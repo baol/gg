@@ -1307,7 +1307,7 @@ Covered by (Not automated)
 ### REV-12 File list rows: marker, elided path, tooltip
 Fixture: `fx-file-history` (Review on the rename commit of `src/old.rs` → `src/lib.rs`)
 Layer: visual
-- Then rows are 22 px with one-character markers (`+ ~ − T`), the path elided at its start (`…/folder/file.rs`) so the file name stays visible, full path and change kind on hover; the rename appears as `−` `src/old.rs` and `+` `src/lib.rs` (no rename detection in M1); rows are in Git tree order
+- Then rows are 22 px with one-character markers (`+ ~ − T R`), the path elided at its start (`…/folder/file.rs`) so the file name stays visible, full path and change kind on hover; the rename is one row, `R` `src/lib.rs`, its hover `R Renamed from src/old.rs`, and `src/old.rs` is not listed; rows are in Git tree order
 Covered by (backend, interaction): `compact_rows_and_placeholder_identity_survive_arrival` (review_view.rs), `comparison_is_pinned_and_reads_trees_without_blobs` (crates/git/tests/history.rs)
 
 ### REV-13 Type change marker
@@ -1617,9 +1617,13 @@ Covered by (backend, interaction): `linear_history_skips_commits_that_carry_the_
 ### REV-58 History follows the rename
 Fixture: `fx-file-history`
 Layer: product
-- When the user presses `Alt+Left` past version 6
-- Then the version is labeled a rename and names old path `src/old.rs`; older versions read `src/old.rs`
-Covered by (backend, partial): `renames_are_followed_and_name_the_old_path` (crates/git/tests/file_history.rs); GUI path not automated
+- Given a file was renamed in a commit (`Pane e pizza/Focaccia.md` → `Pane e pizza/Focaccia genovese.md`)
+- When the user reviews that commit
+- Then the file list shows one row, `R` at the new path, not a deleted and an added file
+- When the user opens History on it (`H`)
+- Then the version list runs past the rename: the rename version reads `← Pane e pizza/Focaccia.md` and the older versions follow the old path down to the commit that added it
+- And in `fx-file-history`, `Alt+Left` past version 6 labels the version a rename naming `src/old.rs`; older versions read `src/old.rs`
+Covered by (backend, interaction): `renames_are_followed_and_name_the_old_path` (crates/git/tests/file_history.rs), `renames_are_one_change_with_the_old_path_as_git_pairs_them` (crates/git/tests/review_special.rs), `a_renamed_file_reviews_as_one_rename_and_its_history_crosses_it` (apps/git-good/src/main.rs)
 
 ### REV-59 Version boundaries never wrap
 Fixture: `fx-file-history`

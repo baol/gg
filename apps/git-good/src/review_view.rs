@@ -688,10 +688,14 @@ impl Review {
                         egui::FontId::proportional(13.0),
                         ui.visuals().strong_text_color(),
                     );
+                    let label = match &change.old_path {
+                        Some(old) => format!("{label} from {old}"),
+                        None => label.to_string(),
+                    };
                     let response = response.clone().on_hover_text(if elided {
                         format!("{} · {label}", change.path)
                     } else {
-                        label.to_string()
+                        label
                     });
                     bounded_text::paint(
                         ui,
@@ -1391,6 +1395,8 @@ impl Review {
                                 id: "a".repeat(40),
                                 mode: 0o100644,
                             }),
+                            old_path: None,
+                            old_path_bytes: None,
                         },
                     )
                 })
@@ -1807,6 +1813,8 @@ mod tests {
                     id: "a".repeat(40),
                     mode: 0o100644,
                 }),
+                old_path: None,
+                old_path_bytes: None,
             },
         );
         view.selected = Some(0);

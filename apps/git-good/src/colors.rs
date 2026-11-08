@@ -45,6 +45,7 @@ pub fn change(visuals: &Visuals, kind: &ChangeKind) -> (&'static str, Color32) {
             ChangeKind::Deleted => ("− Deleted", Color32::from_rgb(160, 35, 40)),
             ChangeKind::Modified => ("~ Modified", Color32::from_rgb(119, 76, 0)),
             ChangeKind::TypeChanged => ("~ Type", Color32::from_rgb(105, 58, 160)),
+            ChangeKind::Renamed => ("R Renamed", Color32::from_rgb(25, 85, 135)),
         };
     }
     match kind {
@@ -52,6 +53,7 @@ pub fn change(visuals: &Visuals, kind: &ChangeKind) -> (&'static str, Color32) {
         ChangeKind::Deleted => ("− Deleted", Color32::from_rgb(240, 140, 140)),
         ChangeKind::Modified => ("~ Modified", Color32::from_rgb(220, 195, 125)),
         ChangeKind::TypeChanged => ("~ Type", Color32::from_rgb(170, 160, 230)),
+        ChangeKind::Renamed => ("R Renamed", Color32::from_rgb(135, 185, 230)),
     }
 }
 /// One-character change marker; the full kind from [`change`] belongs in the tooltip.
@@ -61,6 +63,7 @@ pub fn change_symbol(kind: &ChangeKind) -> &'static str {
         ChangeKind::Deleted => "−",
         ChangeKind::Modified => "~",
         ChangeKind::TypeChanged => "T",
+        ChangeKind::Renamed => "R",
     }
 }
 
@@ -122,6 +125,7 @@ mod tests {
             ChangeKind::Deleted,
             ChangeKind::Modified,
             ChangeKind::TypeChanged,
+            ChangeKind::Renamed,
         ] {
             let symbol = change_symbol(&kind);
             assert_eq!(symbol.chars().count(), 1);
@@ -131,6 +135,7 @@ mod tests {
                 ChangeKind::Deleted => "Deleted",
                 ChangeKind::Modified => "Modified",
                 ChangeKind::TypeChanged => "Type",
+                ChangeKind::Renamed => "Renamed",
             }));
         }
     }
@@ -167,6 +172,7 @@ mod tests {
             ChangeKind::Deleted,
             ChangeKind::Modified,
             ChangeKind::TypeChanged,
+            ChangeKind::Renamed,
         ] {
             let (_, text) = change(&visuals, &kind);
             for fill in [visuals.panel_fill, selection(&visuals)] {

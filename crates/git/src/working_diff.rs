@@ -90,6 +90,8 @@ fn read_inner(
             kind: ChangeKind::Modified,
             old: before,
             new: index_side,
+            old_path: None,
+            old_path_bytes: None,
         };
         let result = crate::diff::read(&request.repository.path, &change, cancelled)?;
         check()?;

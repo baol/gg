@@ -996,6 +996,8 @@ impl DiffView {
             },
             old: None,
             new: None,
+            old_path: None,
+            old_path_bytes: None,
         });
         self.working = Some(WorkingRequest { repository, entry });
         self.generation += 1;
@@ -4081,6 +4083,8 @@ mod tests {
             kind: gg_engine::review::ChangeKind::Modified,
             old: before.then(side),
             new: after.then(side),
+            old_path: None,
+            old_path_bytes: None,
         }
     }
 
@@ -4288,6 +4292,8 @@ mod tests {
                 id: "a".repeat(40),
                 mode: 0o100644,
             }),
+            old_path: None,
+            old_path_bytes: None,
         };
         let mut doc = FileDiff::summary(DiffKind::Text, 1, 1, "");
         doc.rows.push(DiffRow {
@@ -4334,6 +4340,8 @@ mod tests {
                 kind: gg_engine::review::ChangeKind::Modified,
                 old: None,
                 new: None,
+                old_path: None,
+                old_path_bytes: None,
             }),
             working: Some(working.clone()),
             info: Some(doc),
@@ -4364,6 +4372,8 @@ mod tests {
                 id: "b".repeat(40),
                 mode: 0o160000,
             }),
+            old_path: None,
+            old_path_bytes: None,
         };
         let view = DiffView {
             change: Some(change.clone()),
@@ -4577,6 +4587,8 @@ mod tests {
                 kind: gg_engine::review::ChangeKind::Modified,
                 old: None,
                 new: None,
+                old_path: None,
+                old_path_bytes: None,
             }),
             info: Some(FileDiff::summary(DiffKind::Binary, 256, 268, "")),
             details_open: true,

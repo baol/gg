@@ -129,6 +129,8 @@ fn parse(
             kind: ChangeKind::Modified,
             old: before,
             new: after,
+            old_path: None,
+            old_path_bytes: None,
         }),
     ))
 }

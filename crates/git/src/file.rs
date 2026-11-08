@@ -88,6 +88,8 @@ mod tests {
             kind: ChangeKind::Added,
             old: None,
             new: None,
+            old_path: None,
+            old_path_bytes: None,
         };
         let text = read(
             Path::new("."),

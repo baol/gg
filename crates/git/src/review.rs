@@ -1,6 +1,6 @@
 //! Tree-only comparison: skip identical subtrees and read blobs on demand later.
 use gg_engine::review::*;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 type Error = Box<dyn std::error::Error>;
 #[derive(Clone, PartialEq, Eq)]
@@ -28,7 +28,18 @@ pub struct ReviewSession {
     repo: gix::Repository,
     comparison: Comparison,
     pending: Vec<Node>,
+    /// Renames as `git diff -M` pairs them, read once the first added or
+    /// deleted file shows up; `None` until then.
+    renames: Option<Renames>,
 }
+
+/// Rename pairs of one comparison: each destination with its source side.
+#[derive(Default)]
+struct Renames {
+    by_destination: HashMap<Vec<u8>, (Vec<u8>, FileSide)>,
+    sources: HashSet<Vec<u8>>,
+}
+
 impl ReviewSession {
     pub fn open(request: &ReviewRequest) -> Result<Self, String> {
         Self::open_inner(request).map_err(|e| {
@@ -149,6 +160,7 @@ impl ReviewSession {
                 old,
                 new,
             }],
+            renames: None,
         })
     }
     fn expand(&mut self, node: &Node) -> Result<(), Error> {
@@ -202,6 +214,63 @@ impl ReviewSession {
         }
         Ok(())
     }
+    /// The comparison's renames, paired as `git diff -M` pairs them (50 %
+    /// similarity, at most 1000 candidates), the first time an added or
+    /// deleted file needs them. Read in process: no Git command runs, so a
+    /// review started beside a mutation never adds to its commands. A root
+    /// commit has none; a read that fails (a blob missing from a partial
+    /// clone) pairs nothing, and the files list as added and deleted.
+    fn renames(&mut self) -> &Renames {
+        if self.renames.is_none() {
+            let renames = self.read_renames().unwrap_or_default();
+            self.renames = Some(renames);
+        }
+        self.renames.get_or_insert_with(Renames::default)
+    }
+    fn read_renames(&self) -> Result<Renames, Error> {
+        let Some(parent) = &self.comparison.parent else {
+            return Ok(Renames::default());
+        };
+        let tree = |id: &str| -> Result<gix::Tree<'_>, Error> {
+            Ok(self
+                .repo
+                .find_commit(gix::ObjectId::from_hex(id.as_bytes())?)?
+                .tree()?)
+        };
+        let (old, new) = (tree(parent)?, tree(&self.comparison.commit)?);
+        let mut options = gix::diff::Options::default();
+        options
+            .track_path()
+            .track_rewrites(Some(gix::diff::Rewrites::default()));
+        let mut renames = Renames::default();
+        for change in self.repo.diff_tree_to_tree(&old, &new, options)? {
+            if let gix::object::tree::diff::ChangeDetached::Rewrite {
+                source_location,
+                source_entry_mode,
+                source_id,
+                entry_mode,
+                location,
+                copy: false,
+                ..
+            } = change
+                && !entry_mode.is_tree()
+                && !source_entry_mode.is_tree()
+            {
+                renames.sources.insert(source_location.to_vec());
+                renames.by_destination.insert(
+                    location.to_vec(),
+                    (
+                        source_location.to_vec(),
+                        FileSide {
+                            id: source_id.to_string(),
+                            mode: source_entry_mode.value(),
+                        },
+                    ),
+                );
+            }
+        }
+        Ok(renames)
+    }
     fn next(&mut self) -> Result<ReviewStep, Error> {
         let Some(node) = self.pending.pop() else {
             return Ok(ReviewStep::Complete);
@@ -221,12 +290,34 @@ impl ReviewSession {
             (Some(a), Some(b)) if a.mode & 0o170000 != b.mode & 0o170000 => ChangeKind::TypeChanged,
             _ => ChangeKind::Modified,
         };
+        if matches!(kind, ChangeKind::Added | ChangeKind::Deleted) {
+            let renames = self.renames();
+            if kind == ChangeKind::Deleted && renames.sources.contains(&node.path) {
+                // Listed once, at its new path.
+                return Ok(ReviewStep::Pending);
+            }
+            if kind == ChangeKind::Added
+                && let Some((source, side)) = renames.by_destination.get(&node.path)
+            {
+                return Ok(ReviewStep::Change(FileChange {
+                    path: display_path(&node.path),
+                    path_bytes: node.path,
+                    kind: ChangeKind::Renamed,
+                    old: Some(side.clone()),
+                    new,
+                    old_path: Some(display_path(source)),
+                    old_path_bytes: Some(source.clone()),
+                }));
+            }
+        }
         Ok(ReviewStep::Change(FileChange {
             path: display_path(&node.path),
             path_bytes: node.path,
             kind,
             old,
             new,
+            old_path: None,
+            old_path_bytes: None,
         }))
     }
 }
