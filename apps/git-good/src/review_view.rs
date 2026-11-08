@@ -1466,6 +1466,7 @@ mod tests {
             old_path_bytes: old_path.map(|path| path.as_bytes().to_vec()),
             old_path: old_path.map(str::to_owned),
             previous,
+            offset: 0,
         };
         Timeline::new(
             vec![
@@ -2536,6 +2537,7 @@ mod tests {
             kind: gg_engine::file_history::HistoryKind::Modified,
             old_path_bytes: None,
             old_path: None,
+            offset: 0,
         };
         let version = gg_engine::file_history::FileVersion {
             path_bytes: change.path_bytes.clone(),
@@ -2551,6 +2553,7 @@ mod tests {
             previous: gg_engine::file_history::Predecessor::Candidates {
                 choices: vec![candidate],
             },
+            offset: 0,
         };
         view.history = Some(crate::file_history_view::FileHistory::fixture(
             change.path_bytes.clone(),

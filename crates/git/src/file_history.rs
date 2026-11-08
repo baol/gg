@@ -52,6 +52,7 @@ struct Meta {
     subject: String,
     author: String,
     time: i64,
+    offset: i32,
 }
 
 type BoundaryKey = (gix::ObjectId, Vec<u8>, Option<(String, u16)>);
@@ -232,6 +233,7 @@ impl Session {
                     subject: candidate_meta.subject,
                     author: candidate_meta.author,
                     time: candidate_meta.time,
+                    offset: candidate_meta.offset,
                     kind: edge_kind(
                         boundary.state.side.as_ref(),
                         state.side.as_ref(),
@@ -255,6 +257,7 @@ impl Session {
                 subject: meta.subject,
                 author: meta.author,
                 time: meta.time,
+                offset: meta.offset,
                 kind,
                 old_path_bytes: old_path_bytes.clone(),
                 old_path: old_path_bytes.as_deref().map(display_version_path),
@@ -496,10 +499,10 @@ impl Session {
         let author = decoded
             .author()
             .map_err(|error| format!("Could not read the author of {id}: {error}"))?;
-        let time = author
+        let when = author
             .time()
-            .map_err(|error| format!("Could not read the time of {id}: {error}"))?
-            .seconds;
+            .map_err(|error| format!("Could not read the time of {id}: {error}"))?;
+        let (time, offset) = (when.seconds, when.offset);
         Ok(Meta {
             subject: decoded
                 .message
@@ -509,6 +512,7 @@ impl Session {
                 .unwrap_or_else(|| "(empty message)".into()),
             author: author.name.to_string(),
             time,
+            offset,
         })
     }
 }

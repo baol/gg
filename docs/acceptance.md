@@ -1646,6 +1646,18 @@ Layer: product
 - And for a file that was deleted and later re-added, the absent version between them is the commit that deleted it
 Covered by (backend, interaction): `the_absent_version_before_a_file_is_the_commit_just_before_it_was_added`, `the_absent_version_after_a_deletion_is_the_commit_that_deleted_it` (crates/git/tests/file_history.rs), `a_renamed_and_rewritten_file_keeps_its_file_history` (apps/git-good/src/main.rs)
 
+
+### REV-80 File history dates each version and names the selected author
+Fixture: `Focaccia.md` added by Ada Lovelace on 2026-04-16 09:30 +02:00 and changed by Grace Hopper on 2026-11-08 14:02 +01:00; reported on `baol/recipes`, where rows read `11-08` with no year and nothing named the selected version's author or date
+Layer: product
+- Given a file with versions by different authors on different days
+- When the user opens File history on it
+- Then each row ends with its full date in the author's time zone, as the History tree's Date column shows it (`2026-11-08`, `2026-04-16`; relative with Preferences › Appearance › Relative dates)
+- And the reader header's After endpoint names the selected version's author and time: `After … · Grace Hopper · 2026-11-08 14:02`
+- When the user steps to the older version (`Alt+Left`)
+- Then the header reads `Ada Lovelace · 2026-04-16 09:30`
+Covered by (interaction): `file_history_shows_each_version_date_and_the_selected_author` (apps/git-good/src/main.rs)
+
 ### REV-59 Version boundaries never wrap
 Fixture: `fx-file-history`
 Layer: interaction
