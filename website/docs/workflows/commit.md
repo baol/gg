@@ -14,6 +14,7 @@ Click **Changes** in the toolbar. The badge counts the changed files; here there
 - **Unstaged** holds changes to tracked files (`~`) and new, untracked files (`?`).
 - **Staged** holds what the next commit will contain.
 - **Stage all** and **Unstage all** move everything; the **+** on a row stages that file.
+- Images (PNG and JPEG) show as pictures, new or changed: side by side, swipe or onion skin, as in [Review](review.md).
 
 ## Stage only what belongs together
 

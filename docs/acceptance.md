@@ -1875,6 +1875,16 @@ Layer: product
 - Then each moves to Staged: `d.txt` as `−`, `new.txt` as `+`, `run.sh` staged as 100755, `logo.png` with its new bytes; unrelated entries unchanged
 Covered by (backend, interaction): `whole_file_actions_preserve_unrelated_index_and_working_data` (status_view.rs); `stage_matches_git_add_and_preserves_working_files` (crates/git/tests/status.rs)
 
+### CHG-75 An image in Local Changes shows its picture
+Fixture: `fx-dirty` (`logo.png` modified, staged later), plus an untracked `muffin-farro.jpeg`
+Layer: interaction
+- Given an image file is new (untracked), modified, or staged
+- When the user selects it in Local Changes
+- Then the reader shows the image comparison Review uses (the Side by side | Swipe | Onion skin | Hex layouts with Fit | 1:1), not *Binary content* or *No inline preview*
+- And each side names where it comes from with its dimensions and size: untracked `Before absent` · `After working · 5 × 5`; unstaged `Before index` · `After working`; staged `Before HEAD` · `After index`
+- And the working side is the file as it is on disk, within the 16 MiB preview budget
+Covered by (interaction): `an_untracked_and_a_modified_image_show_their_pictures` (apps/git-good/src/status_view.rs)
+
 ### CHG-17 Unstaging a staged rename restores both halves
 Fixture: `fx-dirty`
 Layer: product

@@ -286,6 +286,139 @@ fn read_side_inner(
     Ok(side)
 }
 
+/// One side of a working comparison as raw bytes, for the image and
+/// hexadecimal preview of binary files.
+#[derive(Debug, PartialEq, Eq)]
+pub enum PreviewBytes {
+    /// Exact bytes: a blob, or the working file as it is on disk.
+    Bytes(Vec<u8>),
+    /// Nothing on this side, and why.
+    Absent(String),
+    /// Larger than the preview budget; the size in bytes.
+    OverLimit(u64),
+    /// A submodule commit, not file content.
+    Gitlink,
+}
+
+/// Read one side of the selected working comparison for a binary preview,
+/// within `limit` bytes. The sides are those of [`read_side`]: staged
+/// compares the base tree with the index; unstaged the index with the
+/// working file; untracked nothing with the working file. The working file
+/// is read as it is on disk, without Git's filters.
+pub fn preview_bytes(
+    request: &WorkingRequest,
+    side: ReadingSide,
+    limit: u64,
+    cancelled: impl Fn() -> bool,
+) -> std::result::Result<PreviewBytes, String> {
+    preview_bytes_inner(request, side, limit, &cancelled).map_err(|error| {
+        format!(
+            "Read {} of {}: {error}",
+            side.label().to_lowercase(),
+            request.entry.path
+        )
+    })
+}
+
+fn preview_bytes_inner(
+    request: &WorkingRequest,
+    side: ReadingSide,
+    limit: u64,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<PreviewBytes> {
+    if cancelled() {
+        return Err("Read cancelled".into());
+    }
+    let repo = gix::discover(&request.repository.path)?;
+    let relative = gix::path::from_bstr(gix::bstr::BStr::new(&request.entry.path_bytes))?;
+    if relative.as_os_str().is_empty()
+        || relative
+            .components()
+            .any(|part| !matches!(part, Component::Normal(_)))
+    {
+        return Err("Use a repository-relative file path".into());
+    }
+    if request.entry.area == Area::Conflict {
+        return Ok(PreviewBytes::Absent("Unmerged path".into()));
+    }
+    let index = repo.index_or_empty()?;
+    let index_side = index
+        .entry_by_path(gix::bstr::BStr::new(&request.entry.path_bytes))
+        .filter(|entry| {
+            !entry
+                .flags
+                .contains(gix::index::entry::Flags::INTENT_TO_ADD)
+        })
+        .map(|entry| FileSide {
+            id: entry.id.to_string(),
+            mode: entry.mode.bits() as u16,
+        });
+    let blob = |file: Option<FileSide>| -> Result<PreviewBytes> {
+        let Some(file) = file else {
+            return Ok(PreviewBytes::Absent("No content on this side".into()));
+        };
+        if file.mode == 0o160000 {
+            return Ok(PreviewBytes::Gitlink);
+        }
+        let id = gix::ObjectId::from_hex(file.id.as_bytes())?;
+        let size = repo.find_header(id)?.size();
+        if size > limit {
+            return Ok(PreviewBytes::OverLimit(size));
+        }
+        if cancelled() {
+            return Err("Read cancelled".into());
+        }
+        Ok(PreviewBytes::Bytes(repo.find_blob(id)?.data.clone()))
+    };
+    let bytes = match (request.entry.area, side) {
+        (Area::Staged, ReadingSide::Before) => {
+            let tree = if let Some(base) = &request.repository.base_tree {
+                Some(repo.find_tree(gix::ObjectId::from_hex(base.as_bytes())?)?)
+            } else if let Some(head) = &request.repository.head {
+                Some(
+                    repo.find_commit(gix::ObjectId::from_hex(head.as_bytes())?)?
+                        .tree()?,
+                )
+            } else {
+                None
+            };
+            let before = match tree {
+                Some(tree) => tree.lookup_entry_by_path(&relative)?.map(|entry| FileSide {
+                    id: entry.id().to_string(),
+                    mode: entry.mode().value(),
+                }),
+                None => None,
+            };
+            blob(before)?
+        }
+        (Area::Staged, ReadingSide::After) => blob(index_side)?,
+        (Area::Untracked, ReadingSide::Before) => {
+            PreviewBytes::Absent("Untracked: no earlier content".into())
+        }
+        (_, ReadingSide::Before) => blob(index_side)?,
+        (_, ReadingSide::After) => {
+            if index_side
+                .as_ref()
+                .is_some_and(|side| side.mode == 0o160000)
+            {
+                PreviewBytes::Gitlink
+            } else {
+                match capture(&request.repository.path, &relative, Some(limit))? {
+                    None => PreviewBytes::Absent("Working file absent".into()),
+                    Some(captured) if captured.size > limit => {
+                        PreviewBytes::OverLimit(captured.size)
+                    }
+                    Some(captured) => PreviewBytes::Bytes(captured.bytes),
+                }
+            }
+        }
+    };
+    if cancelled() {
+        return Err("Read cancelled".into());
+    }
+    Ok(bytes)
+}
+
 fn read_tree_side(
     request: &WorkingRequest,
     repo: &gix::Repository,

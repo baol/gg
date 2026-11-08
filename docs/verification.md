@@ -956,3 +956,9 @@ Linux x86_64 · Rust 1.97.0 · Mesa lavapipe · Zensical 0.1.0.
 
 - FRM-05 is now the GWT scenario *Given I just opened Git Good, when the folder is not a Git repository and not inside one, then Git Good opens on the welcome view*. The **Reopen the last repository when launched outside one** preference and its launch fallback are removed; an old `"reopen_last"` key in `settings.json` is ignored. `launch_folder` (main.rs) returns the given folder or the working folder as it is.
 - `a_launch_outside_a_repository_shows_the_welcome_view_not_the_last_repository` (main.rs) launches in an empty folder with an existing repository in the recent list and finds the welcome view with `<path> is not a Git repository.`, the repository only in RECENT, and no history loaded. `a_launch_in_a_repository_subfolder_opens_that_repository` (FRM-06) launches in `src/deep` of a repository and finds its two commits and no welcome view.
+
+## Images in Local Changes · 2026-11-08
+
+- Reported with screenshots: an untracked `docs/images/muffin-farro.jpeg` showed *Binary content · No inline preview* in Diff and *Binary content* in Full file. The diff worker built the image preview only for Review, whose sides are blobs; Local Changes sides are the index and the working file.
+- `gg_git::working_diff::preview_bytes` reads those sides and `binary_preview::read_working` decodes them, so Local Changes shows the Review image comparison. `an_untracked_and_a_modified_image_show_their_pictures` (status_view.rs) finds `After working · 5 × 5` for an untracked image, `Before index · 3 × 2` and `After working · 6 × 4` for an unstaged change, and `Before HEAD · 3 × 2` and `After index · 6 × 4` once staged; it fails on the old worker.
+
