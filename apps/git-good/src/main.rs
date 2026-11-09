@@ -496,7 +496,7 @@ fn title_bar_default(desktop: Desktop) -> bool {
 fn custom_titlebar(prefs: &settings::Prefs, desktop: Desktop) -> bool {
     desktop != Desktop::Mac
         && !prefs
-            .system_title_bar
+            .use_system_title_bar
             .unwrap_or_else(|| title_bar_default(desktop))
 }
 
@@ -3719,7 +3719,7 @@ impl Browser {
                                             // Unset follows the desktop: on for
                                             // Windows and KDE Plasma.
                                             let mut system = prefs
-                                                .system_title_bar
+                                                .use_system_title_bar
                                                 .unwrap_or_else(|| title_bar_default(Desktop::current()));
                                             if ui
                                                 .checkbox(&mut system, "Use the system title bar")
@@ -3728,7 +3728,7 @@ impl Browser {
                                                 )
                                                 .changed()
                                             {
-                                                prefs.system_title_bar = Some(system);
+                                                prefs.use_system_title_bar = Some(system);
                                             }
                                             ui.weak("Takes effect when Git Good restarts.");
                                         });
@@ -22794,11 +22794,11 @@ mod tests {
             assert_eq!(custom_titlebar(&prefs, desktop), custom, "{desktop:?}");
         }
         // A choice in Preferences wins over the default (not on macOS).
-        prefs.system_title_bar = Some(false);
+        prefs.use_system_title_bar = Some(false);
         assert!(custom_titlebar(&prefs, Desktop::Windows));
         assert!(custom_titlebar(&prefs, Desktop::Kde));
         assert!(!custom_titlebar(&prefs, Desktop::Mac));
-        prefs.system_title_bar = Some(true);
+        prefs.use_system_title_bar = Some(true);
         assert!(!custom_titlebar(&prefs, Desktop::OtherLinux));
         let icon = branding::icon()?.clone();
         let size = egui::vec2(1120.0, 740.0);

@@ -630,8 +630,10 @@ Layer: interaction
 - Given **Preferences › Appearance › Use the system title bar** has not been changed
 - Then it follows the desktop: on for Windows (Windows' own title bar, with snap layouts and Mica) and KDE Plasma (KWin's frame, with the user's decoration theme and window rules), off for GNOME and other Linux desktops, which get Git Good's title bar
 - When it is turned on or off and Git Good restarts
-- Then with it on the window has the OS title bar and frame; the menu bar shows the menus and the right-aligned identity, no caption buttons, no drag gap and no resize zones; with it off Git Good's menu bar is the title bar; the choice is saved in `settings.json` (`system_title_bar`; absent follows the desktop) and wins over the desktop's default; macOS has no such preference
-Covered by (interaction): `each_desktop_frames_the_window_its_own_way`, `preferences_search_keeps_sections_with_a_match` (apps/git-good/src/main.rs), `the_system_title_bar_keeps_the_identity_at_the_right_and_no_buttons` (apps/git-good/src/titlebar/tests.rs), `round_trips_and_keeps_unknown_keys` (apps/git-good/src/settings.rs)
+- Then with it on the window has the OS title bar and frame; the menu bar shows the menus and the right-aligned identity, no caption buttons, no drag gap and no resize zones; with it off Git Good's menu bar is the title bar; the choice is saved in `settings.json` (`use_system_title_bar`; absent follows the desktop) and wins over the desktop's default; macOS has no such preference
+- Given a `settings.json` saved by an earlier Git Good, which wrote `system_title_bar: false` with every preference whether or not it was chosen
+- Then Git Good still follows the desktop (KWin's frame on KDE Plasma, Windows' title bar); an earlier `system_title_bar: true` was a choice and keeps the system title bar; a choice made now is saved as `use_system_title_bar`, off as well as on
+Covered by (interaction): `each_desktop_frames_the_window_its_own_way`, `preferences_search_keeps_sections_with_a_match` (apps/git-good/src/main.rs), `the_system_title_bar_keeps_the_identity_at_the_right_and_no_buttons` (apps/git-good/src/titlebar/tests.rs), `round_trips_and_keeps_unknown_keys`, `a_title_bar_setting_saved_by_an_earlier_git_good_keeps_the_desktops_frame` (apps/git-good/src/settings.rs)
 
 ### FRM-88 macOS menu bar
 Fixture: `fx-linear` on macOS

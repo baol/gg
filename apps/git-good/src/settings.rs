@@ -636,7 +636,7 @@ pub struct Prefs {
     /// Windows and Linux: keep the system's title bar instead of gg's menu
     /// bar being the title bar; read at launch. `None` follows the desktop:
     /// on for Windows and KDE Plasma, off elsewhere (`title_bar_default`).
-    pub system_title_bar: Option<bool>,
+    pub use_system_title_bar: Option<bool>,
     /// Selection, links and primary buttons in the desktop's accent color.
     pub desktop_accent: bool,
     /// The desktop's interface and monospace fonts (at launch) and its text
@@ -701,7 +701,7 @@ impl Default for Prefs {
             diff_whitespace: Whitespace::All,
             show_invisibles: true,
             wrap_lines: false,
-            system_title_bar: None,
+            use_system_title_bar: None,
             desktop_accent: true,
             desktop_fonts: true,
             keys: Default::default(),
@@ -768,7 +768,11 @@ impl Prefs {
             diff_whitespace: read(path, "diff_whitespace").unwrap_or(defaults.diff_whitespace),
             show_invisibles: read(path, "show_invisibles").unwrap_or(defaults.show_invisibles),
             wrap_lines: read(path, "wrap_lines").unwrap_or(defaults.wrap_lines),
-            system_title_bar: read(path, "system_title_bar").or(defaults.system_title_bar),
+            // Earlier versions saved `system_title_bar: false` whether or not it
+            // was chosen, so only an earlier `true` is a choice.
+            use_system_title_bar: read(path, "use_system_title_bar")
+                .or_else(|| read::<bool>(path, "system_title_bar").filter(|&on| on))
+                .or(defaults.use_system_title_bar),
             desktop_accent: read(path, "desktop_accent").unwrap_or(defaults.desktop_accent),
             desktop_fonts: read(path, "desktop_fonts").unwrap_or(defaults.desktop_fonts),
             keys: read(path, "keys").unwrap_or(defaults.keys),
@@ -820,7 +824,7 @@ impl Prefs {
             diff_whitespace,
             show_invisibles,
             wrap_lines,
-            system_title_bar,
+            use_system_title_bar,
             desktop_accent,
             desktop_fonts,
             keys
@@ -983,12 +987,32 @@ mod tests {
         prefs.diff_whitespace = Whitespace::IgnoreAtEol;
         prefs.show_invisibles = false;
         prefs.wrap_lines = true;
-        prefs.system_title_bar = Some(true);
+        prefs.use_system_title_bar = Some(true);
         prefs.desktop_accent = false;
         prefs.desktop_fonts = false;
         prefs.save()?;
         assert_eq!(Prefs::load_from(&path), prefs);
         assert_eq!(read::<u32>(&path, "future_option"), Some(7));
+        Ok(())
+    }
+
+    #[test]
+    fn a_title_bar_setting_saved_by_an_earlier_git_good_keeps_the_desktops_frame()
+    -> Result<(), Box<dyn std::error::Error>> {
+        // Earlier versions saved `system_title_bar: false` with every other
+        // preference, chosen or not, so it cannot hide KWin's or Windows'
+        // frame (FRM-87). An earlier `true` was always a choice.
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, br#"{"theme": "dark", "system_title_bar": false}"#)?;
+        assert_eq!(Prefs::load_from(&path).use_system_title_bar, None);
+        std::fs::write(&path, br#"{"system_title_bar": true}"#)?;
+        assert_eq!(Prefs::load_from(&path).use_system_title_bar, Some(true));
+        // A choice made now is kept, off as well as on.
+        let mut prefs = Prefs::load_from(&path);
+        prefs.use_system_title_bar = Some(false);
+        prefs.save()?;
+        assert_eq!(Prefs::load_from(&path).use_system_title_bar, Some(false));
         Ok(())
     }
 
@@ -1006,7 +1030,7 @@ mod tests {
         assert!(prefs.network_avatars);
         assert!(prefs.branch_switch, "absent keys keep their defaults");
         assert!(prefs.details_visible);
-        assert_eq!(prefs.system_title_bar, None, "the desktop's default");
+        assert_eq!(prefs.use_system_title_bar, None, "the desktop's default");
         assert_eq!(prefs.sign_commits, SignCommits::Git);
         assert_eq!(
             prefs.diff_layout,
