@@ -254,7 +254,7 @@ impl Export {
                                     .color(egui::Color32::from_rgb(184, 212, 230)),
                             ))
                         }
-                        .fill(crate::welcome_view::PRIMARY);
+                        .fill(crate::desktop_look::primary_fill());
                         export |= ui
                             .add_enabled(ready, primary)
                             .on_disabled_hover_text(if busy {

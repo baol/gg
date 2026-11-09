@@ -220,7 +220,7 @@ pub fn primary<'a>(label: impl Into<String>, key: Option<&'a str>) -> egui::Butt
         )),
         None => egui::Button::new(text),
     }
-    .fill(crate::welcome_view::PRIMARY)
+    .fill(crate::desktop_look::primary_fill())
 }
 
 /// A secondary button with a dimmed key hint.

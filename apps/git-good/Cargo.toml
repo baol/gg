@@ -30,7 +30,7 @@ wgpu = { version = "30", default-features = false, features = ["vulkan", "metal"
 [target.'cfg(target_os = "macos")'.dependencies]
 muda = { version = "=0.21.2", default-features = false }
 objc2 = "=0.6.5"
-objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSApplication", "NSEvent", "NSResponder"] }
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSApplication", "NSEvent", "NSResponder", "NSColor", "NSColorSpace", "objc2-core-foundation"] }
 [dev-dependencies]
 # The README screenshot, rendered offscreen (examples/screenshot.rs): no
 # display server and no window on the desktop.
@@ -41,6 +41,10 @@ workspace = true
 # The file watcher (watcher.rs). On Linux, inotify directly: notify's inotify
 # backend always asks for open events, which slowed every Git command while a
 # window watched (RULE-16). Both already in Cargo.lock.
+[target.'cfg(windows)'.dependencies]
+# The desktop's accent color and text size, from the registry (desktop_look).
+windows-sys = { version = "0.61", features = ["Win32_System_Registry"] }
+
 [target.'cfg(target_os = "linux")'.dependencies]
 inotify = { version = "0.11", default-features = false }
 

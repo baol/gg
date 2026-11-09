@@ -33,7 +33,7 @@ Click a command's key and press the new one. A key that is already taken is refu
 | Section | Settings |
 |---|---|
 | General | Clone folders and the preferred one, prune deleted remote branches on fetch, the editor to open files in, dialog defaults (stash untracked files, merge with `--no-ff`, switch to a new branch) |
-| Appearance | Theme (system, dark, light), compact or comfortable rows, zoom, code font size, title bar style, avatars in the History tree |
+| Appearance | Theme (system, dark, light), compact or comfortable rows, zoom, code font size, title bar style, avatars in the History tree, and **Desktop**: use the desktop's accent color, and its fonts and text size (both on by default) |
 | Diff | Default layout (inline or side by side), context lines, whitespace, wrapping |
 | Commit | Identity, subject length guide, run hooks, sign commits and tags |
 | Rebase & recovery | Stash before a rebase, confirm Drop and Reset, pull strategy (rebase, merge, fast-forward only), offer force-with-lease after a rewrite, how long to keep private backups |

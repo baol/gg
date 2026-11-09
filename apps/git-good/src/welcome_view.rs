@@ -659,9 +659,9 @@ fn card(ui: &mut egui::Ui, rect: egui::Rect, title: &str, subtitle: &str, primar
     let (fill, ink, weak) = if primary {
         (
             if response.hovered() {
-                PRIMARY.gamma_multiply(1.15)
+                crate::desktop_look::primary_fill().gamma_multiply(1.15)
             } else {
-                PRIMARY
+                crate::desktop_look::primary_fill()
             },
             egui::Color32::WHITE,
             egui::Color32::from_rgb(184, 212, 230),

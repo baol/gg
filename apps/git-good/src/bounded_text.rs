@@ -244,7 +244,7 @@ pub fn show_disclosure(ctx: &egui::Context) {
                             .small()
                             .color(egui::Color32::from_rgb(184, 212, 230)),
                     ))
-                    .fill(crate::welcome_view::PRIMARY);
+                    .fill(crate::desktop_look::primary_fill());
                     copy |= ui.add(primary).clicked();
                     close |= ui
                         .button(("Close", egui::RichText::new("Esc").small().weak()))

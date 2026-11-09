@@ -989,3 +989,8 @@ Linux x86_64 · Rust 1.97.0 · Mesa lavapipe · Zensical 0.1.0.
 - Versions now carry the author's time-zone offset. Rows show the date as the History tree does (`2026-11-08`, or relative with that preference); the reader header's After endpoint adds the selected version's author and time. Validated on a clone at `origin/main`: Review of 935e221, `H`: rows `2026-11-08` … `2026-04-16`, `2026-09-12`; header `After 935e2216 · Mirko Maischberger · 2026-11-08 19:14`, and `After 02e33ecd · docs/Pane e pizza/Focaccia.md · Mirko Maischberger · 2026-11-08 18:37` one version older, matching `git log --date=format:'%Y-%m-%d %H:%M'`.
 - Acceptance REV-80: `file_history_shows_each_version_date_and_the_selected_author` failed before the change (`row date 2026-11-08`) and passes after.
 
+## Desktop accent, fonts and text size · 2026-11-09
+
+- Acceptance XCT-36 and XCT-37. The Linux reading is tested end to end with stand-in KDE and GNOME sessions (their `kdeglobals`, `kcmfonts`, portal and `gsettings` output and `fc-match` answers), including a font family `fc-match` replaces with another (not used) and a desktop that answers nothing. Colors: seven accents (GNOME blue, yellow and green, Breeze, Windows blue, a bright yellow, near black) keep the contrast rules in both themes; the test first failed for GNOME blue on a dark selected row (2.5:1), so rows now keep at least 3:1, as Git Good's own (3.4:1).
+- Not checked on a desktop here: this container has no KDE, GNOME, Windows or macOS session. The Windows (registry) and macOS (AppKit, SF fonts) code is compiled by CI's native jobs; a cross check here stops at `ring`'s C build.
+
