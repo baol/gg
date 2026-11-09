@@ -393,6 +393,21 @@ pub fn read() -> Look {
     platform::read()
 }
 
+/// Linux: whether the session, from its environment `var`, is KDE Plasma.
+pub(crate) fn kde_session(var: &dyn Fn(&str) -> Option<String>) -> bool {
+    [
+        "XDG_CURRENT_DESKTOP",
+        "XDG_SESSION_DESKTOP",
+        "DESKTOP_SESSION",
+    ]
+    .iter()
+    .filter_map(|key| var(key))
+    .any(|value| {
+        let value = value.to_ascii_lowercase();
+        value.contains("kde") || value.contains("plasma")
+    }) || var("KDE_FULL_SESSION").is_some()
+}
+
 /// Linux: what a desktop session says, from `var` (its environment), `run`
 /// (a command's trimmed output, `None` when it fails) and `config` (the
 /// configuration folder). Pure apart from reading font files, so a test can
@@ -439,17 +454,7 @@ pub(crate) fn read_session(
             .and_then(|dir| std::fs::read_to_string(dir.join(name)).ok())
             .unwrap_or_default()
     };
-    let kde = [
-        "XDG_CURRENT_DESKTOP",
-        "XDG_SESSION_DESKTOP",
-        "DESKTOP_SESSION",
-    ]
-    .iter()
-    .filter_map(|key| var(key))
-    .any(|value| {
-        let value = value.to_ascii_lowercase();
-        value.contains("kde") || value.contains("plasma")
-    }) || var("KDE_FULL_SESSION").is_some();
+    let kde = kde_session(var);
     let kdeglobals = file("kdeglobals");
     let accent = portal("org.freedesktop.appearance", "accent-color")
         .and_then(|text| portal_accent(&text))

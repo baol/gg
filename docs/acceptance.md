@@ -627,17 +627,20 @@ Covered by (interaction): `f6_moves_between_search_sidebar_and_content_and_shift
 ### FRM-87 Use the system title bar
 Fixture: `fx-linear`, Windows or Linux
 Layer: interaction
-- When **Preferences › Appearance › Use the system title bar** is turned on and Git Good restarts
-- Then the window has the OS title bar and frame; the menu bar shows the menus and the right-aligned identity, no caption buttons, no drag gap and no resize zones; the choice is saved in `settings.json` (`system_title_bar`, off by default); macOS has no such preference
-Covered by (interaction): `the_system_title_bar_preference_keeps_the_window_decorations`, `preferences_search_keeps_sections_with_a_match` (apps/git-good/src/main.rs), `the_system_title_bar_keeps_the_identity_at_the_right_and_no_buttons` (apps/git-good/src/titlebar/tests.rs), `round_trips_and_keeps_unknown_keys` (apps/git-good/src/settings.rs)
+- Given **Preferences › Appearance › Use the system title bar** has not been changed
+- Then it follows the desktop: on for Windows (Windows' own title bar, with snap layouts and Mica) and KDE Plasma (KWin's frame, with the user's decoration theme and window rules), off for GNOME and other Linux desktops, which get Git Good's title bar
+- When it is turned on or off and Git Good restarts
+- Then with it on the window has the OS title bar and frame; the menu bar shows the menus and the right-aligned identity, no caption buttons, no drag gap and no resize zones; with it off Git Good's menu bar is the title bar; the choice is saved in `settings.json` (`system_title_bar`; absent follows the desktop) and wins over the desktop's default; macOS has no such preference
+Covered by (interaction): `each_desktop_frames_the_window_its_own_way`, `preferences_search_keeps_sections_with_a_match` (apps/git-good/src/main.rs), `the_system_title_bar_keeps_the_identity_at_the_right_and_no_buttons` (apps/git-good/src/titlebar/tests.rs), `round_trips_and_keeps_unknown_keys` (apps/git-good/src/settings.rs)
 
 ### FRM-88 macOS menu bar
 Fixture: `fx-linear` on macOS
 Layer: interaction
 - When the window is shown
-- Then the screen's menu bar holds **Git Good** (About Git Good · Settings… `⌘,` · Services · Hide Git Good `⌘H` · Hide Others · Show All · Quit Git Good `⌘Q`), **Repository · Branch · Commit · Changes · View** with the in-window items, labels, shortcuts, enablement and checks, **Window** (Minimize · Zoom · Bring All to Front) and **Help** with the system search; the window has no in-window menu bar and the toolbar is its top row
+- Then the window's title bar is merged into the toolbar row: the title is hidden, the close, minimize and zoom buttons sit at the row's left with the toolbar's first button 78 pt in, dragging the row's empty space moves the window and a double-click zooms it
+- And the screen's menu bar holds **Git Good** (About Git Good · Settings… `⌘,` · Services · Hide Git Good `⌘H` · Hide Others · Show All · Quit Git Good `⌘Q`), **Repository · Branch · Commit · Changes · View** with the in-window items, labels, shortcuts, enablement and checks, **Window** (Minimize · Zoom · Bring All to Front) and **Help** with the system search; the window has no in-window menu bar and the toolbar is its top row
 - And a key equivalent reaches Git Good as the key press it was (text fields keep ⌘C, ⌘X, ⌘V, ⌘A and ⌘Z, which are not key equivalents); a click runs the command as the in-window menu does; a new Open recent entry rebuilds the menu, other changes update it in place; a system key Git Good binds moves Hide to ⌃⌘H and Minimize to ⌃⌘M
-Covered by (interaction, partial): `the_mac_menu_bar_comes_from_the_command_table`, `selection_changes_update_the_mac_menu_in_place`, `the_native_menu_bar_replaces_the_in_window_menus` (apps/git-good/src/main.rs), `key_equivalents_reach_egui_as_key_presses_and_clicks_run_commands`, `clashes_with_system_keys_are_resolved_in_ggs_favour`, `gg_shortcuts_become_the_key_presses_egui_sees` (apps/git-good/src/native_menu/tests.rs); AppKit itself (muda) is Not automated
+Covered by (interaction, partial): `each_desktop_frames_the_window_its_own_way`, `a_merged_title_bar_leaves_room_for_the_window_buttons_and_moves_the_window`, `the_mac_menu_bar_comes_from_the_command_table`, `selection_changes_update_the_mac_menu_in_place`, `the_native_menu_bar_replaces_the_in_window_menus` (apps/git-good/src/main.rs), `key_equivalents_reach_egui_as_key_presses_and_clicks_run_commands`, `clashes_with_system_keys_are_resolved_in_ggs_favour`, `gg_shortcuts_become_the_key_presses_egui_sees` (apps/git-good/src/native_menu/tests.rs); AppKit itself (muda) is Not automated
 
 ### FRM-89 Dialogs take the keyboard
 Fixture: `fx-branchy`

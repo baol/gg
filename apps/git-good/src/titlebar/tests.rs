@@ -34,6 +34,7 @@ impl Win {
             chrome: Chrome {
                 custom: true,
                 style: CaptionStyle::default(),
+                merged: false,
             },
             width,
             time: 0.0,
@@ -519,6 +520,7 @@ fn only_sides_with_buttons_take_room() {
     let mut chrome = Chrome {
         custom: true,
         style: CaptionStyle::from_gtk_layout(CaptionFamily::Adwaita, "appmenu:close"),
+        merged: false,
     };
     assert_eq!(chrome.reserved(), (0.0, 6.5 + 24.0 + 10.0));
     chrome.style = CaptionStyle::default();

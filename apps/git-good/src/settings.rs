@@ -634,8 +634,9 @@ pub struct Prefs {
     /// The reader wraps long lines instead of scrolling sideways.
     pub wrap_lines: bool,
     /// Windows and Linux: keep the system's title bar instead of gg's menu
-    /// bar being the title bar; read at launch.
-    pub system_title_bar: bool,
+    /// bar being the title bar; read at launch. `None` follows the desktop:
+    /// on for Windows and KDE Plasma, off elsewhere (`title_bar_default`).
+    pub system_title_bar: Option<bool>,
     /// Selection, links and primary buttons in the desktop's accent color.
     pub desktop_accent: bool,
     /// The desktop's interface and monospace fonts (at launch) and its text
@@ -700,7 +701,7 @@ impl Default for Prefs {
             diff_whitespace: Whitespace::All,
             show_invisibles: true,
             wrap_lines: false,
-            system_title_bar: false,
+            system_title_bar: None,
             desktop_accent: true,
             desktop_fonts: true,
             keys: Default::default(),
@@ -767,7 +768,7 @@ impl Prefs {
             diff_whitespace: read(path, "diff_whitespace").unwrap_or(defaults.diff_whitespace),
             show_invisibles: read(path, "show_invisibles").unwrap_or(defaults.show_invisibles),
             wrap_lines: read(path, "wrap_lines").unwrap_or(defaults.wrap_lines),
-            system_title_bar: read(path, "system_title_bar").unwrap_or(defaults.system_title_bar),
+            system_title_bar: read(path, "system_title_bar").or(defaults.system_title_bar),
             desktop_accent: read(path, "desktop_accent").unwrap_or(defaults.desktop_accent),
             desktop_fonts: read(path, "desktop_fonts").unwrap_or(defaults.desktop_fonts),
             keys: read(path, "keys").unwrap_or(defaults.keys),
@@ -982,7 +983,7 @@ mod tests {
         prefs.diff_whitespace = Whitespace::IgnoreAtEol;
         prefs.show_invisibles = false;
         prefs.wrap_lines = true;
-        prefs.system_title_bar = true;
+        prefs.system_title_bar = Some(true);
         prefs.desktop_accent = false;
         prefs.desktop_fonts = false;
         prefs.save()?;
@@ -1005,7 +1006,7 @@ mod tests {
         assert!(prefs.network_avatars);
         assert!(prefs.branch_switch, "absent keys keep their defaults");
         assert!(prefs.details_visible);
-        assert!(!prefs.system_title_bar, "Git Good's title bar by default");
+        assert_eq!(prefs.system_title_bar, None, "the desktop's default");
         assert_eq!(prefs.sign_commits, SignCommits::Git);
         assert_eq!(
             prefs.diff_layout,

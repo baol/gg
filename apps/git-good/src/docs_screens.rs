@@ -41,7 +41,10 @@ fn window(repo: Option<&Path>, size: egui::Vec2, theme: egui::Theme) -> Harness 
     app.prefs = crate::settings::Prefs::load();
     app.recent = crate::settings::recent();
     app.recent_base = app.recent.clone();
-    app.chrome.custom = crate::custom_titlebar(&crate::settings::Prefs::default());
+    app.chrome.custom = crate::custom_titlebar(
+        &crate::settings::Prefs::default(),
+        crate::Desktop::OtherLinux,
+    );
     let mut harness = egui_kittest::Harness::builder()
         .with_size(size)
         .with_pixels_per_point(2.0)
