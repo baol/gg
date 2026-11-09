@@ -28,19 +28,19 @@ const SCOPES: &[(&str, &[(&str, &str)])] = &[
         )],
     ),
     (
-        "History list",
+        "History tree",
         &[
             ("j k  ↑ ↓", "Move selection"),
             ("PgUp PgDn", "Page"),
             ("Home End", "First / last commit"),
             ("Ctrl+K", "Search commits, branches, files, actions"),
-            ("Ctrl+F", "Filter history"),
+            ("Ctrl+F", "Filter the History tree"),
             ("Alt+A  Shift+F10", "Commit actions"),
             ("Esc", "Back · clear filter"),
         ],
     ),
     (
-        "Changes list",
+        "Local Changes list",
         &[
             ("S  U", "Stage / unstage selection"),
             ("[  ]", "Previous / next hunk"),
@@ -322,8 +322,8 @@ mod tests {
                 "Repository",
                 "Menu bar",
                 "Window",
-                "History list",
-                "Changes list",
+                "History tree",
+                "Local Changes list",
                 "Review",
                 "Rebase list",
                 "Conflicts",

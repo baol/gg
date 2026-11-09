@@ -381,7 +381,7 @@ pub fn steps_from_progress(progress: &RebaseProgress) -> Vec<Step> {
 /// is read.
 pub fn rewrite_band(branch: &str, mut steps: Vec<Step>, refreshing: bool) -> Band {
     let sub =
-        "Browsing stays available; the old history is labelled until the new one is accepted."
+        "Browsing stays available; the old History tree is labelled until the new one is accepted."
             .to_string();
     if refreshing {
         for step in &mut steps {
@@ -390,7 +390,7 @@ pub fn rewrite_band(branch: &str, mut steps: Vec<Step>, refreshing: bool) -> Ban
         return Band {
             tone: Tone::Ready,
             icon: Icon::Spinner,
-            title: "Refreshing history…".into(),
+            title: "Refreshing the History tree…".into(),
             hash: String::new(),
             post: String::new(),
             status: String::new(),
@@ -1030,12 +1030,12 @@ mod tests {
         );
         assert_eq!(
             band.sub,
-            "Browsing stays available; the old history is labelled until the new one is accepted."
+            "Browsing stays available; the old History tree is labelled until the new one is accepted."
         );
         assert!(band.buttons.is_empty(), "no cancel while Git writes");
         assert_eq!(band.steps.len(), 5);
         let band = rewrite_band("repo-and-branch-ux", steps, true);
-        assert_eq!(band.title_text(), "Refreshing history…");
+        assert_eq!(band.title_text(), "Refreshing the History tree…");
         assert!(band.steps.iter().all(|step| step.state == StepState::Done));
     }
 

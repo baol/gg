@@ -12,18 +12,18 @@ The product does not need fewer Git capabilities. It needs fewer rules for findi
 
 | Current documented pattern | Proposed rule | What is removed or changed |
 | --- | --- | --- |
-| Local Changes / All Commits move from sidebar to toolbar at narrow widths | Keep **Local Changes / History** in one navigation strip at every width | Remove duplicate responsive navigation placements; All Commits becomes History |
+| Local Changes / All Commits move from sidebar to toolbar at narrow widths | Keep **Local Changes / History tree** in one navigation strip at every width | Remove duplicate responsive navigation placements; All Commits becomes History tree |
 | Clicking a branch pill inspects; clicking a sidebar local branch switches; double-clicking a pill switches | Selecting any ref inspects its target; **Switch to branch…** explicitly changes the checkout | Remove mutating single/double-click meanings from ref selection |
 | Global Actions, Commit actions window, row menu, and ref menus expose actions | Give the selected object one **Commit actions**, **Branch actions**, or **File actions** menu beside its identity | Remove global target ambiguity and the separate command-list window; shortcuts/context menus invoke these same command definitions |
-| Commit review, full-width reading, file history, blame, and staging grow their own headers | Use one file workspace with a source pair, file selector, presentation controls, and content | Remove separate Diff/Full-file viewers and a second history reader |
+| Commit review, full-width reading, File history, blame, and staging grow their own headers | Use one file workspace with a source pair, file selector, presentation controls, and content | Remove separate Diff/Full-file viewers and a second File history reader |
 | Staging changes layout between two panes, tabs, and stacked Split | Keep Unstaged files above Staged files on the left, the selected comparison on the right, and commit/amend below the comparison | Both file groups stay visible; selecting an entry chooses the comparison without a duplicate Staged/Unstaged switch |
-| Before/After navigates versions while Old/New selects content | **Older version / Newer version** moves in history; **Before / After** selects content | Remove overloaded directional terms |
-| Full file, blame, and history can look like peer destinations | Diff/Full file is presentation; **Blame** is a Full-file overlay; **File history** changes the comparison source in place | Remove separate blame navigation and preserve the original comparison as the history return point |
+| Before/After navigates versions while Old/New selects content | **Older version / Newer version** moves in File history; **Before / After** selects content | Remove overloaded directional terms |
+| Full file, blame, and File history can look like peer destinations | Diff/Full file is presentation; **Blame** is a Full-file overlay; **File history** changes the comparison source in place | Remove separate blame navigation and preserve the original comparison as the File history return point |
 | Whole-file conflict choices replace and stage; externally edited content has a different route | Preview a resolution, then use **Stage resolution** for every source | Separate choosing content from publishing it; no content selection silently stages |
 | Continue/Skip/Abort, progress, and recovery appear in multiple places; rewrite keeps a blocking modal | Show one operation area beneath primary navigation; configuration closes on submission | Remove duplicate progress/recovery controls and the rewrite-specific progress dialog |
 | Stash Apply and Pop are adjacent operations | One **Restore stash…** form, with **Remove stash after successful restore** | Remove parallel forms; retain the underlying Apply/Pop semantics and CLI commands |
 | Backups and Reflog are separate windows with shared recovery actions | **Repository → Recovery**, with a source selector for Backups or Reflog | Remove duplicated recovery UI; retain distinct provenance, identifiers, and backend readers |
-| Dialog-specific Back, Close, Cancel and return destinations vary | Back returns to the actual caller; Cancel dismisses an unsubmitted action; Close dismisses details | Remove hard-coded returns to History from nested inspection |
+| Dialog-specific Back, Close, Cancel and return destinations vary | Back returns to the actual caller; Cancel dismisses an unsubmitted action; Close dismisses details | Remove hard-coded returns to the History tree from nested inspection |
 
 This is consolidation of UI rules. Staging and discarding, merge and rebase, or fetch and push remain distinct operations because they have different effects. Shortcuts and contextual access are useful aliases when target, preconditions, wording, confirmation, and outcome are identical.
 
@@ -31,7 +31,7 @@ This is consolidation of UI rules. Staging and discarding, merge and rebase, or 
 
 1. **Repository identity:** repository, worktree path, current branch, upstream snapshot. Display the actual checkout separately from the selected ref or commit.
 2. **Application menus:** Repository (including network, worktrees, stashes, recovery), View (presentation preferences), Help. Move Stash management into Repository; move ref commands to the selected ref's actions. Ref browsing remains reachable at narrow widths through the same labeled ref selector.
-3. **Primary navigation:** Local Changes and History, always in the same order and position. Stashes/Recovery are repository tools with one Back to their calling view, not extra permanent primary destinations.
+3. **Primary navigation:** Local Changes and History tree, always in the same order and position. Stashes/Recovery are repository tools with one Back to their calling view, not extra permanent primary destinations.
 4. **Operation area:** hidden when idle; otherwise one compact strip naming the operation, phase, target, and permitted next action. The same strip persists across browsing views.
 5. **Workspace:** collection/list or selected-file workspace, with the same identity and actions alignment.
 6. **Outcome line:** one concise result, Details if needed, and at most one next action. Repeated operation controls do not also appear here; an unresolved conflict stays in the operation area.
@@ -76,7 +76,7 @@ Branch creation has one form with a starting point and an explicit **Switch afte
 
 **Configure → validate → run → refresh → done**, with **needs attention** for conflicts and actionable errors. One operation area beneath navigation is hidden when idle and owns progress, cancellation, and supported continuation; configuration closes on submission, so a running rewrite keeps browsing available.
 
-Configuration is specific to the Git operation. The lifecycle and placement are shared. Merge, rebase, rewrite, stash, and network operations use the same pending/attention/result presentation. Rewriting becomes non-blocking for browsing after submission; its old history remains explicitly labeled until replacement data is accepted. Incompatible mutations remain disabled. That is a proposed change to the existing blocking rewrite contract and needs native worker/state verification before implementation.
+Configuration is specific to the Git operation. The lifecycle and placement are shared. Merge, rebase, rewrite, stash, and network operations use the same pending/attention/result presentation. Rewriting becomes non-blocking for browsing after submission; its old History tree remains explicitly labeled until replacement data is accepted. Incompatible mutations remain disabled. That is a proposed change to the existing blocking rewrite contract and needs native worker/state verification before implementation.
 
 Continue/Skip/Abort appear only in the operation area and only where Git supports them. A merge has no Skip. A stash apply conflict has no sequencer Continue/Abort. Cancellation requests for cancellable network/export work remain distinct from aborting a Git sequencer. A cancelled process is followed by state inspection; it does not imply rollback.
 
@@ -86,7 +86,7 @@ If validation interrupts a requested action, retain an **intent**, not a queued 
 
 ### Inspect a change
 
-History → select commit → Open commit → choose file → Diff/Full file. Blame toggles in place. File history adds the version strip to the same reader. Close file history restores the original comparison. Back returns to History with the same commit selected. Opening the same commit from Recovery instead returns to Recovery.
+History tree → select commit → Open commit → choose file → Diff/Full file. Blame toggles in place. File history adds the version strip to the same reader. Close File history restores the original comparison. Back returns to the History tree with the same commit selected. Opening the same commit from Recovery instead returns to Recovery.
 
 ### Commit a portion of the work
 
@@ -106,7 +106,7 @@ Repository → Recovery → choose Backups or Reflog → select entry → Open c
 
 ### Resume a blocked branch switch
 
-History → select branch → Branch actions → Switch to main. Local changes block validation. Review changes or Restore/stash work through the existing workspace. Return to the saved switch intent, show its target again, and revalidate on submission. Clicking a branch or opening a commit never changes the checkout.
+History tree → select branch → Branch actions → Switch to main. Local changes block validation. Review changes or Restore/stash work through the existing workspace. Return to the saved switch intent, show its target again, and revalidate on submission. Clicking a branch or opening a commit never changes the checkout.
 
 ## Tradeoffs and rollout
 

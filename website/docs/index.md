@@ -17,12 +17,12 @@ hide:
 
 </div>
 
-![Git Good showing the history of a web service: a commit graph with branches, tags and a merge, the refs sidebar, and the details of the selected commit](assets/screens/history.png){ .gg-shot }
+![Git Good showing the History tree of a web service: a commit graph with branches, tags and a merge, the refs sidebar, and the details of the selected commit](assets/screens/history.png){ .gg-shot }
 
 <div class="gg-stats" markdown>
-<div class="gg-stat"><strong>~150 ms</strong><span>to the first rows of a 100,000-commit history</span></div>
+<div class="gg-stat"><strong>~150 ms</strong><span>to the first rows of a 100,000-commit History tree</span></div>
 <div class="gg-stat"><strong>1.8 s</strong><span>to load all 100,000 commits, while you scroll</span></div>
-<div class="gg-stat"><strong>70 MiB</strong><span>peak memory for that history</span></div>
+<div class="gg-stat"><strong>70 MiB</strong><span>peak memory for that History tree</span></div>
 <div class="gg-stat"><strong>0.5 ms</strong><span>per frame for a sidebar of 10,000 branches</span></div>
 <div class="gg-stat"><strong>1 %</strong><span>most a GUI command may add over the same CLI command</span></div>
 </div>
@@ -31,19 +31,19 @@ hide:
 
 <div class="grid cards" markdown>
 
--   :material-source-branch: **History that keeps up**
+-   :material-source-branch: **A History tree that keeps up**
 
     ---
 
-    Commit lanes, branch, remote and tag pills, and a refs sidebar that filters as you type. History streams in pages, so the first rows show before the rest is read.
+    Commit lanes, branch, remote and tag pills, and a refs sidebar that filters as you type. The History tree streams in pages, so the first rows show before the rest is read.
 
-    [:octicons-arrow-right-24: Find your way in history](workflows/history.md)
+    [:octicons-arrow-right-24: Find your way in the History tree](workflows/history.md)
 
 -   :material-file-compare: **Review like a reviewer**
 
     ---
 
-    Press ++enter++ on a commit to read every file inline or side by side, with word-level highlights, blame, file history and image previews.
+    Press ++enter++ on a commit to read every file inline or side by side, with word-level highlights, blame, File history and image previews.
 
     [:octicons-arrow-right-24: Review a commit](workflows/review.md)
 
@@ -114,7 +114,7 @@ Git Good is a native Rust application drawn with egui. It does not embed a brows
 
 -   **Automate it**
 
-    `git good --cli status`, `history`, `rewrite` and others print JSON with stable keys and documented exit codes, for CI and editor integrations.
+    `git good --cli status`, `history-tree`, `rewrite` and others print JSON with stable keys and documented exit codes, for CI and editor integrations.
     [:octicons-arrow-right-24: Scripting with the CLI](cli.md)
 
 </div>
@@ -125,9 +125,9 @@ The window follows your system theme and adapts to narrow windows: the sidebar f
 
 <div class="grid" markdown>
 
-![History in the light theme](assets/screens/history-light.png){ .gg-shot }
+![The History tree in the light theme](assets/screens/history-light.png){ .gg-shot }
 
-![History in a narrow window](assets/screens/history-narrow.png){ .gg-shot }
+![The History tree in a narrow window](assets/screens/history-narrow.png){ .gg-shot }
 
 </div>
 

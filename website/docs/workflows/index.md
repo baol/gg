@@ -9,7 +9,7 @@ Each guide follows one task from start to finish on the same example project: **
 
 | Task | Guide |
 |---|---|
-| Find a commit, a branch or who changed what | [Find your way in history](history.md) |
+| Find a commit, a branch or who changed what | [Find your way in the History tree](history.md) |
 | Read what a commit changed, file by file | [Review a commit](review.md) |
 | Stage files, hunks or single lines and commit | [Commit part of your work](commit.md) |
 | Switch and create branches, fetch, pull and push | [Branches, fetch, pull and push](sync.md) |

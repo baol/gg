@@ -12,8 +12,7 @@ const ROW: f32 = crate::density::COMPACT_ROW;
 const FILE_LIST_WIDTH: f32 = 300.0;
 
 /// The status line of the narrow reading view.
-const NARROW_READING_HINT: &str =
-    "Esc: history · F: files · Alt+Up/Down: next file · [ ]: changes · B: blame · H: file history";
+const NARROW_READING_HINT: &str = "Esc: History tree · F: files · Alt+Up/Down: next file · [ ]: changes · B: blame · H: File history";
 /// Font of the per-file line counts.
 fn stat_font() -> egui::FontId {
     egui::FontId::monospace(10.5)
@@ -395,7 +394,7 @@ impl Review {
     }
 
     /// Reset the version cursor when the file-list selection moves to another
-    /// path. The original entry context stays saved for Close history.
+    /// path. The original entry context stays saved for Close File history.
     fn reset_history_for_selection(&mut self, ctx: &egui::Context) {
         let Some(change) = self.selected.and_then(|row| self.rows.get(&row)) else {
             return;
@@ -815,7 +814,7 @@ impl Review {
             self.open_history_now_with_lines(ctx, Some(lines), start_index);
         }
     }
-    /// The back pill's label, as in the mockup: `‹ History`, followed by a
+    /// The back pill's label, as in the mockup: `‹ History tree`, followed by a
     /// dimmed `Esc`.
     fn back_label(&self) -> &'static str {
         if self.show_diff {
@@ -825,7 +824,7 @@ impl Review {
         }
     }
 
-    /// The caller the identity row returns to: `‹ History`, `‹ Rebase`, or
+    /// The caller the identity row returns to: `‹ History tree`, `‹ Rebase`, or
     /// `‹ Recovery`.
     fn caller_label(&self) -> &'static str {
         if matches!(
@@ -839,7 +838,7 @@ impl Review {
         ) {
             "‹ Rebase"
         } else {
-            "‹ History"
+            "‹ History tree"
         }
     }
 
@@ -1255,9 +1254,9 @@ impl Review {
                         } else if self.show_diff {
                             crate::navigation::READING_HINT
                         } else if narrow && self.complete {
-                            "Up/Down: choose · Enter: read file · Esc: history · Alt+Left/Right: versions"
+                            "Up/Down: choose · Enter: read file · Esc: History tree · Alt+Left/Right: versions"
                         } else if self.complete {
-                            "Esc: history · Up/Down: files · [ ]: changes · Alt+Left/Right: versions · H: file history · B: blame"
+                            "Esc: History tree · Up/Down: files · [ ]: changes · Alt+Left/Right: versions · H: File history · B: blame"
                         } else {
                             "Reading changed files…"
                         })
@@ -1521,7 +1520,7 @@ mod tests {
         assert!(!output.shapes.iter().any(|shape| matches!(
             &shape.shape,
             egui::epaint::Shape::Text(text)
-                if text.galley.job.text == "‹ History"
+                if text.galley.job.text == "‹ History tree"
         )));
     }
 
@@ -1653,7 +1652,7 @@ mod tests {
                     _ => None,
                 })
             };
-            let back = row("‹ History");
+            let back = row("‹ History tree");
             let subject = row("Review fixture");
             assert!(
                 back.zip(subject).is_some_and(|(a, b)| (a - b).abs() < 2.0),
@@ -2317,7 +2316,7 @@ mod tests {
         assert!(view.history.is_some());
         // The version list takes the file-list pane; History stays on the
         // reader row.
-        for label in ["FILE HISTORY 2", "×", "History"] {
+        for label in ["FILE HISTORY 2", "×", "File history"] {
             assert!(
                 text.contains(&label.to_string()),
                 "missing {label}: {text:?}"
@@ -2408,7 +2407,7 @@ mod tests {
         assert!(
             text.iter()
                 .chain(text2.iter())
-                .any(|line| line == "History"),
+                .any(|line| line == "File history"),
             "the visible History button remains reachable"
         );
         let saved = view.saved_reader.is_some();

@@ -13,7 +13,7 @@ These are situations from a normal week on **acme-api**, the example project in 
 
 **In Git Good**
 
-1. In History, select *Read the database URL from ACME_DB* and press ++r++.
+1. In the History tree, select *Read the database URL from ACME_DB* and press ++r++.
 2. Select *WIP fix db typo* and press ++f++. The plan shows *fixup into 2d566e9*, and the header *3 commits → 2*.
 3. Check the diffs on the right, tick **Stash working changes first** if you have uncommitted work, and press ++ctrl+enter++.
 
@@ -53,7 +53,7 @@ If the rebase stops on a conflict, the band names the step: **Resolve conflicts*
 
 **In Git Good**
 
-1. Click **Changes** (the badge says *3*).
+1. Click **Local Changes** (the badge says *3*).
 2. Select `src/routes.rs`. Click **Stage hunk** on each hunk you want, or tick single lines.
 3. Stage `src/orders.rs` with its **+**.
 4. Write the message and press ++ctrl+enter++.
@@ -108,4 +108,4 @@ If the rebase stops on a conflict, the band names the step: **Resolve conflicts*
 
 **Situation.** A monorepo with 100,000 commits and 10,000 branches.
 
-**In Git Good.** History shows its first rows in about 150 ms and keeps scrolling smoothly while it loads the rest in under 2 s, in about 70 MiB. The refs sidebar with 10,000 branches costs about half a millisecond per frame. See [Performance](performance.md) for how these are measured.
+**In Git Good.** The History tree shows its first rows in about 150 ms and keeps scrolling smoothly while it loads the rest in under 2 s, in about 70 MiB. The refs sidebar with 10,000 branches costs about half a millisecond per frame. See [Performance](performance.md) for how these are measured.

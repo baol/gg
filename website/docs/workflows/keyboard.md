@@ -9,7 +9,7 @@ description: Run any command from search, change keyboard shortcuts and set pref
 
 Press ++ctrl+k++ and type. Search finds commits, branches, files and **every menu command**, with the menu it lives in and its key:
 
-![Search for "rebase": filter history, rebase onto, pull with rebase, interactive rebase of the current branch, interactive rebase from here](../assets/screens/search.png){ .gg-shot }
+![Search for "rebase": filter the History tree, rebase onto, pull with rebase, interactive rebase of the current branch, interactive rebase from here](../assets/screens/search.png){ .gg-shot }
 
 ++up++ / ++down++ choose, ++enter++ runs, ++escape++ closes.
 
@@ -33,7 +33,7 @@ Click a command's key and press the new one. A key that is already taken is refu
 | Section | Settings |
 |---|---|
 | General | Clone folders and the preferred one, prune deleted remote branches on fetch, the editor to open files in, dialog defaults (stash untracked files, merge with `--no-ff`, switch to a new branch) |
-| Appearance | Theme (system, dark, light), compact or comfortable rows, zoom, code font size, title bar style, avatars in History |
+| Appearance | Theme (system, dark, light), compact or comfortable rows, zoom, code font size, title bar style, avatars in the History tree |
 | Diff | Default layout (inline or side by side), context lines, whitespace, wrapping |
 | Commit | Identity, subject length guide, run hooks, sign commits and tags |
 | Rebase & recovery | Stash before a rebase, confirm Drop and Reset, pull strategy (rebase, merge, fast-forward only), offer force-with-lease after a rewrite, how long to keep private backups |

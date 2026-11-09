@@ -6,7 +6,7 @@ Use Rust 1.95+ and native graphics drivers. [Installation and usage](../README.m
 
 ```sh
 cargo run -p git-good
-cargo run -p git-good -- history
+cargo run -p git-good -- --cli history-tree
 cargo fmt --all --check
 cargo test --workspace --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
@@ -28,11 +28,11 @@ The native UI uses egui/eframe 0.37 on wgpu 30. wgpu enables Vulkan, Metal, DX12
 | `GG_SCREENSHOT=/absolute/path.ppm` | Debug build: capture after loading, then exit |
 | `GG_SCREENSHOT_DELAY_MS=500` | Debug build: settle time before the screenshot |
 | `GG_WINDOW_SIZE=720x480` | Debug window size |
-| `GG_LOCAL_CHANGES=1` | Debug: open Local Changes after history loads |
+| `GG_LOCAL_CHANGES=1` | Debug: open Local Changes after the History tree loads |
 | `GG_SEARCH=text` | Debug: open `Ctrl+K` search with the text |
 | `GG_REBASE=COMMIT` | Debug: open the interactive rebase dialog from the commit through HEAD |
 | `GG_DETAILS=1` | Debug narrow-screen details view |
-| `GG_WORKTREES=1` | Debug: open Repository › Worktrees… after history loads |
+| `GG_WORKTREES=1` | Debug: open Repository › Worktrees… after the History tree loads |
 | `GG_THEME=light` or `dark` | Debug: override the saved theme without changing it |
 
 Use an isolated display for captures. Avatar cache: `git-good/avatars-v2-128` under the OS cache directory (XDG cache, macOS Library/Caches, or Windows LocalAppData).
@@ -45,7 +45,7 @@ Enable the tracked pre-commit hook once per clone:
 git config core.hooksPath .githooks
 ```
 
-When staged files under `apps/git-good/src`, `apps/git-good/assets`, or the workspace manifests change, the hook renders `docs/screenshots/gg-native-wide.png` offscreen and stages the PNG. It runs the ignored test `screenshot::readme_screenshot` (`apps/git-good/src/screenshot.rs`), which opens the window on this repository in an `egui_kittest` harness at 1120×740, steps it until History and the background reads are in, and draws it through wgpu: no display server, no window on the desktop, and nothing in the way of the session you are working in. It needs Python 3 and a wgpu adapter: the GPU, or on a Linux machine without one Mesa's software Vulkan (lavapipe, in `mesa-vulkan-drivers`).
+When staged files under `apps/git-good/src`, `apps/git-good/assets`, or the workspace manifests change, the hook renders `docs/screenshots/gg-native-wide.png` offscreen and stages the PNG. It runs the ignored test `screenshot::readme_screenshot` (`apps/git-good/src/screenshot.rs`), which opens the window on this repository in an `egui_kittest` harness at 1120×740, steps it until the History tree and the background reads are in, and draws it through wgpu: no display server, no window on the desktop, and nothing in the way of the session you are working in. It needs Python 3 and a wgpu adapter: the GPU, or on a Linux machine without one Mesa's software Vulkan (lavapipe, in `mesa-vulkan-drivers`).
 
 The hook skips during merge, rebase, cherry-pick, and revert operations and when `GG_SKIP_SCREENSHOT=1` or `CI` is set. It refuses to capture when the staged UI files also have unstaged or untracked edits, so the image matches the commit. Refresh manually with:
 
@@ -112,4 +112,4 @@ Check the performance budgets:
 cargo test --release -p git-good --locked --bin git-good -- --ignored --nocapture performance_stays_within_budgets
 ```
 
-The benchmark (`perf.rs`) builds its own fixture, 100,000 commits and 10,000 branches in 100 folders written by one `git fast-import`, then times History (first rows, complete, frame p95 while loading and once loaded, a jump to the last row) and the refs sidebar (frame p95, and the frame that builds its list again after a new snapshot). Each part writes `target/perf/<name>.json` (`GG_PERF_OUT` moves it) with the numbers and the peak resident memory (`VmHWM`, Linux only), and fails when a number is over its limit in `apps/git-good/perf/budgets.json` or, with `GG_PERF_BASELINE` naming an earlier run's folder, more than 1.25 × its baseline + 2. The `Timing` workflow runs it nightly and keeps the JSON as the `perf` artifact; pass that folder as the baseline to compare a change with it. Raise a budget only with the measurement that justifies it.
+The benchmark (`perf.rs`) builds its own fixture, 100,000 commits and 10,000 branches in 100 folders written by one `git fast-import`, then times the History tree (first rows, complete, frame p95 while loading and once loaded, a jump to the last row) and the refs sidebar (frame p95, and the frame that builds its list again after a new snapshot). Each part writes `target/perf/<name>.json` (`GG_PERF_OUT` moves it) with the numbers and the peak resident memory (`VmHWM`, Linux only), and fails when a number is over its limit in `apps/git-good/perf/budgets.json` or, with `GG_PERF_BASELINE` naming an earlier run's folder, more than 1.25 × its baseline + 2. The `Timing` workflow runs it nightly and keeps the JSON as the `perf` artifact; pass that folder as the baseline to compare a change with it. Raise a budget only with the measurement that justifies it.

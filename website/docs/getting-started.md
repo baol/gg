@@ -50,7 +50,7 @@ Or pass a folder: `git good ~/src/acme-api`. Inside a subfolder of a repository,
 
 ## The window
 
-![History of acme-api: the toolbar at the top, refs on the left, the commit list with lanes in the middle and the selected commit's details at the bottom](assets/screens/history.png){ .gg-shot }
+![The History tree of acme-api: the toolbar at the top, refs on the left, the commit list with lanes in the middle and the selected commit's details at the bottom](assets/screens/history.png){ .gg-shot }
 
 From top to bottom:
 
@@ -58,12 +58,12 @@ Title and menu bar
 :   **Repository**, **Branch**, **Commit**, **Changes**, **View** and **Help**. Every command lives in a menu and shows its key there.
 
 Toolbar
-:   The sidebar toggle, **Changes** (with the number of changed files) and **History**. Then Fetch, Pull and Push; the Pull button shows how many commits you are behind. Then New branch, Stash changes, the stash list, Interactive rebase and Recovery. On the right, the **current branch** button (`main ↑5 ↓1`: five commits to push, one to pull) opens a filterable branch switcher, and the search box (++ctrl+k++) finds commits, branches, files and commands.
+:   The sidebar toggle, **Local Changes** (with the number of changed files) and **History tree**. Then Fetch, Pull and Push; the Pull button shows how many commits you are behind. Then New branch, Stash changes, the stash list, Interactive rebase and Recovery. On the right, the **current branch** button (`main ↑5 ↓1`: five commits to push, one to pull) opens a filterable branch switcher, and the search box (++ctrl+k++) finds commits, branches, files and commands.
 
 Refs sidebar
 :   Branches grouped by folder (`feature/`, `fix/`), remotes, tags and stashes. Type in **Filter refs** to narrow it. Double-click a branch to switch to it.
 
-History
+History tree
 :   One row per commit with its lane, pills for the branches and tags on it, author, short hash and date.
 
 Details

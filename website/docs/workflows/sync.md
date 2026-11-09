@@ -14,7 +14,7 @@ The current branch button in the toolbar reads `main ↑5 ↓1`: five local comm
 ## Switch and create branches
 
 - Click the **current branch** button (or ++ctrl+shift+b++) to open the switcher; type to filter and press ++enter++.
-- Double-click a branch in the sidebar or a pill in History to switch to it. A remote branch switches to its local branch, creating one that tracks it if needed.
+- Double-click a branch in the sidebar or a pill in the History tree to switch to it. A remote branch switches to its local branch, creating one that tracks it if needed.
 - **New branch** (++ctrl+b++) creates a branch at HEAD and can switch to it; a branch's context menu in the sidebar creates one at that ref.
 - **Rename…** (++f2++) renames the current branch; **Delete…** (++delete++) asks which other branch to delete.
 

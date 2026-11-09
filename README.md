@@ -1,10 +1,10 @@
 # Git Good
 
-![Git Good native history view](docs/screenshots/gg-native-wide.png)
+![Git Good native History tree view](docs/screenshots/gg-native-wide.png)
 
 Purpose: introduce Git Good and explain installation and use.
 
-A fast, native Git desktop app. Browse history, inspect diffs, stage hunks or lines, commit, and recover rewrites without leaving the UI.
+A fast, native Git desktop app. Browse the History tree, inspect diffs, stage hunks or lines, commit, and recover rewrites without leaving the UI.
 
 ## Install or update
 
@@ -47,8 +47,8 @@ Commands for scripts follow `--cli` and print JSON, for example `git good --cli 
 
 ## UI overview
 
-- **History and Refs** — Stream and filter commit history with commit lanes and branch, remote, and tag pills. Switch branches, create tracking branches, merge, or rebase from the refs sidebar or the **Branch** menu; the toolbar keeps fetch, pull, and push one click away, and search (`Ctrl+K`) runs every menu command.
-- **Commit review** — Press **Enter** on a commit to inspect changed files, side-by-side or inline diffs, image previews, blame, and file history.
+- **History tree and Refs** — Stream and filter the History tree with commit lanes and branch, remote, and tag pills. Switch branches, create tracking branches, merge, or rebase from the refs sidebar or the **Branch** menu; the toolbar keeps fetch, pull, and push one click away, and search (`Ctrl+K`) runs every menu command.
+- **Commit review** — Press **Enter** on a commit to inspect changed files, side-by-side or inline diffs, image previews, blame, and File history.
 - **Local Changes** — Inspect staged, unstaged, untracked, and conflicted files. Stage, unstage, or discard whole files, hunks, or individual lines, then commit or amend `HEAD`.
 - **Rewrites and recovery** — Cherry-pick, revert, reset, or rewrite commits with an interactive rebase (pick, reword, reopen, squash, fixup, drop, reorder). Rebase stops show the step, a reopened commit opens in Local Changes to split, and conflicts resolve block by block, with **Continue**, **Skip commit**, and **Abort and restore**. Automatic private backups and the reflog under `Repository → Recovery…` let you restore previous branch tips.
 - **Sync and Stash** — Fetch, push, and clone from **Repository** with live progress and cancellation, or park work from **Stash**.

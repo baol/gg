@@ -250,7 +250,7 @@ fn shifted_symbol(key: Key) -> bool {
 /// Keys the window keeps for itself, and what for.
 const FIXED: &[(&str, &str)] = &[
     ("Ctrl+1", "View › Local Changes"),
-    ("Ctrl+2", "View › History"),
+    ("Ctrl+2", "View › History tree"),
     ("Ctrl+K", "Search"),
     ("Ctrl+F", "Find"),
     ("Ctrl+\\", "View › Refs sidebar"),

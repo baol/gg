@@ -1121,7 +1121,7 @@ impl StatusView {
             && self.commit.is_none()
     }
 
-    /// The clean view: returns whether Open History was chosen.
+    /// The clean view: returns whether Open History tree was chosen.
     fn draw_clean(&mut self, ui: &mut egui::Ui) -> bool {
         let mut back = false;
         ui.vertical_centered(|ui| {
@@ -1159,11 +1159,14 @@ impl StatusView {
                         self.clean_request = Some(action);
                     }
                     back |= ui
-                        .button(("Open History", egui::RichText::new("Ctrl+2").small().weak()))
+                        .button((
+                            "Open History tree",
+                            egui::RichText::new("Ctrl+2").small().weak(),
+                        ))
                         .clicked();
                 } else {
                     back |= ui
-                        .add(primary("Open History".into()))
+                        .add(primary("Open History tree".into()))
                         .on_hover_text("Ctrl+2")
                         .clicked();
                 }

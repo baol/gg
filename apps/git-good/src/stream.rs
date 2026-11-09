@@ -89,7 +89,7 @@ impl Worker {
                     ctx.request_repaint();
                 }
             })
-            .map_err(|e| format!("Could not start history reader: {e}"))?;
+            .map_err(|e| format!("Could not start reading the History tree: {e}"))?;
         Ok(Self {
             request: input,
             output,
@@ -183,7 +183,7 @@ impl SpoolFile {
         let available = self.end.saturating_sub(offset) as usize;
         let chunk = available.min(SPOOL_BUFFER);
         if chunk < out.len() {
-            return Err(err("unexpected end of history spool"));
+            return Err(err("unexpected end of the History tree spool"));
         }
         if self.pos != offset {
             self.file.seek(SeekFrom::Start(offset)).map_err(err)?;
@@ -269,7 +269,7 @@ impl Spool {
     }
 }
 fn err(error: impl std::fmt::Display) -> String {
-    format!("History session: {error}")
+    format!("History tree session: {error}")
 }
 
 fn run(

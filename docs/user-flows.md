@@ -10,14 +10,14 @@ Follow-up design direction: [coherent interaction proposal](ui-coherence.md) and
 
 | Area | Documented state | User outcome | Design coverage |
 | --- | --- | --- | --- |
-| M0–M1: history and review | Complete/baseline | Find a commit, select a parent, inspect text or binary changes | F01–F02; History and Review mockups |
+| M0–M1: History tree and review | Complete/baseline | Find a commit, select a parent, inspect text or binary changes | F01–F02; History tree and Review mockups |
 | M2: Local Changes | Complete | Stage file/hunk/lines, discard deliberately, commit with hooks | F03–F04; Stage, Discard, and Hook failure mockups |
-| M3: graph and refs | Complete | Navigate references, switch/create branches, compare with HEAD | F01, F05; History and Branch mockups |
+| M3: graph and refs | Complete | Navigate references, switch/create branches, compare with HEAD | F01, F05; History tree and Branch mockups |
 | M4: network | Complete | Clone, fetch, push, force-with-lease, set upstream, cancel and retry | F06; Network mockup |
 | M5: integration and recovery | Complete | Stash, merge, cherry-pick, revert, resolve and recover | F07–F09; Integrate, Conflicts, and Stash mockups |
 | M6: rewriting and recovery | Complete | Amend, rebase, reorder/squash, inspect reflog and backups | F04, F08, F10; Rewrite and Recovery mockups |
 | M7: file reading and file history | Complete | Read a complete file and follow content versions and renames | F02, F11; Reading and File history mockups |
-| M7: blame and line/range history | Complete | Explain a line's origin without losing the selected range | F12; Blame mockup |
+| M7: blame and Line history | Complete | Explain a line's origin without losing the selected range | F12; Blame mockup |
 | M7: image comparison | Complete | Compare dimensions and pixels across revisions with side-by-side, swipe, and onion skin | F13; Images mockup |
 | M7: worktrees | Complete | Work on another branch with isolated drafts and selection | F14; Worktrees mockup |
 | M7: submodules and LFS | Complete (smudge/materialization planned) | Understand nested revisions, pointer/object availability, and bounded previews | F15–F16; Submodule and LFS mockups |
@@ -25,15 +25,15 @@ Follow-up design direction: [coherent interaction proposal](ui-coherence.md) and
 
 The roadmap and plan record M0–M7 as delivered, with LFS working-file smudging/materialization kept as an explicit planned follow-up. Platform acceptance and preview gates remain tracked in [verification](verification.md#preview-acceptance-pending).
 
-The existing product has a coherent center: history → review → reading, and Local Changes → stage → commit. Recovery is equally central: failed operations lead to explicit Git state and a next action. M7 should extend those surfaces rather than add a separate dashboard. The highest design risk is confusing three independent axes: **file**, **comparison side**, and **content version**. Keep each named in a stable header. The second risk is presenting proposed worktree/submodule/LFS/signing actions as ordinary refreshes; each needs an explicit target and mutation boundary.
+The existing product has a coherent center: History tree → review → reading, and Local Changes → stage → commit. Recovery is equally central: failed operations lead to explicit Git state and a next action. M7 should extend those surfaces rather than add a separate dashboard. The highest design risk is confusing three independent axes: **file**, **comparison side**, and **content version**. Keep each named in a stable header. The second risk is presenting proposed worktree/submodule/LFS/signing actions as ordinary refreshes; each needs an explicit target and mutation boundary.
 
 ## Shared screen and interaction model
 
-The menu bar holds Repository, Branch, Commit, Changes, View, and Help. One toolbar keeps, in the same place at every width, the refs sidebar toggle, **Changes** and **History**, Fetch, Pull, and Push, New branch, Stash changes and Stashes, Interactive rebase from here, and Recovery, then the current-branch button and search ([architecture](architecture.md#presentation)). At wide widths grouped refs stay docked at the left; at narrow widths the sidebar toggle opens them as a drawer. Place file actions and commit actions beside their selected identity. One operation band sits directly beneath navigation, hidden when idle; the fixed-height status line shows severity, summary, Details, and at most one recovery action.
+The menu bar holds Repository, Branch, Commit, Changes, View, and Help. One toolbar keeps, in the same place at every width, the refs sidebar toggle, **Local Changes** and **History tree**, Fetch, Pull, and Push, New branch, Stash changes and Stashes, Interactive rebase from here, and Recovery, then the current-branch button and search ([architecture](architecture.md#presentation)). At wide widths grouped refs stay docked at the left; at narrow widths the sidebar toggle opens them as a drawer. Place file actions and commit actions beside their selected identity. One operation band sits directly beneath navigation, hidden when idle; the fixed-height status line shows severity, summary, Details, and at most one recovery action.
 
 Retain selected commit, file, side, reading position, and filters through back navigation where the owning contracts specify them. Keep normal/amend drafts separately per canonical worktree. A pending worker disables duplicate/incompatible writes while browsing stays available; rewrite configuration closes on submission and its progress stays in the operation band. Never publish an old file's result under a new file's label.
 
-Keyboard paths mirror visible controls: arrows or j/k select; Enter/Right opens; Escape/Left returns one level; Alt+A opens Actions; H opens file history; B toggles line attribution; brackets move changes; Alt+Up/Down moves files; Alt+Left/Right moves history versions. Editors retain their text keys. Keep focus visible, give disabled actions visible reasons, accompany color with text/symbols, and follow the design's 4.5:1 contrast requirement in both themes.
+Keyboard paths mirror visible controls: arrows or j/k select; Enter/Right opens; Escape/Left returns one level; Alt+A opens Actions; H opens File history; B toggles line attribution; brackets move changes; Alt+Up/Down moves files; Alt+Left/Right moves File history versions. Editors retain their text keys. Keep focus visible, give disabled actions visible reasons, accompany color with text/symbols, and follow the design's 4.5:1 contrast requirement in both themes.
 
 The mockup selector is review tooling outside the product shell. Each screen is an interaction wireframe, not a native screenshot or a promise of final widget styling. **Narrow layout** demonstrates reflow, not a mobile product. Only scenario controls and the displayed primary flow actions simulate transitions; static context is presented as text. All proposed screen labels below are design recommendations.
 
@@ -41,47 +41,47 @@ The mockup selector is review tooling outside the product shell. Each screen is 
 
 ```mermaid
 flowchart TD
-    Open[Open repository] --> History[History]
-    History --> Review[Commit files and comparison]
+    Open[Open repository] --> HistoryTree[History tree]
+    HistoryTree --> Review[Commit files and comparison]
     Review --> Read[Diff or Full file]
-    Read --> Timeline[File or line history]
-    Read --> Blame[Blame and line history]
+    Read --> Timeline[File history or Line history]
+    Read --> Blame[Blame and Line history]
     Open --> Local[Local Changes]
     Local --> Stage[Review and stage]
     Stage --> Commit[Commit or amend]
     Commit -->|Hook failure: retain draft| Local
-    Commit -->|Success| History
-    History --> Integrate[Merge / rebase / cherry-pick / revert]
+    Commit -->|Success| HistoryTree
+    HistoryTree --> Integrate[Merge / rebase / cherry-pick / revert]
     Integrate -->|Conflicts| Resolve[Resolve and stage]
     Resolve --> Continue[Continue / supported Skip / Abort]
     Continue -->|More conflicts| Resolve
-    Continue -->|Finished| History
-    History --> Rewrite[Interactive rebase]
+    Continue -->|Finished| HistoryTree
+    HistoryTree --> Rewrite[Interactive rebase]
     Rewrite --> Resolve
     Rewrite --> Backup[Backups / reflog]
     Backup --> Recover[Open / create branch / confirmed reset]
 ```
 
-### F01 · Open, find, and inspect history
+### F01 · Open, find, and inspect the History tree
 
-**Entry:** launch in a repository, use Repository → Open, or return through History. **Goal:** identify a change without mutating the repository.
+**Entry:** launch in a repository, use Repository → Open, or return through the History tree. **Goal:** identify a change without mutating the repository.
 
-1. Resolve the containing repository and show its path, current branch, refs, and streamed history. Retain stable row slots while more history arrives.
-2. Filter history; select a matching commit by pointer or keyboard. Selection reveals bounded subject/identity metadata; open complete text separately with Copy.
+1. Resolve the containing repository and show its path, current branch, refs, and the streamed History tree. Retain stable row slots while more commits arrive.
+2. Filter the History tree; select a matching commit by pointer or keyboard. Selection reveals bounded subject/identity metadata; open complete text separately with Copy.
 3. Select a ref pill to inspect its commit. Switching is explicit through the sidebar context menu or **Branch → Switch to…**; tags and remotes are read-only inspections.
 4. Press Enter to open changed files in F02. Escape restores the original row and viewport. Actions → Compare with current HEAD names Before and After with resolved IDs and the requested HEAD ref.
 
-**Alternatives:** empty history/filter results state why no rows appear; a read error keeps an actionable Details view. Detached HEAD is named as such; no branch is inferred. Narrow layouts retain Refs access. **Completion:** the chosen commit is selected, with no objects, refs, index, or worktree writes. **Mockup:** History → Review.
+**Alternatives:** empty History tree/filter results state why no rows appear; a read error keeps an actionable Details view. Detached HEAD is named as such; no branch is inferred. Narrow layouts retain Refs access. **Completion:** the chosen commit is selected, with no objects, refs, index, or worktree writes. **Mockup:** History tree → Review.
 
 ### F02 · Review a commit and read a file
 
-**Entry:** Enter on a history commit. **Precondition:** a resolved commit, and a chosen one-based parent for merges.
+**Entry:** Enter on a History tree commit. **Precondition:** a resolved commit, and a chosen one-based parent for merges.
 
 1. Show subject, commit ID, parent selector, and persistent comparison direction. Root commits name the empty-tree base.
 2. Choose a changed file. Keep the previous displayed file correctly labeled while a worker loads the new selection; replace identity, metadata, and rows together.
 3. Open the full-width reader with Enter. Diff shows both sides; Full file reads the chosen Before/After side with exact line numbers and changed-line markers.
 4. Use Prev/Next change or brackets, and Prev/Next file or Alt+Up/Down. File navigation keeps presentation/side and approximately preserves the line, clamped to the new file.
-5. Switch Diff/Full file without losing path, side, or reading position. Escape returns to files, then history.
+5. Switch Diff/Full file without losing path, side, or reading position. Escape returns to files, then the History tree.
 
 **Alternatives:** addition/deletion defaults to the side that exists; an absent side is explicit. Binary, symlink, gitlink, and reads beyond 2 MiB/100,000 lines have named summaries, not blank editors. Binary previews/hex and Export before/after remain available within existing bounds. Export selects a new destination and reports failures. **Completion:** a file and exact comparison are understood; reading is read-only. **Mockup:** Review → Reading → File history.
 
@@ -93,7 +93,7 @@ flowchart TD
 2. Select an entry in either counted group. It immediately selects that comparison in the shared reader: Staged is HEAD → index, Unstaged is index → working file, and amend is HEAD parent → index. The reader header's Unstaged | Staged toggle switches the same path between both comparisons, with a side that has no changes disabled and its reason shown; there is no separate View diff step, the reader stays in place, and its header names the path, exact endpoints, and Diff/Full file once. Enter opens review; double-click on a Local Changes file row stages or unstages the whole file.
 3. **Stage**/**Unstage** is the selected file's own header button and applies to the whole path. Double-click an Unstaged or Untracked row to stage it, or a Staged row to unstage it; conflict and intent-to-add rows do not toggle. After staging a file, select the next Unstaged row in display order (previous when it was last); if none remain, keep the newly staged row selected. After unstaging, follow the same path into Unstaged. Stage hunk for one hunk or select changed lines and Stage selected; Unstage and Discard mirror those scopes. The same reader keeps Diff/Full, Before/After, and the reading place; refresh both lists and the active comparison in place and preserve independent selections and scroll.
 4. Return to files and enter a message. Enable Commit only when the validated scan is complete, the message is nonempty, and staged changes exist. Name any blocking conflict or unsupported index state.
-5. Commit the index through hooks. On success clear only the submitted draft; History refreshes and selects the new commit.
+5. Commit the index through hooks. On success clear only the submitted draft; the History tree refreshes and selects the new commit.
 
 **Alternatives:** partial staging is for supported regular text modifications; offer whole-file actions for other supported kinds rather than imply line staging works. A stale diff rejects without publishing and reloads; preserve the draft. A hook failure keeps index/worktree/message and exposes hook output through Details; refresh status because hooks may have staged edits. A post-commit hook failure states that the commit already exists. **Completion:** the new commit contains the reviewed index; unrelated working changes remain. **Mockup:** Stage → commit success or Hook failure → Stage.
 
@@ -118,13 +118,13 @@ flowchart TD
 
 **Clone:** Repository → Clone opens with a clipboard repository URL when available, otherwise an empty URL. Paste works in the URL and all other text inputs. Compose the destination from a parent-folder selector (development base folders in order, then the current directory last, or any folder chosen with the desktop dialog) and a project-slug text field (default URL slug). Repository → Development base folders marks the default folder; every launch starts there, and a folder chosen in Clone lasts for the session. The default carries a checkmark in the selector. Validate → bounded progress/Cancel → open only after success. An existing nonempty destination or authentication failure remains actionable; retain inputs and never clean up user files automatically. Root-folder preferences persist across launches.
 
-**Fetch:** select the explicit configured remote (or documented sole/default choice), optionally prune, then start. Fetch updates remote-tracking refs; it does not merge or change working files. Success refreshes history/refs while retaining selection. Cancel/failure preserves the previous display and offers Retry fetch.
+**Fetch:** select the explicit configured remote (or documented sole/default choice), optionally prune, then start. Fetch updates remote-tracking refs; it does not merge or change working files. Success refreshes the History tree/refs while retaining selection. Cancel/failure preserves the previous display and offers Retry fetch.
 
 **Push:** show local branch, destination remote/branch, and upstream decision when missing. Start a non-force push; report progress and allow cancellation. A rejected push offers Details and Fetch, guiding the user to fetch and inspect before integration, without automatic fetch, merge, or rebase; Retry push follows only network, credential, and timeout failures. Record upstream only after successful push. Credentials use Git configuration/helpers/SSH; output excludes secrets.
 
 **Force push with lease:** a separate explicit Repository action, enabled only with an upstream remote-tracking ref. The confirmation names the local branch, destination, and lease commit and warns that the remote branch must still match that lease. A missing/stale lease fails without changing the remote and does not offer a retry that falls back to non-force. Bare force is never offered.
 
-**Branch switching and integration:** resize Refs and Details by dragging their dividers; widths remain stable during normal use. The current branch is bold, with a dot matching its history lane. Double-click on a branch or remote, in the sidebar or as a History pill, requests the ordinary validated switch (a remote switches to its local branch, or creates one tracking it). Dirty checkout offers **Stash and switch…**, retaining the stash afterward; dirty rebase retains its target and offers explicit resubmission with autostash. **Pull --rebase** fetches and rebases onto the upstream, including when cached tracking reports zero behind. Choose other targets through **Rebase current onto this**.
+**Branch switching and integration:** resize Refs and Details by dragging their dividers; widths remain stable during normal use. The current branch is bold, with a dot matching its History tree lane. Double-click on a branch or remote, in the sidebar or as a History tree pill, requests the ordinary validated switch (a remote switches to its local branch, or creates one tracking it). Dirty checkout offers **Stash and switch…**, retaining the stash afterward; dirty rebase retains its target and offers explicit resubmission with autostash. **Pull --rebase** fetches and rebases onto the upstream, including when cached tracking reports zero behind. Choose other targets through **Rebase current onto this**.
 
 **Completion:** a receipt names the actual outcome; tracking refreshes when changed. **Mockup:** Network toggles rejected/pending/success states; Retry push is a simulation.
 
@@ -153,34 +153,34 @@ flowchart TD
 
 ### F09 · Resolve conflicts and finish or abort
 
-**Entry:** the operation band's **Resolve conflicts**, or the Changes tab while conflicts exist. **Precondition:** actual unmerged paths, or an externally detected operation on launch (the same band).
+**Entry:** the operation band's **Resolve conflicts**, or the Local Changes tab while conflicts exist. **Precondition:** actual unmerged paths, or an externally detected operation on launch (the same band).
 
-1. The amber band names the operation, the commit, and what is left (`Merge conflict · merging origin/main 0f51a473 into main` · `2 conflicts left in 2 files`). The workspace is the Changes view: CONFLICTED (each file with what is left), RESOLVED, STAGED (− reopens a file), ALSO CHANGED BY THIS MERGE, and the legend. Select an unresolved path; load Base/Ours/Theirs on workers. `Esc` returns to the plain changes list; the band's Resolve conflicts brings the workspace back.
+1. The amber band names the operation, the commit, and what is left (`Merge conflict · merging origin/main 0f51a473 into main` · `2 conflicts left in 2 files`). The workspace is the Local Changes view: CONFLICTED (each file with what is left), RESOLVED, STAGED (− reopens a file), ALSO CHANGED BY THIS MERGE, and the legend. Select an unresolved path; load Base/Ours/Theirs on workers. `Esc` returns to the plain changes list; the band's Resolve conflicts brings the workspace back.
 2. Explain side identities for that operation. For rebase, Ours is the rebased destination/current replay state and Theirs the commit being replayed; never equate Ours with 'my branch' universally. Name each side wherever it appears: `Ours · main (current branch)` / `Theirs · origin/main (being merged)` for a merge, `Theirs · 9a4f9a95 (picked commit)` for a cherry-pick, `Theirs · undo of 7151cc83` for a revert, `Ours · rewritten branch (onto main)` / `Theirs · 0f99a42b (replayed commit)` for a rebase; the stage number and full identity are in the tooltip.
 3. For a text file, choose per conflict block: Ours, Theirs, Ours + theirs, or Theirs + ours (keys 1–4); each column wraps long lines inside itself. The Result is editable: an option rewrites only its block, hand edits stay (an option over a hand-edited block asks first), lines are tinted by origin, and Ctrl+Z undoes. Stage resolution (Ctrl+S) is enabled once the Result has no markers left and stages exactly its text. When the working file was edited outside the blocks, say so and offer **Use working file** (stage it as is) or **Replace with blocks…**, which confirms before overwriting the edits. In Whole file mode, choose Take ours, Take theirs, or Keep working file to change only the Result preview. A delete/modify conflict also offers **Keep deletion**, whose preview states that the file will be deleted and the other side's changes discarded; staging it removes the path. Edit externally and use Refresh external edits to preview it. **Stage resolution** is the single publication step; it validates the original stages and working bytes and stages the previewed result. State those consequences next to the controls. Select the next unresolved path after success.
 4. Keep Continue disabled, with the reason as the band's status, until unresolved paths reach zero; then the band turns purple (`Merge ready`, `All files staged`), Continue is the filled primary with Ctrl+Enter, and it runs on the operation worker while the band keeps its layout (spinner, `Continuing merge`, buttons disabled in place). A later conflict returns to this flow.
 5. Abort and restore requests Git's recovery and refreshes; report any failure rather than promise removal of all user edits. Skip commit exists only for supporting operations (rebase/cherry-pick/revert), never merge.
 
-**Alternatives:** absent sides/deletion, binary files, stale reads, external changes, and worker failure require explicit states; keep the operation band until Git says it ended. **Completion:** operation completes or aborts, refs/history/status/reflog/backups refresh, and prior selection/Local Changes context returns. **Mockup:** Conflicts → resolved → Continue; merge has no Skip.
+**Alternatives:** absent sides/deletion, binary files, stale reads, external changes, and worker failure require explicit states; keep the operation band until Git says it ended. **Completion:** operation completes or aborts, refs/History tree/status/reflog/backups refresh, and prior selection/Local Changes context returns. **Mockup:** Conflicts → resolved → Continue; merge has no Skip.
 
 ### F10 · Rewrite and recover a previous tip
 
-**Entry:** selected history commit → Interactive rebase from here (`R`), or **Branch › Interactive rebase of current branch…**.
+**Entry:** selected History tree commit → Interactive rebase from here (`R`), or **Branch › Interactive rebase of current branch…**.
 
 1. Resolve the inclusive linear range; reject merge ranges. Show every commit exactly once, newest first, with move controls, drag, and an action chip: Pick, Reword, Reopen, Squash, Fixup, Drop. Squash and Fixup combine into the nearest kept commit below; consequence badges say where.
 2. Inspect the selected commit's files and diff beside the plan, or Open in Review and come back to the same plan. Reword edits the message in place.
 3. Review the result count, clean-worktree/autostash choice, the refs that stay on the original commits, and the private-backup notice; Start rebase.
-4. Close the plan on submission. The purple band shows `Rewriting <branch> · step n of m · picking <id>` with the step strip and no buttons, the footer names the backup ref, then the band reads Refreshing history until the replacement history is accepted and the footer shows `Rewrote 4 commits · backup <ref>` with Recovery… and Details…; browsing stays available and the old history remains labeled. Conflicts use F09.
+4. Close the plan on submission. The purple band shows `Rewriting <branch> · step n of m · picking <id>` with the step strip and no buttons, the footer names the backup ref, then the band reads Refreshing the History tree until the replacement History tree is accepted and the footer shows `Rewrote 4 commits · backup <ref>` with Recovery… and Details…; browsing stays available and the old History tree remains labeled. Conflicts use F09.
 5. From Repository → Recovery choose Backups or Reflog, then inspect the source, kind, subject, and commit time. **Open commit** verifies content in the ordinary reader; Back returns to that source, the Reflog reference filter, and the selected entry.
 6. **Create branch here…** opens the shared branch form with **Switch after creation** off. Reset branch here offers Soft (move tip), Mixed (also reset index), or Hard (also discard staged/working changes), with exact-target confirmation and Hard warning. Hard always confirms, lists the untracked files it would overwrite, and refuses while there are any. Copy hash/ref is read-only. Keep backups after recovery.
 
-**Completion:** rewritten history or a recovered tip is reachable and selection restores. **Mockup:** Rewrite → Recovery; primary Create branch here demonstrates the nondestructive route.
+**Completion:** the rewritten commits or a recovered tip is reachable and selection restores. **Mockup:** Rewrite → Recovery; primary Create branch here demonstrates the nondestructive route.
 
 ### F11 · Follow a file through content versions
 
-**Entry:** Reading → History/H. **Goal:** understand how the selected file evolved without moving history selection or HEAD.
+**Entry:** Reading → File history/H. **Goal:** understand how the selected file evolved without moving the History tree selection or HEAD.
 
-1. Change the comparison source inside the shared reader while keeping the entry context in place: the file list gives way to a version list (22 px rows: change kind, hash, subject, `← old path` for renames, date; × or Esc closes and restores the file list; History stays pressed).
+1. Change the comparison source inside the shared reader while keeping the entry context in place: the file list gives way to a version list (22 px rows: change kind, hash, subject, `← old path` for renames, date; × or Esc closes and restores the file list; File history stays pressed).
 2. A row click selects that version; Alt+Left moves one older content version and Alt+Right one newer. Pages load as the list scrolls, the next slot blank. Skip unchanged commits. Keep version navigation separate from Before/After inspection sides; Full file shows current content, Diff shows previous → current.
 3. Follow a unique predecessor silently. For multiple genuinely ambiguous predecessors, nest candidates under the merge row as list rows with kind/hash/subject/old path/author/date and require a choice (Up/Down, Enter); until then current Full file remains available and Diff disables.
 4. Page earlier versions on demand. Distinguish Loading earlier versions, trace limit, failed page with retry, Oldest version, Newest version, and Only version; never wrap.
@@ -197,7 +197,7 @@ flowchart TD
 3. A deleted range explicitly anchors Before. If the range spans divergent hunks, ask which predecessor to follow and show candidate ranges; do not silently shrink the selection or invent a common boundary.
 4. Back returns through timeline → blame → reader with selection restored. A cancelled/stale worker result never replaces a newer place.
 
-**Proposed states:** loading attribution, unavailable/shallow history, unsupported binary, and failed lookup retain source and exact place with Details/Retry. **Completion:** origin or an honest boundary is visible. **Mockup:** Blame → File history; the full range chooser is specified here, not simulated. No uncommitted-line blame semantics are assumed.
+**Proposed states:** loading attribution, unavailable/shallow Line history, unsupported binary, and failed lookup retain source and exact place with Details/Retry. **Completion:** origin or an honest boundary is visible. **Mockup:** Blame → File history; the full range chooser is specified here, not simulated. No uncommitted-line blame semantics are assumed.
 
 ### F13 · Compare images · M7
 
@@ -254,18 +254,18 @@ flowchart TD
 
 ## Review and delivery sequence
 
-The plan sequence is now: blame/line history → image diffs → worktrees → submodules → LFS → signing, with onion skin as an image-diff extension. Blame/line history, image diffs, worktrees, submodules, review-time and Local Changes LFS, signing, and onion skin are complete; reuse the shipped history cursor rather than creating a second timeline. LFS smudging/materialization remains planned. No date or new milestone commitment is inferred.
+The plan sequence is now: Blame/Line history → image diffs → worktrees → submodules → LFS → signing, with onion skin as an image-diff extension. Blame/Line history, image diffs, worktrees, submodules, review-time and Local Changes LFS, signing, and onion skin are complete; reuse the shipped File history cursor rather than creating a second timeline. LFS smudging/materialization remains planned. No date or new milestone commitment is inferred.
 
 | Review scenario | Expected observation |
 | --- | --- |
-| Keyboard-only inspect → history → back | Focus and original file/place restore; editors retain text navigation |
+| Keyboard-only inspect → File history → back | Focus and original file/place restore; editors retain text navigation |
 | Rapid file/side/version changes | Old results never appear under the new identity |
 | Normal and amend drafts; worktree switch | Drafts stay separate, hook failure retains them, success clears submitted text only |
 | Partial staging followed by discard | Index and working scopes stay explicit; discard confirmation names unchanged index |
 | Rejected push or stash apply conflict | Details and one relevant recovery action; stash entry remains |
 | Merge versus rebase conflict | Correct side identities; Continue gated; merge has no Skip |
 | Rewrite success/conflict/backup failure | Progress through accepted refresh; recoverable prior tip; no publication after backup failure |
-| Rename, deletion, merge ambiguity, history limit | Honest path/side/version identity; explicit chooser and boundaries |
+| Rename, deletion, merge ambiguity, File history limit | Honest path/side/version identity; explicit chooser and boundaries |
 | Image dimensions, unavailable LFS, unknown signing key | No misleading empty preview, hidden fetch, or inferred trust |
 | Wide/narrow, light/dark, long Unicode paths, display scaling | Reachable controls, readable diffs, bounded metadata, visible focus |
 

@@ -712,7 +712,7 @@ fn narrow_details_step_commits_with_j_and_k() -> Result {
             _ => None,
         })
         .collect::<Vec<_>>();
-    for label in ["‹ History", "Review", "Actions", "Commit", "Signature"] {
+    for label in ["‹ History tree", "Review", "Actions", "Commit", "Signature"] {
         assert!(texts.iter().any(|text| text == label), "missing {label}");
     }
     Ok(())

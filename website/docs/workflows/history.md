@@ -1,13 +1,13 @@
 ---
-title: Find your way in history
-description: Browse, filter and search the commit history, and inspect a commit.
+title: Find your way in the History tree
+description: Browse, filter and search the History tree, and inspect a commit.
 ---
 
-# Find your way in history
+# Find your way in the History tree
 
-History is the view Git Good opens on. It streams the log in pages: the first rows appear in about 150 ms even on a 100,000-commit repository, and you can scroll while the rest loads.
+The History tree is the view Git Good opens on. It streams the log in pages: the first rows appear in about 150 ms even on a 100,000-commit repository, and you can scroll while the rest loads.
 
-![History of acme-api with the feature/rate-limit branch selected at the top](../assets/screens/history.png){ .gg-shot }
+![The History tree of acme-api with the feature/rate-limit branch selected at the top](../assets/screens/history.png){ .gg-shot }
 
 ## Read the graph
 
@@ -24,15 +24,15 @@ History is the view Git Good opens on. It streams the log in pages: the first ro
 | ++enter++ | [Review](review.md) the selected commit |
 | ++alt+a++ | Open the commit's actions: cherry-pick, revert, reword, fixup, drop, rebase from here, reset… |
 | ++ctrl+c++ | Copy the commit ID |
-| ++ctrl+f++ | Filter history by message, author or ID |
+| ++ctrl+f++ | Filter the History tree by message, author or ID |
 
 ## Narrow it down
 
 **Filter refs** at the top of the sidebar keeps only the branches, remotes and tags that match what you type. Branch folders such as `feature/` and `fix/` fold, and remotes and tags stay collapsed until you open them.
 
-To filter the commits themselves, start typing in search (++ctrl+k++) and choose **Filter history by "…"**. The filter matches the message, the author or the commit ID.
+To filter the commits themselves, start typing in search (++ctrl+k++) and choose **Filter the History tree by "…"**. The filter matches the message, the author or the commit ID.
 
-![Search with "rebase" typed: the first choice filters history, the others are rebase commands with their menus and keys](../assets/screens/search.png){ .gg-shot }
+![Search with "rebase" typed: the first choice filters the History tree, the others are rebase commands with their menus and keys](../assets/screens/search.png){ .gg-shot }
 
 ## Any window size, either theme
 
@@ -40,8 +40,8 @@ At narrow widths the details fold under the list and the columns shrink; the lig
 
 <div class="grid" markdown>
 
-![History in the light theme](../assets/screens/history-light.png){ .gg-shot }
+![The History tree in the light theme](../assets/screens/history-light.png){ .gg-shot }
 
-![History at 760 pixels wide](../assets/screens/history-narrow.png){ .gg-shot }
+![The History tree at 760 pixels wide](../assets/screens/history-narrow.png){ .gg-shot }
 
 </div>
