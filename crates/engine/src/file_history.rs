@@ -58,6 +58,10 @@ pub struct FileVersion {
     pub author: String,
     /// Author time in Unix seconds.
     pub time: i64,
+    /// The author's time zone, in seconds east of UTC, so dates read as
+    /// the History tree shows them.
+    #[serde(default)]
+    pub offset: i32,
     /// Edge from the predecessor version to this version. `None` when the
     /// predecessor is not unique.
     pub kind: Option<HistoryKind>,
@@ -116,6 +120,9 @@ pub struct VersionCandidate {
     pub subject: String,
     pub author: String,
     pub time: i64,
+    /// The author's time zone, in seconds east of UTC.
+    #[serde(default)]
+    pub offset: i32,
     /// Edge from this candidate to the version that offered the choice.
     pub kind: HistoryKind,
     pub old_path_bytes: Option<Vec<u8>>,
@@ -319,6 +326,7 @@ mod tests {
             old_path_bytes: None,
             old_path: None,
             previous,
+            offset: 0,
         }
     }
 
@@ -402,6 +410,7 @@ mod tests {
                 kind: HistoryKind::Modified,
                 old_path_bytes: None,
                 old_path: None,
+                offset: 0,
             },
             VersionCandidate {
                 commit: "c".repeat(40),
@@ -414,6 +423,7 @@ mod tests {
                 kind: HistoryKind::Modified,
                 old_path_bytes: None,
                 old_path: None,
+                offset: 0,
             },
         ];
         let ambiguous = Timeline::new(

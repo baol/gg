@@ -565,6 +565,12 @@ impl FileHistory {
         } else {
             format!("{} · {}", version.short_commit(), version.path)
         };
+        // The selected version's author and time: the row shows the date.
+        let after = format!(
+            "{after} · {} · {}",
+            version.author,
+            local_time(version.time, version.offset)
+        );
         let before = match &version.previous {
             Predecessor::Linked => timeline
                 .current(self.index + 1)
@@ -890,7 +896,7 @@ impl FileHistory {
             &version.short_commit(),
             &version.subject,
             renamed.as_deref(),
-            &short_date(version.time),
+            &row_date(version.time, version.offset),
             selected,
         );
         let mut tip = format!(
@@ -898,7 +904,7 @@ impl FileHistory {
             version.short_commit(),
             version.subject,
             version.author,
-            date(version.time)
+            local_time(version.time, version.offset)
         );
         if let Some(old) = &renamed {
             tip.push_str(&format!(" · renamed {old}"));
@@ -937,7 +943,7 @@ impl FileHistory {
         let who = format!(
             "{} · {}",
             choice.author.split_whitespace().next().unwrap_or_default(),
-            short_date(choice.time)
+            row_date(choice.time, choice.offset)
         );
         paint_row(
             ui,
@@ -1034,9 +1040,25 @@ fn paint_row(
     );
 }
 
-/// `10-27`: the list's compact date.
-fn short_date(seconds: i64) -> String {
-    date(seconds).get(5..10).unwrap_or_default().to_string()
+/// `2026-10-27` in the author's time zone, or `3 weeks ago` when
+/// Preferences › Appearance › Relative dates is on, as the History tree's
+/// Date column reads.
+fn row_date(seconds: i64, offset: i32) -> String {
+    if crate::density::relative_dates() {
+        crate::history_view::relative_age(seconds, crate::history_view::now_seconds())
+    } else {
+        local_time(seconds, offset)
+            .get(..10)
+            .unwrap_or_default()
+            .to_string()
+    }
+}
+
+/// `2026-10-27 14:02` in the author's time zone.
+fn local_time(seconds: i64, offset: i32) -> String {
+    date(seconds + i64::from(offset))
+        .trim_end_matches(" UTC")
+        .to_string()
 }
 
 #[cfg(test)]
@@ -1088,7 +1110,7 @@ fn choice_label(choice: &VersionCandidate) -> String {
         choice.short_commit(),
         choice.subject,
         choice.author,
-        date(choice.time)
+        local_time(choice.time, choice.offset)
     );
     if let Some(old) = &choice.old_path
         && old != &choice.path
@@ -1149,6 +1171,7 @@ mod tests {
             old_path_bytes: None,
             old_path: None,
             previous,
+            offset: 0,
         }
     }
 
@@ -1268,6 +1291,7 @@ mod tests {
             kind: HistoryKind::Modified,
             old_path_bytes: None,
             old_path: None,
+            offset: 0,
         }];
         let history = view(Timeline::new(
             vec![version(Predecessor::Candidates { choices }, None)],
@@ -1571,6 +1595,7 @@ mod tests {
                 kind: HistoryKind::Modified,
                 old_path_bytes: None,
                 old_path: None,
+                offset: 0,
             },
             VersionCandidate {
                 commit: "c".repeat(40),
@@ -1583,6 +1608,7 @@ mod tests {
                 kind: HistoryKind::Renamed,
                 old_path_bytes: Some(b"old.rs".to_vec()),
                 old_path: Some("old.rs".into()),
+                offset: 0,
             },
         ];
         let mut history = view(Timeline::new(

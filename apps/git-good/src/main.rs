@@ -22024,6 +22024,95 @@ mod tests {
     }
 
     #[test]
+    fn file_history_shows_each_version_date_and_the_selected_author()
+    -> Result<(), Box<dyn std::error::Error>> {
+        // Reported on baol/recipes: File history rows read `11-08` (no
+        // year) and nothing named the selected version's author or date.
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir()?;
+        let path = dir.path();
+        git_in(path, &["init", "-q", "-b", "main"])?;
+        std::fs::write(path.join("Focaccia.md"), "flour\n")?;
+        git_in(path, &["add", "."])?;
+        git_in(
+            path,
+            &[
+                "commit",
+                "-qm",
+                "Add Focaccia",
+                "--author",
+                "Ada Lovelace <ada@example.org>",
+                "--date",
+                "2026-04-16T09:30:00+02:00",
+            ],
+        )?;
+        std::fs::write(path.join("Focaccia.md"), "flour\nsalt\n")?;
+        git_in(
+            path,
+            &[
+                "commit",
+                "-qam",
+                "Salt the Focaccia",
+                "--author",
+                "Grace Hopper <grace@example.org>",
+                "--date",
+                "2026-11-08T14:02:00+01:00",
+            ],
+        )?;
+        let mut app = Browser::new(path.to_path_buf());
+        app.load(&ctx);
+        frames_until(&ctx, &mut app, vec![], |app, _| app.state.count == 2)?;
+        app.open_review_at(&ctx, "HEAD".into(), "Salt the Focaccia".into(), None);
+        if let Some(review) = app.review.take() {
+            app.review = Some(review.select_path("Focaccia.md".into()));
+        }
+        frames_until(&ctx, &mut app, vec![], |_, text| {
+            text.iter().any(|line| line.contains("H: File history"))
+        })?;
+        let key = |key, modifiers| egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        };
+        let newest = frames_until(
+            &ctx,
+            &mut app,
+            vec![key(egui::Key::H, egui::Modifiers::NONE)],
+            |_, text| text.iter().any(|line| line == "FILE HISTORY 2"),
+        )?;
+        // Each row names its full date, in the author's time zone, as the
+        // History tree does.
+        for date in ["2026-11-08", "2026-04-16"] {
+            assert!(
+                newest.iter().any(|line| line == date),
+                "row date {date}: {newest:?}"
+            );
+        }
+        assert!(
+            newest
+                .iter()
+                .any(|line| line.contains("Grace Hopper · 2026-11-08 14:02")),
+            "the header names the selected version's author and time: {newest:?}"
+        );
+        let older = frames_until(
+            &ctx,
+            &mut app,
+            vec![key(egui::Key::ArrowLeft, egui::Modifiers::ALT)],
+            |_, text| {
+                text.iter()
+                    .any(|line| line.contains("Ada Lovelace · 2026-04-16 09:30"))
+            },
+        )?;
+        assert!(
+            !older.iter().any(|line| line.contains("Grace Hopper · ")),
+            "the header follows the selection: {older:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn a_renamed_and_rewritten_file_keeps_its_file_history()
     -> Result<(), Box<dyn std::error::Error>> {
         // baol/recipes 935e221: Focaccia.md renamed to "Focaccia con il

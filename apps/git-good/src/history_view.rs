@@ -517,7 +517,7 @@ fn contents(
     (response, action)
 }
 
-fn now_seconds() -> i64 {
+pub(crate) fn now_seconds() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_secs() as i64)
@@ -558,9 +558,14 @@ fn parse_time(value: &str) -> Option<i64> {
 /// `5 min ago`, `3 h ago`, `2 days ago`, `3 weeks ago`, `4 months ago`,
 /// `2 years ago`; `None` when the time cannot be read.
 fn relative_date(time: &str, now: i64) -> Option<String> {
-    let age = (now - parse_time(time)?).max(0);
+    Some(relative_age(parse_time(time)?, now))
+}
+
+/// [`relative_date`] for Unix seconds, shared with File history.
+pub(crate) fn relative_age(seconds: i64, now: i64) -> String {
+    let age = (now - seconds).max(0);
     let (count, unit) = match age {
-        0..60 => return Some("just now".into()),
+        0..60 => return "just now".into(),
         60..3_600 => (age / 60, "min"),
         3_600..86_400 => (age / 3_600, "h"),
         86_400..1_209_600 => (age / 86_400, "day"),
@@ -573,7 +578,7 @@ fn relative_date(time: &str, now: i64) -> Option<String> {
     } else {
         ""
     };
-    Some(format!("{count} {unit}{plural} ago"))
+    format!("{count} {unit}{plural} ago")
 }
 
 #[cfg(test)]

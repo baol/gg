@@ -982,3 +982,10 @@ Linux x86_64 · Rust 1.97.0 · Mesa lavapipe · Zensical 0.1.0.
 
 - "History" named five things: the commit list, one file's versions, line versions, rewriting commits, and a Preferences section. With the user, the domain language in `docs/domain.md` names them History tree, File history, Line history and Rewrite history, always in full; Local Changes is the working-tree view everywhere; Interactive rebase keeps Git's name; CLI words follow the terms with the old ones as hidden aliases (`history-tree`, alias `history`).
 - Acceptance XCT-35. `the_word_history_is_always_part_of_a_full_domain_term` renders the History tree, menus, search, Review with File history, Local Changes and every Preferences section; `no_shown_string_uses_history_outside_the_full_domain_terms` reads every non-test string literal in the app's sources (it listed 54 before the change, 0 after); `history_is_a_hidden_alias_of_history_tree` checks the CLI. Specifications, the documentation site and README were brought to the same terms; dated records (this file, plan.md, implementation-prompts.md) keep their wording.
+
+## File history dates · 2026-11-08
+
+- Reported on `baol/recipes`: File history rows ended with `11-08`, no year, and nothing named the selected version's author or date (the Review header names the reviewed commit, not the version).
+- Versions now carry the author's time-zone offset. Rows show the date as the History tree does (`2026-11-08`, or relative with that preference); the reader header's After endpoint adds the selected version's author and time. Validated on a clone at `origin/main`: Review of 935e221, `H`: rows `2026-11-08` … `2026-04-16`, `2026-09-12`; header `After 935e2216 · Mirko Maischberger · 2026-11-08 19:14`, and `After 02e33ecd · docs/Pane e pizza/Focaccia.md · Mirko Maischberger · 2026-11-08 18:37` one version older, matching `git log --date=format:'%Y-%m-%d %H:%M'`.
+- Acceptance REV-80: `file_history_shows_each_version_date_and_the_selected_author` failed before the change (`row date 2026-11-08`) and passes after.
+
