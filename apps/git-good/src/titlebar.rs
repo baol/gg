@@ -152,7 +152,15 @@ pub struct Chrome {
     /// The row is the window's title bar (no OS decorations).
     pub custom: bool,
     pub style: CaptionStyle,
+    /// macOS: the title bar is merged into the toolbar row, so the window
+    /// buttons sit at its left ([`WINDOW_BUTTONS`]) and its empty space
+    /// moves the window.
+    pub merged: bool,
 }
+
+/// macOS: the width the window buttons (close, minimize, zoom) take at the
+/// left of a merged toolbar row, with their margins.
+pub const WINDOW_BUTTONS: f32 = 78.0;
 
 impl Chrome {
     /// The width the caption buttons take at the bar's (left, right) end:

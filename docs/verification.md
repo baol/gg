@@ -994,3 +994,9 @@ Linux x86_64 · Rust 1.97.0 · Mesa lavapipe · Zensical 0.1.0.
 - Acceptance XCT-36 and XCT-37. The Linux reading is tested end to end with stand-in KDE and GNOME sessions (their `kdeglobals`, `kcmfonts`, portal and `gsettings` output and `fc-match` answers), including a font family `fc-match` replaces with another (not used) and a desktop that answers nothing. Colors: seven accents (GNOME blue, yellow and green, Breeze, Windows blue, a bright yellow, near black) keep the contrast rules in both themes; the test first failed for GNOME blue on a dark selected row (2.5:1), so rows now keep at least 3:1, as Git Good's own (3.4:1).
 - Not checked on a desktop here: this container has no KDE, GNOME, Windows or macOS session. The Windows (registry) and macOS (AppKit, SF fonts) code is compiled by CI's native jobs; a cross check here stops at `ring`'s C build.
 
+## Window frames per desktop · 2026-11-09
+
+- Decided with the user: Windows defaults to its own title bar (snap layouts, Mica) and KDE Plasma to KWin's frame, each with the menus in a row below; GNOME keeps Git Good's libadwaita-style title bar; macOS merges the title bar into the toolbar. `system_title_bar` became optional: absent follows the desktop, a choice in Preferences wins.
+- FRM-87 and FRM-88: `each_desktop_frames_the_window_its_own_way` checks the default and the preference for each desktop and the window options (macOS: full-size content, hidden title, transparent title bar); `a_merged_title_bar_leaves_room_for_the_window_buttons_and_moves_the_window` finds the toolbar's first button at 78 pt or more and a drag of the empty row starting a window move; it fails without the inset (first button at 16 px).
+- Not done: rounded corners for GNOME's title bar need a transparent window and every panel's background redrawn; left for a separate change. Not checked on a desktop here (no Windows, KDE or macOS session); CI's native jobs compile the macOS and Windows code.
+

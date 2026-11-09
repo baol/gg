@@ -25,7 +25,10 @@ fn readme_screenshot() -> Result<(), Box<dyn std::error::Error>> {
     let mut app = Browser::new(repository);
     // As a launch on Windows and Linux with the default preferences: the
     // menu bar is the title bar, with the caption buttons at the right.
-    app.chrome.custom = crate::custom_titlebar(&crate::settings::Prefs::default());
+    app.chrome.custom = crate::custom_titlebar(
+        &crate::settings::Prefs::default(),
+        crate::Desktop::OtherLinux,
+    );
     let mut harness = egui_kittest::Harness::builder()
         .with_size(SIZE)
         .with_pixels_per_point(1.0)

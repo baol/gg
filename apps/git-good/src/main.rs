@@ -417,7 +417,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         window_size = egui::vec2(width.clamp(720.0, 3840.0), height.clamp(480.0, 2160.0));
     }
     diagnostics::start();
-    let custom_titlebar = custom_titlebar(&settings::Prefs::load());
+    let desktop = Desktop::current();
+    let custom_titlebar = custom_titlebar(&settings::Prefs::load(), desktop);
     // Read while the window opens: accent, fonts and text size.
     let desktop_read = desktop_look::read_in_background();
     let icon = branding::icon()
@@ -425,7 +426,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         .clone();
     eframe::run_native(
         "Git Good",
-        native_options(custom_titlebar, window_size, icon),
+        native_options(custom_titlebar, desktop, window_size, icon),
         Box::new(move |cc| {
             phosphor::install(&cc.egui_ctx);
             wide_font::install(&cc.egui_ctx);
@@ -435,6 +436,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             app.desktop_live = true;
             app.desktop_read = Some(desktop_read);
             app.chrome.custom = custom_titlebar;
+            app.chrome.merged = desktop == Desktop::Mac;
             // Linux: the desktop's caption buttons on the side its layout puts them.
             if custom_titlebar {
                 app.caption_style = caption_style::service();
@@ -454,29 +456,74 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// The desktop the window is framed for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Desktop {
+    Windows,
+    Mac,
+    Kde,
+    /// GNOME and other Linux desktops.
+    OtherLinux,
+}
+
+impl Desktop {
+    fn current() -> Self {
+        if cfg!(target_os = "macos") {
+            Self::Mac
+        } else if cfg!(windows) {
+            Self::Windows
+        } else if desktop_look::kde_session(&|key| std::env::var(key).ok()) {
+            Self::Kde
+        } else {
+            Self::OtherLinux
+        }
+    }
+}
+
+/// Whether the system draws the title bar when the preference is not set:
+/// on Windows (snap layouts, Mica and the rest of Windows' own frame) and on
+/// KDE Plasma (KWin's frame, with the user's decoration theme and window
+/// rules); off on GNOME, which draws no frame for apps, and elsewhere.
+fn title_bar_default(desktop: Desktop) -> bool {
+    matches!(desktop, Desktop::Windows | Desktop::Kde)
+}
+
 /// Windows and Linux: the menu bar is the window's title bar (no OS
-/// decorations), unless Preferences › Appearance › Use the system title bar
-/// is on. macOS keeps its own title bar; its menus are in the menu bar at
-/// the top of the screen.
-fn custom_titlebar(prefs: &settings::Prefs) -> bool {
-    !cfg!(target_os = "macos") && !prefs.system_title_bar
+/// decorations) unless the system draws it (Preferences › Appearance › Use
+/// the system title bar, or the desktop's default). macOS keeps its own
+/// title bar, merged into the toolbar; its menus are in the menu bar at the
+/// top of the screen.
+fn custom_titlebar(prefs: &settings::Prefs, desktop: Desktop) -> bool {
+    desktop != Desktop::Mac
+        && !prefs
+            .system_title_bar
+            .unwrap_or_else(|| title_bar_default(desktop))
 }
 
 /// The main window: `size`, at least 720 × 480, decorated unless gg draws
-/// the title bar.
+/// the title bar. On macOS the title bar is transparent and the content
+/// runs under it, so the window buttons sit in the toolbar row.
 fn native_options(
     custom_titlebar: bool,
+    desktop: Desktop,
     size: egui::Vec2,
     icon: egui::IconData,
 ) -> eframe::NativeOptions {
+    let mut viewport = egui::ViewportBuilder::default()
+        // The name docks and taskbars show (Wayland app ID, X11 class).
+        .with_app_id(native_menu::APP_NAME)
+        .with_icon(icon)
+        .with_inner_size(size)
+        .with_min_inner_size([720.0, 480.0])
+        .with_decorations(!custom_titlebar);
+    if desktop == Desktop::Mac {
+        viewport = viewport
+            .with_fullsize_content_view(true)
+            .with_title_shown(false)
+            .with_titlebar_shown(false);
+    }
     eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            // The name docks and taskbars show (Wayland app ID, X11 class).
-            .with_app_id(native_menu::APP_NAME)
-            .with_icon(icon)
-            .with_inner_size(size)
-            .with_min_inner_size([720.0, 480.0])
-            .with_decorations(!custom_titlebar),
+        viewport,
         wgpu_options: diagnostics::wgpu_options(),
         ..Default::default()
     }
@@ -3669,13 +3716,20 @@ impl Browser {
                                     if !cfg!(target_os = "macos") {
                                         ui.label("Title bar");
                                         ui.vertical(|ui| {
-                                            ui.checkbox(
-                                                &mut prefs.system_title_bar,
-                                                "Use the system title bar",
-                                            )
-                                            .on_hover_text(
-                                                "Off: Git Good's menu bar is the title bar, with its own window buttons.",
-                                            );
+                                            // Unset follows the desktop: on for
+                                            // Windows and KDE Plasma.
+                                            let mut system = prefs
+                                                .system_title_bar
+                                                .unwrap_or_else(|| title_bar_default(Desktop::current()));
+                                            if ui
+                                                .checkbox(&mut system, "Use the system title bar")
+                                                .on_hover_text(
+                                                    "Off: Git Good's menu bar is the title bar, with its own window buttons. The default follows your desktop: on for Windows and KDE Plasma.",
+                                                )
+                                                .changed()
+                                            {
+                                                prefs.system_title_bar = Some(system);
+                                            }
                                             ui.weak("Takes effect when Git Good restarts.");
                                         });
                                         ui.end_row();
@@ -12085,8 +12139,26 @@ impl Browser {
         egui::Panel::top("navigation")
             .exact_size(TOOLBAR_HEIGHT)
             .show(ui, |ui| {
+                // macOS: the title bar is merged into this row. Its empty
+                // space moves the window and a double-click zooms it; the
+                // buttons drawn after this sit on top and keep their clicks.
+                if self.chrome.merged {
+                    let row = ui.max_rect();
+                    let background =
+                        ui.interact(row, egui::Id::unique("gg-window-drag"), egui::Sense::click_and_drag());
+                    if background.drag_started() {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+                    }
+                    if background.double_clicked() {
+                        let maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+                    }
+                }
                 ui.horizontal_centered(|ui| {
                     ui.spacing_mut().item_spacing.x = 2.0;
+                    if self.chrome.merged {
+                        ui.add_space(titlebar::WINDOW_BUTTONS);
+                    }
                     let has_repo = self.state.history.is_some();
                     let local_selected = self.working.is_some();
                     let sidebar_available = ctx.content_rect().width() >= 1120.0;
@@ -22708,23 +22780,110 @@ mod tests {
     }
 
     #[test]
-    fn the_system_title_bar_preference_keeps_the_window_decorations() -> Result<(), String> {
+    fn each_desktop_frames_the_window_its_own_way() -> Result<(), String> {
         let mut prefs = settings::Prefs::default();
-        assert_eq!(custom_titlebar(&prefs), !cfg!(target_os = "macos"));
-        prefs.system_title_bar = true;
-        assert!(!custom_titlebar(&prefs));
+        // Unset: the desktop's default. Windows and KDE Plasma draw the
+        // frame; GNOME and other Linux desktops get Git Good's title bar;
+        // macOS keeps its own, merged into the toolbar.
+        for (desktop, custom) in [
+            (Desktop::Windows, false),
+            (Desktop::Kde, false),
+            (Desktop::OtherLinux, true),
+            (Desktop::Mac, false),
+        ] {
+            assert_eq!(custom_titlebar(&prefs, desktop), custom, "{desktop:?}");
+        }
+        // A choice in Preferences wins over the default (not on macOS).
+        prefs.system_title_bar = Some(false);
+        assert!(custom_titlebar(&prefs, Desktop::Windows));
+        assert!(custom_titlebar(&prefs, Desktop::Kde));
+        assert!(!custom_titlebar(&prefs, Desktop::Mac));
+        prefs.system_title_bar = Some(true);
+        assert!(!custom_titlebar(&prefs, Desktop::OtherLinux));
         let icon = branding::icon()?.clone();
         let size = egui::vec2(1120.0, 740.0);
-        assert_eq!(
-            native_options(false, size, icon.clone())
-                .viewport
-                .decorations,
-            Some(true)
-        );
-        let custom = native_options(true, size, icon).viewport;
+        let framed = native_options(false, Desktop::Windows, size, icon.clone()).viewport;
+        assert_eq!(framed.decorations, Some(true));
+        assert_eq!(framed.fullsize_content_view, None);
+        let custom = native_options(true, Desktop::OtherLinux, size, icon.clone()).viewport;
         assert_eq!(custom.decorations, Some(false));
         assert_eq!(custom.min_inner_size, Some(egui::vec2(720.0, 480.0)));
+        let mac = native_options(false, Desktop::Mac, size, icon).viewport;
+        assert_eq!(
+            mac.decorations,
+            Some(true),
+            "macOS keeps its window buttons"
+        );
+        assert_eq!(
+            mac.fullsize_content_view,
+            Some(true),
+            "content under the title bar"
+        );
+        assert_eq!(mac.title_shown, Some(false));
+        assert_eq!(mac.titlebar_shown, Some(false), "a transparent title bar");
         Ok(())
+    }
+
+    #[test]
+    fn a_merged_title_bar_leaves_room_for_the_window_buttons_and_moves_the_window() {
+        let ctx = egui::Context::default();
+        crate::phosphor::install(&ctx);
+        let mut app = layout_fixture();
+        app.chrome.merged = true;
+        let mut commands = Vec::new();
+        let mut frame = |app: &mut Browser, events: Vec<egui::Event>| {
+            let mut output =
+                crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, events), |ctx| {
+                    app.draw_ui(ctx)
+                });
+            commands.extend(
+                output
+                    .viewport_output
+                    .remove(&egui::ViewportId::ROOT)
+                    .map(|v| v.commands)
+                    .unwrap_or_default(),
+            );
+            output
+        };
+        let output = frame(&mut app, vec![]);
+        let sidebar = output.shapes.iter().find_map(|shape| match &shape.shape {
+            egui::Shape::Text(text)
+                if text
+                    .galley
+                    .job
+                    .text
+                    .contains(crate::phosphor::SIDEBAR_SIMPLE) =>
+            {
+                Some(text.pos.x)
+            }
+            _ => None,
+        });
+        assert!(
+            sidebar.is_some_and(|x| x >= titlebar::WINDOW_BUTTONS),
+            "the first toolbar button starts after the window buttons: {sidebar:?}"
+        );
+        // Dragging the empty space where the window buttons are not moves the window.
+        let toolbar_y = MENU_BAR_HEIGHT + TOOLBAR_HEIGHT / 2.0;
+        let start = egui::pos2(40.0, toolbar_y);
+        let press = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        frame(
+            &mut app,
+            vec![egui::Event::PointerMoved(start), press(start, true)],
+        );
+        let moved = start + egui::vec2(30.0, 0.0);
+        frame(&mut app, vec![egui::Event::PointerMoved(moved)]);
+        frame(&mut app, vec![press(moved, false)]);
+        assert!(
+            commands
+                .iter()
+                .any(|command| matches!(command, egui::ViewportCommand::StartDrag)),
+            "{commands:?}"
+        );
     }
 
     /// The macOS menu bar is gg's own table laid out the Mac way; built and
