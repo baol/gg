@@ -138,6 +138,19 @@ pub(crate) fn windows_accent(dword: u32) -> Color32 {
     Color32::from_rgb(r, g, b)
 }
 
+/// A `REG_DWORD` in `reg query` output:
+/// `    AccentColor    REG_DWORD    0xffd77800`.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn reg_dword(output: &str, value: &str) -> Option<u32> {
+    output.lines().find_map(|line| {
+        let mut fields = line.split_whitespace();
+        (fields.next()? == value && fields.next()? == "REG_DWORD")
+            .then(|| fields.next())
+            .flatten()
+            .and_then(|hex| u32::from_str_radix(hex.trim_start_matches("0x"), 16).ok())
+    })
+}
+
 /// The family of a GNOME font name, `Cantarell 11` or `Noto Sans Bold 10`:
 /// everything before the size.
 pub(crate) fn gnome_font_family(spec: &str) -> Option<String> {
@@ -505,28 +518,20 @@ mod platform {
 mod platform {
     use super::*;
 
+    /// A DWORD under `HKEY_CURRENT_USER`, read with `reg query`: Git Good
+    /// forbids unsafe code, which the registry API needs.
     fn dword(key: &str, value: &str) -> Option<u32> {
-        use windows_sys::Win32::System::Registry::{
-            HKEY_CURRENT_USER, RRF_RT_REG_DWORD, RegGetValueW,
-        };
-        let wide = |s: &str| s.encode_utf16().chain(Some(0)).collect::<Vec<u16>>();
-        let (key, value) = (wide(key), wide(value));
-        let mut data: u32 = 0;
-        let mut size = std::mem::size_of::<u32>() as u32;
-        // SAFETY: the strings are NUL-terminated UTF-16 and `data` holds
-        // the DWORD the call writes, `size` bytes.
-        let status = unsafe {
-            RegGetValueW(
-                HKEY_CURRENT_USER,
-                key.as_ptr(),
-                value.as_ptr(),
-                RRF_RT_REG_DWORD,
-                std::ptr::null_mut(),
-                (&mut data as *mut u32).cast(),
-                &mut size,
-            )
-        };
-        (status == 0).then_some(data)
+        use std::os::windows::process::CommandExt as _;
+        // CREATE_NO_WINDOW: no console flashes up.
+        let output = std::process::Command::new("reg")
+            .args(["query", &format!(r"HKCU\{key}"), "/v", value])
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .creation_flags(0x0800_0000)
+            .output()
+            .ok()
+            .filter(|out| out.status.success())?;
+        reg_dword(&String::from_utf8_lossy(&output.stdout), value)
     }
 
     pub fn read() -> Look {
@@ -552,14 +557,13 @@ mod platform {
 
     fn accent() -> Option<Color32> {
         use objc2_app_kit::{NSColor, NSColorSpace};
-        // SAFETY: AppKit's color class methods are thread-safe reads.
-        let color = unsafe { NSColor::controlAccentColor() };
-        let srgb = unsafe { color.colorUsingColorSpace(&NSColorSpace::sRGBColorSpace()) }?;
+        let color = NSColor::controlAccentColor();
+        let srgb = color.colorUsingColorSpace(&NSColorSpace::sRGBColorSpace())?;
         let unit = |c: f64| (c.clamp(0.0, 1.0) * 255.0).round() as u8;
         Some(Color32::from_rgb(
-            unit(unsafe { srgb.redComponent() }),
-            unit(unsafe { srgb.greenComponent() }),
-            unit(unsafe { srgb.blueComponent() }),
+            unit(srgb.redComponent()),
+            unit(srgb.greenComponent()),
+            unit(srgb.blueComponent()),
         ))
     }
 
@@ -631,6 +635,24 @@ mod tests {
         assert_eq!(
             windows_accent(0xffd77800),
             Color32::from_rgb(0x00, 0x78, 0xd7)
+        );
+    }
+
+    #[test]
+    fn reg_query_output_gives_its_dword() {
+        let output = "\r\nHKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\DWM\r\n    AccentColor    REG_DWORD    0xffd77800\r\n\r\n";
+        assert_eq!(reg_dword(output, "AccentColor"), Some(0xffd77800));
+        assert_eq!(
+            reg_dword(
+                "    TextScaleFactor    REG_DWORD    0x7d\r\n",
+                "TextScaleFactor"
+            ),
+            Some(125)
+        );
+        assert_eq!(reg_dword(output, "TextScaleFactor"), None);
+        assert_eq!(
+            reg_dword("    AccentColor    REG_SZ    blue\r\n", "AccentColor"),
+            None
         );
     }
 
