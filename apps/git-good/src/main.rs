@@ -19,6 +19,7 @@ mod conflict_result;
 mod conflict_workspace;
 mod consequence;
 mod density;
+mod desktop_look;
 mod details_view;
 mod diagnostics;
 mod diff_view;
@@ -417,6 +418,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     diagnostics::start();
     let custom_titlebar = custom_titlebar(&settings::Prefs::load());
+    // Read while the window opens: accent, fonts and text size.
+    let desktop_read = desktop_look::read_in_background();
     let icon = branding::icon()
         .inspect_err(|error| diagnostics::launch_failed(error))?
         .clone();
@@ -427,6 +430,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             phosphor::install(&cc.egui_ctx);
             wide_font::install(&cc.egui_ctx);
             let mut app = Browser::new(path);
+            // The desktop's look, usually read before the first frame; a
+            // slow desktop updates the window when it answers.
+            app.desktop_live = true;
+            app.desktop_read = Some(desktop_read);
             app.chrome.custom = custom_titlebar;
             // Linux: the desktop's caption buttons on the side its layout puts them.
             if custom_titlebar {
@@ -578,7 +585,7 @@ impl PrefSection {
                 "general clone folders avatars network fetch prune editor open dialog defaults stash merge branch"
             }
             Self::Appearance => {
-                "appearance theme dark light system density compact comfortable zoom font size code title bar window frame decorations caption buttons"
+                "appearance theme dark light system density compact comfortable zoom font size code title bar window frame decorations caption buttons desktop accent color fonts text size scaling"
             }
             Self::Diff => {
                 "diff open files full file layout inline side by side images compare context lines whitespace ignore line end display wrap long lines invisible characters tabs trailing spaces"
@@ -2274,6 +2281,15 @@ struct Browser {
     /// buttons' style (`titlebar`, `caption_style`).
     chrome: titlebar::Chrome,
     caption_style: Option<titlebar::CaptionStyleFn>,
+    /// The desktop's look: accent, fonts and text size (`desktop_look`).
+    desktop: desktop_look::Look,
+    /// A read of the desktop's look in flight.
+    desktop_read: Option<std::sync::mpsc::Receiver<desktop_look::Look>>,
+    /// Read the desktop again when the window regains focus (the running
+    /// app; tests keep Git Good's own look).
+    desktop_live: bool,
+    /// The desktop's fonts were installed (once, at launch).
+    desktop_fonts_installed: bool,
     /// macOS: the native menu bar, which hides the in-window menus.
     native_menu: Option<native_menu::NativeMenu<FrameCommand>>,
     /// The larger logo drawn in About Git Good.
@@ -2490,6 +2506,10 @@ impl Browser {
             about_open: cfg!(debug_assertions) && std::env::var_os("GG_ABOUT").is_some(),
             chrome: titlebar::Chrome::default(),
             caption_style: None,
+            desktop: desktop_look::Look::default(),
+            desktop_read: None,
+            desktop_live: false,
+            desktop_fonts_installed: false,
             native_menu: None,
             about_logo: None,
             discard_confirm: false,
@@ -3160,13 +3180,57 @@ impl Browser {
         settings::set_diff_wrap(ctx, self.prefs.wrap_lines);
         settings::set_subject_guide(ctx, self.prefs.subject_guide);
         settings::set_run_hooks(ctx, self.prefs.run_hooks);
-        ctx.set_zoom_factor(f32::from(self.prefs.zoom) / 100.0);
+        // The desktop's text size scales the interface zoom.
+        let text_scale = if self.prefs.desktop_fonts {
+            self.desktop.text_scale
+        } else {
+            1.0
+        };
+        ctx.set_zoom_factor(f32::from(self.prefs.zoom) / 100.0 * text_scale);
+        self.apply_desktop_accent(ctx);
         density::set_code_font(self.prefs.code_font);
         density::set_history(
             self.prefs.history_avatars,
             self.prefs.history_tags,
             self.prefs.relative_dates,
         );
+    }
+
+    /// Selection, links and primary buttons in the desktop's accent, or in
+    /// Git Good's own colors when it has none or the preference is off.
+    fn apply_desktop_accent(&self, ctx: &egui::Context) {
+        let accent = self.desktop.accent.filter(|_| self.prefs.desktop_accent);
+        if accent.is_none() {
+            // Back to Git Good's own colors.
+            ctx.set_visuals_of(egui::Theme::Dark, egui::Visuals::dark());
+            ctx.set_visuals_of(egui::Theme::Light, egui::Visuals::light());
+            colors::apply(ctx);
+        }
+        desktop_look::set_accent(ctx, accent);
+        if self.desktop_live {
+            desktop_look::set_primary(accent);
+        }
+    }
+
+    /// A finished read of the desktop's look: its fonts at launch, its
+    /// accent and text size whenever it arrives.
+    fn poll_desktop(&mut self, ctx: &egui::Context) {
+        let Some(look) = self
+            .desktop_read
+            .as_ref()
+            .and_then(|read| read.try_recv().ok())
+        else {
+            return;
+        };
+        self.desktop_read = None;
+        if !self.desktop_fonts_installed && self.prefs.desktop_fonts {
+            desktop_look::install_fonts(ctx, &look);
+            self.desktop_fonts_installed = true;
+        }
+        if look != self.desktop {
+            self.desktop = look;
+            self.apply_prefs(ctx);
+        }
     }
 
     /// Save a remembered starting value when it changes. A save failure only
@@ -3581,6 +3645,25 @@ impl Browser {
                                                 crate::menus::choose(ui, &mut prefs.code_font, size, px(size));
                                             }
                                         });
+                                    ui.end_row();
+                                    ui.label("Desktop");
+                                    ui.vertical(|ui| {
+                                        ui.checkbox(
+                                            &mut prefs.desktop_accent,
+                                            "Use the desktop's accent color",
+                                        )
+                                        .on_hover_text(
+                                            "Selection, links and primary buttons in your desktop's accent color.",
+                                        );
+                                        ui.checkbox(
+                                            &mut prefs.desktop_fonts,
+                                            "Use the desktop's fonts and text size",
+                                        )
+                                        .on_hover_text(
+                                            "Your desktop's interface and monospace fonts, and its text size setting.",
+                                        );
+                                        ui.weak("Fonts change when Git Good restarts.");
+                                    });
                                     ui.end_row();
                                     // macOS always has its own title bar.
                                     if !cfg!(target_os = "macos") {
@@ -11669,6 +11752,7 @@ impl Browser {
             }
         }
         self.menu_shortcuts(ctx);
+        self.poll_desktop(ctx);
         self.poll_local_summary();
         self.poll_refs_probe(ctx, mutating);
         let focused = ctx.input(|i| i.focused);
@@ -11688,6 +11772,10 @@ impl Browser {
             }
             self.refresh_local_summary(ctx);
             self.reread_signing();
+            // The desktop's accent or text size may have changed meanwhile.
+            if self.desktop_live && self.desktop_read.is_none() {
+                self.desktop_read = Some(desktop_look::read_in_background());
+            }
             // The Worktrees window has no Refresh button: it re-reads when
             // gg gets focus back (accepted proposal).
             if self
@@ -22539,6 +22627,84 @@ mod tests {
         assert_eq!(switch, None, "Switch to… is enabled");
         assert!(egui::Popup::is_id_open(&ctx, branch_switcher_popup_id()));
         assert!(app.create_branch.is_none(), "Ctrl+Shift+B is not Ctrl+B");
+    }
+
+    #[test]
+    fn the_desktop_accent_and_text_size_shape_the_window_and_follow_preferences() {
+        let ctx = egui::Context::default();
+        colors::apply(&ctx);
+        let own = ctx.style_of(egui::Theme::Light).visuals.selection.bg_fill;
+        let mut app = layout_fixture();
+        let breeze = egui::Color32::from_rgb(61, 174, 233);
+        app.desktop = desktop_look::Look {
+            accent: Some(breeze),
+            text_scale: 1.25,
+            ..Default::default()
+        };
+        app.apply_prefs(&ctx);
+        let light = ctx.style_of(egui::Theme::Light).visuals.clone();
+        assert_eq!(
+            light.selection.bg_fill,
+            desktop_look::accent_colors(breeze, false, light.panel_fill, light.text_color()).row,
+            "selected rows in the desktop's accent"
+        );
+        let frame = |ctx: &egui::Context| {
+            let _ = crate::tests::run_ui(ctx, frame_input(400.0, 300.0, vec![]), |_| {});
+        };
+        frame(&ctx);
+        assert!(
+            (ctx.zoom_factor() - 1.25).abs() < 1e-4,
+            "the desktop's text size"
+        );
+        app.prefs.desktop_accent = false;
+        app.prefs.desktop_fonts = false;
+        app.apply_prefs(&ctx);
+        assert_eq!(
+            ctx.style_of(egui::Theme::Light).visuals.selection.bg_fill,
+            own,
+            "switched off: Git Good's own colors"
+        );
+        frame(&ctx);
+        assert!((ctx.zoom_factor() - 1.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn the_desktop_fonts_come_before_the_bundled_ones() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let bytes = egui::FontDefinitions::default()
+            .font_data
+            .values()
+            .map(|data| (*data.font).as_ref().to_vec())
+            .next()
+            .ok_or("no bundled font")?;
+        let font = dir.path().join("Desktop-Regular.ttf");
+        std::fs::write(&font, bytes)?;
+        let ctx = egui::Context::default();
+        crate::phosphor::install(&ctx);
+        desktop_look::install_fonts(
+            &ctx,
+            &desktop_look::Look {
+                ui_font: Some(font.clone()),
+                mono_font: Some(font),
+                ..Default::default()
+            },
+        );
+        let _ = crate::tests::run_ui(&ctx, frame_input(400.0, 300.0, vec![]), |_| {});
+        let families = ctx.fonts(|fonts| fonts.definitions().families.clone());
+        for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+            let names = families.get(&family).cloned().unwrap_or_default();
+            assert!(
+                names
+                    .first()
+                    .is_some_and(|name| name.starts_with("desktop-")),
+                "{family:?}: {names:?}"
+            );
+            assert!(
+                names.iter().any(|name| name == "phosphor-icons"),
+                "the bundled fallbacks stay: {names:?}"
+            );
+        }
+        Ok(())
     }
 
     #[test]

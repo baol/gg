@@ -636,6 +636,11 @@ pub struct Prefs {
     /// Windows and Linux: keep the system's title bar instead of gg's menu
     /// bar being the title bar; read at launch.
     pub system_title_bar: bool,
+    /// Selection, links and primary buttons in the desktop's accent color.
+    pub desktop_accent: bool,
+    /// The desktop's interface and monospace fonts (at launch) and its text
+    /// size.
+    pub desktop_fonts: bool,
     /// Keys changed in Preferences › Keyboard: command id → chord
     /// (`keymap.rs`); the defaults are not stored.
     pub keys: std::collections::BTreeMap<String, String>,
@@ -696,6 +701,8 @@ impl Default for Prefs {
             show_invisibles: true,
             wrap_lines: false,
             system_title_bar: false,
+            desktop_accent: true,
+            desktop_fonts: true,
             keys: Default::default(),
             path: None,
             saved: Saved::default(),
@@ -761,6 +768,8 @@ impl Prefs {
             show_invisibles: read(path, "show_invisibles").unwrap_or(defaults.show_invisibles),
             wrap_lines: read(path, "wrap_lines").unwrap_or(defaults.wrap_lines),
             system_title_bar: read(path, "system_title_bar").unwrap_or(defaults.system_title_bar),
+            desktop_accent: read(path, "desktop_accent").unwrap_or(defaults.desktop_accent),
+            desktop_fonts: read(path, "desktop_fonts").unwrap_or(defaults.desktop_fonts),
             keys: read(path, "keys").unwrap_or(defaults.keys),
             path: Some(path.to_path_buf()),
             saved: Saved::default(),
@@ -811,6 +820,8 @@ impl Prefs {
             show_invisibles,
             wrap_lines,
             system_title_bar,
+            desktop_accent,
+            desktop_fonts,
             keys
         )
         .into_iter()
@@ -972,6 +983,8 @@ mod tests {
         prefs.show_invisibles = false;
         prefs.wrap_lines = true;
         prefs.system_title_bar = true;
+        prefs.desktop_accent = false;
+        prefs.desktop_fonts = false;
         prefs.save()?;
         assert_eq!(Prefs::load_from(&path), prefs);
         assert_eq!(read::<u32>(&path, "future_option"), Some(7));

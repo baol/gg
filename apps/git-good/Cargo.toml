@@ -30,7 +30,7 @@ wgpu = { version = "30", default-features = false, features = ["vulkan", "metal"
 [target.'cfg(target_os = "macos")'.dependencies]
 muda = { version = "=0.21.2", default-features = false }
 objc2 = "=0.6.5"
-objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSApplication", "NSEvent", "NSResponder"] }
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSApplication", "NSEvent", "NSResponder", "NSColor", "NSColorSpace", "objc2-core-foundation"] }
 [dev-dependencies]
 # The README screenshot, rendered offscreen (examples/screenshot.rs): no
 # display server and no window on the desktop.

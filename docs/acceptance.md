@@ -4825,6 +4825,27 @@ Layer: product
 - And `git good --cli history-tree` prints the History tree; `git good --cli history` still prints the same document, and `--help` lists only `history-tree`
 Covered by (interaction, end-to-end): `the_word_history_is_always_part_of_a_full_domain_term`, `no_shown_string_uses_history_outside_the_full_domain_terms` (apps/git-good/src/main.rs), `history_is_a_hidden_alias_of_history_tree` (apps/git-good/tests/cli.rs)
 
+### XCT-36 The desktop's accent color
+Fixture: KDE Plasma with `AccentColor=61,174,233` in `kdeglobals`; GNOME 47 with the purple accent (settings portal `accent-color`); Windows with an accent color; macOS with an accent color
+Layer: product
+- Given Preferences › Appearance › **Use the desktop's accent color** is on (the default)
+- When Git Good starts, or regains focus after the accent changed
+- Then selected rows, selected buttons, links and primary buttons use the desktop's accent, adjusted so white text on primary buttons and links on the panel keep 4.5:1 contrast and text on selected rows at least 3:1, in the light and the dark theme
+- And a desktop without an accent (or the preference off) keeps Git Good's own blue
+- Where it comes from: Linux, the settings portal's `org.freedesktop.appearance accent-color`, else KDE's `kdeglobals` `[General] AccentColor` or `[Colors:Selection] BackgroundNormal`, else GNOME's `accent-color` setting; Windows, `HKCU\Software\Microsoft\Windows\DWM\AccentColor`; macOS, `NSColor.controlAccentColor`
+Covered by (interaction): `the_portal_accent_reads_gdbus_output_and_rejects_unset`, `gnome_and_kde_accents_read_their_settings`, `the_windows_accent_dword_is_abgr`, `a_kde_session_gives_its_accent_fonts_and_forced_dpi`, `a_gnome_session_reads_the_portal_then_gsettings`, `every_accent_keeps_text_readable_in_both_themes`, `the_accent_reaches_selection_links_and_primary_buttons` (apps/git-good/src/desktop_look.rs), `the_desktop_accent_and_text_size_shape_the_window_and_follow_preferences` (apps/git-good/src/main.rs)
+
+### XCT-37 The desktop's fonts and text size
+Fixture: KDE with `font=Noto Sans,10,…`, `fixed=Hack,10,…` and `forceFontDPI=120`; GNOME with `font-name 'Cantarell 11'` and `text-scaling-factor 1.5`; Windows with "Make text bigger" at 125 %; macOS
+Layer: product
+- Given Preferences › Appearance › **Use the desktop's fonts and text size** is on (the default)
+- When Git Good starts
+- Then interface text uses the desktop's interface font and code uses its monospace font (KDE `font=`/`fixed=`, GNOME `font-name`/`monospace-font-name` found with `fc-match`; Windows Segoe UI Variable and Cascadia Mono; macOS SF Pro and SF Mono), with the bundled fonts, icons and CJK fallback behind them for any character they lack
+- And a font that is not installed, does not parse, or that `fc-match` replaces with another family is not used
+- And the interface zoom is multiplied by the desktop's text size (KDE forced DPI ÷ 96, GNOME `text-scaling-factor`, Windows `TextScaleFactor` ÷ 100)
+- And with the preference off the bundled fonts and zoom are used; fonts change when Git Good restarts, the text size at once
+Covered by (interaction): `font_settings_name_their_family`, `text_scales_read_each_desktop_and_reject_misreads`, `only_font_files_that_parse_with_latin_letters_are_used`, `a_kde_session_gives_its_accent_fonts_and_forced_dpi`, `a_gnome_session_reads_the_portal_then_gsettings`, `a_desktop_that_answers_nothing_keeps_git_goods_look` (apps/git-good/src/desktop_look.rs), `the_desktop_fonts_come_before_the_bundled_ones`, `the_desktop_accent_and_text_size_shape_the_window_and_follow_preferences` (apps/git-good/src/main.rs)
+
 ## CLI contract
 
 The contract for scripts using `git good --cli`. *Proposed* marks behavior decided but not yet built ([spec decisions](#spec-decisions--2026-11-04)).
