@@ -161,9 +161,9 @@ fn gpg_signed_commits_and_tags_verify_as_good() -> Result {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(home.path(), std::fs::Permissions::from_mode(0o700))?;
         }
-        // Git for Windows' gpg is an MSYS program, which reads `C:\...` as
-        // a relative path but `C:/...` as the folder.
-        let gnupg_home = home.path().to_string_lossy().replace('\\', "/");
+        // Git for Windows' gpg is an MSYS program: it reads `C:\...` and
+        // `C:/...` as relative paths and wants the folder as `/c/...`.
+        let gnupg_home = msys_path(home.path());
         let key = Command::new("gpg")
             .args(["--batch", "--pinentry-mode", "loopback", "--passphrase", ""])
             .args(["--quick-gen-key", "Ada Lovelace <ada@example.com>"])
@@ -240,4 +240,25 @@ fn gpg_signed_commits_and_tags_verify_as_good() -> Result {
     let unsigned = gg_git::signature::verify(p, "HEAD~1")?;
     assert_eq!(unsigned.state, gg_engine::signature::State::Unsigned);
     Ok(())
+}
+
+/// `path` as MSYS programs (Git for Windows' gpg) read it: `/c/Users/...`
+/// on Windows, unchanged elsewhere.
+fn msys_path(path: &Path) -> String {
+    let text = path.to_string_lossy().replace('\\', "/");
+    let bytes = text.as_bytes();
+    if cfg!(windows) && bytes.len() > 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic() {
+        format!("/{}{}", (bytes[0] as char).to_ascii_lowercase(), &text[2..])
+    } else {
+        text
+    }
+}
+
+#[test]
+fn msys_paths_use_the_drive_as_a_folder() {
+    if cfg!(windows) {
+        assert_eq!(msys_path(Path::new(r"C:\Users\a b")), "/c/Users/a b");
+    } else {
+        assert_eq!(msys_path(Path::new("/tmp/x")), "/tmp/x");
+    }
 }
