@@ -297,7 +297,7 @@ fn pull_leaves_out_commits_the_upstream_rewrote() -> Result {
         let plan = std::fs::read_to_string(mine.join(".git/rebase-merge/git-rebase-todo"))
             .unwrap_or_default();
         let done = std::fs::read_to_string(mine.join(".git/rebase-merge/done")).unwrap_or_default();
-        panic!(
+        return Err(format!(
             "{receipt:?}\n--- git version\n{}--- status\n{}--- reflog origin/main\n{}--- todo\n{plan}--- done\n{done}--- fork point\n{}",
             show(&["version"]),
             show(&["status"]),
@@ -308,7 +308,8 @@ fn pull_leaves_out_commits_the_upstream_rewrote() -> Result {
                 "refs/remotes/origin/main",
                 "main"
             ]),
-        );
+        )
+        .into());
     }
     assert!(receipt.conflicts.is_empty());
     assert_eq!(
