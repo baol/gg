@@ -14,7 +14,8 @@ Select a commit in the History tree and press ++enter++ (or click **Review**). H
 - **Files** on the left, with added and removed line counts for each. A renamed file is one row marked **R** at its new name; hovering it names the old one. ++up++ and ++down++ move between files.
 - The **header** names the commit, its author and date, and what it is compared with: **Compare with** defaults to the first parent and can be any other parent of a merge.
 - The **reader** shows the file's change as a **Diff** or the **Full file**, **Inline** or **Side by side**. Changed words are highlighted inside changed lines.
-- ++bracket-left++ and ++bracket-right++ jump between changes; **Blame** (++b++) shows who last changed each line and **File history** (++h++) lists the commits that touched the file.
+- ++bracket-left++ and ++bracket-right++ jump between changes; **Blame** (++b++) shows who last changed each line and **File history** (++h++) lists the commits that touched the file; see [Follow a file](file-history.md).
+- Binary files, and files your `.gitattributes` marks `binary` or `-diff` (for example `*.min.js -diff`), show *Binary content* instead of a text diff and count no lines, as `git diff` does. Images preview side by side.
 
 ## Typical uses
 

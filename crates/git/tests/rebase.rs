@@ -18,7 +18,7 @@ fn git(path: &Path, args: &[&str]) -> Result<Vec<u8>> {
         .env("GIT_COMMITTER_EMAIL", "test@example.org")
         .output()?;
     if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).into_owned().into());
+        return Err(format!("git {args:?}: {}", String::from_utf8_lossy(&output.stderr)).into());
     }
     Ok(output.stdout)
 }
@@ -248,5 +248,127 @@ fn rebase_rejects_option_shaped_and_missing_references() -> Result {
     };
     assert!(error.contains("was not found"), "{error}");
     assert_eq!(head(p)?, before);
+    Ok(())
+}
+
+/// NET-39: Pro Git 3.6, "Rebase When You Rebase". After the upstream
+/// rewrote a commit the branch was built on, `pull` replays only the
+/// branch's own commit, as `git pull --rebase` does; a plain rebase onto
+/// the same upstream would replay the old commit too and stop on it.
+#[test]
+fn pull_leaves_out_commits_the_upstream_rewrote() -> Result {
+    let dir = tempfile::tempdir()?;
+    let root = dir.path();
+    git(root, &["init", "-q", "--bare", "-b", "main", "origin.git"])?;
+    git(root, &["init", "-q", "-b", "main", "theirs"])?;
+    let theirs = root.join("theirs");
+    let origin = root.join("origin.git").display().to_string();
+    git(&theirs, &["remote", "add", "origin", &origin])?;
+    for name in ["a", "b", "c"] {
+        std::fs::write(theirs.join(name), format!("{name} v1\n"))?;
+        git(&theirs, &["add", name])?;
+        git(&theirs, &["commit", "-qm", &format!("add {name}")])?;
+    }
+    git(&theirs, &["push", "-q", "-u", "origin", "main"])?;
+    git(root, &["clone", "-q", &origin, "mine"])?;
+    let mine = root.join("mine");
+    // Git Good's own Git process commits as the repository's user.
+    git(&mine, &["config", "user.name", "Test"])?;
+    git(&mine, &["config", "user.email", "test@example.org"])?;
+    git(&mine, &["config", "core.autocrlf", "false"])?;
+    std::fs::write(mine.join("d"), b"mine\n")?;
+    git(&mine, &["add", "d"])?;
+    git(&mine, &["commit", "-qm", "my work"])?;
+    git(&theirs, &["reset", "-q", "--hard", "HEAD~1"])?;
+    std::fs::write(theirs.join("c"), b"c v2 rewritten\n")?;
+    git(&theirs, &["add", "c"])?;
+    git(&theirs, &["commit", "-qm", "add c (rewritten)"])?;
+    git(&theirs, &["push", "-q", "-f", "origin", "main"])?;
+    git(&mine, &["fetch", "-q", "origin"])?;
+
+    let receipt = gg_git::rebase::pull(&mine, "refs/remotes/origin/main", false)?;
+    if !receipt.applied {
+        // What Git did, for a failure on another Git version.
+        let show = |args: &[&str]| {
+            git(&mine, args)
+                .map(|out| String::from_utf8_lossy(&out).into_owned())
+                .unwrap_or_else(|error| error.to_string())
+        };
+        let plan = std::fs::read_to_string(mine.join(".git/rebase-merge/git-rebase-todo"))
+            .unwrap_or_default();
+        let done = std::fs::read_to_string(mine.join(".git/rebase-merge/done")).unwrap_or_default();
+        return Err(format!(
+            "{receipt:?}\n--- git version\n{}--- status\n{}--- reflog origin/main\n{}--- todo\n{plan}--- done\n{done}--- fork point\n{}",
+            show(&["version"]),
+            show(&["status"]),
+            show(&["reflog", "show", "refs/remotes/origin/main"]),
+            show(&[
+                "merge-base",
+                "--fork-point",
+                "refs/remotes/origin/main",
+                "main"
+            ]),
+        )
+        .into());
+    }
+    assert!(receipt.conflicts.is_empty());
+    assert_eq!(
+        String::from_utf8(git(&mine, &["log", "--format=%s"])?)?,
+        "my work\nadd c (rewritten)\nadd b\nadd a\n"
+    );
+    Ok(())
+}
+
+/// RWR-80: Pro Git 3.6, "More Interesting Rebases". `client` branched from
+/// `server`, which branched from `master`; rebasing `client` onto `master`
+/// leaving out `server` replays only `client`'s own commits.
+#[test]
+fn rebase_onto_leaves_out_the_commits_of_another_branch() -> Result {
+    let dir = repo()?;
+    let p = dir.path();
+    let commit = |name: &str| -> Result {
+        std::fs::write(p.join(name), format!("{name}\n"))?;
+        git(p, &["add", name])?;
+        git(p, &["commit", "-qm", name])?;
+        Ok(())
+    };
+    git(p, &["branch", "-qm", "master"])?;
+    commit("C2")?;
+    git(p, &["switch", "-qc", "server"])?;
+    commit("C3")?;
+    git(p, &["switch", "-qc", "client"])?;
+    commit("C8")?;
+    commit("C9")?;
+    git(p, &["switch", "-q", "server"])?;
+    commit("C4")?;
+    commit("C10")?;
+    git(p, &["switch", "-q", "master"])?;
+    commit("C5")?;
+    commit("C6")?;
+    git(p, &["switch", "-q", "client"])?;
+    let previous = head(p)?;
+
+    let receipt = gg_git::rebase::rebase_onto(p, "master", "server", false)?;
+    assert!(receipt.applied, "{receipt:?}");
+    assert_eq!(receipt.reference, "master");
+    assert_eq!(receipt.previous.as_deref(), Some(previous.as_str()));
+    assert!(receipt.backup.is_some());
+    assert_eq!(
+        String::from_utf8(git(p, &["log", "--format=%s"])?)?,
+        "C9\nC8\nC6\nC5\nC2\nbase\n",
+        "C3 stays on server"
+    );
+    assert!(!p.join("C3").exists());
+
+    let error = gg_git::rebase::rebase_onto(p, "master", "--exec=x", false).err();
+    assert_eq!(
+        error.as_deref(),
+        Some("Leave out commits from must not start with '-'.")
+    );
+    let error = gg_git::rebase::rebase_onto(p, "master", "nosuch", false).err();
+    assert_eq!(
+        error.as_deref(),
+        Some("Rebase reference nosuch was not found.")
+    );
     Ok(())
 }

@@ -343,11 +343,15 @@ impl ReviewReader for ReviewSession {
 /// Counts added and deleted lines of changed files in one repository.
 pub struct LineStats {
     repo: gix::Repository,
+    attributes: std::sync::Mutex<crate::attributes::DiffAttributes>,
 }
 impl LineStats {
     pub fn open(path: &std::path::Path) -> Result<Self, String> {
         let repo = gix::discover(path).map_err(|e| e.to_string())?;
-        Ok(Self { repo })
+        let attributes = crate::attributes::DiffAttributes::open(&repo)
+            .map_err(|e| e.to_string())?
+            .into();
+        Ok(Self { repo, attributes })
     }
     /// Count one change; object headers are checked before content is read.
     pub fn count(&self, change: &FileChange) -> Result<LineStat, String> {
@@ -379,6 +383,16 @@ impl LineStats {
         let limit = gg_engine::diff::MAX_BLOB_BYTES as u64;
         if size(&change.old)? > limit || size(&change.new)? > limit {
             return Ok(LineStat::Skipped);
+        }
+        // `-diff` or `binary` in `.gitattributes` counts as binary, as in
+        // `git diff --numstat` (REV-81).
+        if self
+            .attributes
+            .lock()
+            .map_err(|_| "attribute lookup poisoned")?
+            .binary(&self.repo, &change.path_bytes)?
+        {
+            return Ok(LineStat::Binary);
         }
         let bytes = |side: &Option<FileSide>| -> Result<Vec<u8>, Error> {
             match side {

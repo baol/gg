@@ -38,3 +38,13 @@ If a step stops (a **Reopen**, or a conflict), the band offers **Continue**, **S
 
 !!! note "Linear ranges only"
     Interactive rebase works on a range without merge commits. Choose a starting commit after the last merge.
+
+## Rebase onto another branch
+
+To move the whole branch instead, choose **Branch › Rebase current onto…** and name the branch, remote branch or tag to rebase onto. A backup of the old tip is saved first.
+
+**Leave out commits from** handles a branch built on top of another one. In Pro Git's example, `client` was branched from `server`, which was branched from `master`. Rebasing `client` onto `master` with **Leave out commits from** `server` moves only `client`'s own commits and leaves `server`'s where they are (`git rebase --onto master server`).
+
+```sh
+git good --cli rebase master --leave-out server
+```

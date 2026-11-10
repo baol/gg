@@ -276,6 +276,7 @@ pub fn dirty_tree_error(error: &str) -> bool {
     error.starts_with("Working tree is not clean")
 }
 
+pub mod attributes;
 pub mod backup;
 pub mod blame;
 pub mod blob;

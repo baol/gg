@@ -583,3 +583,67 @@ fn a_rewritten_rename_reviews_as_a_rename_of_the_most_similar_deleted_file() -> 
     );
     Ok(())
 }
+
+/// REV-81: Pro Git 8.2, "Identifying Binary Files". Files `.gitattributes`
+/// marks `binary` or `-diff` review as binary content and count no lines,
+/// as `git diff` and `git show --numstat` report them.
+#[test]
+fn gitattributes_binary_and_no_diff_files_review_as_binary() -> Result {
+    use gg_engine::review::LineStat;
+    let dir = tempfile::tempdir()?;
+    let p = dir.path();
+    git(p, &["init", "-q", "-b", "main"], b"")?;
+    std::fs::write(p.join(".gitattributes"), b"*.dat binary\n*.min.js -diff\n")?;
+    std::fs::write(p.join("data.dat"), b"plain text v1\n")?;
+    std::fs::write(p.join("app.min.js"), b"var a=1\n")?;
+    std::fs::write(p.join("note.txt"), b"hello\n")?;
+    git(p, &["add", "."], b"")?;
+    git(p, &["commit", "-qm", "base"], b"")?;
+    std::fs::write(p.join("data.dat"), b"plain text v2\n")?;
+    std::fs::write(p.join("app.min.js"), b"var a=2\n")?;
+    std::fs::write(p.join("note.txt"), b"hello\nworld\n")?;
+    git(p, &["commit", "-qam", "change"], b"")?;
+    assert_eq!(
+        git(p, &["show", "--numstat", "--format=", "HEAD"], b"")?,
+        "-\t-\tapp.min.js\n-\t-\tdata.dat\n1\t0\tnote.txt"
+    );
+    let mut reader = gg_git::review::ReviewSession::open(&ReviewRequest {
+        path: p.into(),
+        revision: "HEAD".into(),
+        parent: None,
+        against: None,
+    })?;
+    let mut files = vec![];
+    loop {
+        match reader.step()? {
+            ReviewStep::Change(change) => files.push(change),
+            ReviewStep::Complete => break,
+            ReviewStep::Pending => {}
+        }
+    }
+    let stats = gg_git::review::LineStats::open(p)?;
+    for file in &files {
+        let diff = gg_git::diff::read(p, file, || false)?;
+        let stat = stats.count(file)?;
+        if file.path == "note.txt" {
+            assert_eq!(diff.kind, DiffKind::Text);
+            assert_eq!(
+                stat,
+                LineStat::Lines {
+                    added: 1,
+                    deleted: 0
+                }
+            );
+        } else {
+            assert_eq!(diff.kind, DiffKind::Binary, "{}", file.path);
+            assert_eq!(
+                diff.note, "Binary content (.gitattributes)",
+                "{}",
+                file.path
+            );
+            assert_eq!(stat, LineStat::Binary, "{}", file.path);
+        }
+    }
+    assert_eq!(files.len(), 3);
+    Ok(())
+}

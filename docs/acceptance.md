@@ -55,6 +55,13 @@ Every fixture is a disposable directory built from scratch by a script with fixe
 | `fx-remote-auth` | `fx-remote-even` with `origin` at a local HTTP server that answers 401, URL carrying `ada:s3cret@`; no credential helper. |
 | `fx-remote-slow` | `fx-remote-even` whose `origin` is reached through a `GIT_SSH_COMMAND` wrapper that prints progress then sleeps 30 s (cancel and serialization). |
 | `fx-merge-conflict-multi` | `main` and `side` both edit `src/many.rs` in three regions; `git merge side` stopped with three conflict blocks in one file. |
+| `fx-remote-rewritten` | A bare `origin.git`, a clone `theirs`, and a clone `mine` whose `main` holds `my work` on top of `add a · add b · add c`; `theirs` then replaced `add c` with `add c (rewritten)` and force-pushed, and `mine` fetched (Pro Git 3.6, *The Perils of Rebasing*). |
+| `fx-merge-revert` | `main` with `topic` (`topic t`, `topic t2`, adding files `t` and `t2`) merged by the merge commit `Merge branch 'topic'` after `main` gained `main c` (file `c`) (Pro Git 7.8, *Undoing Merges*). |
+| `fx-attributes` | `.gitattributes` with `*.dat binary` and `*.min.js -diff`; text files `data.dat`, `app.min.js` and `note.txt`, all three changed by the last commit (Pro Git 8.2, *Identifying Binary Files*). |
+| `fx-onto` | Pro Git 3.6's *More Interesting Rebases*: `master` `C1 · C2 · C5 · C6`; `server` off `C2` with `C3 · C4 · C10`; `client` off `C3` with `C8 · C9`; HEAD on `client`. |
+| `fx-gpg` | A temporary `GNUPGHOME` with an ed25519 GPG key for `Ada Lovelace <ada@example.com>` and no passphrase, set as `user.signingkey` (Pro Git 7.4). Requires `gpg`. |
+| `fx-fork` | A bare project, a bare fork cloned from it, and a clone of the fork with the project added as `upstream`; the project then gains `upstream work`; topic branch `featureA` with one commit and no upstream (Pro Git 5.2, *Forked Public Project*). |
+| `fx-split` | `master`: `Initial commit` (`README`), `Update README formatting and add blame` (`README2`, `lib.rb`), `Add cat-file` (`version`) (Pro Git 7.6, *Splitting a Commit*). |
 | `fx-rebase-local` | `fx-rebase` on a branch without an upstream (the post-rewrite follow-up falls back to **Recovery…**). |
 | `fx-signed-bad` | `fx-signed` plus a commit whose signed payload was altered so verification reports bad. |
 | `fx-lfs-image` | `fx-lfs` plus a small PNG and an object over 2 MiB tracked by LFS, and a malformed pointer `bad.psd`. |
@@ -1661,6 +1668,14 @@ Layer: product
 - Then the header reads `Ada Lovelace · 2026-04-16 09:30`
 Covered by (interaction): `file_history_shows_each_version_date_and_the_selected_author` (apps/git-good/src/main.rs)
 
+### REV-81 Files `.gitattributes` marks binary review as binary
+Fixture: `fx-attributes`
+Layer: product
+- Given `.gitattributes` holds `*.dat binary` and `*.min.js -diff` (Pro Git 8.2, *Identifying Binary Files*)
+- When the commit changing `data.dat`, `app.min.js` and `note.txt` is reviewed
+- Then `data.dat` and `app.min.js` show *Binary content (.gitattributes)* with no text rows and count no lines, as `git diff` (`Binary files … differ`) and `git show --numstat` (`-  -`) report them; `note.txt` keeps its text diff; attributes are read in process from the worktree's attribute files (the index's in a bare repository), `info/attributes` and `core.attributesFile`, with no Git process
+Covered by (backend): `gitattributes_binary_and_no_diff_files_review_as_binary` (crates/git/tests/review_special.rs)
+
 ### REV-59 Version boundaries never wrap
 Fixture: `fx-file-history`
 Layer: interaction
@@ -1924,6 +1939,13 @@ Layer: interaction
 - And each side names where it comes from with its dimensions and size: untracked `Before absent` · `After working · 5 × 5`; unstaged `Before index` · `After working`; staged `Before HEAD` · `After index`
 - And the working side is the file as it is on disk, within the 16 MiB preview budget
 Covered by (interaction): `an_untracked_and_a_modified_image_show_their_pictures` (apps/git-good/src/status_view.rs)
+
+### CHG-76 Files `.gitattributes` marks binary compare as binary in Local Changes
+Fixture: `fx-attributes` with an unstaged edit to `data.dat`
+Layer: product
+- When `data.dat` is selected in Unstaged
+- Then the reader shows *Binary content (.gitattributes)* after the working-snapshot note, with no hunks or lines to stage, as `git diff` reports it (REV-81)
+Covered by (backend): `gitattributes_binary_files_compare_as_binary_in_local_changes` (crates/git/tests/status.rs)
 
 ### CHG-17 Unstaging a staged rename restores both halves
 Fixture: `fx-dirty`
@@ -2476,7 +2498,7 @@ Covered by (interaction, partial): `pull_is_ready_whenever_the_current_branch_ha
 Fixture: `fx-remote`
 Layer: product
 - When **Repository → Pull (rebase)** runs
-- Then Git fetches `origin`, then Git Good reads `main` against `origin/main` from local refs and, because it is behind, rebases `main` onto `origin/main` on the operation worker: 2 local commits now sit above the 3 remote ones; the History tree refreshes once
+- Then Git fetches `origin`, then Git Good reads `main` against `origin/main` from local refs and, because it is behind, rebases `main` onto `origin/main` with `--fork-point` (as `git pull --rebase`; NET-39) on the operation worker: 2 local commits now sit above the 3 remote ones; the History tree refreshes once
 Covered by (backend, partial): `upstream_relation_reads_local_refs_only` (crates/git/tests/sync.rs), `upstream_relation_follows_ahead_and_behind_counts` (crates/engine/src/sync.rs) (relation only; the GUI fetch-then-rebase is Not automated)
 
 ### NET-18 Pull strategy Merge and Fast-forward only
@@ -2487,6 +2509,22 @@ Layer: product
 - Then the menu/toolbar read `Pull (merge)` and a merge commit joins `main` and `origin/main`
 - And with **Fast-forward only** (`Pull (fast-forward)`) on the diverged `main`, Pull refuses with nothing changed; on a branch only behind it fast-forwards
 Covered by (backend, partial): `fast_forward_only_moves_or_refuses_without_merging` (crates/git/tests/merge.rs); GUI path not automated
+
+### NET-39 Pull (rebase) after the upstream was rewritten
+Fixture: `fx-remote-rewritten`
+Layer: product
+- Given `main` holds `my work` on top of `add c`, and the upstream has since replaced `add c` with `add c (rewritten)` and force-pushed (Pro Git 3.6, *The Perils of Rebasing* and *Rebase When You Rebase*)
+- When **Pull (rebase)** runs
+- Then, as `git pull --rebase` does, Git Good rebases with `--fork-point`: `main` is `add a · add b · add c (rewritten) · my work`, the old `add c` is not replayed, and no conflict stops the rebase
+Covered by (backend, interaction): `pull_leaves_out_commits_the_upstream_rewrote` (crates/git/tests/rebase.rs), `pull_after_the_upstream_was_rewritten_replays_only_your_commits` (apps/git-good/src/main.rs)
+
+### NET-40 A fork: fetch upstream, rebase onto it, push to origin
+Fixture: `fx-fork`
+Layer: product
+- Given a clone of the user's fork as `origin`, the project as `upstream`, and topic branch `featureA` with no upstream (Pro Git 5.2, *Forked Public Project*)
+- When **Fetch** runs, then Fetch from the `upstream` remote's menu, then **Rebase current onto…** `upstream/main`, then **Push**
+- Then Fetch without a remote name takes `origin`; `upstream/main` holds the project's new commit and `origin/main` does not; `featureA` sits on `upstream/main`; Push creates `origin/featureA` and sets it as the upstream; the project gains no branch
+Covered by (backend): `a_fork_fetches_upstream_rebases_onto_it_and_pushes_to_origin` (crates/git/tests/sync.rs)
 
 ### NET-19 Push of a branch without upstream sets the upstream after success
 Fixture: `fx-remote`, HEAD switched to `local-only`
@@ -2883,8 +2921,8 @@ Covered by (backend, partial): `cherry_pick_applies_a_commit` (crates/git/tests/
 Fixture: `fx-branchy`
 Layer: product
 - When `Merge branch 'topic'` is selected and **Cherry-pick onto HEAD** runs
-- Then it is refused with `Use the Merge action for merge operations.`; nothing changes
-Covered by (Not automated)
+- Then it is refused with `Use the Merge action for merge operations.` before Git runs, also when the merge is one of several picked commits; nothing changes
+Covered by (backend): `cherry_pick_of_a_merge_is_refused` (crates/git/tests/mutation.rs)
 
 ### INT-11 Cherry-pick conflict: band, Skip commit, Abort, Continue
 Fixture: `fx-cherry-pick-conflict`
@@ -2898,6 +2936,14 @@ Layer: product
 - When c27 is selected and **Commit → Revert** runs
 - Then a new commit on `main` undoes c27's change and the footer reads `Reverted <id>`
 Covered by (backend, end-to-end, partial): `revert_inverts_a_commit_and_can_skip_a_conflict` (crates/git/tests/mutation.rs); `revert_cli_inverts_a_commit` (tests/cli.rs)
+
+### INT-43 Revert of a merge commit undoes what it brought in
+Fixture: `fx-merge-revert`
+Layer: product
+- Given `Merge branch 'topic'` selected (Pro Git 7.8, *Undoing Merges*, *Reverse the commit*)
+- When **Commit → Revert** runs
+- Then, as `git revert -m 1`, a new commit `Revert "Merge branch 'topic'"` removes `topic`'s files `t` and `t2` and keeps `main`'s own `c`; the footer reads `Reverted <id> · Merging this branch again will not bring these changes back; revert this revert first.`
+Covered by (backend, interaction): `reverting_a_merge_undoes_what_it_brought_in` (crates/git/tests/mutation.rs), `a_reverted_merge_says_how_to_bring_it_back` (apps/git-good/src/main.rs)
 
 ### INT-13 Revert conflict recovery
 Fixture: `fx-revert-conflict`
@@ -3452,7 +3498,7 @@ Covered by (interaction): `panes_hold_still_while_a_rebase_stop_changes` (apps/g
 Fixture: `fx-remote`
 Layer: product
 - When the user chooses **Branch › Rebase current onto…** (or a branch/remote/tag context-menu Rebase)
-- Then a modal **Rebase branch** dialog shows a reference field, **Automatically stash working changes** (starting from the preference), and `Rebase rewrites commits. A private backup ref is created before Git starts.`; ref actions are disabled while a mutation runs
+- Then a modal **Rebase branch** dialog shows a reference field, an optional **Leave out commits from** field (RWR-80), **Automatically stash working changes** (starting from the preference), and `Rebase rewrites commits. A private backup ref is created before Git starts.`; ref actions are disabled while a mutation runs
 Covered by (interaction, partial): `rebase_dialog_and_banner_render_at_supported_widths` (apps/git-good/src/main.rs)
 
 ### RWR-56 Rebase onto creates a backup and rewrites the branch
@@ -3475,6 +3521,22 @@ Layer: product
 - When `git good --cli rebase --exec=x` or `git good --cli rebase nosuch` runs
 - Then it fails with an actionable error; no backup, no state change
 Covered by (backend, partial): `rebase_rejects_option_shaped_and_missing_references` (crates/git/tests/rebase.rs); GUI path not automated
+
+### RWR-80 Rebase onto, leaving out another branch's commits
+Fixture: `fx-onto`
+Layer: product
+- Given `client` checked out (Pro Git 3.6, *More Interesting Rebases*)
+- When **Rebase current onto…** runs with `master` and **Leave out commits from** `server` (or `git good --cli rebase master --leave-out server`)
+- Then, as `git rebase --onto master server`, `client` is `C8 · C9` on top of `master`'s `C6`; `server`'s `C3` is not replayed; the backup ref holds the old `client`; the worker reads `Rebasing client onto master, leaving out server…`; an option-shaped or missing leave-out ref fails before any change
+Covered by (backend, end-to-end, interaction): `rebase_onto_leaves_out_the_commits_of_another_branch` (crates/git/tests/rebase.rs), `rebase_cli_leaves_out_the_commits_of_another_branch` (apps/git-good/tests/cli.rs), `rebase_dialog_leaves_out_the_commits_of_another_branch`, `rebase_dialog_and_banner_render_at_supported_widths` (apps/git-good/src/main.rs)
+
+### RWR-81 Split a commit with Reopen
+Fixture: `fx-split`
+Layer: product
+- Given `Update README formatting and add blame` (adding `README2` and `lib.rb`) between `Initial commit` and `Add cat-file` (Pro Git 7.6, *Splitting a Commit*)
+- When it is reopened for editing, `lib.rb` is unstaged, `Update README formatting` is committed, `lib.rb` is staged and `Add blame` committed, and the rewrite continues
+- Then the branch reads `Initial commit · Update README formatting (README2) · Add blame (lib.rb) · Add cat-file`
+Covered by (end-to-end): `reopening_a_commit_splits_it_in_two` (apps/git-good/tests/cli.rs)
 
 ### RWR-59 CLI rewrite: reword, fixup, drop, edit — see CLI-16e
 
@@ -4176,6 +4238,14 @@ Layer: interaction
 - When **Repository › Preferences… › Commit** (or **Signing settings…** in Signature details)
 - Then under the signing choices read-only rows show Format `ssh · gpg.format`, Signing key `<path> · user.signingkey`, Allowed signers `<path> · gpg.ssh.allowedSignersFile`, then *Read from Git config.* with **Edit in repository config…**, which opens the repository's config in the configured editor; the rows are read in the background and keep their place while Git runs
 Covered by (interaction, partial): `preferences_commit_lists_the_signing_configuration_read_only` (apps/git-good/src/main.rs) (rows and stable height; the editor launch not checked)
+
+### SIG-12 GPG signing and verification
+Fixture: `fx-gpg`
+Layer: product
+- Given a GPG key as `user.signingkey` (Pro Git 7.4, *Signing Your Work*, which uses GPG)
+- When Git Good signs a commit (**Sign** in Local Changes, `git good --cli commit --sign`) and an annotated tag (New tag › **Sign**, `tag --create --sign`)
+- Then **Signature details…** for each reads *Good signature* with FORMAT `openpgp`, SIGNER `Ada Lovelace <ada@example.com>` and KEY the key's fingerprint; the previous commit reads *Unsigned*
+Covered by (backend): `gpg_signed_commits_and_tags_verify_as_good` (crates/git/tests/signature.rs; reports a skip where `gpg` is not installed)
 
 ## Repository dialogs
 

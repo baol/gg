@@ -531,3 +531,86 @@ fn rejected_push_names_the_upstream_and_suggests_fetch() -> Result {
     );
     Ok(())
 }
+
+/// NET-40: Pro Git 5.2, "Forked Public Project". A clone of the user's fork
+/// (`origin`) with the project as `upstream`: Fetch without a name takes
+/// `origin`, Fetch `upstream` reads the project's new work, the topic
+/// branch rebases onto `upstream/main`, and Push publishes it to the fork
+/// with its upstream set, leaving the project untouched.
+#[test]
+fn a_fork_fetches_upstream_rebases_onto_it_and_pushes_to_origin() -> Result {
+    let cancel = no_cancel();
+    let project = bare()?;
+    let seed = repo()?;
+    push_all(seed.path(), project.path())?;
+    let fork = tempfile::tempdir()?;
+    git(
+        fork.path(),
+        &[
+            "clone",
+            "-q",
+            "--bare",
+            &project.path().display().to_string(),
+            ".",
+        ],
+    )?;
+    let root = tempfile::tempdir()?;
+    let work = root.path().join("work");
+    git(
+        root.path(),
+        &["clone", "-q", &fork.path().display().to_string(), "work"],
+    )?;
+    git(&work, &["config", "user.name", "Test"])?;
+    git(&work, &["config", "user.email", "test@example.org"])?;
+    git(
+        &work,
+        &[
+            "remote",
+            "add",
+            "upstream",
+            &project.path().display().to_string(),
+        ],
+    )?;
+    // The project moves on.
+    std::fs::write(seed.path().join("upstream"), b"upstream\n")?;
+    git(seed.path(), &["add", "upstream"])?;
+    git(seed.path(), &["commit", "-qm", "upstream work"])?;
+    push_all(seed.path(), project.path())?;
+    let project_main = head(seed.path(), "HEAD")?;
+    // The user's topic branch, not yet pushed anywhere.
+    git(&work, &["switch", "-qc", "featureA"])?;
+    std::fs::write(work.join("feature"), b"feature\n")?;
+    git(&work, &["add", "feature"])?;
+    git(&work, &["commit", "-qm", "feature A"])?;
+
+    let receipt = gg_git::sync::fetch(&work, None, false, false, &cancel, &mut |_| {})?;
+    assert_eq!(receipt.remote, "origin", "the fork is the default remote");
+    let receipt = gg_git::sync::fetch(&work, Some("upstream"), false, false, &cancel, &mut |_| {})?;
+    assert_eq!(receipt.remote, "upstream");
+    assert_eq!(head(&work, "upstream/main")?, project_main);
+    assert_ne!(head(&work, "origin/main")?, project_main, "the fork lags");
+
+    let rebased = gg_git::rebase::rebase(&work, "upstream/main", false)?;
+    assert!(rebased.applied, "{rebased:?}");
+    assert_eq!(head(&work, "HEAD~1")?, project_main);
+
+    let pushed = gg_git::sync::push(
+        &work,
+        Some("origin"),
+        Some("featureA"),
+        gg_git::sync::PushOptions {
+            set_upstream: true,
+            force_with_lease: None,
+        },
+        false,
+        &cancel,
+        &mut |_| {},
+    )?;
+    assert_eq!(pushed.upstream.as_deref(), Some("origin/featureA"));
+    assert_eq!(head(fork.path(), "featureA")?, head(&work, "HEAD")?);
+    assert!(
+        git(project.path(), &["rev-parse", "--verify", "-q", "featureA"]).is_err(),
+        "the project is untouched"
+    );
+    Ok(())
+}

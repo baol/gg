@@ -228,6 +228,62 @@ fn docs_screenshots() -> Result {
         settle(&mut harness, |_| true);
         save(&mut harness, &out, "recovery")?;
     }
+    for (name, pressed) in [("file-history", egui::Key::H), ("blame", egui::Key::B)] {
+        if !wanted(name) {
+            continue;
+        }
+        let mut harness = window(Some(&api), WIDE, dark);
+        let commit = fixture.commit("not_found_json")?;
+        let ctx = harness.ctx.clone();
+        harness
+            .state_mut()
+            .open_review_at(&ctx, commit, "Return 404 as JSON".into(), None);
+        settle(&mut harness, |app| app.review.is_some());
+        settle(&mut harness, |_| true);
+        harness
+            .input_mut()
+            .events
+            .push(key(pressed, egui::Modifiers::NONE));
+        settle(&mut harness, |_| true);
+        save(&mut harness, &out, name)?;
+    }
+    for (name, command, row) in [
+        ("new-tag", FrameCommand::NewTag, Some(2)),
+        ("reset", FrameCommand::ResetHere, Some(4)),
+        ("worktrees", FrameCommand::Worktrees, None),
+    ] {
+        if !wanted(name) {
+            continue;
+        }
+        let mut harness = window(Some(&api), WIDE, dark);
+        let ctx = harness.ctx.clone();
+        if let Some(row) = row {
+            harness.state_mut().state.selected_row = Some(row);
+            settle(&mut harness, |_| true);
+        }
+        let (mut local, mut history) = (false, false);
+        harness
+            .state_mut()
+            .run_frame_command(&ctx, command, &mut local, &mut history);
+        settle(&mut harness, |_| true);
+        save(&mut harness, &out, name)?;
+    }
+    for (name, command) in [
+        ("clone", FrameCommand::Clone),
+        ("new-repository", FrameCommand::NewRepository(None)),
+    ] {
+        if !wanted(name) {
+            continue;
+        }
+        let mut harness = window(None, WIDE, dark);
+        let ctx = harness.ctx.clone();
+        let (mut local, mut history) = (false, false);
+        harness
+            .state_mut()
+            .run_frame_command(&ctx, command, &mut local, &mut history);
+        settle(&mut harness, |_| true);
+        save(&mut harness, &out, name)?;
+    }
     if wanted("preferences") {
         let mut harness = window(Some(&api), WIDE, dark);
         harness.state_mut().open_preferences(PrefSection::Keyboard);
