@@ -24,10 +24,15 @@ $repo = 'baol/gg'
 $dir = if ($env:GG_INSTALL_DIR) { $env:GG_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA 'Programs\git-good' }
 $version = if ($env:GG_VERSION) { $env:GG_VERSION.TrimStart('v') } else { 'latest' }
 
-$machine = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+# The machine's own processor: a shell running under x64 emulation on an
+# Arm PC reports X64 to .NET, but the system environment says ARM64.
+$machine = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment' -ErrorAction SilentlyContinue).PROCESSOR_ARCHITECTURE
+if (-not $machine) {
+    $machine = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+}
 $arch = switch ($machine) {
-    'X64' { 'x86_64' }
-    'Arm64' { 'aarch64' }
+    { $_ -in 'AMD64', 'X64' } { 'x86_64' }
+    { $_ -in 'ARM64', 'Arm64' } { 'aarch64' }
     default { Fail "unsupported processor $machine" }
 }
 $name = "git-good-$arch-pc-windows-msvc.zip"
