@@ -13,12 +13,12 @@ python3 scripts/docs_screenshots.py                 # all shots
 python3 scripts/docs_screenshots.py --only rebase   # some of them
 ```
 
-To add a shot, set the state in `docs_screens.rs` under a new name, extend the fixture in the script if it needs more history, and reference `assets/screens/<name>.png` from a page.
+To add a shot, set the state in `docs_screens.rs` under a new name, extend the fixture in the script if it needs more history, and reference `assets/screens/<name>.png` from a page. An animation is a `Recording`: call `shot` after each step, `finish` at the end, and reference `assets/screens/<name>.gif`.
 
 ## Preview
 
 ```sh
-pip install zensical
+pip install zensical pillow
 python3 scripts/docs_screenshots.py
 cd website && zensical serve
 ```
