@@ -8,32 +8,34 @@ A fast, native Git desktop app. Browse the History tree, inspect diffs, stage hu
 
 ## Install or update
 
-Git runs `git-good` whenever you invoke `git good`, as long as the binary is on your `PATH`.
+Run the same command again to update. Git runs `git-good` whenever you type `git good`, as long as it is on your `PATH`.
 
-### Prebuilt binaries
-
-1. Download the archive for your platform (`x86_64` or `arm64` on Linux, macOS, or Windows) from [GitHub Releases](https://github.com/baol/gg/releases).
-2. Extract `git-good` (`git-good.exe` on Windows) into a directory on your `PATH` (such as `~/.local/bin` or `/usr/local/bin`).
-3. To update, replace the binary in place with the new release.
+**Linux and macOS** (installs to `~/.local/bin`):
 
 ```sh
-# Linux / macOS example (replace TARGET with your platform archive)
-curl -L https://github.com/baol/gg/releases/latest/download/git-good-TARGET.tar.gz | tar -xz -C ~/.local/bin git-good
+curl -fsSL https://raw.githubusercontent.com/baol/gg/main/scripts/install.sh | sh
 ```
 
-### From source
+**Windows** (PowerShell; installs to `%LOCALAPPDATA%\Programs\git-good` and adds it to your user `PATH`):
 
-Requires Rust 1.95+. Git Good runs Git from PATH; a commit hook that exists needs Git 2.36+ to run. Re-run the same command to update:
+```powershell
+irm https://raw.githubusercontent.com/baol/gg/main/scripts/install.ps1 | iex
+```
+
+The scripts download the release for your system and processor from [GitHub Releases](https://github.com/baol/gg/releases), check it against its published SHA-256, and install nothing if it does not match. `GG_VERSION=0.1.90` installs a given release and `GG_INSTALL_DIR` picks another folder; read [install.sh](scripts/install.sh) or [install.ps1](scripts/install.ps1) before you run them.
+
+**With Cargo**, the prebuilt binary through [cargo-binstall](https://github.com/cargo-bins/cargo-binstall), or a build from source (Rust 1.95+):
 
 ```sh
-cargo install --git https://github.com/baol/gg git-good --locked --force
+cargo binstall git-good
+cargo install git-good --locked
 ```
 
-Or from a local checkout:
+**By hand:** download the archive for your platform (`x86_64` or `arm64` on Linux, macOS or Windows) from [GitHub Releases](https://github.com/baol/gg/releases) and put `git-good` (`git-good.exe` on Windows) in a folder on your `PATH`.
 
-```sh
-cargo install --path apps/git-good --locked --force
-```
+**From a checkout:** `cargo install --path apps/git-good --locked --force`.
+
+Git Good runs the Git on your `PATH`; commit hooks need Git 2.36+.
 
 ## Run
 

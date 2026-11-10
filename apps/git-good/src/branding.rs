@@ -4,7 +4,7 @@ use std::sync::OnceLock;
 pub fn icon() -> Result<&'static egui::IconData, String> {
     static ICON: OnceLock<Result<egui::IconData, image::ImageError>> = OnceLock::new();
     ICON.get_or_init(|| {
-        let image = image::load_from_memory(include_bytes!("../../../gg.png"))?
+        let image = image::load_from_memory(include_bytes!("../assets/gg.png"))?
             .resize(256, 256, image::imageops::FilterType::Lanczos3)
             .into_rgba8();
         Ok(egui::IconData {

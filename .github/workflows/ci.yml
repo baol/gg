@@ -107,6 +107,31 @@ jobs:
               digest = hashlib.sha256(path.read_bytes()).hexdigest()
               Path(str(path) + ".sha256").write_text(f"{digest}  {path.name}\n")
           PYTHON
+      - name: Install scripts install the packaged build
+        shell: bash
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          python -m http.server 8765 --bind 127.0.0.1 --directory dist >/dev/null 2>&1 &
+          server=$!
+          trap 'kill $server' EXIT
+          for _ in $(seq 50); do
+            curl -fs -o /dev/null http://127.0.0.1:8765/ && break
+            sleep 0.2
+          done
+          export GG_DOWNLOAD_URL=http://127.0.0.1:8765
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            # PowerShell 7 and the Windows PowerShell 5.1 that `irm | iex` may run in.
+            for shell in pwsh powershell; do
+              dest="$RUNNER_TEMP/gg-install-$shell"
+              GG_INSTALL_DIR="$dest" "$shell" -NoProfile -ExecutionPolicy Bypass -File scripts/install.ps1
+              test "$("$dest/git-good.exe" --version)" = "git-good $VERSION"
+            done
+          else
+            dest="$RUNNER_TEMP/gg-install"
+            GG_INSTALL_DIR="$dest" sh scripts/install.sh
+            test "$("$dest/git-good" --version)" = "git-good $VERSION"
+          fi
       - uses: actions/upload-artifact@v7
         with:
           name: git-good-${{ matrix.target }}
@@ -119,6 +144,9 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+    env:
+      # Set in the repository's Actions secrets to publish to crates.io.
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -169,3 +197,21 @@ jobs:
             gh release create "$tag" dist/* --target "$COMMIT" \
               --title "$title" --generate-notes "${options[@]}"
           fi
+      - uses: dtolnay/rust-toolchain@stable
+        if: env.CARGO_REGISTRY_TOKEN != ''
+      - name: Publish to crates.io
+        if: env.CARGO_REGISTRY_TOKEN != ''
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          python3 scripts/release_version.py apply "$VERSION"
+          # In dependency order; a version already there (a re-run) is skipped.
+          for crate in gg-engine gg-git git-good; do
+            if curl -fsS -o /dev/null -A "git-good release (https://github.com/baol/gg)" \
+              "https://crates.io/api/v1/crates/$crate/$VERSION"; then
+              echo "$crate $VERSION is already on crates.io"
+              continue
+            fi
+            # Applying the release version leaves the manifests changed.
+            cargo publish -p "$crate" --locked --allow-dirty
+          done

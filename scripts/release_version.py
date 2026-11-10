@@ -53,6 +53,12 @@ def apply(root, version):
                           lambda m: m[1] + version, text, count=1)
     if count != 1:
         raise ValueError('Workspace version field missing')
+    # Local crates depend on the same release of each other, for crates.io.
+    for name in names:
+        pattern = r'(\n' + re.escape(name) + r' = \{ path = "[^"]+", version = "=)[^"]+'
+        text, count = re.subn(pattern, lambda m: m[1] + version, text)
+        if count > 1:
+            raise ValueError(f'Expected at most one workspace dependency on {name}')
     lock_text = lock.read_text()
     for name in names:
         pattern = r'(\[\[package\]\]\nname = "' + re.escape(name) + r'"\nversion = ")[^"]+'

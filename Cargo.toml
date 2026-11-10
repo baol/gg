@@ -8,6 +8,8 @@ edition = "2024"
 license = "Apache-2.0"
 authors = ["Mirko Maischberger"]
 rust-version = "1.95"
+repository = "https://github.com/baol/gg"
+homepage = "https://baol.github.io/gg/"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
@@ -20,6 +22,8 @@ todo = "deny"
 unimplemented = "deny"
 
 [workspace.dependencies]
-gg-engine = { path = "crates/engine" }
-gg-git = { path = "crates/git" }
+# Versions are the workspace version (scripts/release_version.py keeps them in
+# step), so the published crates depend on each other's release.
+gg-engine = { path = "crates/engine", version = "=0.1.0" }
+gg-git = { path = "crates/git", version = "=0.1.0" }
 serde = { version = "1", features = ["derive"] }
