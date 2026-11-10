@@ -161,11 +161,14 @@ fn gpg_signed_commits_and_tags_verify_as_good() -> Result {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(home.path(), std::fs::Permissions::from_mode(0o700))?;
         }
+        // Git for Windows' gpg is an MSYS program, which reads `C:\...` as
+        // a relative path but `C:/...` as the folder.
+        let gnupg_home = home.path().to_string_lossy().replace('\\', "/");
         let key = Command::new("gpg")
             .args(["--batch", "--pinentry-mode", "loopback", "--passphrase", ""])
             .args(["--quick-gen-key", "Ada Lovelace <ada@example.com>"])
             .args(["ed25519", "sign", "never"])
-            .env("GNUPGHOME", home.path())
+            .env("GNUPGHOME", &gnupg_home)
             .output()?;
         if !key.status.success() {
             return Err(String::from_utf8_lossy(&key.stderr).into_owned().into());
@@ -173,14 +176,14 @@ fn gpg_signed_commits_and_tags_verify_as_good() -> Result {
         let output = Command::new(std::env::current_exe()?)
             .args([TEST, "--exact", "--test-threads=1", "--nocapture"])
             .env(ISOLATED, "1")
-            .env("GNUPGHOME", home.path())
+            .env("GNUPGHOME", &gnupg_home)
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("GIT_CONFIG_GLOBAL", NO_CONFIG)
             .output()?;
         // The keyring's agent ends with the test.
         let _ = Command::new("gpgconf")
             .args(["--kill", "gpg-agent"])
-            .env("GNUPGHOME", home.path())
+            .env("GNUPGHOME", &gnupg_home)
             .output();
         let stdout = String::from_utf8_lossy(&output.stdout);
         if !output.status.success() || !stdout.contains("1 passed") {
