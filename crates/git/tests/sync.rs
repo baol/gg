@@ -91,6 +91,9 @@ fn clone_fetch_push_upstream_and_non_fast_forward() -> Result {
     );
     assert_eq!(git(&target, &["show", "HEAD:a"])?, b"base\n");
     git(&target, &["config", "core.autocrlf", "false"])?;
+    // Reset skips a file the index already holds as clean, whatever its
+    // line endings: remove it so the checkout writes it again.
+    std::fs::remove_file(target.join("a"))?;
     git(&target, &["reset", "--hard", "HEAD"])?;
     let working = std::fs::read(target.join("a"))?;
     assert_eq!(working, b"base\n");
