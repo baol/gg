@@ -272,6 +272,9 @@ fn pull_leaves_out_commits_the_upstream_rewrote() -> Result {
     git(&theirs, &["push", "-q", "-u", "origin", "main"])?;
     git(root, &["clone", "-q", &origin, "mine"])?;
     let mine = root.join("mine");
+    // Git Good's own Git process commits as the repository's user.
+    git(&mine, &["config", "user.name", "Test"])?;
+    git(&mine, &["config", "user.email", "test@example.org"])?;
     std::fs::write(mine.join("d"), b"mine\n")?;
     git(&mine, &["add", "d"])?;
     git(&mine, &["commit", "-qm", "my work"])?;

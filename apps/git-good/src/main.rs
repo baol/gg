@@ -17486,6 +17486,9 @@ mod tests {
             dir.path(),
             &["clone", "-q", &origin.display().to_string(), "mine"],
         )?;
+        // Git Good's own Git process commits as the repository's user.
+        git_in(&mine, &["config", "user.name", "Test"])?;
+        git_in(&mine, &["config", "user.email", "test@example.org"])?;
         std::fs::write(mine.join("d.txt"), b"mine\n")?;
         git_in(&mine, &["add", "."])?;
         git_in(&mine, &["commit", "-qm", "my work"])?;
@@ -17585,6 +17588,8 @@ mod tests {
         let dir = tempfile::tempdir()?;
         let p = dir.path();
         git_in(p, &["init", "-q", "-b", "master"])?;
+        git_in(p, &["config", "user.name", "Test"])?;
+        git_in(p, &["config", "user.email", "test@example.org"])?;
         let commit = |name: &str| -> Result<(), Box<dyn std::error::Error>> {
             std::fs::write(p.join(name), format!("{name}\n"))?;
             git_in(p, &["add", name])?;
