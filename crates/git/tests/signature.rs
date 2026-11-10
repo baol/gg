@@ -138,3 +138,103 @@ fn non_commit_objects_and_invalid_references_are_rejected() -> Result {
     assert!(error.contains("invalid"), "{error}");
     Ok(())
 }
+
+/// SIG-12: Pro Git 7.4 signs with GPG. With a GPG key, Git Good signs a
+/// commit and an annotated tag and reports both as good OpenPGP
+/// signatures by the key's user; an unsigned commit stays unsigned. Needs
+/// `gpg`; without it the test says so and passes, as the LFS tests do.
+#[test]
+fn gpg_signed_commits_and_tags_verify_as_good() -> Result {
+    const TEST: &str = "gpg_signed_commits_and_tags_verify_as_good";
+    if std::env::var_os(ISOLATED).is_none() {
+        let gpg = Command::new("gpg")
+            .arg("--version")
+            .output()
+            .is_ok_and(|output| output.status.success());
+        if !gpg {
+            eprintln!("skipped: gpg is not installed");
+            return Ok(());
+        }
+        let home = tempfile::tempdir()?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(home.path(), std::fs::Permissions::from_mode(0o700))?;
+        }
+        let key = Command::new("gpg")
+            .args(["--batch", "--pinentry-mode", "loopback", "--passphrase", ""])
+            .args(["--quick-gen-key", "Ada Lovelace <ada@example.com>"])
+            .args(["ed25519", "sign", "never"])
+            .env("GNUPGHOME", home.path())
+            .output()?;
+        if !key.status.success() {
+            return Err(String::from_utf8_lossy(&key.stderr).into_owned().into());
+        }
+        let output = Command::new(std::env::current_exe()?)
+            .args([TEST, "--exact", "--test-threads=1", "--nocapture"])
+            .env(ISOLATED, "1")
+            .env("GNUPGHOME", home.path())
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", NO_CONFIG)
+            .output()?;
+        // The keyring's agent ends with the test.
+        let _ = Command::new("gpgconf")
+            .args(["--kill", "gpg-agent"])
+            .env("GNUPGHOME", home.path())
+            .output();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if !output.status.success() || !stdout.contains("1 passed") {
+            return Err(format!(
+                "isolated run of {TEST} failed:\n{stdout}\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            )
+            .into());
+        }
+        return Ok(());
+    }
+    let listed = Command::new("gpg")
+        .args(["--list-secret-keys", "--with-colons"])
+        .output()?;
+    let listed = String::from_utf8(listed.stdout)?;
+    let key = listed
+        .lines()
+        .find_map(|line| line.strip_prefix("fpr:"))
+        .and_then(|rest| rest.split(':').find(|field| !field.is_empty()))
+        .ok_or("no GPG key")?
+        .to_string();
+    let dir = repo()?;
+    let p = dir.path();
+    git(p, &["config", "user.signingkey", &key])?;
+    git(p, &["config", "gpg.program", "gpg"])?;
+    std::fs::write(p.join("signed"), b"signed\n")?;
+    git(p, &["add", "signed"])?;
+    let identity = gg_git::status::Session::open(p)?.identity;
+    let receipt = gg_git::commit::create_signed(&identity, "signed by Git Good")?;
+    gg_git::tag::create(p, "v1", &receipt.id, "signed tag", true)?;
+    for reference in ["HEAD", "v1"] {
+        let verification = gg_git::signature::verify(p, reference)?;
+        assert_eq!(
+            verification.state,
+            gg_engine::signature::State::Good,
+            "{reference}"
+        );
+        assert_eq!(
+            verification.format.as_deref(),
+            Some("openpgp"),
+            "{reference}"
+        );
+        assert_eq!(
+            verification.signer.as_deref(),
+            Some("Ada Lovelace <ada@example.com>"),
+            "{reference}"
+        );
+        assert_eq!(
+            verification.key.as_deref(),
+            Some(key.as_str()),
+            "{reference}"
+        );
+    }
+    let unsigned = gg_git::signature::verify(p, "HEAD~1")?;
+    assert_eq!(unsigned.state, gg_engine::signature::State::Unsigned);
+    Ok(())
+}

@@ -59,6 +59,9 @@ Every fixture is a disposable directory built from scratch by a script with fixe
 | `fx-merge-revert` | `main` with `topic` (`topic t`, `topic t2`, adding files `t` and `t2`) merged by the merge commit `Merge branch 'topic'` after `main` gained `main c` (file `c`) (Pro Git 7.8, *Undoing Merges*). |
 | `fx-attributes` | `.gitattributes` with `*.dat binary` and `*.min.js -diff`; text files `data.dat`, `app.min.js` and `note.txt`, all three changed by the last commit (Pro Git 8.2, *Identifying Binary Files*). |
 | `fx-onto` | Pro Git 3.6's *More Interesting Rebases*: `master` `C1 · C2 · C5 · C6`; `server` off `C2` with `C3 · C4 · C10`; `client` off `C3` with `C8 · C9`; HEAD on `client`. |
+| `fx-gpg` | A temporary `GNUPGHOME` with an ed25519 GPG key for `Ada Lovelace <ada@example.com>` and no passphrase, set as `user.signingkey` (Pro Git 7.4). Requires `gpg`. |
+| `fx-fork` | A bare project, a bare fork cloned from it, and a clone of the fork with the project added as `upstream`; the project then gains `upstream work`; topic branch `featureA` with one commit and no upstream (Pro Git 5.2, *Forked Public Project*). |
+| `fx-split` | `master`: `Initial commit` (`README`), `Update README formatting and add blame` (`README2`, `lib.rb`), `Add cat-file` (`version`) (Pro Git 7.6, *Splitting a Commit*). |
 | `fx-rebase-local` | `fx-rebase` on a branch without an upstream (the post-rewrite follow-up falls back to **Recovery…**). |
 | `fx-signed-bad` | `fx-signed` plus a commit whose signed payload was altered so verification reports bad. |
 | `fx-lfs-image` | `fx-lfs` plus a small PNG and an object over 2 MiB tracked by LFS, and a malformed pointer `bad.psd`. |
@@ -2515,6 +2518,14 @@ Layer: product
 - Then, as `git pull --rebase` does, Git Good rebases with `--fork-point`: `main` is `add a · add b · add c (rewritten) · my work`, the old `add c` is not replayed, and no conflict stops the rebase
 Covered by (backend, interaction): `pull_leaves_out_commits_the_upstream_rewrote` (crates/git/tests/rebase.rs), `pull_after_the_upstream_was_rewritten_replays_only_your_commits` (apps/git-good/src/main.rs)
 
+### NET-40 A fork: fetch upstream, rebase onto it, push to origin
+Fixture: `fx-fork`
+Layer: product
+- Given a clone of the user's fork as `origin`, the project as `upstream`, and topic branch `featureA` with no upstream (Pro Git 5.2, *Forked Public Project*)
+- When **Fetch** runs, then Fetch from the `upstream` remote's menu, then **Rebase current onto…** `upstream/main`, then **Push**
+- Then Fetch without a remote name takes `origin`; `upstream/main` holds the project's new commit and `origin/main` does not; `featureA` sits on `upstream/main`; Push creates `origin/featureA` and sets it as the upstream; the project gains no branch
+Covered by (backend): `a_fork_fetches_upstream_rebases_onto_it_and_pushes_to_origin` (crates/git/tests/sync.rs)
+
 ### NET-19 Push of a branch without upstream sets the upstream after success
 Fixture: `fx-remote`, HEAD switched to `local-only`
 Layer: product
@@ -3519,6 +3530,14 @@ Layer: product
 - Then, as `git rebase --onto master server`, `client` is `C8 · C9` on top of `master`'s `C6`; `server`'s `C3` is not replayed; the backup ref holds the old `client`; the worker reads `Rebasing client onto master, leaving out server…`; an option-shaped or missing leave-out ref fails before any change
 Covered by (backend, end-to-end, interaction): `rebase_onto_leaves_out_the_commits_of_another_branch` (crates/git/tests/rebase.rs), `rebase_cli_leaves_out_the_commits_of_another_branch` (apps/git-good/tests/cli.rs), `rebase_dialog_leaves_out_the_commits_of_another_branch`, `rebase_dialog_and_banner_render_at_supported_widths` (apps/git-good/src/main.rs)
 
+### RWR-81 Split a commit with Reopen
+Fixture: `fx-split`
+Layer: product
+- Given `Update README formatting and add blame` (adding `README2` and `lib.rb`) between `Initial commit` and `Add cat-file` (Pro Git 7.6, *Splitting a Commit*)
+- When it is reopened for editing, `lib.rb` is unstaged, `Update README formatting` is committed, `lib.rb` is staged and `Add blame` committed, and the rewrite continues
+- Then the branch reads `Initial commit · Update README formatting (README2) · Add blame (lib.rb) · Add cat-file`
+Covered by (end-to-end): `reopening_a_commit_splits_it_in_two` (apps/git-good/tests/cli.rs)
+
 ### RWR-59 CLI rewrite: reword, fixup, drop, edit — see CLI-16e
 
 ### RWR-60 CLI rewrite: reorder, squash, continue/abort — see CLI-16f
@@ -4219,6 +4238,14 @@ Layer: interaction
 - When **Repository › Preferences… › Commit** (or **Signing settings…** in Signature details)
 - Then under the signing choices read-only rows show Format `ssh · gpg.format`, Signing key `<path> · user.signingkey`, Allowed signers `<path> · gpg.ssh.allowedSignersFile`, then *Read from Git config.* with **Edit in repository config…**, which opens the repository's config in the configured editor; the rows are read in the background and keep their place while Git runs
 Covered by (interaction, partial): `preferences_commit_lists_the_signing_configuration_read_only` (apps/git-good/src/main.rs) (rows and stable height; the editor launch not checked)
+
+### SIG-12 GPG signing and verification
+Fixture: `fx-gpg`
+Layer: product
+- Given a GPG key as `user.signingkey` (Pro Git 7.4, *Signing Your Work*, which uses GPG)
+- When Git Good signs a commit (**Sign** in Local Changes, `git good --cli commit --sign`) and an annotated tag (New tag › **Sign**, `tag --create --sign`)
+- Then **Signature details…** for each reads *Good signature* with FORMAT `openpgp`, SIGNER `Ada Lovelace <ada@example.com>` and KEY the key's fingerprint; the previous commit reads *Unsigned*
+Covered by (backend): `gpg_signed_commits_and_tags_verify_as_good` (crates/git/tests/signature.rs; reports a skip where `gpg` is not installed)
 
 ## Repository dialogs
 

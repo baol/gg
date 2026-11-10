@@ -3489,3 +3489,61 @@ fn rebase_cli_leaves_out_the_commits_of_another_branch() -> Result {
     assert_eq!(missing.status.code(), Some(2), "a usage error");
     Ok(())
 }
+
+/// RWR-81: Pro Git 7.6, "Splitting a Commit". Reopening the middle commit
+/// leaves its changes staged; unstaging one file, committing, then staging
+/// and committing it, and continuing, splits the commit in two.
+#[test]
+fn reopening_a_commit_splits_it_in_two() -> Result {
+    let repo = tempfile::tempdir()?;
+    let p = repo.path();
+    init(p, &["-b", "master"])?;
+    git(p, &["config", "user.name", "Test"])?;
+    git(p, &["config", "user.email", "test@example.org"])?;
+    let commit = |files: &[&str], message: &str| -> Result {
+        for file in files {
+            std::fs::write(p.join(file), format!("{file}\n"))?;
+            git(p, &["add", file])?;
+        }
+        git(p, &["commit", "-qm", message])?;
+        Ok(())
+    };
+    commit(&["README"], "Initial commit")?;
+    commit(
+        &["README2", "lib.rb"],
+        "Update README formatting and add blame",
+    )?;
+    commit(&["version"], "Add cat-file")?;
+    let id = |reference: &str| -> Result<String> {
+        Ok(
+            String::from_utf8(git_output(p, &["rev-parse", reference])?)?
+                .trim()
+                .to_string(),
+        )
+    };
+    let (middle, last) = (id("HEAD~1")?, id("HEAD")?);
+
+    let binary = env!("CARGO_BIN_EXE_git-good");
+    let run = |args: &[&str]| -> Result<serde_json::Value> {
+        let out = cli(binary).args(args).arg("--repo").arg(p).output()?;
+        if !out.status.success() {
+            return Err(String::from_utf8_lossy(&out.stderr).into_owned().into());
+        }
+        Ok(serde_json::from_slice(&out.stdout)?)
+    };
+    let reopened = run(&[
+        "rewrite", "--from", &middle, "--edit", &middle, "--pick", &last,
+    ])?;
+    assert_eq!(reopened["in_progress"], true);
+    run(&["unstage", "--file", "lib.rb"])?;
+    run(&["commit", "-m", "Update README formatting"])?;
+    run(&["stage", "--file", "lib.rb"])?;
+    run(&["commit", "-m", "Add blame"])?;
+    let done = run(&["rewrite", "--continue"])?;
+    assert_eq!(done["applied"], true);
+    assert_eq!(
+        String::from_utf8(git_output(p, &["log", "--format=%s", "--name-only"])?)?,
+        "Add cat-file\n\nversion\nAdd blame\n\nlib.rb\nUpdate README formatting\n\nREADME2\nInitial commit\n\nREADME\n"
+    );
+    Ok(())
+}
