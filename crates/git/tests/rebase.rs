@@ -283,7 +283,29 @@ fn pull_leaves_out_commits_the_upstream_rewrote() -> Result {
     git(&mine, &["fetch", "-q", "origin"])?;
 
     let receipt = gg_git::rebase::pull(&mine, "refs/remotes/origin/main", false)?;
-    assert!(receipt.applied, "{receipt:?}");
+    if !receipt.applied {
+        // What Git did, for a failure on another Git version.
+        let show = |args: &[&str]| {
+            git(&mine, args)
+                .map(|out| String::from_utf8_lossy(&out).into_owned())
+                .unwrap_or_else(|error| error.to_string())
+        };
+        let plan = std::fs::read_to_string(mine.join(".git/rebase-merge/git-rebase-todo"))
+            .unwrap_or_default();
+        let done = std::fs::read_to_string(mine.join(".git/rebase-merge/done")).unwrap_or_default();
+        panic!(
+            "{receipt:?}\n--- git version\n{}--- status\n{}--- reflog origin/main\n{}--- todo\n{plan}--- done\n{done}--- fork point\n{}",
+            show(&["version"]),
+            show(&["status"]),
+            show(&["reflog", "show", "refs/remotes/origin/main"]),
+            show(&[
+                "merge-base",
+                "--fork-point",
+                "refs/remotes/origin/main",
+                "main"
+            ]),
+        );
+    }
     assert!(receipt.conflicts.is_empty());
     assert_eq!(
         String::from_utf8(git(&mine, &["log", "--format=%s"])?)?,
