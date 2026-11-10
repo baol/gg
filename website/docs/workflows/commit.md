@@ -26,6 +26,10 @@ In the example, `src/routes.rs` has two hunks: a new `use crate::orders;` import
 
 **Discard hunk** throws a hunk's working changes away after asking you to confirm.
 
+## Ignore what should never be committed
+
+For an untracked file, ⋯ (File actions) offers **Ignore this file**, **Ignore all \*.log files** (for its extension) and **Ignore folder logs/** (for the folder it is in). Git Good adds the pattern to `.gitignore` at the repository root, and the file leaves the list. Commit `.gitignore` like any other file.
+
 ## Commit
 
 Write the message in the box under the diff (the first line is the subject) and press ++ctrl+enter++ or **Commit**.

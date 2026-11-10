@@ -399,6 +399,8 @@ pub struct DiffView {
     lfs_request: Option<LfsRequest>,
     /// Repository-relative path chosen with ⋯ › Open in editor.
     editor_request: Option<crate::editor::Request>,
+    /// The `.gitignore` pattern chosen with ⋯ › Ignore (CHG-77).
+    ignore_request: Option<String>,
     /// Draw History on the mode row: `Some(enabled)`; the owner opens it.
     history_button: Option<bool>,
     /// History stays pressed while the version list is open.
@@ -502,6 +504,7 @@ impl Default for DiffView {
             submodule_request: None,
             lfs_request: None,
             editor_request: None,
+            ignore_request: None,
             history_button: None,
             history_open: false,
             history_request: false,
@@ -695,6 +698,11 @@ impl DiffView {
 
     pub fn take_editor_request(&mut self) -> Option<crate::editor::Request> {
         self.editor_request.take()
+    }
+
+    /// Take the `.gitignore` pattern chosen with ⋯ › Ignore.
+    pub fn take_ignore_request(&mut self) -> Option<String> {
+        self.ignore_request.take()
     }
 
     pub fn take_lfs_request(&mut self) -> Option<LfsRequest> {
@@ -2579,6 +2587,38 @@ impl DiffView {
             {
                 self.submodule_request = Some(request);
                 ui.close();
+            }
+            // CHG-77: an untracked file can be ignored by name, by its
+            // extension, or by its folder.
+            if let Some(working) = &self.working
+                && working.entry.area == gg_engine::status::Area::Untracked
+            {
+                use gg_git::ignore::{Scope, pattern};
+                let path = &working.entry.path_bytes;
+                let options = [
+                    (Scope::File, "Ignore this file".to_string()),
+                    (Scope::Extension, String::new()),
+                    (Scope::Folder, String::new()),
+                ];
+                ui.separator();
+                for (scope, label) in options {
+                    let Ok(Some(found)) = pattern(path, scope) else {
+                        continue;
+                    };
+                    let label = match scope {
+                        Scope::File => label,
+                        Scope::Extension => format!("Ignore all {found} files"),
+                        Scope::Folder => format!("Ignore folder {}", found.trim_start_matches('/')),
+                    };
+                    if ui
+                        .add(row(false, label))
+                        .on_hover_text(format!("Add {found} to .gitignore at the repository root"))
+                        .clicked()
+                    {
+                        self.ignore_request = Some(found);
+                        ui.close();
+                    }
+                }
             }
             if self.can_drop_whole() {
                 ui.separator();

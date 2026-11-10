@@ -39,6 +39,7 @@ mod graph;
 mod history_view;
 #[cfg(test)]
 mod idle_tests;
+mod ignore_cli;
 mod init_cli;
 mod inspect_ui;
 #[cfg(test)]
@@ -260,6 +261,10 @@ const COMMANDS: &[(&str, &str)] = &[
         "--delete TAG | --create TAG --at REF -m MESSAGE [--sign] [--repo PATH]   Delete, or create an annotated or signed tag",
     ),
     (
+        "ignore",
+        "FILE [--extension|--folder] [--repo PATH]   Add the pattern that ignores an untracked file, its extension, or its folder to .gitignore",
+    ),
+    (
         "show",
         "COMMIT [--repo PATH] [--parent N] [--against REF] [--file PATH] [--export before|after --output PATH]   Review or export",
     ),
@@ -355,6 +360,7 @@ fn run_command(
         "push" => sync_cli::push(args),
         "clone" => sync_cli::clone(args),
         "init" => init_cli::run(args),
+        "ignore" => ignore_cli::run(args),
         "show" => review_cli::run(args),
         _ => return None,
     };
@@ -4432,6 +4438,26 @@ impl Browser {
     fn refresh_backups(&mut self) {
         if let Some(view) = &mut self.recovery {
             view.reread();
+        }
+    }
+
+    /// ⋯ › Ignore: add `pattern` to the root `.gitignore` and read Local
+    /// Changes again (CHG-77).
+    fn ignore(&mut self, ctx: &egui::Context, pattern: &str) {
+        let Some(path) = self.stash_path() else {
+            return;
+        };
+        match gg_git::ignore::add(&path, pattern) {
+            Ok(receipt) => {
+                let summary = if receipt.added {
+                    format!("Ignored {} · added to .gitignore", receipt.pattern)
+                } else {
+                    format!("{} is already in .gitignore", receipt.pattern)
+                };
+                self.set_outcome(OutcomeSeverity::Info, summary, None, None);
+                self.refresh_working(ctx);
+            }
+            Err(error) => self.set_outcome(OutcomeSeverity::Error, error, None, None),
         }
     }
 
@@ -14102,6 +14128,13 @@ impl Browser {
             {
                 self.set_outcome(OutcomeSeverity::Info, receipt, None, None);
             }
+            if let Some(pattern) = self
+                .working
+                .as_mut()
+                .and_then(|working| working.take_ignore_request())
+            {
+                self.ignore(ctx, &pattern);
+            }
             if let Some(stage) = self
                 .working
                 .as_mut()
@@ -17630,6 +17663,39 @@ mod tests {
             "C8\nC5\nC1",
             "error={:?}",
             app.mutation_error
+        );
+        Ok(())
+    }
+
+    /// CHG-77: Ignore writes the pattern to the root `.gitignore`, says so
+    /// in the footer, and says when the pattern is already there.
+    #[test]
+    fn ignore_adds_the_pattern_and_names_it_in_the_footer() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let (dir, mut app) = two_commits()?;
+        let ctx = egui::Context::default();
+        std::fs::write(dir.path().join("build.log"), b"noise\n")?;
+        app.ignore(&ctx, "*.log");
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join(".gitignore"))?,
+            "*.log\n"
+        );
+        assert_eq!(
+            app.outcome.as_ref().map(|outcome| outcome.summary.as_str()),
+            Some("Ignored *.log · added to .gitignore")
+        );
+        assert!(
+            git_in(
+                dir.path(),
+                &["status", "--porcelain", "--untracked-files=all"]
+            )?
+            .lines()
+            .all(|line| !line.contains("build.log"))
+        );
+        app.ignore(&ctx, "*.log");
+        assert_eq!(
+            app.outcome.as_ref().map(|outcome| outcome.summary.as_str()),
+            Some("*.log is already in .gitignore")
         );
         Ok(())
     }
