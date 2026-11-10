@@ -299,6 +299,18 @@ fn start(path: &Path, operation: Operation, commits: &[&str]) -> Result<Mutation
         all.push(resolve(path, commit)?);
     }
     let resolved = all.last().cloned().unwrap_or_default();
+    // A merge commit has no single change to apply: cherry-picking one is
+    // refused (INT-10); reverting one undoes what it brought in, against
+    // its first parent, as `git revert -m 1` (INT-43).
+    let mut merges = false;
+    for commit in &all {
+        if parents(path, commit)? > 1 {
+            merges = true;
+        }
+    }
+    if merges && operation == Operation::CherryPick {
+        return Err("Use the Merge action for merge operations.".into());
+    }
     let flag = match operation {
         Operation::CherryPick => "cherry-pick",
         Operation::Revert => "revert",
@@ -310,6 +322,9 @@ fn start(path: &Path, operation: Operation, commits: &[&str]) -> Result<Mutation
         }
     };
     let mut args = vec![flag.to_string(), "--no-edit".into()];
+    if merges {
+        args.extend(["-m".into(), "1".into()]);
+    }
     args.extend(all.iter().cloned());
     let output = run(path, &args, false)?;
     let conflicts = unmerged(path)?;
@@ -324,6 +339,12 @@ fn start(path: &Path, operation: Operation, commits: &[&str]) -> Result<Mutation
     let mut warnings = Vec::new();
     if !conflicts.is_empty() {
         warnings.push("Resolve the listed conflicts, then continue or abort the operation.".into());
+    }
+    if merges {
+        warnings.push(
+            "Merging this branch again will not bring these changes back; revert this revert first."
+                .into(),
+        );
     }
     Ok(MutationReceipt {
         operation,
@@ -364,6 +385,27 @@ fn finish(
         conflicts,
         warnings,
     })
+}
+
+/// How many parents `commit` (a full ID) has.
+fn parents(path: &Path, commit: &str) -> Result<usize, String> {
+    let output = run(
+        path,
+        &[
+            "rev-list".into(),
+            "--parents".into(),
+            "-n1".into(),
+            commit.into(),
+        ],
+        false,
+    )?;
+    if !output.status.success() {
+        return Err(format!("Commit {commit} was not found."));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .split_whitespace()
+        .count()
+        .saturating_sub(1))
 }
 
 fn resolve(path: &Path, commit: &str) -> Result<String, String> {

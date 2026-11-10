@@ -56,6 +56,7 @@ Every fixture is a disposable directory built from scratch by a script with fixe
 | `fx-remote-slow` | `fx-remote-even` whose `origin` is reached through a `GIT_SSH_COMMAND` wrapper that prints progress then sleeps 30 s (cancel and serialization). |
 | `fx-merge-conflict-multi` | `main` and `side` both edit `src/many.rs` in three regions; `git merge side` stopped with three conflict blocks in one file. |
 | `fx-remote-rewritten` | A bare `origin.git`, a clone `theirs`, and a clone `mine` whose `main` holds `my work` on top of `add a · add b · add c`; `theirs` then replaced `add c` with `add c (rewritten)` and force-pushed, and `mine` fetched (Pro Git 3.6, *The Perils of Rebasing*). |
+| `fx-merge-revert` | `main` with `topic` (`topic t`, `topic t2`, adding files `t` and `t2`) merged by the merge commit `Merge branch 'topic'` after `main` gained `main c` (file `c`) (Pro Git 7.8, *Undoing Merges*). |
 | `fx-rebase-local` | `fx-rebase` on a branch without an upstream (the post-rewrite follow-up falls back to **Recovery…**). |
 | `fx-signed-bad` | `fx-signed` plus a commit whose signed payload was altered so verification reports bad. |
 | `fx-lfs-image` | `fx-lfs` plus a small PNG and an object over 2 MiB tracked by LFS, and a malformed pointer `bad.psd`. |
@@ -2892,8 +2893,8 @@ Covered by (backend, partial): `cherry_pick_applies_a_commit` (crates/git/tests/
 Fixture: `fx-branchy`
 Layer: product
 - When `Merge branch 'topic'` is selected and **Cherry-pick onto HEAD** runs
-- Then it is refused with `Use the Merge action for merge operations.`; nothing changes
-Covered by (Not automated)
+- Then it is refused with `Use the Merge action for merge operations.` before Git runs, also when the merge is one of several picked commits; nothing changes
+Covered by (backend): `cherry_pick_of_a_merge_is_refused` (crates/git/tests/mutation.rs)
 
 ### INT-11 Cherry-pick conflict: band, Skip commit, Abort, Continue
 Fixture: `fx-cherry-pick-conflict`
@@ -2907,6 +2908,14 @@ Layer: product
 - When c27 is selected and **Commit → Revert** runs
 - Then a new commit on `main` undoes c27's change and the footer reads `Reverted <id>`
 Covered by (backend, end-to-end, partial): `revert_inverts_a_commit_and_can_skip_a_conflict` (crates/git/tests/mutation.rs); `revert_cli_inverts_a_commit` (tests/cli.rs)
+
+### INT-43 Revert of a merge commit undoes what it brought in
+Fixture: `fx-merge-revert`
+Layer: product
+- Given `Merge branch 'topic'` selected (Pro Git 7.8, *Undoing Merges*, *Reverse the commit*)
+- When **Commit → Revert** runs
+- Then, as `git revert -m 1`, a new commit `Revert "Merge branch 'topic'"` removes `topic`'s files `t` and `t2` and keeps `main`'s own `c`; the footer reads `Reverted <id> · Merging this branch again will not bring these changes back; revert this revert first.`
+Covered by (backend, interaction): `reverting_a_merge_undoes_what_it_brought_in` (crates/git/tests/mutation.rs), `a_reverted_merge_says_how_to_bring_it_back` (apps/git-good/src/main.rs)
 
 ### INT-13 Revert conflict recovery
 Fixture: `fx-revert-conflict`

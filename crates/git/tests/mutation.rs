@@ -225,3 +225,82 @@ fn rejects_option_shaped_and_missing_commits() -> Result {
     assert!(gg_git::mutation::state(p)?.is_none());
     Ok(())
 }
+
+/// `main` with `topic` (files `t`, `t2`) merged in by a merge commit, after
+/// `main` gained `c` (Pro Git 7.8, "Undoing Merges").
+fn merged_topic() -> Result<tempfile::TempDir> {
+    let dir = repo()?;
+    let p = dir.path();
+    git(p, &["switch", "-qc", "topic"])?;
+    for name in ["t", "t2"] {
+        std::fs::write(p.join(name), b"topic\n")?;
+        git(p, &["add", name])?;
+        git(p, &["commit", "-qm", &format!("topic {name}")])?;
+    }
+    git(p, &["switch", "-q", "main"])?;
+    std::fs::write(p.join("c"), b"main\n")?;
+    git(p, &["add", "c"])?;
+    git(p, &["commit", "-qm", "main c"])?;
+    git(
+        p,
+        &[
+            "merge",
+            "-q",
+            "--no-ff",
+            "topic",
+            "-m",
+            "Merge branch 'topic'",
+        ],
+    )?;
+    Ok(dir)
+}
+
+/// INT-10: a merge commit is not cherry-picked; nothing changes.
+#[test]
+fn cherry_pick_of_a_merge_is_refused() -> Result {
+    let dir = merged_topic()?;
+    let p = dir.path();
+    let merge = String::from_utf8(git(p, &["rev-parse", "HEAD"])?)?;
+    git(p, &["switch", "-qc", "other", "HEAD~1"])?;
+    let before = String::from_utf8(git(p, &["rev-parse", "HEAD"])?)?;
+    let error = gg_git::mutation::cherry_pick(p, merge.trim()).err();
+    assert_eq!(
+        error.as_deref(),
+        Some("Use the Merge action for merge operations.")
+    );
+    let error = gg_git::mutation::cherry_pick_many(p, &["main~1", merge.trim()]).err();
+    assert_eq!(
+        error.as_deref(),
+        Some("Use the Merge action for merge operations.")
+    );
+    assert_eq!(String::from_utf8(git(p, &["rev-parse", "HEAD"])?)?, before);
+    assert_eq!(status(p)?, "");
+    Ok(())
+}
+
+/// INT-43: Revert of a merge undoes what the merge brought in, against its
+/// first parent (`git revert -m 1`), and says that merging the branch again
+/// will not bring those commits back.
+#[test]
+fn reverting_a_merge_undoes_what_it_brought_in() -> Result {
+    let dir = merged_topic()?;
+    let p = dir.path();
+    let receipt = gg_git::mutation::revert(p, "HEAD")?;
+    assert!(receipt.applied, "{receipt:?}");
+    assert_eq!(subject(p)?, "Revert \"Merge branch 'topic'\"");
+    assert!(
+        !p.join("t").exists() && !p.join("t2").exists(),
+        "topic's files are gone"
+    );
+    assert!(p.join("c").exists(), "main's own work stays");
+    assert_eq!(status(p)?, "");
+    assert!(
+        receipt
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("again will not bring")),
+        "{:?}",
+        receipt.warnings
+    );
+    Ok(())
+}

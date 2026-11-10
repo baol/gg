@@ -7292,10 +7292,13 @@ impl Browser {
             gg_engine::mutation::Operation::Revert => format!(
                 "Reverted {}{}",
                 commit,
-                if receipt.conflicts.is_empty() {
-                    String::new()
-                } else {
+                if !receipt.conflicts.is_empty() {
                     format!(" · {} conflict(s)", receipt.conflicts.len())
+                } else if receipt.applied && !receipt.warnings.is_empty() {
+                    // A reverted merge says how to bring it back (INT-43).
+                    format!(" · {}", receipt.warnings.join(" · "))
+                } else {
+                    String::new()
                 }
             ),
             gg_engine::mutation::Operation::Merge => String::new(),
@@ -17506,6 +17509,33 @@ mod tests {
             "no conflict left"
         );
         Ok(())
+    }
+
+    /// INT-43: the footer of a reverted merge says that merging the branch
+    /// again will not bring its changes back.
+    #[test]
+    fn a_reverted_merge_says_how_to_bring_it_back() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        let warning = "Merging this branch again will not bring these changes back; revert this revert first.";
+        app.finish_pick(
+            &ctx,
+            gg_engine::mutation::Operation::Revert,
+            "abc12345",
+            gg_engine::mutation::MutationReceipt {
+                operation: gg_engine::mutation::Operation::Revert,
+                commit: "abc12345".into(),
+                applied: true,
+                in_progress: false,
+                conflicts: Vec::new(),
+                warnings: vec![warning.into()],
+            },
+            None,
+        );
+        assert_eq!(
+            app.mutation_notice.as_deref(),
+            Some(format!("Reverted abc12345 · {warning}").as_str())
+        );
     }
 
     #[test]
