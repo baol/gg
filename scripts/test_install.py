@@ -98,6 +98,11 @@ class InstallScript(unittest.TestCase):
         self.assertIn("does not match its checksum", result.stderr)
         self.assertFalse(binary.exists())
 
+    def test_the_script_is_plain_ascii(self):
+        # macOS /bin/sh reads a non-ASCII character after `$name` as part
+        # of the name, which `set -u` then rejects.
+        SCRIPT.read_bytes().decode("ascii")
+
     def test_a_missing_release_fails_with_its_address(self):
         result, binary = self.install()
         self.assertNotEqual(result.returncode, 0)

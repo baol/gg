@@ -70,7 +70,7 @@ sha256() {
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-echo "Downloading $name…"
+echo "Downloading ${name}..."
 download "$base/$name" "$work/$name" || fail "could not download $base/$name"
 download "$base/$name.sha256" "$work/$name.sha256" ||
     fail "could not download the checksum $base/$name.sha256"
