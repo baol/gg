@@ -17,6 +17,14 @@ Each guide follows one task from start to finish on the same example project: **
 | Reword, squash, fixup, drop and reorder commits | [Clean up with interactive rebase](rebase.md) |
 | Finish a merge or rebase that stopped | [Resolve a merge conflict](conflicts.md) |
 | Get back a branch tip from before a rewrite | [Undo with Recovery](recovery.md) |
+| See who changed a file or a few lines, and when | [Follow a file](file-history.md) |
+| Mark a release | [Tag a release](tags.md) |
+| Copy a commit onto your branch, or undo one | [Cherry-pick and revert](cherry-pick-revert.md) |
+| Move a branch back, keeping or discarding changes | [Reset a branch](reset.md) |
+| Check out a second branch in its own folder | [Work on two branches at once](worktrees.md) |
+| Update submodules, fetch LFS objects | [Submodules and LFS](submodules-lfs.md) |
+| Sign your work, check others' signatures | [Sign commits and tags](signing.md) |
+| Get a repository, or start one | [Clone or create a repository](clone-init.md) |
 | Run any command from the keyboard, change keys | [Search, keys and preferences](keyboard.md) |
 
 !!! tip "Every command, three ways"

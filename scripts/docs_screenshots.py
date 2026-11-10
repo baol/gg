@@ -272,6 +272,9 @@ def build(root: Path) -> dict[str, str]:
     ).replace("use serde::Serialize;", "use serde::Serialize;\n\nuse crate::orders;"))
     write(api, "src/orders.rs", "pub async fn recent(limit: usize) -> Vec<String> {\n    (1..=limit).map(|n| format!(\"order-{n}\")).collect()\n}\n")
 
+    # A linked worktree for the hotfix, beside the main one.
+    git(api, "worktree", "add", "-q", "-b", "hotfix/1.2.1", str(root / "acme-api-hotfix"), "v0.2.0")
+
     # A clone stopped in a merge conflict on src/routes.rs.
     merge = root / "acme-api-merge"
     subprocess.run(["git", "clone", "-q", str(origin), str(merge)], check=True, capture_output=True)
