@@ -1947,6 +1947,16 @@ Layer: product
 - Then the reader shows *Binary content (.gitattributes)* after the working-snapshot note, with no hunks or lines to stage, as `git diff` reports it (REV-81)
 Covered by (backend): `gitattributes_binary_files_compare_as_binary_in_local_changes` (crates/git/tests/status.rs)
 
+### CHG-77 Ignore an untracked file, its extension, or its folder
+Fixture: `fx-linear` with untracked `logs/a.log`
+Layer: product
+- When ⋯ File actions opens on `logs/a.log`
+- Then, above **Discard file…**, it offers **Ignore this file** (`/logs/a.log`), **Ignore all \*.log files** (`*.log`) and **Ignore folder logs/** (`/logs/`), each naming its pattern on hover; a file at the root has no folder row and a file without an extension (or a dotfile) has no extension row; a tracked file has none of them
+- When one is chosen
+- Then Git Good adds the pattern on its own line to `.gitignore` at the repository root (created when missing, a missing final newline added first, other lines kept), the footer reads *Ignored \*.log · added to .gitignore* (or *\*.log is already in .gitignore*, writing nothing), and Local Changes reads again without the ignored files; patterns are anchored to the root and escape `\`, `*`, `?`, `[` and a trailing space, so they match exactly what was chosen (`git check-ignore`); a non-UTF-8 path is refused
+- And `git good --cli ignore FILE [--extension|--folder]` adds the same pattern and prints `{"operation":"ignore","pattern","file","added","complete":true}`
+Covered by (backend, interaction, end-to-end): `ignore_patterns_match_what_git_ignores`, `ignore_writes_the_root_gitignore_from_a_subfolder` (crates/git/tests/ignore.rs), `patterns_anchor_files_and_folders_and_escape_specials` (crates/git/src/ignore.rs), `an_untracked_file_can_be_ignored_from_file_actions` (apps/git-good/src/status_view.rs), `ignore_adds_the_pattern_and_names_it_in_the_footer` (apps/git-good/src/main.rs), `ignore_cli_adds_the_pattern_for_a_file_its_extension_or_folder` (apps/git-good/tests/cli.rs)
+
 ### CHG-17 Unstaging a staged rename restores both halves
 Fixture: `fx-dirty`
 Layer: product
@@ -4622,6 +4632,8 @@ Rules every area relies on, cases that span areas, and the CLI contract. Area ca
 17. **RULE-17 Targets never swap under a click.** New content shows when it arrives; the scroll position, selection and focus follow identity; a row that changes under a still pointer fades in over 0.25 s and refuses clicks for 0.3 s, and a click acts only on the row that was pressed (HIS-05, HIS-07, REV-06, REV-21, CHG-66).
 
 ## Cross-cutting scenarios
+
+### CLI-29 ignore — see CHG-77
 
 ### Restart during an operation
 

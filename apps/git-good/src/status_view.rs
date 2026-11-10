@@ -1240,6 +1240,26 @@ impl StatusView {
         self.reader.take_editor_request()
     }
 
+    /// Take the `.gitignore` pattern chosen with ⋯ › Ignore.
+    pub fn take_ignore_request(&mut self) -> Option<String> {
+        self.reader.take_ignore_request()
+    }
+
+    /// Select the Unstaged (or untracked) row of `path`, for the
+    /// documentation screenshots; false while it is not listed yet.
+    #[cfg(test)]
+    pub(crate) fn select_unstaged(&mut self, path: &[u8], ctx: &egui::Context) -> bool {
+        let Some(row) = self.lists[0]
+            .rows
+            .iter()
+            .find_map(|(row, entry)| (entry.path_bytes == path).then_some(*row))
+        else {
+            return false;
+        };
+        self.select_row(0, row, ctx);
+        true
+    }
+
     pub(crate) fn take_lfs_request(&mut self) -> Option<crate::diff_view::LfsRequest> {
         self.reader.take_lfs_request()
     }
@@ -3744,6 +3764,69 @@ mod tests {
         if view.lists[index].rows.contains_key(&0) {
             view.select_row(index, 0, ctx);
         }
+    }
+
+    /// CHG-77: ⋯ File actions on an untracked file offers Ignore this file,
+    /// Ignore all *.ext files and Ignore folder dir/; choosing one asks for
+    /// that `.gitignore` pattern. A tracked file has no Ignore rows.
+    #[test]
+    fn an_untracked_file_can_be_ignored_from_file_actions() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path();
+        git(path, &["init", "-q"])?;
+        git(path, &["config", "user.name", "Test"])?;
+        git(path, &["config", "user.email", "test@example.org"])?;
+        std::fs::write(path.join("a"), b"base\n")?;
+        git(path, &["add", "a"])?;
+        git(path, &["commit", "-qm", "base"])?;
+        std::fs::create_dir_all(path.join("logs"))?;
+        std::fs::write(path.join("logs/a.log"), b"noise\n")?;
+        let ctx = egui::Context::default();
+        let mut view = StatusView::new(path.into(), &ctx);
+        settle(&ctx, &mut view, 1120.0);
+        select_area(&mut view, &ctx, Area::Unstaged);
+        ready(&ctx, &mut view, 1120.0);
+        click_file_action(&ctx, &mut view, 1120.0, "Ignore all *.log files")?;
+        run(&ctx, &mut view, 1120.0, vec![]);
+        assert_eq!(view.take_ignore_request().as_deref(), Some("*.log"));
+
+        // The rows read the path; a tracked change has none.
+        let menu_rows = |view: &mut StatusView| -> Result<Vec<String>, Box<dyn std::error::Error>> {
+            let output = run(&ctx, view, 1120.0, vec![]);
+            let menu =
+                text_pos(&output, crate::phosphor::DOTS_THREE).ok_or("missing File actions")?;
+            click(&ctx, view, 1120.0, menu + egui::vec2(5.0, 0.0));
+            let output = run(&ctx, view, 1120.0, vec![]);
+            Ok(output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text)
+                        if text.galley.job.text.starts_with("Ignore") =>
+                    {
+                        Some(text.galley.job.text.clone())
+                    }
+                    _ => None,
+                })
+                .collect())
+        };
+        let rows = menu_rows(&mut view)?;
+        for label in [
+            "Ignore this file",
+            "Ignore all *.log files",
+            "Ignore folder logs/",
+        ] {
+            assert!(rows.iter().any(|row| row == label), "{label} in {rows:?}");
+        }
+        std::fs::remove_file(path.join("logs/a.log"))?;
+        std::fs::write(path.join("a"), b"changed\n")?;
+        let mut view = StatusView::new(path.into(), &ctx);
+        settle(&ctx, &mut view, 1120.0);
+        select_area(&mut view, &ctx, Area::Unstaged);
+        ready(&ctx, &mut view, 1120.0);
+        assert_eq!(menu_rows(&mut view)?, Vec::<String>::new(), "tracked");
+        Ok(())
     }
 
     #[test]

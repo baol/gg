@@ -3547,3 +3547,44 @@ fn reopening_a_commit_splits_it_in_two() -> Result {
     );
     Ok(())
 }
+
+/// CHG-77: `ignore FILE [--extension|--folder]` adds the pattern to the root
+/// `.gitignore` and reports it.
+#[test]
+fn ignore_cli_adds_the_pattern_for_a_file_its_extension_or_folder() -> Result {
+    let repo = tempfile::tempdir()?;
+    let p = repo.path();
+    init(p, &["-b", "main"])?;
+    std::fs::create_dir_all(p.join("logs"))?;
+    std::fs::write(p.join("logs/a.log"), b"x\n")?;
+    let binary = env!("CARGO_BIN_EXE_git-good");
+    let mut patterns = Vec::new();
+    for scope in [None, Some("--extension"), Some("--folder")] {
+        let mut command = cli(binary);
+        command.args(["ignore", "logs/a.log", "--repo"]).arg(p);
+        if let Some(scope) = scope {
+            command.arg(scope);
+        }
+        let out = command.output()?;
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let receipt: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+        assert_eq!(receipt["added"], true);
+        patterns.push(receipt["pattern"].as_str().unwrap_or_default().to_string());
+    }
+    assert_eq!(patterns, ["/logs/a.log", "*.log", "/logs/"]);
+    assert_eq!(
+        std::fs::read_to_string(p.join(".gitignore"))?,
+        "/logs/a.log\n*.log\n/logs/\n"
+    );
+    let root = cli(binary)
+        .args(["ignore", "top.txt", "--folder", "--repo"])
+        .arg(p)
+        .output()?;
+    assert_eq!(root.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&root.stderr).contains("repository root"));
+    Ok(())
+}

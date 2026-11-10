@@ -90,6 +90,20 @@ If the rebase stops on a conflict, the band names the step: **Resolve conflicts*
 
 **What it saves.** Without it, the old tip is somewhere in `git reflog feature/rate-limit`, and only until the reflog expires. Git Good's backups are refs with a timestamp and the operation in their name, kept until you delete them (or for the period set in Preferences › Rebase & recovery › Keep private backups).
 
+## Keep generated files out of commits
+
+**Situation.** Ada's test run leaves `logs/requests.log` behind, and it shows up in Local Changes every time.
+
+**In Git Good**
+
+1. Select `logs/requests.log` in **Unstaged** and open ⋯.
+2. Choose **Ignore all \*.log files**. The footer reads *Ignored \*.log · added to .gitignore*, and the log leaves the list.
+3. Stage `.gitignore` with its **+** and commit it, so the whole team ignores logs too.
+
+![File actions on an untracked log with the three Ignore choices](assets/screens/ignore.png){ .gg-shot }
+
+**What it saves.** Opening `.gitignore` in an editor, working out the pattern (and its escaping), then checking it with `git check-ignore`.
+
 ## Context switch in the middle of work
 
 **Situation.** Linus was tuning the rate limiter's burst size when an urgent fix came in.

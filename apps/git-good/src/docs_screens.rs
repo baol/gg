@@ -228,6 +228,35 @@ fn docs_screenshots() -> Result {
         settle(&mut harness, |_| true);
         save(&mut harness, &out, "recovery")?;
     }
+    if wanted("ignore") {
+        // An untracked log, and ⋯ File actions open on it.
+        std::fs::create_dir_all(api.join("logs"))?;
+        std::fs::write(api.join("logs/requests.log"), "GET /orders 200\n")?;
+        let mut harness = window(Some(&api), WIDE, dark);
+        let ctx = harness.ctx.clone();
+        harness.state_mut().open_working(&ctx);
+        settle(&mut harness, |app| {
+            app.working.as_ref().is_some_and(|working| !working.busy())
+        });
+        let started = Instant::now();
+        while !harness
+            .state_mut()
+            .working
+            .as_mut()
+            .is_some_and(|working| working.select_unstaged(b"logs/requests.log", &ctx))
+            && started.elapsed() < Duration::from_secs(30)
+        {
+            harness.step();
+        }
+        settle(&mut harness, |_| true);
+        {
+            use egui_kittest::kittest::Queryable;
+            harness.get_by_label(crate::phosphor::DOTS_THREE).click();
+        }
+        settle(&mut harness, |_| true);
+        save(&mut harness, &out, "ignore")?;
+        std::fs::remove_dir_all(api.join("logs"))?;
+    }
     for (name, pressed) in [("file-history", egui::Key::H), ("blame", egui::Key::B)] {
         if !wanted(name) {
             continue;

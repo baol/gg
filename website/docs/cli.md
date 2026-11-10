@@ -82,7 +82,7 @@ git good --cli commit -m "Import the orders module"
 | Area | Commands |
 |---|---|
 | Inspect | `history-tree`, `refs`, `show`, `status`, `reflog`, `blame`, `signature config`, `signature verify` |
-| Stage and commit | `stage`, `unstage`, `commit [--amend] [--sign]` |
+| Stage and commit | `stage`, `unstage`, `commit [--amend] [--sign]`, `ignore [--extension \| --folder]` |
 | Branches and tags | `switch [--create \| --stash]`, `branch --create \| --delete`, `tag --create \| --delete`, `reset --soft \| --mixed \| --hard` |
 | Sync | `fetch`, `push [--set-upstream] [--force-with-lease]`, `clone`, `init` |
 | Stash | `stash list \| push \| apply \| pop \| drop` |

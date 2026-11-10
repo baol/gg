@@ -26,6 +26,28 @@ In the example, `src/routes.rs` has two hunks: a new `use crate::orders;` import
 
 **Discard hunk** throws a hunk's working changes away after asking you to confirm.
 
+## Ignore what should never be committed
+
+Build output, logs and editor files show up as untracked (`?`) until Git is told to ignore them. Select one and open ⋯ (File actions):
+
+![File actions on the untracked logs/requests.log: Ignore this file, Ignore all *.log files and Ignore folder logs/ above Discard file](../assets/screens/ignore.png){ .gg-shot }
+
+| Choice | Pattern added | Ignores |
+|---|---|---|
+| **Ignore this file** | `/logs/requests.log` | only this file |
+| **Ignore all \*.log files** | `*.log` | every `.log` file, in any folder |
+| **Ignore folder logs/** | `/logs/` | the folder and everything in it |
+
+- The pattern goes into `.gitignore` at the repository root. Git Good creates the file if there is none, keeps every line already in it and never adds a pattern twice. Hover a choice to see its pattern first.
+- The footer names what was added (*Ignored \*.log · added to .gitignore*), and the ignored files leave the Unstaged list.
+- Patterns are anchored to the root and escape characters Git treats specially (`*`, `?`, `[`, `\`), so they ignore exactly what you picked, even for a file named `report [draft].txt`.
+- Rows that do not apply are left out: a file without an extension has no *Ignore all* row, and a file at the root has no folder row.
+- Ignoring never touches tracked files: Git keeps tracking a file it already has. To stop tracking one, delete it (or run `git rm --cached` on it) and commit.
+
+`.gitignore` is now a changed file itself. Stage and commit it so the rest of the team ignores the same files.
+
+From a script: `git good --cli ignore logs/requests.log --extension` (see [Scripting with the CLI](../cli.md)).
+
 ## Commit
 
 Write the message in the box under the diff (the first line is the subject) and press ++ctrl+enter++ or **Commit**.

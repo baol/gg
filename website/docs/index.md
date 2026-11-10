@@ -51,7 +51,7 @@ hide:
 
     ---
 
-    Stage a file, a hunk or one line. Unstaged and staged changes sit side by side, with the commit box under the diff.
+    Stage a file, a hunk or one line, and ignore build output in two clicks. Unstaged and staged changes sit side by side, with the commit box under the diff.
 
     [:octicons-arrow-right-24: Commit part of your work](workflows/commit.md)
 

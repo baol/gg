@@ -48,7 +48,10 @@ git good --cli signature verify REF [--repo PATH]
 git good --cli stage --file PATH [--hunk HEADER]... [--repo PATH]
 git good --cli unstage --file PATH [--repo PATH]
 git good --cli commit [--amend] [--sign|--no-sign] -m MESSAGE [--repo PATH]
+git good --cli ignore FILE [--extension|--folder] [--repo PATH]
 ```
+
+`ignore` adds the pattern that ignores the untracked FILE (`/FILE`), every file with its extension (`*.EXT`), or its folder (`/DIR/`) to `.gitignore` at the repository root, creating it when missing; the receipt is `{"operation":"ignore","pattern","file","added","complete":true}`, with `added` false when the file already held the pattern.
 
 `-m` is also `--message` (in `commit`, `tag`, and `stash push`), and `--sign` is also `-s` (in `commit` and `tag`).
 
