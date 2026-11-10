@@ -27,7 +27,7 @@ def target():
     return f"git-good-{arch}-{system}.tar.gz"
 
 
-def archive(version):
+def archive(version, owner=0):
     """A release archive whose git-good prints its version, like the real one."""
     data = io.BytesIO()
     script = f"#!/bin/sh\necho 'git-good {version}'\n".encode()
@@ -36,6 +36,7 @@ def archive(version):
             info = tarfile.TarInfo(name)
             info.size = len(body)
             info.mode = 0o755
+            info.uid = info.gid = owner
             tar.addfile(info, io.BytesIO(body))
     return data.getvalue()
 
@@ -90,6 +91,13 @@ class InstallScript(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("git-good 9.9.10", result.stdout)
         self.assertIn("Run it with: git good", result.stdout)
+
+    @unittest.skipUnless(os.geteuid() == 0, "only root keeps an archive's owner")
+    def test_the_installed_binary_belongs_to_whoever_installed_it(self):
+        self.publish(archive("9.9.9", owner=1001))
+        result, binary = self.install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(binary.stat().st_uid, os.geteuid())
 
     def test_a_download_that_does_not_match_its_checksum_installs_nothing(self):
         self.publish(archive("9.9.9"), digest="0" * 64)

@@ -80,7 +80,8 @@ actual="$(sha256 "$work/$name")"
     fail "the download does not match its checksum (expected $expected, got $actual); nothing was installed"
 
 mkdir -p "$work/archive"
-tar -xzf "$work/$name" -C "$work/archive"
+# As root, keep the files ours rather than the build machine's user.
+tar -xzf "$work/$name" -C "$work/archive" --no-same-owner
 [ -f "$work/archive/git-good" ] || fail "the archive holds no git-good"
 chmod 755 "$work/archive/git-good"
 mkdir -p "$dir"
