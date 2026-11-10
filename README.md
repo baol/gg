@@ -6,6 +6,8 @@ Purpose: introduce Git Good and explain installation and use.
 
 Linux, macOS and Windows, on x86_64 and Arm. Free and open source (Apache-2.0).
 
+[![GitHub stars](https://img.shields.io/github/stars/baol/gg?style=social)](https://github.com/baol/gg/stargazers) If Git Good saves you time, a [star on GitHub](https://github.com/baol/gg) helps other people find it.
+
 ```sh
 curl -fsSL https://raw.githubusercontent.com/baol/gg/main/scripts/install.sh | sh
 ```
@@ -30,7 +32,7 @@ Then run `git good` in any repository. More ways to install are [below](#install
 
 ![Folding a WIP commit into the one it fixes, starting the rebase, then the backup in Recovery](https://baol.github.io/gg/assets/screens/demo-rebase.gif)
 
-[Documentation](https://baol.github.io/gg/) · [Workflows](https://baol.github.io/gg/workflows/) · [Real use cases](https://baol.github.io/gg/use-cases/) · [How it was built](https://baol.github.io/gg/how-it-was-built/)
+[★ Star on GitHub](https://github.com/baol/gg) · [Documentation](https://baol.github.io/gg/) · [Workflows](https://baol.github.io/gg/workflows/) · [Real use cases](https://baol.github.io/gg/use-cases/) · [How it was built](https://baol.github.io/gg/how-it-was-built/)
 
 ## Install or update
 

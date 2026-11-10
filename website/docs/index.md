@@ -14,6 +14,7 @@ hide:
 
 [Get started](getting-started.md){ .md-button .md-button--primary }
 [See the workflows](workflows/index.md){ .md-button }
+[:octicons-star-16: Star on GitHub](https://github.com/baol/gg){ .md-button }
 
 </div>
 
@@ -155,4 +156,4 @@ The window follows your system theme and adapts to narrow windows: the sidebar f
 </div>
 
 [Install Git Good](getting-started.md){ .md-button .md-button--primary }
-[View on GitHub](https://github.com/baol/gg){ .md-button }
+[:octicons-star-16: Star on GitHub](https://github.com/baol/gg){ .md-button }

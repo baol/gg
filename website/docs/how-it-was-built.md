@@ -13,7 +13,7 @@ This page says how that is kept honest. Everything it names is in the [repositor
 
 Each behavior is written before it is built, in one owning document:
 
-- **[Acceptance scenarios](https://github.com/baol/gg/blob/main/docs/acceptance.md)**: 697 numbered Given / When / Then scenarios, each naming the tests that cover it.
+- **[Acceptance scenarios](https://github.com/baol/gg/blob/main/docs/acceptance.md)**: nearly 700 numbered Given / When / Then scenarios, each naming the tests that cover it.
 - **[Domain language](https://github.com/baol/gg/blob/main/docs/domain.md)**: one term for each thing the app shows, used the same way in the app, the specifications, this site and the CLI. That is why you read *History tree*, *Local Changes* and *Recovery* everywhere, and never two words for one thing.
 - **[Architecture](https://github.com/baol/gg/blob/main/docs/architecture.md)**: system boundaries and contracts, such as the one place every Git process starts.
 - **[Verification](https://github.com/baol/gg/blob/main/docs/verification.md)**: measured results, and checks that are still open.
@@ -22,7 +22,7 @@ A change that alters behavior updates its specification in the same commit.
 
 ## Tested where it runs
 
-- **1,067 tests**, many of them driving the real window offscreen: they press keys, click buttons by their accessible names and read what is on screen.
+- **Over 1,000 tests**, many of them driving the real window offscreen: they press keys, click buttons by their accessible names and read what is on screen.
 - **Six platforms on every change**: Linux, macOS and Windows, each on x86_64 and Arm.
 - **Fixture repositories** built by scripts for each Git situation the app handles: renames, merge conflicts, signed commits, submodules, LFS, a remote that was rewritten, and more. The pictures on this site are rendered from them by the same tests.
 
@@ -36,4 +36,4 @@ Rule 16 of the specification reads: *commands cost what Git costs*. A command fr
 
 ## Why say so
 
-You are trusting a Git client with your work, so you should know how it is made. The safeguards above are what we rely on, and they are what make an AI-written app worth trusting, or not. Read the specifications, run the tests, and [open an issue](https://github.com/baol/gg/issues) when something is wrong.
+You are trusting a Git client with your work, so you should know how it is made. The safeguards above are what we rely on, and they are what make an AI-written app worth trusting, or not. Read the specifications, run the tests, and [open an issue](https://github.com/baol/gg/issues) when something is wrong. If the approach is worth following, [star the repository](https://github.com/baol/gg).
