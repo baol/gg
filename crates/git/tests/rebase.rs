@@ -275,6 +275,7 @@ fn pull_leaves_out_commits_the_upstream_rewrote() -> Result {
     // Git Good's own Git process commits as the repository's user.
     git(&mine, &["config", "user.name", "Test"])?;
     git(&mine, &["config", "user.email", "test@example.org"])?;
+    git(&mine, &["config", "core.autocrlf", "false"])?;
     std::fs::write(mine.join("d"), b"mine\n")?;
     git(&mine, &["add", "d"])?;
     git(&mine, &["commit", "-qm", "my work"])?;

@@ -17489,6 +17489,7 @@ mod tests {
         // Git Good's own Git process commits as the repository's user.
         git_in(&mine, &["config", "user.name", "Test"])?;
         git_in(&mine, &["config", "user.email", "test@example.org"])?;
+        git_in(&mine, &["config", "core.autocrlf", "false"])?;
         std::fs::write(mine.join("d.txt"), b"mine\n")?;
         git_in(&mine, &["add", "."])?;
         git_in(&mine, &["commit", "-qm", "my work"])?;
