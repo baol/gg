@@ -2164,3 +2164,23 @@ fn validate_refuses_a_switch_to_another_branch_at_the_same_commit() -> Result {
     assert!(gg_git::status::validate(&identity).is_err());
     Ok(())
 }
+
+/// CHG-76: a working change to a file `.gitattributes` marks `binary`
+/// compares as binary content in Local Changes, as `git diff` reports it.
+#[test]
+fn gitattributes_binary_files_compare_as_binary_in_local_changes() -> Result {
+    let dir = tempfile::tempdir()?;
+    let p = dir.path();
+    git(p, &["init", "-b", "main"])?;
+    git(p, &["config", "user.name", "Test"])?;
+    git(p, &["config", "user.email", "test@example.org"])?;
+    std::fs::write(p.join(".gitattributes"), b"*.dat binary\n")?;
+    std::fs::write(p.join("data.dat"), b"plain text v1\n")?;
+    git(p, &["add", "."])?;
+    git(p, &["commit", "-qm", "base"])?;
+    std::fs::write(p.join("data.dat"), b"plain text v2\n")?;
+    let diff = gg_git::working_diff::read(&request(p, b"data.dat", Area::Unstaged)?, || false)?;
+    assert_eq!(diff.kind, gg_engine::diff::DiffKind::Binary);
+    assert!(diff.note.ends_with("Binary content (.gitattributes)"), "{}", diff.note);
+    Ok(())
+}

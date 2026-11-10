@@ -82,6 +82,15 @@ pub fn read_with(
                 "Text budget: 2 MiB per side",
             ));
         }
+        // REV-81: `-diff` or `binary` in `.gitattributes`, as `git diff`.
+        if crate::attributes::DiffAttributes::open(&repo)?.binary(&repo, &change.path_bytes)? {
+            return Ok(FileDiff::summary(
+                DiffKind::Binary,
+                old_size,
+                new_size,
+                crate::attributes::NOTE,
+            ));
+        }
         let bytes = |side: &Option<FileSide>| -> Result<Vec<u8>, Box<dyn std::error::Error>> {
             if cancelled() {
                 return Err("Comparison cancelled".into());

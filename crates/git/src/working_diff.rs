@@ -157,7 +157,19 @@ fn read_inner(
             after = normalized;
         }
         check()?;
-        let mut diff = diff::compare_with(&before, &after, options, cancelled)?;
+        // CHG-76: `-diff` or `binary` in `.gitattributes`, as `git diff`.
+        let mut diff = if crate::attributes::DiffAttributes::open(&repo)?
+            .binary(&repo, &request.entry.path_bytes)?
+        {
+            diff::FileDiff::summary(
+                diff::DiffKind::Binary,
+                before.len() as u64,
+                after.len() as u64,
+                crate::attributes::NOTE,
+            )
+        } else {
+            diff::compare_with(&before, &after, options, cancelled)?
+        };
         if let (Some(old), Some(new_mode)) = (&index_side, effective_mode)
             && old.mode != new_mode
         {

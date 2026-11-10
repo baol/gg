@@ -57,6 +57,7 @@ Every fixture is a disposable directory built from scratch by a script with fixe
 | `fx-merge-conflict-multi` | `main` and `side` both edit `src/many.rs` in three regions; `git merge side` stopped with three conflict blocks in one file. |
 | `fx-remote-rewritten` | A bare `origin.git`, a clone `theirs`, and a clone `mine` whose `main` holds `my work` on top of `add a · add b · add c`; `theirs` then replaced `add c` with `add c (rewritten)` and force-pushed, and `mine` fetched (Pro Git 3.6, *The Perils of Rebasing*). |
 | `fx-merge-revert` | `main` with `topic` (`topic t`, `topic t2`, adding files `t` and `t2`) merged by the merge commit `Merge branch 'topic'` after `main` gained `main c` (file `c`) (Pro Git 7.8, *Undoing Merges*). |
+| `fx-attributes` | `.gitattributes` with `*.dat binary` and `*.min.js -diff`; text files `data.dat`, `app.min.js` and `note.txt`, all three changed by the last commit (Pro Git 8.2, *Identifying Binary Files*). |
 | `fx-rebase-local` | `fx-rebase` on a branch without an upstream (the post-rewrite follow-up falls back to **Recovery…**). |
 | `fx-signed-bad` | `fx-signed` plus a commit whose signed payload was altered so verification reports bad. |
 | `fx-lfs-image` | `fx-lfs` plus a small PNG and an object over 2 MiB tracked by LFS, and a malformed pointer `bad.psd`. |
@@ -1663,6 +1664,14 @@ Layer: product
 - Then the header reads `Ada Lovelace · 2026-04-16 09:30`
 Covered by (interaction): `file_history_shows_each_version_date_and_the_selected_author` (apps/git-good/src/main.rs)
 
+### REV-81 Files `.gitattributes` marks binary review as binary
+Fixture: `fx-attributes`
+Layer: product
+- Given `.gitattributes` holds `*.dat binary` and `*.min.js -diff` (Pro Git 8.2, *Identifying Binary Files*)
+- When the commit changing `data.dat`, `app.min.js` and `note.txt` is reviewed
+- Then `data.dat` and `app.min.js` show *Binary content (.gitattributes)* with no text rows and count no lines, as `git diff` (`Binary files … differ`) and `git show --numstat` (`-  -`) report them; `note.txt` keeps its text diff; attributes are read in process from the worktree's attribute files (the index's in a bare repository), `info/attributes` and `core.attributesFile`, with no Git process
+Covered by (backend): `gitattributes_binary_and_no_diff_files_review_as_binary` (crates/git/tests/review_special.rs)
+
 ### REV-59 Version boundaries never wrap
 Fixture: `fx-file-history`
 Layer: interaction
@@ -1926,6 +1935,13 @@ Layer: interaction
 - And each side names where it comes from with its dimensions and size: untracked `Before absent` · `After working · 5 × 5`; unstaged `Before index` · `After working`; staged `Before HEAD` · `After index`
 - And the working side is the file as it is on disk, within the 16 MiB preview budget
 Covered by (interaction): `an_untracked_and_a_modified_image_show_their_pictures` (apps/git-good/src/status_view.rs)
+
+### CHG-76 Files `.gitattributes` marks binary compare as binary in Local Changes
+Fixture: `fx-attributes` with an unstaged edit to `data.dat`
+Layer: product
+- When `data.dat` is selected in Unstaged
+- Then the reader shows *Binary content (.gitattributes)* after the working-snapshot note, with no hunks or lines to stage, as `git diff` reports it (REV-81)
+Covered by (backend): `gitattributes_binary_files_compare_as_binary_in_local_changes` (crates/git/tests/status.rs)
 
 ### CHG-17 Unstaging a staged rename restores both halves
 Fixture: `fx-dirty`
