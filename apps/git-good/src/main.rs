@@ -4195,7 +4195,7 @@ impl Browser {
                     }
                     let started = match self.prefs.pull_strategy {
                         settings::PullStrategy::Rebase => {
-                            self.start_rebase(ctx, &pull.upstream, false)
+                            self.start_pull_rebase_onto(ctx, &pull.upstream)
                         }
                         settings::PullStrategy::Merge => {
                             self.start_merge(ctx, &pull.upstream, false)
@@ -9054,6 +9054,30 @@ impl Browser {
         self.rebase_target = Some(reference.clone());
         let started = self.start_operation(ctx, label, move || {
             gg_git::rebase::rebase(&path, &reference, autostash)
+                .map(|receipt| OperationOutcome::Rebase(receipt, branch))
+        });
+        if started.is_err() {
+            self.rebase_target = None;
+        }
+        started
+    }
+
+    /// Pull (rebase)'s integration step: `git rebase --fork-point`, as
+    /// `git pull --rebase` runs it (NET-39).
+    fn start_pull_rebase_onto(
+        &mut self,
+        ctx: &egui::Context,
+        upstream: &str,
+    ) -> Result<(), String> {
+        let path = self
+            .stash_path()
+            .ok_or("Open a repository before pulling.")?;
+        let reference = upstream.to_string();
+        let branch = self.current_branch_name();
+        let label = format!("Rebasing {branch} onto {reference}…");
+        self.rebase_target = Some(reference.clone());
+        let started = self.start_operation(ctx, label, move || {
+            gg_git::rebase::pull(&path, &reference, false)
                 .map(|receipt| OperationOutcome::Rebase(receipt, branch))
         });
         if started.is_err() {
@@ -17387,6 +17411,99 @@ mod tests {
             "notice={:?} error={:?}",
             app.mutation_notice,
             app.mutation_error
+        );
+        Ok(())
+    }
+
+    /// NET-39: Pro Git 3.6, "Rebase When You Rebase". The upstream was
+    /// rewritten and force-pushed after the user built on it; Pull (rebase)
+    /// replays only the user's own commit, as `git pull --rebase` does.
+    #[test]
+    fn pull_after_the_upstream_was_rewritten_replays_only_your_commits()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let origin = dir.path().join("origin.git");
+        let theirs = dir.path().join("theirs");
+        let mine = dir.path().join("mine");
+        git_in(
+            dir.path(),
+            &["init", "-q", "--bare", "-b", "main", "origin.git"],
+        )?;
+        git_in(dir.path(), &["init", "-q", "-b", "main", "theirs"])?;
+        git_in(
+            &theirs,
+            &["remote", "add", "origin", &origin.display().to_string()],
+        )?;
+        for name in ["a", "b", "c"] {
+            std::fs::write(theirs.join(format!("{name}.txt")), format!("{name} v1\n"))?;
+            git_in(&theirs, &["add", "."])?;
+            git_in(&theirs, &["commit", "-qm", &format!("add {name}")])?;
+        }
+        git_in(&theirs, &["push", "-q", "-u", "origin", "main"])?;
+        git_in(
+            dir.path(),
+            &["clone", "-q", &origin.display().to_string(), "mine"],
+        )?;
+        std::fs::write(mine.join("d.txt"), b"mine\n")?;
+        git_in(&mine, &["add", "."])?;
+        git_in(&mine, &["commit", "-qm", "my work"])?;
+        // Upstream rewrites `add c` and force-pushes it.
+        git_in(&theirs, &["reset", "-q", "--hard", "HEAD~1"])?;
+        std::fs::write(theirs.join("c.txt"), b"c v2 rewritten\n")?;
+        git_in(&theirs, &["add", "."])?;
+        git_in(&theirs, &["commit", "-qm", "add c (rewritten)"])?;
+        git_in(&theirs, &["push", "-q", "-f", "origin", "main"])?;
+        // Pull's fetch step.
+        git_in(&mine, &["fetch", "-q", "origin"])?;
+
+        let ctx = egui::Context::default();
+        let mut app = Browser::new(mine.clone());
+        app.state.history = Some(History {
+            path: mine.clone(),
+            head: "main".into(),
+            truncated: false,
+            shallow: false,
+            commits: Vec::new(),
+        });
+        app.pull_rebase = Some(PullRebase {
+            path: mine.clone(),
+            branch: "refs/heads/main".into(),
+            remote: "origin".into(),
+            upstream: "refs/remotes/origin/main".into(),
+            upstream_label: "origin/main".into(),
+        });
+        app.finish_network(
+            &ctx,
+            Ok(network::Outcome::Pull {
+                fetch: gg_engine::sync::FetchReceipt {
+                    remote: "origin".into(),
+                    pruned: false,
+                },
+                relation: Some(gg_engine::sync::UpstreamRelation::Diverged),
+            }),
+            Some(gg_engine::sync::Operation::Fetch),
+        );
+        for _ in 0..2000 {
+            let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            if !app.operation_busy() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(!app.operation_busy());
+        assert_eq!(
+            git_in(&mine, &["log", "--format=%s"])?,
+            "my work\nadd c (rewritten)\nadd b\nadd a",
+            "notice={:?} error={:?}",
+            app.mutation_notice,
+            app.mutation_error
+        );
+        assert_eq!(
+            git_in(&mine, &["status", "--porcelain"])?,
+            "",
+            "no conflict left"
         );
         Ok(())
     }

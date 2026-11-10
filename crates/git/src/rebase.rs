@@ -7,6 +7,22 @@ use std::{
 };
 
 pub fn rebase(path: &Path, reference: &str, autostash: bool) -> Result<Receipt, String> {
+    rebase_with(path, reference, autostash, false)
+}
+
+/// Pull (rebase): rebase onto the fetched upstream as `git pull --rebase`
+/// does, with `--fork-point`, so commits the upstream rewrote or dropped
+/// after the branch was built on them are left out instead of replayed.
+pub fn pull(path: &Path, upstream: &str, autostash: bool) -> Result<Receipt, String> {
+    rebase_with(path, upstream, autostash, true)
+}
+
+fn rebase_with(
+    path: &Path,
+    reference: &str,
+    autostash: bool,
+    fork_point: bool,
+) -> Result<Receipt, String> {
     let reference = reference.trim();
     if reference.is_empty() || reference.starts_with('-') || reference.contains('\0') {
         return Err("Rebase reference must not start with '-'.".into());
@@ -29,6 +45,9 @@ pub fn rebase(path: &Path, reference: &str, autostash: bool) -> Result<Receipt, 
     } else {
         "--no-autostash".into()
     });
+    if fork_point {
+        args.push("--fork-point".into());
+    }
     args.push(reference.to_string());
     let output = run(path, &args)?;
     let conflicts = unmerged(path)?;

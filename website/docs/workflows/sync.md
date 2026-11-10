@@ -25,7 +25,7 @@ If your working changes would be overwritten, the switch stops before changing a
 | Button | Key | Does |
 |---|---|---|
 | Fetch | ++ctrl+shift+f++ | Updates remote branches. Your branches and files are not touched. |
-| Pull | ++ctrl+shift+l++ | Fetches and integrates the upstream: rebase by default; merge or fast-forward only in Preferences › Rebase & recovery. |
+| Pull | ++ctrl+shift+l++ | Fetches and integrates the upstream: rebase by default, like `git pull --rebase` (commits the upstream rewrote after you built on them are left out); merge or fast-forward only in Preferences › Rebase & recovery. |
 | Push | ++ctrl+shift+p++ | Pushes the current branch, setting its upstream on the first push. |
 
 Progress shows in the footer, and a long transfer can be cancelled. A rejected push explains why and offers **Fetch**, so you can look at the new commits before integrating them. Git Good never fetches, merges or rebases on its own.

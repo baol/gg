@@ -55,6 +55,7 @@ Every fixture is a disposable directory built from scratch by a script with fixe
 | `fx-remote-auth` | `fx-remote-even` with `origin` at a local HTTP server that answers 401, URL carrying `ada:s3cret@`; no credential helper. |
 | `fx-remote-slow` | `fx-remote-even` whose `origin` is reached through a `GIT_SSH_COMMAND` wrapper that prints progress then sleeps 30 s (cancel and serialization). |
 | `fx-merge-conflict-multi` | `main` and `side` both edit `src/many.rs` in three regions; `git merge side` stopped with three conflict blocks in one file. |
+| `fx-remote-rewritten` | A bare `origin.git`, a clone `theirs`, and a clone `mine` whose `main` holds `my work` on top of `add a · add b · add c`; `theirs` then replaced `add c` with `add c (rewritten)` and force-pushed, and `mine` fetched (Pro Git 3.6, *The Perils of Rebasing*). |
 | `fx-rebase-local` | `fx-rebase` on a branch without an upstream (the post-rewrite follow-up falls back to **Recovery…**). |
 | `fx-signed-bad` | `fx-signed` plus a commit whose signed payload was altered so verification reports bad. |
 | `fx-lfs-image` | `fx-lfs` plus a small PNG and an object over 2 MiB tracked by LFS, and a malformed pointer `bad.psd`. |
@@ -2476,7 +2477,7 @@ Covered by (interaction, partial): `pull_is_ready_whenever_the_current_branch_ha
 Fixture: `fx-remote`
 Layer: product
 - When **Repository → Pull (rebase)** runs
-- Then Git fetches `origin`, then Git Good reads `main` against `origin/main` from local refs and, because it is behind, rebases `main` onto `origin/main` on the operation worker: 2 local commits now sit above the 3 remote ones; the History tree refreshes once
+- Then Git fetches `origin`, then Git Good reads `main` against `origin/main` from local refs and, because it is behind, rebases `main` onto `origin/main` with `--fork-point` (as `git pull --rebase`; NET-39) on the operation worker: 2 local commits now sit above the 3 remote ones; the History tree refreshes once
 Covered by (backend, partial): `upstream_relation_reads_local_refs_only` (crates/git/tests/sync.rs), `upstream_relation_follows_ahead_and_behind_counts` (crates/engine/src/sync.rs) (relation only; the GUI fetch-then-rebase is Not automated)
 
 ### NET-18 Pull strategy Merge and Fast-forward only
@@ -2487,6 +2488,14 @@ Layer: product
 - Then the menu/toolbar read `Pull (merge)` and a merge commit joins `main` and `origin/main`
 - And with **Fast-forward only** (`Pull (fast-forward)`) on the diverged `main`, Pull refuses with nothing changed; on a branch only behind it fast-forwards
 Covered by (backend, partial): `fast_forward_only_moves_or_refuses_without_merging` (crates/git/tests/merge.rs); GUI path not automated
+
+### NET-39 Pull (rebase) after the upstream was rewritten
+Fixture: `fx-remote-rewritten`
+Layer: product
+- Given `main` holds `my work` on top of `add c`, and the upstream has since replaced `add c` with `add c (rewritten)` and force-pushed (Pro Git 3.6, *The Perils of Rebasing* and *Rebase When You Rebase*)
+- When **Pull (rebase)** runs
+- Then, as `git pull --rebase` does, Git Good rebases with `--fork-point`: `main` is `add a · add b · add c (rewritten) · my work`, the old `add c` is not replayed, and no conflict stops the rebase
+Covered by (backend, interaction): `pull_leaves_out_commits_the_upstream_rewrote` (crates/git/tests/rebase.rs), `pull_after_the_upstream_was_rewritten_replays_only_your_commits` (apps/git-good/src/main.rs)
 
 ### NET-19 Push of a branch without upstream sets the upstream after success
 Fixture: `fx-remote`, HEAD switched to `local-only`
