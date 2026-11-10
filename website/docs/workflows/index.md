@@ -12,6 +12,7 @@ Each guide follows one task from start to finish on the same example project: **
 | Find a commit, a branch or who changed what | [Find your way in the History tree](history.md) |
 | Read what a commit changed, file by file | [Review a commit](review.md) |
 | Stage files, hunks or single lines and commit | [Commit part of your work](commit.md) |
+| Keep logs and build output out of Git | [Ignore what should never be committed](commit.md#ignore-what-should-never-be-committed) |
 | Switch and create branches, fetch, pull and push | [Branches, fetch, pull and push](sync.md) |
 | Put work aside and bring it back | [Park work in a stash](stash.md) |
 | Reword, squash, fixup, drop and reorder commits | [Clean up with interactive rebase](rebase.md) |

@@ -1245,6 +1245,21 @@ impl StatusView {
         self.reader.take_ignore_request()
     }
 
+    /// Select the Unstaged (or untracked) row of `path`, for the
+    /// documentation screenshots; false while it is not listed yet.
+    #[cfg(test)]
+    pub(crate) fn select_unstaged(&mut self, path: &[u8], ctx: &egui::Context) -> bool {
+        let Some(row) = self.lists[0]
+            .rows
+            .iter()
+            .find_map(|(row, entry)| (entry.path_bytes == path).then_some(*row))
+        else {
+            return false;
+        };
+        self.select_row(0, row, ctx);
+        true
+    }
+
     pub(crate) fn take_lfs_request(&mut self) -> Option<crate::diff_view::LfsRequest> {
         self.reader.take_lfs_request()
     }
