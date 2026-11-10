@@ -9,25 +9,40 @@ Git Good is a single binary, `git-good`. Put it on your `PATH` and Git runs it f
 
 ## Install
 
-=== "Prebuilt binary"
+=== "Linux and macOS"
 
-    1. Download the archive for your platform from [GitHub Releases](https://github.com/baol/gg/releases). Builds cover Linux, macOS and Windows, each on `x86_64` and `arm64`.
+    ```sh
+    curl -fsSL https://raw.githubusercontent.com/baol/gg/main/scripts/install.sh | sh
+    ```
+
+    The script picks the build for your system and processor (`x86_64` or `arm64`, Apple silicon included), checks it against its published SHA-256 and puts `git-good` in `~/.local/bin`. If that folder is not on your `PATH` yet, it prints the line to add. Run it again to update.
+
+=== "Windows"
+
+    In PowerShell:
+
+    ```powershell
+    irm https://raw.githubusercontent.com/baol/gg/main/scripts/install.ps1 | iex
+    ```
+
+    The script picks the `x86_64` or `arm64` build, checks it against its SHA-256, puts `git-good.exe` in `%LOCALAPPDATA%\Programs\git-good` and adds that folder to your user `PATH`; open a new terminal afterwards. Run it again to update.
+
+=== "Cargo"
+
+    The prebuilt binary through [cargo-binstall](https://github.com/cargo-bins/cargo-binstall), or a build from source (Rust 1.95 or newer):
+
+    ```sh
+    cargo binstall git-good
+    cargo install git-good --locked
+    ```
+
+=== "By hand"
+
+    1. Download the archive for your platform from [GitHub Releases](https://github.com/baol/gg/releases). Builds cover Linux, macOS and Windows, each on `x86_64` and `arm64`; each has a `.sha256` file beside it.
     2. Extract `git-good` (`git-good.exe` on Windows) into a folder on your `PATH`, such as `~/.local/bin`.
     3. To update, replace the binary with the new release.
 
-    ```sh
-    # Linux / macOS (replace TARGET with your platform's archive name)
-    curl -L https://github.com/baol/gg/releases/latest/download/git-good-TARGET.tar.gz \
-      | tar -xz -C ~/.local/bin git-good
-    ```
-
-=== "From source"
-
-    You need Rust 1.95 or newer. Run the same command again to update.
-
-    ```sh
-    cargo install --git https://github.com/baol/gg git-good --locked --force
-    ```
+Both scripts install nothing when the download does not match its checksum. `GG_VERSION=0.1.90` installs a given release, and `GG_INSTALL_DIR` another folder. You can read them first: [install.sh](https://github.com/baol/gg/blob/main/scripts/install.sh), [install.ps1](https://github.com/baol/gg/blob/main/scripts/install.ps1).
 
 Git Good runs the `git` on your `PATH`, so your configuration, hooks, credential helpers and signing setup all apply. Commit hooks need Git 2.36 or newer.
 

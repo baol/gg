@@ -5,6 +5,12 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 rust-version.workspace = true
+description = "A fast, native Git desktop app: History tree, review, line staging, interactive rebase and Recovery, running your own git"
+repository.workspace = true
+homepage.workspace = true
+readme = "../../README.md"
+keywords = ["git", "gui", "desktop", "egui", "version-control"]
+categories = ["development-tools", "gui"]
 [dependencies]
 serde.workspace = true
 gg-engine.workspace = true
@@ -46,3 +52,17 @@ inotify = { version = "0.11", default-features = false }
 
 [target.'cfg(not(target_os = "linux"))'.dependencies]
 notify = "8"
+
+# `cargo binstall git-good` installs the release archive instead of building.
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/git-good-{ target }.tar.gz"
+pkg-fmt = "tgz"
+bin-dir = "{ bin }{ binary-ext }"
+
+[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
+pkg-url = "{ repo }/releases/download/v{ version }/git-good-{ target }.zip"
+pkg-fmt = "zip"
+
+[package.metadata.binstall.overrides.aarch64-pc-windows-msvc]
+pkg-url = "{ repo }/releases/download/v{ version }/git-good-{ target }.zip"
+pkg-fmt = "zip"

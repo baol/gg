@@ -5,6 +5,11 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 rust-version.workspace = true
+description = "The Git layer of Git Good: reads repositories with gix and runs git for every change"
+repository.workspace = true
+homepage.workspace = true
+keywords = ["git", "git-good"]
+categories = ["development-tools"]
 [dependencies]
 gg-engine.workspace = true
 sha2 = "0.11"

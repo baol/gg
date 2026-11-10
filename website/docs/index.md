@@ -17,6 +17,19 @@ hide:
 
 </div>
 
+=== "Linux and macOS"
+
+    ```sh
+    curl -fsSL https://raw.githubusercontent.com/baol/gg/main/scripts/install.sh | sh
+    ```
+
+=== "Windows"
+
+    ```powershell
+    irm https://raw.githubusercontent.com/baol/gg/main/scripts/install.ps1 | iex
+    ```
+
+
 ![Git Good showing the History tree of a web service: a commit graph with branches, tags and a merge, the refs sidebar, and the details of the selected commit](assets/screens/history.png){ .gg-shot }
 
 <div class="gg-stats" markdown>

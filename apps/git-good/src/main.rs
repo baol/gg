@@ -22549,7 +22549,12 @@ mod tests {
             &ctx,
             &mut app,
             vec![key(egui::Key::H, egui::Modifiers::NONE)],
-            |_, text| text.iter().any(|line| line == "FILE HISTORY 2"),
+            // The header names the selected version once its comparison has
+            // loaded, a few frames after the list (slow on CI's Intel Macs).
+            |_, text| {
+                text.iter().any(|line| line == "FILE HISTORY 2")
+                    && text.iter().any(|line| line.contains("Grace Hopper · "))
+            },
         )?;
         // Each row names its full date, in the author's time zone, as the
         // History tree does.

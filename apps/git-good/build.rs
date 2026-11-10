@@ -2,15 +2,33 @@
 use std::process::Command;
 
 fn main() {
-    let commit = Command::new("git")
-        .args(["rev-parse", "--short=8", "HEAD"])
-        .output()
+    // A crate built from crates.io is no checkout; cargo records the commit
+    // it was published from in .cargo_vcs_info.json.
+    let published = std::fs::read_to_string(".cargo_vcs_info.json")
         .ok()
-        .filter(|output| output.status.success())
-        .and_then(|output| String::from_utf8(output.stdout).ok())
-        .map(|commit| commit.trim().to_string())
-        .filter(|commit| !commit.is_empty())
-        .unwrap_or_else(|| "unknown".into());
+        .and_then(|info| {
+            let start = info.find("\"sha1\"")?;
+            let rest = &info[start + 6..];
+            let rest = &rest[rest.find('"')? + 1..];
+            Some(
+                rest.chars()
+                    .take_while(char::is_ascii_hexdigit)
+                    .take(8)
+                    .collect::<String>(),
+            )
+        })
+        .filter(|commit| commit.len() == 8);
+    let commit = published.unwrap_or_else(|| {
+        Command::new("git")
+            .args(["rev-parse", "--short=8", "HEAD"])
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .and_then(|output| String::from_utf8(output.stdout).ok())
+            .map(|commit| commit.trim().to_string())
+            .filter(|commit| !commit.is_empty())
+            .unwrap_or_else(|| "unknown".into())
+    });
     // Reproducible builds pin the date; otherwise it is today (UTC).
     let seconds = std::env::var("SOURCE_DATE_EPOCH")
         .ok()

@@ -5,6 +5,11 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 rust-version.workspace = true
+description = "The model of Git Good: diffs, review, status and operation receipts, independent of Git and the UI"
+repository.workspace = true
+homepage.workspace = true
+keywords = ["git", "git-good"]
+categories = ["development-tools"]
 [dependencies]
 serde.workspace = true
 similar = "2.7"

@@ -45,7 +45,11 @@ class VersionTests(unittest.TestCase):
                 shutil.copyfile(source / name, target)
             before = tomllib.loads((root / 'Cargo.lock').read_text())
             apply(root, '0.3.7')
-            self.assertEqual(tomllib.loads((root / 'Cargo.toml').read_text())['workspace']['package']['version'], '0.3.7')
+            workspace = tomllib.loads((root / 'Cargo.toml').read_text())['workspace']
+            self.assertEqual(workspace['package']['version'], '0.3.7')
+            # The published crates depend on the same release of each other.
+            for name in ['gg-engine', 'gg-git']:
+                self.assertEqual(workspace['dependencies'][name]['version'], '=0.3.7')
             after = tomllib.loads((root / 'Cargo.lock').read_text())
             local = {'gg-engine', 'gg-git', 'git-good'}
             for old, new in zip(before['package'], after['package'], strict=True):
