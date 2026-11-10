@@ -236,7 +236,7 @@ const COMMANDS: &[(&str, &str)] = &[
     ),
     (
         "rebase",
-        "REF [--autostash] [--repo PATH] | --continue|--skip|--abort [--repo PATH]   Rebase onto a ref, or recover an in-progress rebase",
+        "REF [--leave-out REF] [--autostash] [--repo PATH] | --continue|--skip|--abort [--repo PATH]   Rebase onto a ref (leaving out the commits shared with another), or recover an in-progress rebase",
     ),
     (
         "rewrite",
@@ -1489,6 +1489,9 @@ struct MergeDialog {
 
 struct RebaseDialog {
     reference: String,
+    /// Optional: leave out the commits the branch shares with this ref
+    /// (`git rebase --onto <reference> <leave_out>`).
+    leave_out: String,
     autostash: bool,
     error: Option<String>,
 }
@@ -2391,7 +2394,9 @@ struct Browser {
     operation_restore_row: Option<usize>,
     merge_dialog: Option<MergeDialog>,
     rebase_dialog: Option<RebaseDialog>,
-    rebase_target: Option<String>,
+    /// The reference and leave-out ref of the rebase running, to reopen
+    /// the dialog when a dirty tree stops it.
+    rebase_target: Option<(String, String)>,
     stash_switch: Option<StashSwitchDialog>,
     pull_rebase: Option<PullRebase>,
     rewrite_dialog: Option<rebase_dialog::Dialog>,
@@ -4464,6 +4469,7 @@ impl Browser {
             FrameCommand::RebaseOnto => {
                 self.rebase_dialog = Some(RebaseDialog {
                     reference: String::new(),
+                    leave_out: String::new(),
                     autostash: self.prefs.rebase_autostash,
                     error: None,
                 });
@@ -5368,6 +5374,7 @@ impl Browser {
             refs_view::Action::Rebase(name) => {
                 self.rebase_dialog = Some(RebaseDialog {
                     reference: name,
+                    leave_out: String::new(),
                     autostash: self.prefs.rebase_autostash,
                     error: None,
                 });
@@ -8781,11 +8788,12 @@ impl Browser {
                     Err(error) => {
                         self.operation_restore_row = None;
                         self.mutation_notice = None;
-                        if let Some(target) = self.rebase_target.take()
+                        if let Some((target, leave_out)) = self.rebase_target.take()
                             && gg_git::dirty_tree_error(&error)
                         {
                             self.rebase_dialog = Some(RebaseDialog {
                                 reference: target,
+                                leave_out,
                                 autostash: true,
                                 error: Some(
                                     "Working tree is not clean. Autostash is enabled: submit Rebase to stash the changes and continue."
@@ -9042,22 +9050,34 @@ impl Browser {
         })
     }
 
+    /// Rebase the current branch onto `reference`; with a non-empty
+    /// `leave_out`, leave out the commits it shares with that ref (RWR-80).
     fn start_rebase(
         &mut self,
         ctx: &egui::Context,
         reference: &str,
+        leave_out: &str,
         autostash: bool,
     ) -> Result<(), String> {
         let path = self
             .stash_path()
             .ok_or("Open a repository before rebasing.")?;
         let reference = reference.to_string();
+        let leave_out = leave_out.trim().to_string();
         let branch = self.current_branch_name();
-        let label = format!("Rebasing {branch} onto {reference}…");
-        self.rebase_target = Some(reference.clone());
+        let label = if leave_out.is_empty() {
+            format!("Rebasing {branch} onto {reference}…")
+        } else {
+            format!("Rebasing {branch} onto {reference}, leaving out {leave_out}…")
+        };
+        self.rebase_target = Some((reference.clone(), leave_out.clone()));
         let started = self.start_operation(ctx, label, move || {
-            gg_git::rebase::rebase(&path, &reference, autostash)
-                .map(|receipt| OperationOutcome::Rebase(receipt, branch))
+            if leave_out.is_empty() {
+                gg_git::rebase::rebase(&path, &reference, autostash)
+            } else {
+                gg_git::rebase::rebase_onto(&path, &reference, &leave_out, autostash)
+            }
+            .map(|receipt| OperationOutcome::Rebase(receipt, branch))
         });
         if started.is_err() {
             self.rebase_target = None;
@@ -9078,7 +9098,7 @@ impl Browser {
         let reference = upstream.to_string();
         let branch = self.current_branch_name();
         let label = format!("Rebasing {branch} onto {reference}…");
-        self.rebase_target = Some(reference.clone());
+        self.rebase_target = Some((reference.clone(), String::new()));
         let started = self.start_operation(ctx, label, move || {
             gg_git::rebase::pull(&path, &reference, false)
                 .map(|receipt| OperationOutcome::Rebase(receipt, branch))
@@ -13635,6 +13655,13 @@ impl Browser {
                             .hint_text("origin/main, main, or v1.0")
                             .desired_width(f32::INFINITY),
                     );
+                    ui.add_space(4.0);
+                    ui.label("Leave out commits from (optional)");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut dialog.leave_out)
+                            .hint_text("server: its commits stay where they are")
+                            .desired_width(f32::INFINITY),
+                    );
                     ui.checkbox(
                         &mut dialog.autostash,
                         "Automatically stash working changes",
@@ -13654,8 +13681,11 @@ impl Browser {
                             )
                             .clicked()
                         {
-                            rebase_submit =
-                                Some((dialog.reference.trim().to_string(), dialog.autostash));
+                            rebase_submit = Some((
+                                dialog.reference.trim().to_string(),
+                                dialog.leave_out.trim().to_string(),
+                                dialog.autostash,
+                            ));
                         }
                         if ui.add(inspect_ui::secondary("Cancel", "Esc")).clicked() {
                             cancelled = true;
@@ -13668,8 +13698,11 @@ impl Browser {
                         !dialog.reference.trim().is_empty(),
                     );
                     if keys.submit {
-                        rebase_submit =
-                            Some((dialog.reference.trim().to_string(), dialog.autostash));
+                        rebase_submit = Some((
+                            dialog.reference.trim().to_string(),
+                            dialog.leave_out.trim().to_string(),
+                            dialog.autostash,
+                        ));
                     }
                     cancelled |= keys.cancel;
                 });
@@ -13677,8 +13710,8 @@ impl Browser {
                 rebase_open = false;
             }
         }
-        if let Some((reference, autostash)) = rebase_submit {
-            match self.start_rebase(ctx, &reference, autostash) {
+        if let Some((reference, leave_out, autostash)) = rebase_submit {
+            match self.start_rebase(ctx, &reference, &leave_out, autostash) {
                 Ok(()) => self.rebase_dialog = None,
                 Err(error) => {
                     if let Some(dialog) = &mut self.rebase_dialog {
@@ -16512,6 +16545,7 @@ mod tests {
             let mut app = layout_fixture();
             app.rebase_dialog = Some(RebaseDialog {
                 reference: "origin/main".into(),
+                leave_out: String::new(),
                 autostash: true,
                 error: None,
             });
@@ -16535,6 +16569,11 @@ mod tests {
                     .any(|line| line.contains("Automatically stash working changes"))
             );
             assert!(text.iter().any(|line| line.contains("private backup ref")));
+            assert!(
+                text.iter()
+                    .any(|line| line.contains("Leave out commits from (optional)")),
+                "RWR-80"
+            );
             assert!(text.iter().any(|line| line.contains("origin/main")));
             assert!(text.iter().any(|line| line.contains("Rebase")));
 
@@ -17385,7 +17424,7 @@ mod tests {
             shallow: false,
             commits: Vec::new(),
         });
-        assert!(app.start_rebase(&ctx, "feature", false).is_ok());
+        assert!(app.start_rebase(&ctx, "feature", "", false).is_ok());
         assert!(app.operation_busy());
         let output = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
             app.draw_ui(ctx)
@@ -17536,6 +17575,57 @@ mod tests {
             app.mutation_notice.as_deref(),
             Some(format!("Reverted abc12345 · {warning}").as_str())
         );
+    }
+
+    /// RWR-80: Rebase branch with **Leave out commits from** `server`
+    /// replays only `client`'s own commit onto `master`.
+    #[test]
+    fn rebase_dialog_leaves_out_the_commits_of_another_branch()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let p = dir.path();
+        git_in(p, &["init", "-q", "-b", "master"])?;
+        let commit = |name: &str| -> Result<(), Box<dyn std::error::Error>> {
+            std::fs::write(p.join(name), format!("{name}\n"))?;
+            git_in(p, &["add", name])?;
+            git_in(p, &["commit", "-qm", name])?;
+            Ok(())
+        };
+        commit("C1")?;
+        git_in(p, &["switch", "-qc", "server"])?;
+        commit("C3")?;
+        git_in(p, &["switch", "-qc", "client"])?;
+        commit("C8")?;
+        git_in(p, &["switch", "-q", "master"])?;
+        commit("C5")?;
+        git_in(p, &["switch", "-q", "client"])?;
+
+        let ctx = egui::Context::default();
+        let mut app = Browser::new(p.to_path_buf());
+        app.state.history = Some(History {
+            path: p.to_path_buf(),
+            head: "client".into(),
+            truncated: false,
+            shallow: false,
+            commits: Vec::new(),
+        });
+        app.start_rebase(&ctx, "master", "server", false)?;
+        for _ in 0..2000 {
+            let _ = crate::tests::run_ui(&ctx, frame_input(1120.0, 740.0, vec![]), |ctx| {
+                app.draw_ui(ctx)
+            });
+            if !app.operation_busy() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert_eq!(
+            git_in(p, &["log", "--format=%s"])?,
+            "C8\nC5\nC1",
+            "error={:?}",
+            app.mutation_error
+        );
+        Ok(())
     }
 
     #[test]

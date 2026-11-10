@@ -58,6 +58,7 @@ Every fixture is a disposable directory built from scratch by a script with fixe
 | `fx-remote-rewritten` | A bare `origin.git`, a clone `theirs`, and a clone `mine` whose `main` holds `my work` on top of `add a · add b · add c`; `theirs` then replaced `add c` with `add c (rewritten)` and force-pushed, and `mine` fetched (Pro Git 3.6, *The Perils of Rebasing*). |
 | `fx-merge-revert` | `main` with `topic` (`topic t`, `topic t2`, adding files `t` and `t2`) merged by the merge commit `Merge branch 'topic'` after `main` gained `main c` (file `c`) (Pro Git 7.8, *Undoing Merges*). |
 | `fx-attributes` | `.gitattributes` with `*.dat binary` and `*.min.js -diff`; text files `data.dat`, `app.min.js` and `note.txt`, all three changed by the last commit (Pro Git 8.2, *Identifying Binary Files*). |
+| `fx-onto` | Pro Git 3.6's *More Interesting Rebases*: `master` `C1 · C2 · C5 · C6`; `server` off `C2` with `C3 · C4 · C10`; `client` off `C3` with `C8 · C9`; HEAD on `client`. |
 | `fx-rebase-local` | `fx-rebase` on a branch without an upstream (the post-rewrite follow-up falls back to **Recovery…**). |
 | `fx-signed-bad` | `fx-signed` plus a commit whose signed payload was altered so verification reports bad. |
 | `fx-lfs-image` | `fx-lfs` plus a small PNG and an object over 2 MiB tracked by LFS, and a malformed pointer `bad.psd`. |
@@ -3486,7 +3487,7 @@ Covered by (interaction): `panes_hold_still_while_a_rebase_stop_changes` (apps/g
 Fixture: `fx-remote`
 Layer: product
 - When the user chooses **Branch › Rebase current onto…** (or a branch/remote/tag context-menu Rebase)
-- Then a modal **Rebase branch** dialog shows a reference field, **Automatically stash working changes** (starting from the preference), and `Rebase rewrites commits. A private backup ref is created before Git starts.`; ref actions are disabled while a mutation runs
+- Then a modal **Rebase branch** dialog shows a reference field, an optional **Leave out commits from** field (RWR-80), **Automatically stash working changes** (starting from the preference), and `Rebase rewrites commits. A private backup ref is created before Git starts.`; ref actions are disabled while a mutation runs
 Covered by (interaction, partial): `rebase_dialog_and_banner_render_at_supported_widths` (apps/git-good/src/main.rs)
 
 ### RWR-56 Rebase onto creates a backup and rewrites the branch
@@ -3509,6 +3510,14 @@ Layer: product
 - When `git good --cli rebase --exec=x` or `git good --cli rebase nosuch` runs
 - Then it fails with an actionable error; no backup, no state change
 Covered by (backend, partial): `rebase_rejects_option_shaped_and_missing_references` (crates/git/tests/rebase.rs); GUI path not automated
+
+### RWR-80 Rebase onto, leaving out another branch's commits
+Fixture: `fx-onto`
+Layer: product
+- Given `client` checked out (Pro Git 3.6, *More Interesting Rebases*)
+- When **Rebase current onto…** runs with `master` and **Leave out commits from** `server` (or `git good --cli rebase master --leave-out server`)
+- Then, as `git rebase --onto master server`, `client` is `C8 · C9` on top of `master`'s `C6`; `server`'s `C3` is not replayed; the backup ref holds the old `client`; the worker reads `Rebasing client onto master, leaving out server…`; an option-shaped or missing leave-out ref fails before any change
+Covered by (backend, end-to-end, interaction): `rebase_onto_leaves_out_the_commits_of_another_branch` (crates/git/tests/rebase.rs), `rebase_cli_leaves_out_the_commits_of_another_branch` (apps/git-good/tests/cli.rs), `rebase_dialog_leaves_out_the_commits_of_another_branch`, `rebase_dialog_and_banner_render_at_supported_widths` (apps/git-good/src/main.rs)
 
 ### RWR-59 CLI rewrite: reword, fixup, drop, edit — see CLI-16e
 

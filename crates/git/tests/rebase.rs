@@ -291,3 +291,57 @@ fn pull_leaves_out_commits_the_upstream_rewrote() -> Result {
     );
     Ok(())
 }
+
+/// RWR-80: Pro Git 3.6, "More Interesting Rebases". `client` branched from
+/// `server`, which branched from `master`; rebasing `client` onto `master`
+/// leaving out `server` replays only `client`'s own commits.
+#[test]
+fn rebase_onto_leaves_out_the_commits_of_another_branch() -> Result {
+    let dir = repo()?;
+    let p = dir.path();
+    let commit = |name: &str| -> Result {
+        std::fs::write(p.join(name), format!("{name}\n"))?;
+        git(p, &["add", name])?;
+        git(p, &["commit", "-qm", name])?;
+        Ok(())
+    };
+    git(p, &["branch", "-qm", "master"])?;
+    commit("C2")?;
+    git(p, &["switch", "-qc", "server"])?;
+    commit("C3")?;
+    git(p, &["switch", "-qc", "client"])?;
+    commit("C8")?;
+    commit("C9")?;
+    git(p, &["switch", "-q", "server"])?;
+    commit("C4")?;
+    commit("C10")?;
+    git(p, &["switch", "-q", "master"])?;
+    commit("C5")?;
+    commit("C6")?;
+    git(p, &["switch", "-q", "client"])?;
+    let previous = head(p)?;
+
+    let receipt = gg_git::rebase::rebase_onto(p, "master", "server", false)?;
+    assert!(receipt.applied, "{receipt:?}");
+    assert_eq!(receipt.reference, "master");
+    assert_eq!(receipt.previous.as_deref(), Some(previous.as_str()));
+    assert!(receipt.backup.is_some());
+    assert_eq!(
+        String::from_utf8(git(p, &["log", "--format=%s"])?)?,
+        "C9\nC8\nC6\nC5\nC2\nbase\n",
+        "C3 stays on server"
+    );
+    assert!(!p.join("C3").exists());
+
+    let error = gg_git::rebase::rebase_onto(p, "master", "--exec=x", false).err();
+    assert_eq!(
+        error.as_deref(),
+        Some("Leave out commits from must not start with '-'.")
+    );
+    let error = gg_git::rebase::rebase_onto(p, "master", "nosuch", false).err();
+    assert_eq!(
+        error.as_deref(),
+        Some("Rebase reference nosuch was not found.")
+    );
+    Ok(())
+}

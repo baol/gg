@@ -7,25 +7,45 @@ use std::{
 };
 
 pub fn rebase(path: &Path, reference: &str, autostash: bool) -> Result<Receipt, String> {
-    rebase_with(path, reference, autostash, false)
+    rebase_with(path, reference, None, autostash, false)
+}
+
+/// Rebase the current branch onto `onto`, leaving out the commits it shares
+/// with `leave_out`: `git rebase --onto <onto> <leave_out>` (Pro Git 3.6,
+/// "More Interesting Rebases").
+pub fn rebase_onto(
+    path: &Path,
+    onto: &str,
+    leave_out: &str,
+    autostash: bool,
+) -> Result<Receipt, String> {
+    rebase_with(path, onto, Some(leave_out), autostash, false)
 }
 
 /// Pull (rebase): rebase onto the fetched upstream as `git pull --rebase`
 /// does, with `--fork-point`, so commits the upstream rewrote or dropped
 /// after the branch was built on them are left out instead of replayed.
 pub fn pull(path: &Path, upstream: &str, autostash: bool) -> Result<Receipt, String> {
-    rebase_with(path, upstream, autostash, true)
+    rebase_with(path, upstream, None, autostash, true)
 }
 
 fn rebase_with(
     path: &Path,
     reference: &str,
+    leave_out: Option<&str>,
     autostash: bool,
     fork_point: bool,
 ) -> Result<Receipt, String> {
+    let valid = |reference: &str| {
+        !(reference.is_empty() || reference.starts_with('-') || reference.contains('\0'))
+    };
     let reference = reference.trim();
-    if reference.is_empty() || reference.starts_with('-') || reference.contains('\0') {
+    if !valid(reference) {
         return Err("Rebase reference must not start with '-'.".into());
+    }
+    let leave_out = leave_out.map(str::trim).filter(|value| !value.is_empty());
+    if leave_out.is_some_and(|value| !valid(value)) {
+        return Err("Leave out commits from must not start with '-'.".into());
     }
     if let Some(state) = crate::mutation::state(path)? {
         return Err(format!(
@@ -37,6 +57,9 @@ fn rebase_with(
         ensure_clean(path)?;
     }
     let upstream = resolve(path, reference)?;
+    if let Some(leave_out) = leave_out {
+        resolve(path, leave_out)?;
+    }
     let previous = head(path)?;
     let backup = crate::backup::create(path, "rebase", &previous)?;
     let mut args = vec!["rebase".to_string()];
@@ -48,7 +71,14 @@ fn rebase_with(
     if fork_point {
         args.push("--fork-point".into());
     }
-    args.push(reference.to_string());
+    match leave_out {
+        Some(leave_out) => args.extend([
+            "--onto".into(),
+            reference.to_string(),
+            leave_out.to_string(),
+        ]),
+        None => args.push(reference.to_string()),
+    }
     let output = run(path, &args)?;
     let conflicts = unmerged(path)?;
     let state = crate::mutation::state(path)?;

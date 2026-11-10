@@ -10,6 +10,7 @@ pub fn run(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::erro
     let mut args = crate::cli_args::Args::new(args);
     let mut path = std::env::current_dir()?;
     let mut reference = None;
+    let mut leave_out = None;
     let mut autostash = false;
     let mut action = None;
     while let Some(arg) = args.next() {
@@ -18,6 +19,14 @@ pub fn run(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::erro
                 path = PathBuf::from(
                     args.value()
                         .ok_or_else(|| usage_error("--repo needs a path"))?,
+                )
+            }
+            Some("--leave-out") if action.is_none() => {
+                leave_out = Some(
+                    args.value()
+                        .ok_or_else(|| usage_error("--leave-out needs a reference"))?
+                        .into_string()
+                        .map_err(|_| usage_error("Reference must be UTF-8"))?,
                 )
             }
             Some("--autostash") if action.is_none() => autostash = true,
@@ -36,7 +45,7 @@ pub fn run(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::erro
             }
             _ => {
                 return Err(usage_error(
-                    "Usage: git good --cli rebase REF [--autostash] [--repo PATH]\n       git good --cli rebase --continue|--skip|--abort [--repo PATH]",
+                    "Usage: git good --cli rebase REF [--leave-out REF] [--autostash] [--repo PATH]\n       git good --cli rebase --continue|--skip|--abort [--repo PATH]",
                 ));
             }
         }
@@ -65,7 +74,10 @@ pub fn run(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::erro
         return Ok(());
     }
     let reference = reference.ok_or_else(|| usage_error("Rebase requires a reference"))?;
-    let receipt = gg_git::rebase::rebase(&path, &reference, autostash)?;
+    let receipt = match &leave_out {
+        Some(leave_out) => gg_git::rebase::rebase_onto(&path, &reference, leave_out, autostash)?,
+        None => gg_git::rebase::rebase(&path, &reference, autostash)?,
+    };
     write_receipt(serde_json::json!({
         "operation": "rebase",
         "repository": display_repository(&path),

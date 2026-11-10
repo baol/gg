@@ -2181,6 +2181,10 @@ fn gitattributes_binary_files_compare_as_binary_in_local_changes() -> Result {
     std::fs::write(p.join("data.dat"), b"plain text v2\n")?;
     let diff = gg_git::working_diff::read(&request(p, b"data.dat", Area::Unstaged)?, || false)?;
     assert_eq!(diff.kind, gg_engine::diff::DiffKind::Binary);
-    assert!(diff.note.ends_with("Binary content (.gitattributes)"), "{}", diff.note);
+    assert!(
+        diff.note.ends_with("Binary content (.gitattributes)"),
+        "{}",
+        diff.note
+    );
     Ok(())
 }

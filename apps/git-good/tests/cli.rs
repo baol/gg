@@ -3439,3 +3439,53 @@ fn history_is_a_hidden_alias_of_history_tree() -> Result {
     );
     Ok(())
 }
+
+/// RWR-80: `rebase REF --leave-out REF` runs `git rebase --onto`, as Pro Git
+/// 3.6 rebases `client` onto `master` leaving out `server`.
+#[test]
+fn rebase_cli_leaves_out_the_commits_of_another_branch() -> Result {
+    let repo = tempfile::tempdir()?;
+    let p = repo.path();
+    init(p, &["-b", "master"])?;
+    git(p, &["config", "user.name", "Test"])?;
+    git(p, &["config", "user.email", "test@example.org"])?;
+    let commit = |name: &str| -> Result {
+        std::fs::write(p.join(name), format!("{name}\n"))?;
+        git(p, &["add", name])?;
+        git(p, &["commit", "-qm", name])?;
+        Ok(())
+    };
+    commit("C1")?;
+    git(p, &["switch", "-qc", "server"])?;
+    commit("C3")?;
+    git(p, &["switch", "-qc", "client"])?;
+    commit("C8")?;
+    git(p, &["switch", "-q", "master"])?;
+    commit("C5")?;
+    git(p, &["switch", "-q", "client"])?;
+
+    let binary = env!("CARGO_BIN_EXE_git-good");
+    let out = cli(binary)
+        .args(["rebase", "master", "--leave-out", "server", "--repo"])
+        .arg(p)
+        .output()?;
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let receipt: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    assert_eq!(receipt["reference"], "master");
+    assert_eq!(receipt["applied"], true);
+    assert_eq!(
+        String::from_utf8(git_output(p, &["log", "--format=%s"])?)?,
+        "C8\nC5\nC1\n"
+    );
+    let missing = cli(binary)
+        .args(["rebase", "master", "--repo"])
+        .arg(p)
+        .arg("--leave-out")
+        .output()?;
+    assert_eq!(missing.status.code(), Some(2), "a usage error");
+    Ok(())
+}
