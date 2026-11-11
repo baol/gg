@@ -17,6 +17,10 @@ pub enum PageAction {
     Step(i32),
     /// Review the commit, opened on the chosen file when one is given.
     Review(Option<String>),
+    /// Review the commit on this file with its File history open.
+    FileHistory(String),
+    /// Open in editor or Reveal in folder, from a file row's right-click menu.
+    Open(crate::editor::Request),
     Command(CommitCommand),
 }
 
@@ -323,6 +327,26 @@ pub fn page(
                         response.surrender_focus();
                         *selected_file = index;
                     }
+                    // The row's right-click menu (REV-82).
+                    response.context_menu(|ui| {
+                        let Some(choice) = crate::file_menu::show(ui) else {
+                            return;
+                        };
+                        let path = file.path.clone();
+                        action = match choice {
+                            crate::file_menu::Choice::Read => Some(PageAction::Review(Some(path))),
+                            crate::file_menu::Choice::History => {
+                                Some(PageAction::FileHistory(path))
+                            }
+                            crate::file_menu::Choice::Open { folder } => {
+                                Some(PageAction::Open(crate::editor::Request { path, folder }))
+                            }
+                            crate::file_menu::Choice::CopyPath => {
+                                ui.ctx().copy_text(path);
+                                None
+                            }
+                        };
+                    });
                 }
                 if let Some(stats) = info.stats
                     && stats.files > files.len()

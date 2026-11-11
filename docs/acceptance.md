@@ -1691,6 +1691,13 @@ Layer: product
 - Then `data.dat` and `app.min.js` show *Binary content (.gitattributes)* with no text rows and count no lines, as `git diff` (`Binary files … differ`) and `git show --numstat` (`-  -`) report them; `note.txt` keeps its text diff; attributes are read in process from the worktree's attribute files (the index's in a bare repository), `info/attributes` and `core.attributesFile`, with no Git process
 Covered by (backend): `gitattributes_binary_and_no_diff_files_review_as_binary` (crates/git/tests/review_special.rs)
 
+### REV-82 A file row's right-click menu in Review and the commit details
+Fixture: `Review::fixture`; narrow details with files `a.rs`, `b.rs`
+Layer: interaction
+- When the user right-clicks a file in Review's file list, or in the narrow commit details' FILES list
+- Then a menu offers **Read file** (`Enter`), **File history** (`H`), **Open in editor**, **Reveal in folder** and **Copy path**, acting on that file: in Review the row becomes the selected one and the choice runs as its key or ⋯ File actions does; in the details, **Read file** and **File history** open Review on that file (File history with its versions open)
+Covered by (interaction): `a_right_click_on_a_file_row_reads_opens_and_follows_that_file` (apps/git-good/src/review_view.rs), `narrow_details_file_rows_open_a_right_click_menu` (apps/git-good/src/main.rs)
+
 ### REV-59 Version boundaries never wrap
 Fixture: `fx-file-history`
 Layer: interaction
