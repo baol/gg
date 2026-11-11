@@ -240,7 +240,7 @@ pub fn show_disclosure(ctx: &egui::Context) {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let primary = egui::Button::new((
                         egui::RichText::new("Copy").color(egui::Color32::WHITE),
-                        egui::RichText::new("Ctrl+C")
+                        egui::RichText::new(crate::keymap::shown("Ctrl+C"))
                             .small()
                             .color(egui::Color32::from_rgb(184, 212, 230)),
                     ))

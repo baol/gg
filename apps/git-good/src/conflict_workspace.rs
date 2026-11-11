@@ -376,8 +376,10 @@ fn left_pane(ui: &mut egui::Ui, view: &ConflictView, info: &Info, actions: &mut 
             if view.paths.is_empty() && !view.loading {
                 ui.add(
                     egui::Label::new(
-                        egui::RichText::new("All conflicts resolved. Continue with Ctrl+Enter.")
-                            .color(palette::BOTH),
+                        egui::RichText::new(crate::keymap::shown(
+                            "All conflicts resolved. Continue with Ctrl+Enter.",
+                        ))
+                        .color(palette::BOTH),
                     )
                     .wrap(),
                 );
@@ -826,11 +828,13 @@ pub fn show(ui: &mut egui::Ui, view: &mut ConflictView, info: &Info) -> Vec<Acti
                     } else {
                         palette::WEAK
                     }),
-                    egui::RichText::new("Ctrl+S").small().color(if enabled {
-                        egui::Color32::from_rgb(184, 212, 230)
-                    } else {
-                        palette::WEAK
-                    }),
+                    egui::RichText::new(crate::keymap::shown("Ctrl+S"))
+                        .small()
+                        .color(if enabled {
+                            egui::Color32::from_rgb(184, 212, 230)
+                        } else {
+                            palette::WEAK
+                        }),
                 ))
                 .corner_radius(4.0)
                 .min_size(egui::vec2(0.0, 22.0));
