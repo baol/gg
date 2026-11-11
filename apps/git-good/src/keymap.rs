@@ -378,8 +378,109 @@ impl Keymap {
     }
 }
 
+thread_local! {
+    /// Whether key labels are drawn the macOS way (`⇧⌘S`) instead of
+    /// `Ctrl+Shift+S`. The UI draws on one thread. Tests read the same text
+    /// on every platform and opt in with [`set_mac_keys`].
+    static MAC_KEYS: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(cfg!(target_os = "macos") && !cfg!(test)) };
+}
+
+/// Tests: draw key labels as on macOS, or as elsewhere, on this thread.
+#[cfg(test)]
+pub fn set_mac_keys(mac: bool) {
+    MAC_KEYS.with(|cell| cell.set(mac));
+}
+
+/// A label or hint with keys in it, as this platform names them. Labels are
+/// written `Ctrl+Shift+S`, the form the menus and settings parse; on macOS,
+/// where egui's Command modifier is ⌘, they are drawn `⇧⌘S`.
+pub fn shown(text: &str) -> String {
+    if MAC_KEYS.with(std::cell::Cell::get) {
+        mac_style(text)
+    } else {
+        text.to_owned()
+    }
+}
+
+/// `Ctrl+Shift+Enter` → `⇧⌘↩`, `Alt+Up/Down` → `⌥Up/Down`; other text stays.
+/// Modifiers come in Apple's order: ⌃ ⌥ ⇧ ⌘.
+pub fn mac_style(text: &str) -> String {
+    const MODIFIERS: [(&str, usize); 5] = [
+        ("Ctrl+", 3),
+        ("Cmd+", 3),
+        ("Alt+", 1),
+        ("Option+", 1),
+        ("Shift+", 2),
+    ];
+    const SYMBOLS: [&str; 4] = ["⌃", "⌥", "⇧", "⌘"];
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while !rest.is_empty() {
+        // A run of modifiers starts a chord only at a word's start.
+        let at_word_start = out.chars().next_back().is_none_or(|c| !c.is_alphanumeric());
+        let mut held = [false; 4];
+        let mut chord = rest;
+        if at_word_start {
+            while let Some((prefix, slot)) = MODIFIERS
+                .iter()
+                .find(|(prefix, _)| chord.starts_with(prefix))
+            {
+                held[*slot] = true;
+                chord = &chord[prefix.len()..];
+            }
+        }
+        if chord.len() < rest.len() && !chord.is_empty() {
+            for (symbol, on) in SYMBOLS.iter().zip(held) {
+                if on {
+                    out.push_str(symbol);
+                }
+            }
+            let enter = chord.starts_with("Enter")
+                && !chord[5..].starts_with(|c: char| c.is_alphanumeric());
+            if enter {
+                out.push('↩');
+                rest = &chord[5..];
+            } else {
+                rest = chord;
+            }
+            continue;
+        }
+        let mut chars = rest.chars();
+        if let Some(c) = chars.next() {
+            out.push(c);
+        }
+        rest = chars.as_str();
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn mac_labels_use_the_command_symbols() {
+        assert_eq!(mac_style("Ctrl+Enter"), "⌘↩");
+        assert_eq!(mac_style("Ctrl+Shift+S"), "⇧⌘S");
+        assert_eq!(mac_style("Ctrl+Alt+G"), "⌥⌘G");
+        assert_eq!(mac_style("Alt+A  Shift+F10"), "⌥A  ⇧F10");
+        assert_eq!(
+            mac_style("S / U: stage / unstage · Ctrl+Enter: commit"),
+            "S / U: stage / unstage · ⌘↩: commit"
+        );
+        assert_eq!(mac_style("Alt+Up/Down: file"), "⌥Up/Down: file");
+        assert_eq!(mac_style("Enter: read file"), "Enter: read file");
+        assert_eq!(mac_style("Copy ID · Ctrl+C"), "Copy ID · ⌘C");
+        assert_eq!(mac_style("Ctrl+Enterprise"), "⌘Enterprise");
+    }
+
+    #[test]
+    fn labels_follow_the_platform_this_thread_is_set_to() {
+        set_mac_keys(false);
+        assert_eq!(shown("Ctrl+Enter"), "Ctrl+Enter");
+        set_mac_keys(true);
+        assert_eq!(shown("Ctrl+Enter"), "⌘↩");
+    }
+
     use super::*;
 
     fn press(key: Key, modifiers: Modifiers) -> egui::Event {

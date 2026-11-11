@@ -444,7 +444,7 @@ Covered by (Not automated)
 ### FRM-55 Idle hints shorten at narrow widths instead of clipping
 Fixture: `fx-linear`
 Layer: interaction
-- Then at 1440 px the footer reads `j k: select · Enter: review · Alt+A: actions · R: rebase from here · Ctrl+K: search · Ctrl/Cmd+F: filter · Ctrl/Cmd+C: copy ID`; below 1040 px `j/k: select · Enter: review · Space: details · Esc: History tree · Ctrl/Cmd+F: filter` (no `copy ID`)
+- Then at 1440 px the footer reads `j k: select · Enter: review · Alt+A: actions · R: rebase from here · Ctrl+K: search · Ctrl+F: filter · Ctrl+C: copy ID`; below 1040 px `j/k: select · Enter: review · Space: details · Esc: History tree · Ctrl+F: filter` (no `copy ID`)
 Covered by (interaction): `status_hints_shorten_at_narrow_widths` (apps/git-good/src/main.rs)
 
 ### FRM-56 Receipts fade after 8 seconds
@@ -667,6 +667,14 @@ Layer: interaction
 - When **Help › Star Git Good on GitHub**
 - Then the browser opens `https://github.com/baol/gg`, the repository page where GitHub's Star button is; the Help menu reads Keyboard shortcuts · Documentation · Star Git Good on GitHub · About Git Good
 Covered by (interaction): `star_on_github_opens_the_repository_page`, `menus_follow_the_final_design_mockup` (apps/git-good/src/main.rs)
+
+### FRM-91 Key labels name the platform's keys
+Fixture: `fx-linear` on macOS
+Layer: interaction
+- When the window shows a key in a button, hint, tooltip, menu, Keyboard shortcuts or Preferences › Keyboard, such as **Start rebase** in Interactive rebase
+- Then on macOS the Command modifier reads ⌘ and the others ⌥ and ⇧, in Apple's order with no plus signs, and Enter after a modifier reads ↩ (**Start rebase** `⌘↩`, Stage all `⇧⌘S`, Actions `⌥A`); no label reads `Ctrl+`; on Linux and Windows the same labels read `Ctrl+Enter`, `Ctrl+Shift+S`, `Alt+A`
+- And the keys themselves are unchanged: egui's Command modifier is ⌘ on macOS and Ctrl elsewhere, and saved key settings keep the `Ctrl+Shift+S` form on every platform
+Covered by (interaction): `on_macos_the_rewrite_dialog_names_command_keys` (apps/git-good/src/main.rs), `mac_labels_use_the_command_symbols`, `labels_follow_the_platform_this_thread_is_set_to` (apps/git-good/src/keymap.rs)
 
 ### HIS-01 First page streams before traversal finishes
 Fixture: `fx-large` (opt-in performance) (size 1440×900 unless stated)

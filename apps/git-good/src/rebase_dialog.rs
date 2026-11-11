@@ -297,11 +297,13 @@ impl Dialog {
                             } else {
                                 ui.visuals().weak_text_color()
                             }),
-                            egui::RichText::new("Ctrl+Enter").small().color(if ready {
-                                egui::Color32::from_rgb(184, 212, 230)
-                            } else {
-                                ui.visuals().weak_text_color()
-                            }),
+                            egui::RichText::new(crate::keymap::shown("Ctrl+Enter"))
+                                .small()
+                                .color(if ready {
+                                    egui::Color32::from_rgb(184, 212, 230)
+                                } else {
+                                    ui.visuals().weak_text_color()
+                                }),
                         ))
                         .fill(if ready {
                             egui::Color32::from_rgb(11, 85, 119)
@@ -343,11 +345,11 @@ impl Dialog {
         ui.horizontal(|ui| {
             ui.weak("PLAN · NEWEST FIRST, LIKE THE HISTORY TREE");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.weak(format!(
+                ui.weak(crate::keymap::shown(&format!(
                     "j k select · Alt+{}{} move · P R E S F D",
                     phosphor::ARROW_UP,
                     phosphor::ARROW_DOWN
-                ));
+                )));
             });
         });
         let count = self.plan.rows.len();
@@ -497,14 +499,20 @@ impl Dialog {
             ui.spacing_mut().item_spacing.y = 0.0;
             if ui
                 .add_enabled(index > 0, small(phosphor::ARROW_UP))
-                .on_hover_text(format!("Move up · Alt+{}", phosphor::ARROW_UP))
+                .on_hover_text(crate::keymap::shown(&format!(
+                    "Move up · Alt+{}",
+                    phosphor::ARROW_UP
+                )))
                 .clicked()
             {
                 moved = Some(true);
             }
             if ui
                 .add_enabled(index + 1 < count, small(phosphor::ARROW_DOWN))
-                .on_hover_text(format!("Move down · Alt+{}", phosphor::ARROW_DOWN))
+                .on_hover_text(crate::keymap::shown(&format!(
+                    "Move down · Alt+{}",
+                    phosphor::ARROW_DOWN
+                )))
                 .clicked()
             {
                 moved = Some(false);

@@ -1161,7 +1161,7 @@ fn keyboard_keys(ui: &mut egui::Ui, prefs: &mut settings::Prefs, dialog: &mut Fo
                 let text = if waiting {
                     "Press a key… (Esc cancels)".to_string()
                 } else {
-                    keys.label(action)
+                    keymap::shown(&keys.label(action))
                 };
                 let button = ui
                     .add(egui::Button::new(egui::RichText::new(text).monospace()).selected(waiting))
@@ -1173,7 +1173,10 @@ fn keyboard_keys(ui: &mut egui::Ui, prefs: &mut settings::Prefs, dialog: &mut Fo
                 if keys.chord(action) != action.default_chord() {
                     if ui
                         .small_button("Reset")
-                        .on_hover_text(format!("Back to {}", action.default_chord().label()))
+                        .on_hover_text(format!(
+                            "Back to {}",
+                            keymap::shown(&action.default_chord().label())
+                        ))
                         .clicked()
                     {
                         keys.reset(action);
@@ -1459,7 +1462,7 @@ fn git_identity(repo: &Path) -> Option<String> {
 fn search_key_chip(ui: &egui::Ui, field: egui::Rect) {
     let visuals = ui.visuals();
     let galley = ui.painter().layout_no_wrap(
-        "Ctrl+K".into(),
+        keymap::shown("Ctrl+K"),
         egui::FontId::proportional(11.0),
         visuals.weak_text_color(),
     );
@@ -8090,10 +8093,11 @@ impl Browser {
         } else if self.state.history.is_none() {
             "Ctrl+O: open   ·   Ctrl+K: search   ·   ?: shortcuts"
         } else if narrow {
-            "j/k: select · Enter: review · Space: details · Esc: History tree · Ctrl/Cmd+F: filter"
+            "j/k: select · Enter: review · Space: details · Esc: History tree · Ctrl+F: filter"
         } else {
-            "j k: select   ·   Enter: review   ·   Alt+A: actions   ·   R: rebase from here   ·   Ctrl+K: search   ·   Ctrl/Cmd+F: filter   ·   Ctrl/Cmd+C: copy ID"
+            "j k: select   ·   Enter: review   ·   Alt+A: actions   ·   R: rebase from here   ·   Ctrl+K: search   ·   Ctrl+F: filter   ·   Ctrl+C: copy ID"
         };
+        let hints = keymap::shown(hints);
         let picked = self.state.picked.len();
         let mut message = if picked >= 2 && self.state.history.is_some() {
             Message::new(
@@ -14123,7 +14127,11 @@ impl Browser {
                             if ui.available_width() < abort_width + 40.0 {
                                 break;
                             }
-                            ui.label(egui::RichText::new(hint).size(11.0).weak());
+                            ui.label(
+                                egui::RichText::new(crate::keymap::shown(hint))
+                                    .size(11.0)
+                                    .weak(),
+                            );
                         }
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.add(
@@ -15416,7 +15424,7 @@ mod tests {
                     egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
                     _ => None,
                 })
-                .find(|line| line.contains("Enter: review") && line.contains("Ctrl/Cmd+F: filter"));
+                .find(|line| line.contains("Enter: review") && line.contains("Ctrl+F: filter"));
             assert!(hint.is_some(), "missing status hint at {width}");
             if let Some(hint) = hint {
                 if width < 900.0 {
@@ -17004,6 +17012,28 @@ mod tests {
             "{text:?}"
         );
         assert!(!text.iter().any(|line| line.contains("remaining changed")));
+    }
+
+    /// Reported on macOS: Start rebase read `Ctrl+Enter`, but the key is ⌘↩.
+    #[test]
+    fn on_macos_the_rewrite_dialog_names_command_keys() -> Result<(), String> {
+        crate::keymap::set_mac_keys(true);
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        app.rewrite_dialog = Some(rebase_fixture(&app)?);
+        let mut output = None;
+        for _ in 0..2 {
+            output = Some(crate::tests::run_ui(
+                &ctx,
+                frame_input(1120.0, 740.0, vec![]),
+                |ctx| app.draw_ui(ctx),
+            ));
+        }
+        crate::keymap::set_mac_keys(false);
+        let text = shown_text(&output.ok_or("no frame")?);
+        assert!(text.iter().any(|line| line == "⌘↩"), "{text:?}");
+        assert!(!text.iter().any(|line| line.contains("Ctrl+")), "{text:?}");
+        Ok(())
     }
 
     #[test]

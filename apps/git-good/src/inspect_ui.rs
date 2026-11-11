@@ -214,7 +214,7 @@ pub fn primary<'a>(label: impl Into<String>, key: Option<&'a str>) -> egui::Butt
     match key {
         Some(key) => egui::Button::new((
             text,
-            RichText::new(key)
+            RichText::new(crate::keymap::shown(key))
                 .small()
                 .color(Color32::from_rgb(184, 212, 230)),
         )),

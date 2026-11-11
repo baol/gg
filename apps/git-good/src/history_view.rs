@@ -178,7 +178,7 @@ pub fn header(ui: &mut egui::Ui, count: &str, filter: &str) -> bool {
                 )
                 .truncate(),
             )
-            .on_hover_text("Ctrl+F or Ctrl+K changes the filter");
+            .on_hover_text(crate::keymap::shown("Ctrl+F or Ctrl+K changes the filter"));
             cleared = chip
                 .small_button("×")
                 .on_hover_text("Clear the filter")
