@@ -18,21 +18,21 @@ irm https://raw.githubusercontent.com/baol/gg/main/scripts/install.ps1 | iex
 
 Then run `git good` in any repository. More ways to install are [below](#install-or-update).
 
-![Scrolling a 20,000-commit History tree, then jumping to its first commit and back](https://baol.github.io/gg/assets/screens/demo-history.gif)
+![Scrolling a 20,000-commit History tree, then jumping to its first commit and back](https://100allora.it/gg/assets/screens/demo-history.gif)
 
-- **Fast on big repositories.** The first rows of a 100,000-commit History tree show in about 150 ms, all of it loads in under 2 s while you scroll, in about 70 MiB. A sidebar of 10,000 branches costs half a millisecond a frame. [How it is measured](https://baol.github.io/gg/performance/)
+- **Fast on big repositories.** The first rows of a 100,000-commit History tree show in about 150 ms, all of it loads in under 2 s while you scroll, in about 70 MiB. A sidebar of 10,000 branches costs half a millisecond a frame. [How it is measured](https://100allora.it/gg/performance/)
 - **Every rewrite can be undone.** Before each rebase, amend, rewrite or reset, Git Good saves the old branch tip as a private backup. Recovery lists them, with the reflog, and restores in one step.
 - **It is your Git.** Every action runs the `git` on your `PATH`, so hooks, credential helpers, signing and configuration all apply, and a command from the app costs at most 1 % more than the same command typed. No Electron, no embedded browser.
 
 **Stage exactly what you mean**, by file, hunk or line, and commit:
 
-![Staging one hunk of src/routes.rs, writing the message and committing](https://baol.github.io/gg/assets/screens/demo-stage.gif)
+![Staging one hunk of src/routes.rs, writing the message and committing](https://100allora.it/gg/assets/screens/demo-stage.gif)
 
 **Tidy a branch with Interactive rebase**, then take the old tip back from Recovery if you change your mind:
 
-![Folding a WIP commit into the one it fixes, starting the rebase, then the backup in Recovery](https://baol.github.io/gg/assets/screens/demo-rebase.gif)
+![Folding a WIP commit into the one it fixes, starting the rebase, then the backup in Recovery](https://100allora.it/gg/assets/screens/demo-rebase.gif)
 
-[★ Star on GitHub](https://github.com/baol/gg) · [Documentation](https://baol.github.io/gg/) · [Workflows](https://baol.github.io/gg/workflows/) · [Real use cases](https://baol.github.io/gg/use-cases/) · [How it was built](https://baol.github.io/gg/how-it-was-built/)
+[★ Star on GitHub](https://github.com/baol/gg) · [Documentation](https://100allora.it/gg/) · [Workflows](https://100allora.it/gg/workflows/) · [Real use cases](https://100allora.it/gg/use-cases/) · [How it was built](https://100allora.it/gg/how-it-was-built/)
 
 ## Install or update
 
