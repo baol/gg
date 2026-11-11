@@ -380,8 +380,10 @@ impl Keymap {
 
 thread_local! {
     /// Whether key labels are drawn the macOS way (`⇧⌘S`) instead of
-    /// `Ctrl+Shift+S`. The UI draws on one thread; a test sets its own.
-    static MAC_KEYS: std::cell::Cell<bool> = const { std::cell::Cell::new(cfg!(target_os = "macos")) };
+    /// `Ctrl+Shift+S`. The UI draws on one thread. Tests read the same text
+    /// on every platform and opt in with [`set_mac_keys`].
+    static MAC_KEYS: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(cfg!(target_os = "macos") && !cfg!(test)) };
 }
 
 /// Tests: draw key labels as on macOS, or as elsewhere, on this thread.
