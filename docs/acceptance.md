@@ -3951,6 +3951,13 @@ Covered by (interaction): `reports_malformed_configuration_as_an_empty_list` (ap
 - And the first save keeps the unreadable file as `settings.json.unreadable` beside the new one, and leaves no temporary file
 Covered by (interaction): `an_unreadable_file_is_set_aside_not_overwritten` (apps/git-good/src/settings.rs)
 
+### PRF-40 Commit: Name and Email write the global Git identity
+Fixture: an empty global config
+Layer: interaction
+- When the user opens Preferences › Commit, types `Ada Lovelace` and `ada@example.org` under **Identity** and clicks **Save to Git**
+- Then Git Good runs `git config --global user.name` and `user.email` on a worker, reads *Saved. New commits use this name and email.*, and `git config user.name` reads `Ada Lovelace`; **Save to Git** is disabled until a field differs from the saved value and both are filled; a name or email on several lines, or an email in `< >`, is refused with nothing written; when the open repository has its own identity the section adds *This repository commits as …*
+Covered by (backend, interaction): `set_writes_name_and_email_that_git_then_reads`, `set_refuses_a_missing_or_multi_line_value_and_writes_nothing`, `read_in_a_repository_prefers_its_own_config` (crates/git/tests/identity.rs), `preferences_commit_saves_name_and_email_to_git` (apps/git-good/src/main.rs)
+
 ### PRF-39 Keys can be changed
 Fixture: default preferences
 Layer: interaction
@@ -4390,6 +4397,13 @@ Fixture: `fx-not-repo` (cwd), recent list of 6; window 720×480
 Layer: visual
 - Then the column fills the width; the cards stay three across with short subtitles (`Ctrl+O`, `into <~folder>`, `git init`); the branch column drops while the opened time stays; the logo and version line hide below 760 px; search is its icon
 Covered by (interaction): `the_narrow_welcome_keeps_three_cards_and_drops_logo_version_and_branch` (apps/git-good/src/main.rs)
+
+### DLG-19 Welcome names who commits
+Fixture: `fx-not-repo` (cwd), with and without `user.email` in the global config
+Layer: interaction
+- When the welcome view shows and Git's global identity has been read in the background
+- Then with `user.name` and `user.email` set it reads *Committing as* `Ada Lovelace <ada@example.org>` · **Change…**; with either missing an amber row reads *Git does not know your name and email yet, so it cannot commit.* with **Set name and email…**; both open Preferences › Commit; after a save there the line reads again
+Covered by (interaction): `welcome_names_who_commits_or_asks_for_a_name_and_email` (apps/git-good/src/welcome_view.rs)
 
 ## CLI
 
