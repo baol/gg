@@ -689,6 +689,16 @@ struct FoldersDialog {
     search: String,
     /// `user.name <user.email>` from Git config, read when the window opens.
     identity: Option<String>,
+    /// Commit › Name and Email, written to the global Git config on Save.
+    identity_name: String,
+    identity_email: String,
+    /// The global identity as last read, to tell whether the fields changed.
+    identity_global: gg_git::identity::Identity,
+    identity_write: Option<std::sync::mpsc::Receiver<Result<(), String>>>,
+    /// The last save's receipt or error.
+    identity_note: Option<Result<String, String>>,
+    /// Tests: the config file Save writes instead of the global one.
+    identity_file: Option<PathBuf>,
     /// Signing configuration and the repository config file, read in the
     /// background when the window opens (Commit › Signing rows).
     signing: Option<SigningConfig>,
@@ -704,11 +714,32 @@ struct FoldersDialog {
 }
 
 impl FoldersDialog {
+    /// Fill Name and Email from the global Git config.
+    fn read_global_identity(&mut self) {
+        let global = gg_git::identity::read_scope(self.identity_scope());
+        self.identity_name = global.name.clone().unwrap_or_default();
+        self.identity_email = global.email.clone().unwrap_or_default();
+        self.identity_global = global;
+    }
+
+    fn identity_scope(&self) -> gg_git::identity::Scope<'_> {
+        match &self.identity_file {
+            Some(file) => gg_git::identity::Scope::File(file),
+            None => gg_git::identity::Scope::Global,
+        }
+    }
+
     fn new(section: PrefSection) -> Self {
         Self {
             section,
             search: String::new(),
             identity: None,
+            identity_name: String::new(),
+            identity_email: String::new(),
+            identity_global: gg_git::identity::Identity::default(),
+            identity_write: None,
+            identity_note: None,
+            identity_file: None,
             signing: None,
             signing_read: None,
             new_root: String::new(),
@@ -1421,23 +1452,7 @@ fn git_version() -> Option<String> {
 }
 
 fn git_identity(repo: &Path) -> Option<String> {
-    let read = |key: &str| {
-        gg_git::process::git()
-            .arg("-C")
-            .arg(repo)
-            .args(["config", "--get", key])
-            .output()
-            .ok()
-            .filter(|output| output.status.success())
-            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
-            .filter(|value| !value.is_empty())
-    };
-    match (read("user.name"), read("user.email")) {
-        (Some(name), Some(email)) => Some(format!("{name} <{email}>")),
-        (Some(name), None) => Some(name),
-        (None, Some(email)) => Some(format!("<{email}>")),
-        (None, None) => None,
-    }
+    gg_git::identity::read(Some(repo)).label()
 }
 
 /// The `Ctrl+K` chip at the right end of the empty toolbar search field.
@@ -3322,6 +3337,7 @@ impl Browser {
             None => {
                 let mut dialog = FoldersDialog::new(section);
                 dialog.identity = git_identity(Path::new(&self.path));
+                dialog.read_global_identity();
                 let (send, receive) = std::sync::mpsc::channel();
                 let repo = PathBuf::from(&self.path);
                 std::thread::spawn(move || {
@@ -3360,6 +3376,7 @@ impl Browser {
             );
             list
         };
+        let mut identity_saved = false;
         let Some(dialog) = &mut self.folders_dialog else {
             return;
         };
@@ -3826,17 +3843,77 @@ impl Browser {
                         }
                         PrefSection::Commit => {
                             ui.strong("Identity");
+                            if let Some(rx) = &dialog.identity_write
+                                && let Ok(result) = rx.try_recv()
+                            {
+                                dialog.identity_write = None;
+                                dialog.identity_note = Some(result.map(|()| {
+                                    "Saved. New commits use this name and email.".to_string()
+                                }));
+                                identity_saved = true;
+                            }
                             ui.horizontal(|ui| {
-                                ui.label(
-                                    dialog
-                                        .identity
-                                        .as_deref()
-                                        .map_or("No user.name or user.email in Git config".to_string(), |identity| {
-                                            format!("From Git config: {identity}")
-                                        }),
+                                ui.label("Name");
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut dialog.identity_name)
+                                        .hint_text("Ada Lovelace")
+                                        .desired_width(170.0),
+                                );
+                                ui.add_space(8.0);
+                                ui.label("Email");
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut dialog.identity_email)
+                                        .hint_text("ada@example.org")
+                                        .desired_width(200.0),
                                 );
                             });
-                            ui.weak("Set with git config user.name and user.email.");
+                            let changed = dialog.identity_global.name.as_deref().unwrap_or("")
+                                != dialog.identity_name.trim()
+                                || dialog.identity_global.email.as_deref().unwrap_or("")
+                                    != dialog.identity_email.trim();
+                            let filled = !dialog.identity_name.trim().is_empty()
+                                && !dialog.identity_email.trim().is_empty();
+                            ui.horizontal(|ui| {
+                                let saving = dialog.identity_write.is_some();
+                                if ui
+                                    .add_enabled(changed && filled && !saving, egui::Button::new("Save to Git"))
+                                    .on_hover_text(
+                                        "Saved in your global Git config (git config --global), \
+                                         for every repository without its own",
+                                    )
+                                    .clicked()
+                                {
+                                    let (send, receive) = std::sync::mpsc::channel();
+                                    let (name, email) =
+                                        (dialog.identity_name.clone(), dialog.identity_email.clone());
+                                    let file = dialog.identity_file.clone();
+                                    let repaint = ui.ctx().clone();
+                                    std::thread::spawn(move || {
+                                        let scope = match &file {
+                                            Some(file) => gg_git::identity::Scope::File(file),
+                                            None => gg_git::identity::Scope::Global,
+                                        };
+                                        let _ = send.send(gg_git::identity::set(scope, &name, &email));
+                                        repaint.request_repaint();
+                                    });
+                                    dialog.identity_write = Some(receive);
+                                    dialog.identity_note = None;
+                                }
+                                match &dialog.identity_note {
+                                    Some(Ok(note)) => {
+                                        ui.weak(note);
+                                    }
+                                    Some(Err(error)) => {
+                                        ui.colored_label(ui.visuals().error_fg_color, error);
+                                    }
+                                    None => {}
+                                }
+                            });
+                            if let Some(identity) = dialog.identity.as_deref()
+                                && dialog.identity_global.label().as_deref() != Some(identity)
+                            {
+                                ui.weak(format!("This repository commits as {identity} (its own config)."));
+                            }
                             ui.separator();
                             ui.strong("Subject length guide");
                             ui.horizontal(|ui| {
@@ -4032,6 +4109,15 @@ impl Browser {
                     dialog.new_root.clear();
                 }
                 dialog.error = error;
+            }
+        }
+        if identity_saved {
+            self.welcome.reread_identity();
+            if let Some(dialog) = &mut self.folders_dialog {
+                dialog.identity = git_identity(Path::new(&self.path));
+                if dialog.identity_note.as_ref().is_some_and(Result::is_ok) {
+                    dialog.read_global_identity();
+                }
             }
         }
         if !open {
@@ -7526,6 +7612,10 @@ impl Browser {
             Command::NewRepository(folder) => FrameCommand::NewRepository(folder),
             Command::Preferences => {
                 self.open_preferences(PrefSection::General);
+                return;
+            }
+            Command::Identity => {
+                self.open_preferences(PrefSection::Commit);
                 return;
             }
             Command::OpenRecent(path) => {
@@ -15710,6 +15800,47 @@ mod tests {
                 "missing {expected:?} in {text:?}"
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn preferences_commit_saves_name_and_email_to_git() -> Result<(), String> {
+        use egui_kittest::kittest::Queryable;
+        let dir = tempfile::tempdir().map_err(|e| e.to_string())?;
+        let file = dir.path().join("gitconfig");
+        let mut app = layout_fixture();
+        app.open_preferences(PrefSection::Commit);
+        {
+            let dialog = app.folders_dialog.as_mut().ok_or("no Preferences")?;
+            dialog.identity_file = Some(file.clone());
+            dialog.read_global_identity();
+            assert_eq!(dialog.identity_name, "");
+            dialog.identity_name = "Ada Lovelace".into();
+            dialog.identity_email = "ada@example.org".into();
+        }
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(1120.0, 740.0))
+            .with_context_setup(crate::phosphor::install)
+            .build_ui_state(|ui, app: &mut Browser| app.draw_ui(ui), app);
+        harness.step();
+        harness.get_by_label("Save to Git").click();
+        let saved = "Saved. New commits use this name and email.";
+        for _ in 0..500 {
+            harness.step();
+            if harness.query_by_label(saved).is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(harness.query_by_label(saved).is_some(), "no receipt");
+        let written = gg_git::identity::read_scope(gg_git::identity::Scope::File(&file));
+        assert_eq!(
+            written.label().as_deref(),
+            Some("Ada Lovelace <ada@example.org>")
+        );
+        // Read again after saving, so Save has nothing left to write.
+        let dialog = harness.state().folders_dialog.as_ref().ok_or("closed")?;
+        assert_eq!(dialog.identity_global, written);
         Ok(())
     }
 
