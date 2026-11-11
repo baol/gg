@@ -370,3 +370,72 @@ fn creates_a_branch_at_a_revision_without_switching() -> Result {
     assert!(error.contains("invalid"), "{error}");
     Ok(())
 }
+
+/// `main` tracks a remote that has `base`; `one` and `two` are local only.
+fn ahead_of_upstream() -> Result<(tempfile::TempDir, tempfile::TempDir)> {
+    let dir = repo()?;
+    let remote = tempfile::tempdir()?;
+    git(remote.path(), &["init", "-q", "--bare"])?;
+    let p = dir.path();
+    let url = remote.path().to_string_lossy().into_owned();
+    git(p, &["remote", "add", "origin", &url])?;
+    git(p, &["push", "-q", "-u", "origin", "main"])?;
+    for name in ["one", "two"] {
+        std::fs::write(p.join(name), format!("{name}\n"))?;
+        git(p, &["add", name])?;
+        git(p, &["commit", "-qm", name])?;
+    }
+    Ok((dir, remote))
+}
+
+fn rev(path: &Path, name: &str) -> Result<String> {
+    Ok(String::from_utf8(git(path, &["rev-parse", name])?)?
+        .trim()
+        .to_string())
+}
+
+#[test]
+fn local_commits_move_to_a_new_branch_and_main_goes_back() -> Result {
+    let (dir, _remote) = ahead_of_upstream()?;
+    let p = dir.path();
+    let tip = rev(p, "HEAD")?;
+    let base = rev(p, "origin/main")?;
+    let one = rev(p, "HEAD~1")?;
+    // Uncommitted work comes along untouched.
+    std::fs::write(p.join("a"), b"edited\n")?;
+
+    let receipt = gg_git::branch::move_to_new(p, "feature", &one)?;
+    assert_eq!(receipt.branch, "feature");
+    assert_eq!(receipt.from_branch, "main");
+    assert_eq!(receipt.commits, 2);
+    assert_eq!(receipt.base, base);
+    assert_eq!(
+        String::from_utf8(git(p, &["branch", "--show-current"])?)?.trim(),
+        "feature"
+    );
+    assert_eq!(rev(p, "feature")?, tip);
+    assert_eq!(rev(p, "main")?, base);
+    assert_eq!(std::fs::read(p.join("a"))?, b"edited\n");
+    // The old tip is in Recovery.
+    assert_eq!(rev(p, &receipt.backup)?, tip);
+    Ok(())
+}
+
+#[test]
+fn moving_refuses_pushed_commits_taken_names_and_a_detached_head() -> Result {
+    let (dir, _remote) = ahead_of_upstream()?;
+    let p = dir.path();
+    let pushed = rev(p, "origin/main")?;
+    let error = rejected(gg_git::branch::move_to_new(p, "feature", &pushed))?;
+    assert!(error.contains("not pushed"), "{error}");
+    git(p, &["branch", "taken"])?;
+    let error = rejected(gg_git::branch::move_to_new(p, "taken", "HEAD"))?;
+    assert!(error.contains("already exists"), "{error}");
+    let tip = rev(p, "HEAD")?;
+    git(p, &["switch", "-q", "--detach", &tip])?;
+    let error = rejected(gg_git::branch::move_to_new(p, "feature", "HEAD"))?;
+    assert!(error.contains("detached"), "{error}");
+    // Nothing moved.
+    assert_eq!(rev(p, "main")?, tip);
+    Ok(())
+}

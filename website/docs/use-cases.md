@@ -33,6 +33,15 @@ git good --cli rewrite --from 2d566e9 \
  "conflicts":[],"warnings":[],"complete":true, "…": "…"}
 ```
 
+## "I committed on main by habit"
+
+You started work and committed on `main` before making a branch. Nothing is pushed yet.
+
+1. Right-click the commit in the History tree and choose **Move to a new branch…** (it is first in the menu).
+2. Type a name, such as `fix-login`, and press ++enter++.
+
+Git Good switches you to `fix-login` with your commit on it, and puts `main` back where `origin/main` is. Your files do not change. Pick the oldest of several local commits to move them all. `main`'s old tip is kept in [Recovery](workflows/recovery.md). The same from a script: `git good --cli branch --move-from COMMIT fix-login`.
+
 ## Your teammate pushed first
 
 **Situation.** Margaret pushed *Bump serde to 1.0.214* while Ada was working. Ada's `main` is 5 ahead and 1 behind `origin/main`, so a plain push would be rejected.

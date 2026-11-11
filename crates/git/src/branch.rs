@@ -196,6 +196,99 @@ pub fn delete(path: &Path, branch: &str, force: bool) -> Result<DeleteReceipt, S
     })
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MoveReceipt {
+    /// The new branch, now checked out, at the old tip.
+    pub branch: String,
+    /// The branch the commits left, now at `base`.
+    pub from_branch: String,
+    pub base: String,
+    pub tip: String,
+    /// How many commits moved.
+    pub commits: usize,
+    /// The backup of `from_branch`'s old tip.
+    pub backup: String,
+}
+
+/// Move the current branch's own commits, from `from` through HEAD, to a new
+/// branch: the new branch starts at HEAD and is checked out, and the current
+/// branch goes back to `from`'s parent. Only commits its upstream (or the
+/// default branch) lacks can move, so nothing pushed is rewritten. The working
+/// tree and index are untouched: HEAD's commit stays the same.
+pub fn move_to_new(path: &Path, branch: &str, from: &str) -> Result<MoveReceipt, String> {
+    let branch = branch.trim();
+    validate_name(branch)?;
+    let from = from.trim();
+    if from.is_empty() || from.starts_with('-') || from.contains('\0') {
+        return Err("The first commit to move is invalid.".into());
+    }
+    let current =
+        crate::backup::current_branch(path).ok_or("Switch to a branch first: HEAD is detached.")?;
+    if ref_exists(path, &format!("refs/heads/{branch}"))? {
+        return Err(format!("A branch named {branch} already exists."));
+    }
+    let tip = git_out(
+        path,
+        &["rev-parse", "--verify", "HEAD^{commit}"],
+        "Read HEAD",
+    )?;
+    let from = git_out(
+        path,
+        &["rev-parse", "--verify", &format!("{from}^{{commit}}")],
+        "Read the first commit to move",
+    )?;
+    let (start, _) = crate::rewrite::branch_start(path)?.ok_or(format!(
+        "Every commit on {current} is already on its upstream; there is nothing to move."
+    ))?;
+    let within = |older: &str, newer: &str| {
+        crate::process::git()
+            .current_dir(path)
+            .args(["merge-base", "--is-ancestor", older, newer])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success())
+    };
+    if !within(&from, &tip) || !within(&start, &from) {
+        return Err(format!(
+            "Only commits on {current} that are not pushed can move to a new branch."
+        ));
+    }
+    let base = git_out(
+        path,
+        &["rev-parse", "--verify", &format!("{from}^")],
+        "Read the commit before the first one to move",
+    )
+    .map_err(|_| "The first commit of the repository cannot move: nothing comes before it.")?;
+    let commits = git_out(
+        path,
+        &["rev-list", "--count", &format!("{base}..{tip}")],
+        "Count the commits to move",
+    )?
+    .parse()
+    .unwrap_or(0);
+    let backup = crate::backup::create(path, "move", &tip)?;
+    git(
+        path,
+        &["switch", "-c", branch],
+        "Create and switch to the new branch",
+    )?;
+    git(
+        path,
+        &["branch", "-f", "--", &current, &base],
+        "Move the old branch back",
+    )?;
+    Ok(MoveReceipt {
+        branch: branch.to_string(),
+        from_branch: current,
+        base,
+        tip,
+        commits,
+        backup,
+    })
+}
+
 pub fn create(path: &Path, branch: &str) -> Result<Receipt, String> {
     run(path, branch, true)
 }
@@ -495,6 +588,25 @@ fn ref_exists(path: &Path, full: &str) -> Result<bool, String> {
         .status()
         .map(|status| status.success())
         .map_err(|e| format!("Could not run Git: {e}. Install Git and retry."))
+}
+
+/// [`git`], returning what Git printed, trimmed.
+fn git_out(path: &Path, args: &[&str], label: &str) -> Result<String, String> {
+    let output = crate::process::git()
+        .current_dir(path)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .output()
+        .map_err(|e| format!("Could not run Git: {e}. Install Git and retry."))?;
+    if output.status.success() {
+        return Ok(String::from_utf8_lossy(&output.stdout).trim().to_string());
+    }
+    let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    Err(format!("{label} failed ({}). {detail}", output.status))
 }
 
 fn git(path: &Path, args: &[&str], label: &str) -> Result<(), String> {

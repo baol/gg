@@ -61,10 +61,13 @@ git good --cli ignore FILE [--extension|--folder] [--repo PATH]
 git good --cli switch [--create | --stash [--include-untracked]] BRANCH [--repo PATH]
 git good --cli branch --create NAME [--at REF] [--repo PATH]
 git good --cli branch --delete BRANCH [--force] [--repo PATH]
+git good --cli branch --move-from COMMIT NAME [--repo PATH]
 git good --cli tag --create TAG --at REF -m MESSAGE [--sign|--no-sign] [--repo PATH]
 git good --cli tag --delete TAG [--repo PATH]
 git good --cli reset --soft|--mixed|--hard COMMIT [--repo PATH]
 ```
+
+`branch --move-from COMMIT NAME` moves the current branch's own commits, from COMMIT through HEAD, to a new branch NAME and switches to it; the current branch goes back to COMMIT's parent, its old tip saved as a `move` backup first. Only commits its upstream (or the default branch) lacks can move. It runs `git switch -c NAME` and `git branch -f CURRENT COMMIT^`, so the working tree and index are untouched, and prints `{"operation":"branch-move","branch","from_branch","base","tip","commits","backup","complete":true}`.
 
 `switch --stash` stashes the tracked changes (and untracked files with `--include-untracked`) and then switches to an existing branch. `tag --create` signs as `tag.gpgSign` says unless `--sign` or `--no-sign` is given.
 

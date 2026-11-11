@@ -478,6 +478,40 @@ fn branch_create_runs_the_cli_commands() -> Result {
     Ok(())
 }
 
+#[test]
+fn branch_move_runs_the_cli_commands() -> Result {
+    let mut gui = Gui::open(none)?;
+    let head = git(&gui.fixture.repo, &["rev-parse", "HEAD"])?;
+    gui.app.state.selected = Some(head.clone());
+    let (mut local, mut history) = (false, false);
+    gui.app.run_frame_command(
+        &gui.ctx,
+        crate::FrameCommand::MoveToNewBranch,
+        &mut local,
+        &mut history,
+    );
+    if gui.app.create_branch.is_none() {
+        return Err(format!(
+            "Move to a new branch did not open: {:?}",
+            gui.app.move_reason()
+        )
+        .into());
+    }
+    gui.frame(vec![]);
+    gui.frame(vec![egui::Event::Text("topic".into())]);
+    gui.frame(vec![enter()]);
+    gui.until(|app| app.operation_worker.is_none())?;
+    assert!(gui.app.create_branch.is_none(), "Enter moved the commit");
+    let gui = gui.finish()?;
+    let cli = cli(
+        none,
+        move |_| Ok(strings(&["--move-from", &head, "topic"])),
+        branch_cli,
+    )?;
+    assert_parity("branch move", &gui, &cli);
+    Ok(())
+}
+
 /// Git Good has no rename command; the GUI must run what the backend's
 /// rename runs, and nothing more.
 #[test]
