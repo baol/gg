@@ -2,7 +2,7 @@
 
 Purpose: explain how the user documentation site is built and previewed.
 
-The site at <https://baol.github.io/gg/> is built with [Zensical](https://zensical.org) from the pages in `docs/`, configured in `zensical.toml`. The `Docs` workflow (`.github/workflows/docs.yml`) builds it on pull requests that touch it and publishes it to GitHub Pages on every push to `main`.
+The site at <https://100allora.it/gg/> is built with [Zensical](https://zensical.org) from the pages in `docs/`, configured in `zensical.toml`. The `Docs` workflow (`.github/workflows/docs.yml`) builds it on pull requests that touch it and publishes it to GitHub Pages on every push to `main`.
 
 ## Screenshots
 

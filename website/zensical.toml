@@ -5,7 +5,7 @@
 [project]
 site_name = "Git Good"
 site_description = "A fast, native Git desktop app: the History tree, review, hunk and line staging, interactive rebase and recovery."
-site_url = "https://baol.github.io/gg/"
+site_url = "https://100allora.it/gg/"
 repo_url = "https://github.com/baol/gg"
 repo_name = "baol/gg"
 edit_uri = "edit/main/website/docs/"
