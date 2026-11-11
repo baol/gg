@@ -1192,10 +1192,10 @@ impl StatusView {
                 if has_head {
                     amend |= ui
                         .button("Amend HEAD")
-                        .on_hover_text(
+                        .on_hover_text(crate::keymap::shown(
                             "Edit the last commit: reword it, or unstage a file to take it out \
                              · Ctrl+Shift+Enter",
-                        )
+                        ))
                         .clicked();
                 }
             });
