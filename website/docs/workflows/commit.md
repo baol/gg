@@ -28,7 +28,7 @@ In the example, `src/routes.rs` has two hunks: a new `use crate::orders;` import
 
 ## Ignore what should never be committed
 
-Build output, logs and editor files show up as untracked (`?`) until Git is told to ignore them. Select one and open ⋯ (File actions):
+Build output, logs and editor files show up as untracked (`?`) until Git is told to ignore them. Right-click it, or select it and open ⋯ (File actions):
 
 ![File actions on the untracked logs/requests.log: Ignore this file, Ignore all *.log files and Ignore folder logs/ above Discard file](../assets/screens/ignore.png){ .gg-shot }
 
@@ -53,6 +53,8 @@ From a script: `git good --cli ignore logs/requests.log --extension` (see [Scrip
 Write the message in the box under the diff (the first line is the subject) and press ++ctrl+enter++ or **Commit**.
 
 - **Amend HEAD** replaces the last commit instead. Git Good saves the old commit as a [backup](recovery.md) first.
+- With nothing changed, **Amend HEAD** on the *Working tree clean* screen (or **Changes › Amend HEAD**) opens the last commit: reword it, or unstage a file to take it out of the commit.
+- Right-click a file in Unstaged or Staged for its actions: stage or unstage, open, copy its path, ignore it, or discard it.
 - **Sign** signs the commit with your Git signing setup (GPG or SSH); its default follows `commit.gpgSign`.
 - **Expand** gives the message more room.
 
