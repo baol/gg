@@ -1964,6 +1964,21 @@ Layer: product
 - And `git good --cli ignore FILE [--extension|--folder]` adds the same pattern and prints `{"operation":"ignore","pattern","file","added","complete":true}`
 Covered by (backend, interaction, end-to-end): `ignore_patterns_match_what_git_ignores`, `ignore_writes_the_root_gitignore_from_a_subfolder` (crates/git/tests/ignore.rs), `patterns_anchor_files_and_folders_and_escape_specials` (crates/git/src/ignore.rs), `an_untracked_file_can_be_ignored_from_file_actions` (apps/git-good/src/status_view.rs), `ignore_adds_the_pattern_and_names_it_in_the_footer` (apps/git-good/src/main.rs), `ignore_cli_adds_the_pattern_for_a_file_its_extension_or_folder` (apps/git-good/tests/cli.rs)
 
+### CHG-78 A file row's right-click menu
+Fixture: `fx-linear` with `a` modified and untracked `logs/a.log`
+Layer: interaction
+- When the user right-clicks a row in Unstaged or Staged
+- Then a menu acts on that row, whatever the reader shows: **Stage** (`S`) or **Unstage** (`U`) when the row button would, **Open in editor**, **Reveal in folder**, **Copy path**; on an untracked file the Ignore rows of CHG-77; on an Unstaged or untracked file a red **Discard file…** last
+- And **Discard file…** asks first, naming the file (*Discard unstaged changes from a? The index is unchanged.*, or *Delete the untracked file logs/a.log?*), and acts only on **Discard**; while Git is busy no menu opens
+Covered by (interaction): `a_right_click_on_a_file_row_stages_ignores_and_discards_it` (apps/git-good/src/status_view.rs)
+
+### CHG-79 Amend HEAD from a clean working tree
+Fixture: `fx-linear`, clean
+Layer: interaction
+- When Local Changes reads *Working tree clean* and the user clicks **Amend HEAD**
+- Then Local Changes opens in amend mode as **Changes › Amend HEAD** does (CHG-57): the last commit's files under Staged and its message in the commit box, so it can be reworded or a file unstaged to take it out of the commit
+Covered by (interaction): `amend_head_on_a_clean_tree_opens_the_last_commit` (apps/git-good/src/status_view.rs)
+
 ### CHG-17 Unstaging a staged rename restores both halves
 Fixture: `fx-dirty`
 Layer: product
