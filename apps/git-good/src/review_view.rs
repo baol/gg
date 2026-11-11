@@ -1261,7 +1261,12 @@ impl Review {
                             "Reading changed files…"
                         })
                     };
-                    bounded_text::field(ui, text, egui::FontId::proportional(12.0), 18.0);
+                    bounded_text::field(
+                        ui,
+                        &crate::keymap::shown(text),
+                        egui::FontId::proportional(12.0),
+                        18.0,
+                    );
                 });
         }
         if self.history.is_some() && !self.embedded {

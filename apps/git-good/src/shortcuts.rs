@@ -241,7 +241,7 @@ pub fn show(ctx: &egui::Context, query: &mut String, groups: &[Group]) -> Option
                             crate::bounded_text::paint(
                                 ui,
                                 key,
-                                &row.key,
+                                &crate::keymap::shown(&row.key),
                                 egui::FontId::monospace(12.0),
                                 ui.visuals().strong_text_color(),
                             );

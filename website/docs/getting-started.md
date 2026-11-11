@@ -48,6 +48,9 @@ Git Good runs the `git` on your `PATH`, so your configuration, hooks, credential
 
 ## Open a repository
 
+!!! tip "First time with Git?"
+    Git records your name and email in every commit. The welcome screen shows who you commit as; when Git does not know yet, click **Set name and email…** (or open **Preferences › Commit**), fill in **Name** and **Email** and click **Save to Git**. It is the same as `git config --global user.name` and `user.email`.
+
 From a terminal inside a repository:
 
 ```sh

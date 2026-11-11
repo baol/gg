@@ -1176,13 +1176,15 @@ impl StatusView {
                     back |= ui
                         .button((
                             "Open History tree",
-                            egui::RichText::new("Ctrl+2").small().weak(),
+                            egui::RichText::new(crate::keymap::shown("Ctrl+2"))
+                                .small()
+                                .weak(),
                         ))
                         .clicked();
                 } else {
                     back |= ui
                         .add(primary("Open History tree".into()))
-                        .on_hover_text("Ctrl+2")
+                        .on_hover_text(crate::keymap::shown("Ctrl+2"))
                         .clicked();
                 }
                 // Change the last commit without new changes: its message,
@@ -1637,8 +1639,12 @@ impl StatusView {
                         !busy && count > 0 && !blocked,
                         egui::Button::new(label).small(),
                     )
-                    .on_hover_text(key)
-                    .on_disabled_hover_text(if blocked { UNSTAGE_ALL_AMENDING } else { key })
+                    .on_hover_text(crate::keymap::shown(key))
+                    .on_disabled_hover_text(if blocked {
+                        UNSTAGE_ALL_AMENDING.to_owned()
+                    } else {
+                        crate::keymap::shown(key)
+                    })
                     .clicked()
                 {
                     self.group_request = Some(index == 0);
@@ -2396,9 +2402,9 @@ impl StatusView {
                 let response = if let Some(reason) = reason {
                     response.on_hover_text(reason)
                 } else if self.amend {
-                    response.on_hover_text("Ctrl+Shift+Enter")
+                    response.on_hover_text(crate::keymap::shown("Ctrl+Shift+Enter"))
                 } else {
-                    response.on_hover_text("Ctrl+Enter")
+                    response.on_hover_text(crate::keymap::shown("Ctrl+Enter"))
                 };
                 ui.weak(reason.unwrap_or(if self.amend {
                     "Ready to amend"
@@ -2666,9 +2672,9 @@ impl StatusView {
                                 text.push_str(&format!("   ·   Backup: {backup}"));
                             }
                             if self.error.is_none() && self.external_busy.is_none() {
-                                text.push_str(
+                                text.push_str(&crate::keymap::shown(
                                     "   ·   S / U: stage / unstage · [ ]: hunks · Ctrl+Enter: commit",
-                                );
+                                ));
                             }
                             bounded_text::field(
                                 ui,

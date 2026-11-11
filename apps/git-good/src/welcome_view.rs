@@ -47,6 +47,8 @@ pub enum Command {
     Locate(PathBuf),
     /// Preferences › General.
     Preferences,
+    /// Preferences › Commit, to set the Git identity.
+    Identity,
 }
 
 /// What the background read learned about one recent folder.
@@ -75,6 +77,9 @@ pub struct Welcome {
     probe_rx: Option<Receiver<(PathBuf, Probe)>>,
     git_version: Option<String>,
     git_rx: Option<Receiver<Option<String>>>,
+    /// Who Git commits as, from the global config, once read.
+    identity: Option<gg_git::identity::Identity>,
+    identity_rx: Option<Receiver<gg_git::identity::Identity>>,
     /// A dropped folder being checked: is it a repository?
     pub drop_rx: Option<Receiver<(PathBuf, bool)>>,
 }
@@ -100,6 +105,21 @@ impl Welcome {
                 repaint.request_repaint();
             });
             self.git_rx = Some(rx);
+        }
+        if self.identity.is_none() && self.identity_rx.is_none() {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let repaint = ctx.clone();
+            std::thread::spawn(move || {
+                let _ = tx.send(gg_git::identity::read(None));
+                repaint.request_repaint();
+            });
+            self.identity_rx = Some(rx);
+        }
+        if let Some(rx) = &self.identity_rx
+            && let Ok(identity) = rx.try_recv()
+        {
+            self.identity = Some(identity);
+            self.identity_rx = None;
         }
         if let Some(rx) = &self.git_rx
             && let Ok(version) = rx.try_recv()
@@ -143,6 +163,19 @@ impl Welcome {
     /// Re-read every folder, for example after a failed open.
     pub fn reread(&mut self) {
         self.probing.clear();
+    }
+
+    /// Read the Git identity again, after Preferences wrote it.
+    pub fn reread_identity(&mut self) {
+        self.identity = None;
+        self.identity_rx = None;
+    }
+
+    /// Tests: the identity as if Git had just reported it.
+    #[cfg(test)]
+    pub fn set_identity(&mut self, identity: gg_git::identity::Identity) {
+        self.identity = Some(identity);
+        self.identity_rx = None;
     }
 
     /// The `Git <version>` part of the version line, once read.
@@ -268,6 +301,34 @@ impl Welcome {
             });
         });
         ui.add_space(14.0);
+        // Who commits: a quiet line, or a warning while Git cannot commit.
+        match &self.identity {
+            Some(identity) if identity.complete() => {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 4.0;
+                    ui.weak("Committing as");
+                    ui.label(identity.label().unwrap_or_default());
+                    ui.weak("·");
+                    if ui.link("Change…").clicked() {
+                        command = Some(Command::Identity);
+                    }
+                });
+                ui.add_space(10.0);
+            }
+            Some(_) => {
+                if warning_line(
+                    ui,
+                    "Git does not know your name and email yet, so it cannot commit.",
+                    "Git records them in every commit (user.name and user.email).",
+                    &[("Set name and email…", 0)],
+                ) == Some(0)
+                {
+                    command = Some(Command::Identity);
+                }
+                ui.add_space(10.0);
+            }
+            None => {}
+        }
         if let Some((path, error)) = &self.launch {
             let shown = tilde(path, info.home);
             let text = format!("{shown} is not a Git repository.");
@@ -281,7 +342,7 @@ impl Welcome {
         let clone_into = tilde(info.clone_folder, info.home);
         let cards: [(&str, String, Command); 3] = if compact || width < 560.0 {
             [
-                ("Open…", "Ctrl+O".into(), Command::Open),
+                ("Open…", crate::keymap::shown("Ctrl+O"), Command::Open),
                 ("Clone…", format!("into {clone_into}"), Command::Clone),
                 (
                     "New repository…",
@@ -293,7 +354,7 @@ impl Welcome {
             [
                 (
                     "Open…",
-                    "A folder on this computer · Ctrl+O".into(),
+                    crate::keymap::shown("A folder on this computer · Ctrl+O"),
                     Command::Open,
                 ),
                 (
@@ -632,6 +693,9 @@ pub fn warning_line(
             .rect_stroke(button, 3.0, (1.0, border), egui::StrokeKind::Inside);
         ui.painter()
             .galley(button.center() - galley.size() / 2.0, galley, ink);
+        // Painted: name it for screen readers.
+        response
+            .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), *label));
         if response.clicked() {
             clicked = Some(*number);
         }
@@ -642,6 +706,7 @@ pub fn warning_line(
         egui::pos2(right - 6.0, rect.bottom()),
     );
     paint_elided(ui, text_rect, text, egui::FontId::proportional(12.5), ink);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, text));
     response.on_hover_text(hover);
     clicked
 }
@@ -899,6 +964,88 @@ mod tests {
 
     fn recent(paths: &[&str]) -> Vec<Recent> {
         paths.iter().map(|path| Recent::new(path.into())).collect()
+    }
+
+    /// The welcome screen with this identity; returns its text and the
+    /// command a click on `click` (when given) runs.
+    fn identity_screen(
+        identity: gg_git::identity::Identity,
+        click: Option<&str>,
+    ) -> (Vec<String>, Option<Command>) {
+        use egui_kittest::kittest::Queryable;
+        let mut welcome = Welcome::default();
+        welcome.set_identity(identity);
+        let recent = recent(&["/home/me/dev/gg"]);
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(900.0, 600.0))
+            .with_context_setup(crate::phosphor::install)
+            .build_ui_state(
+                |ui, state: &mut (Welcome, Option<Command>)| {
+                    let info = Info {
+                        recent: &recent,
+                        clone_folder: Path::new("/home/me/dev"),
+                        home: Some("/home/me"),
+                        now: 0,
+                        window_width: 900.0,
+                    };
+                    if let Some(command) = state.0.show(ui, &info, &mut None) {
+                        state.1 = Some(command);
+                    }
+                },
+                (welcome, None),
+            );
+        harness.run();
+        if let Some(label) = click {
+            harness.get_by_label(label).click();
+            harness.run();
+        }
+        let text = [
+            "Committing as",
+            "Ada Lovelace <ada@example.org>",
+            "Change…",
+            "Git does not know your name and email yet, so it cannot commit.",
+            "Set name and email…",
+        ]
+        .into_iter()
+        .filter(|label| harness.query_by_label(label).is_some())
+        .map(str::to_owned)
+        .collect();
+        (text, harness.state().1.clone())
+    }
+
+    #[test]
+    fn welcome_names_who_commits_or_asks_for_a_name_and_email() {
+        let full = gg_git::identity::Identity {
+            name: Some("Ada Lovelace".into()),
+            email: Some("ada@example.org".into()),
+        };
+        let (text, _) = identity_screen(full, None);
+        assert!(text.iter().any(|line| line == "Committing as"), "{text:?}");
+        assert!(
+            text.iter()
+                .any(|line| line == "Ada Lovelace <ada@example.org>")
+        );
+        let (_, command) = identity_screen(
+            gg_git::identity::Identity {
+                name: Some("Ada Lovelace".into()),
+                email: Some("ada@example.org".into()),
+            },
+            Some("Change…"),
+        );
+        assert_eq!(command, Some(Command::Identity));
+        let missing = gg_git::identity::Identity {
+            name: Some("Ada Lovelace".into()),
+            email: None,
+        };
+        let (text, _) = identity_screen(missing.clone(), None);
+        assert!(!text.iter().any(|line| line == "Committing as"), "{text:?}");
+        assert!(
+            text.iter()
+                .any(|line| line.starts_with("Git does not know")),
+            "{text:?}"
+        );
+        let (_, command) = identity_screen(missing, Some("Set name and email…"));
+        assert_eq!(command, Some(Command::Identity));
     }
 
     #[test]

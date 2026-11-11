@@ -109,7 +109,12 @@ pub fn page(
                     }
                     let response = ui.add_enabled(
                         commit.is_some(),
-                        egui::Button::new(("Actions", egui::RichText::new("Alt+A").weak().small())),
+                        egui::Button::new((
+                            "Actions",
+                            egui::RichText::new(crate::keymap::shown("Alt+A"))
+                                .weak()
+                                .small(),
+                        )),
                     );
                     egui::Popup::menu(&response)
                         .id(commit_actions_popup_id())
@@ -149,7 +154,7 @@ pub fn page(
                                 .on_hover_text(&commit.id);
                             if ui
                                 .small_button(crate::phosphor::icon(crate::phosphor::COPY))
-                                .on_hover_text("Copy ID · Ctrl+C")
+                                .on_hover_text(crate::keymap::shown("Copy ID · Ctrl+C"))
                                 .clicked()
                             {
                                 ui.ctx().copy_text(commit.id.clone());
@@ -384,7 +389,9 @@ pub fn inspector(
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let response = ui.add(egui::Button::new((
                 "Actions",
-                egui::RichText::new("Alt+A").weak().small(),
+                egui::RichText::new(crate::keymap::shown("Alt+A"))
+                    .weak()
+                    .small(),
             )));
             egui::Popup::menu(&response)
                 .id(commit_actions_popup_id())

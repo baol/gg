@@ -353,7 +353,8 @@ fn item_response<C>(
 ) -> egui::Response {
     let color = (item.danger && item.disabled.is_none()).then(|| ui.visuals().error_fg_color);
     let text = crate::menu_keys::mnemonic_text(ui, &item.label, mnemonic, color);
-    let mut button = row(item.checked == Some(true), text).shortcut_text(item.key.as_str());
+    let mut button =
+        row(item.checked == Some(true), text).shortcut_text(crate::keymap::shown(&item.key));
     if lit {
         button = button.frame_when_inactive(true);
     }

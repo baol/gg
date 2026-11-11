@@ -5,11 +5,11 @@
 [project]
 site_name = "Git Good"
 site_description = "A fast, native Git desktop app: the History tree, review, hunk and line staging, interactive rebase and recovery."
-site_url = "https://baol.github.io/gg/"
+site_url = "https://100allora.it/gg/"
 repo_url = "https://github.com/baol/gg"
 repo_name = "baol/gg"
 edit_uri = "edit/main/website/docs/"
-copyright = "Apache-2.0 · Git Good contributors"
+copyright = 'Apache-2.0 · Git Good contributors · part of <a href="https://100allora.it/">100allora.it</a>'
 extra_css = ["stylesheets/extra.css"]
 
 nav = [
@@ -81,6 +81,11 @@ primary = "indigo"
 accent = "amber"
 toggle.icon = "lucide/moon"
 toggle.name = "Switch to system preference"
+
+[[project.extra.social]]
+icon = "fontawesome/solid/house"
+link = "https://100allora.it/"
+name = "100allora.it"
 
 [[project.extra.social]]
 icon = "fontawesome/brands/github"
