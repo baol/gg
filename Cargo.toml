@@ -9,7 +9,7 @@ license = "Apache-2.0"
 authors = ["Mirko Maischberger"]
 rust-version = "1.95"
 repository = "https://github.com/baol/gg"
-homepage = "https://baol.github.io/gg/"
+homepage = "https://100allora.it/gg/"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
