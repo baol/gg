@@ -444,7 +444,7 @@ Covered by (Not automated)
 ### FRM-55 Idle hints shorten at narrow widths instead of clipping
 Fixture: `fx-linear`
 Layer: interaction
-- Then at 1440 px the footer reads `j k: select · Enter: review · Alt+A: actions · R: rebase from here · Ctrl+K: search · Ctrl/Cmd+F: filter · Ctrl/Cmd+C: copy ID`; below 1040 px `j/k: select · Enter: review · Space: details · Esc: History tree · Ctrl/Cmd+F: filter` (no `copy ID`)
+- Then at 1440 px the footer reads `j k: select · Enter: review · Alt+A: actions · R: rebase from here · Ctrl+K: search · Ctrl+F: filter · Ctrl+C: copy ID`; below 1040 px `j/k: select · Enter: review · Space: details · Esc: History tree · Ctrl+F: filter` (no `copy ID`)
 Covered by (interaction): `status_hints_shorten_at_narrow_widths` (apps/git-good/src/main.rs)
 
 ### FRM-56 Receipts fade after 8 seconds
@@ -667,6 +667,14 @@ Layer: interaction
 - When **Help › Star Git Good on GitHub**
 - Then the browser opens `https://github.com/baol/gg`, the repository page where GitHub's Star button is; the Help menu reads Keyboard shortcuts · Documentation · Star Git Good on GitHub · About Git Good
 Covered by (interaction): `star_on_github_opens_the_repository_page`, `menus_follow_the_final_design_mockup` (apps/git-good/src/main.rs)
+
+### FRM-91 Key labels name the platform's keys
+Fixture: `fx-linear` on macOS
+Layer: interaction
+- When the window shows a key in a button, hint, tooltip, menu, Keyboard shortcuts or Preferences › Keyboard, such as **Start rebase** in Interactive rebase
+- Then on macOS the Command modifier reads ⌘ and the others ⌥ and ⇧, in Apple's order with no plus signs, and Enter after a modifier reads ↩ (**Start rebase** `⌘↩`, Stage all `⇧⌘S`, Actions `⌥A`); no label reads `Ctrl+`; on Linux and Windows the same labels read `Ctrl+Enter`, `Ctrl+Shift+S`, `Alt+A`
+- And the keys themselves are unchanged: egui's Command modifier is ⌘ on macOS and Ctrl elsewhere, and saved key settings keep the `Ctrl+Shift+S` form on every platform
+Covered by (interaction): `on_macos_the_rewrite_dialog_names_command_keys` (apps/git-good/src/main.rs), `mac_labels_use_the_command_symbols`, `labels_follow_the_platform_this_thread_is_set_to` (apps/git-good/src/keymap.rs)
 
 ### HIS-01 First page streams before traversal finishes
 Fixture: `fx-large` (opt-in performance) (size 1440×900 unless stated)
@@ -1963,6 +1971,21 @@ Layer: product
 - Then Git Good adds the pattern on its own line to `.gitignore` at the repository root (created when missing, a missing final newline added first, other lines kept), the footer reads *Ignored \*.log · added to .gitignore* (or *\*.log is already in .gitignore*, writing nothing), and Local Changes reads again without the ignored files; patterns are anchored to the root and escape `\`, `*`, `?`, `[` and a trailing space, so they match exactly what was chosen (`git check-ignore`); a non-UTF-8 path is refused
 - And `git good --cli ignore FILE [--extension|--folder]` adds the same pattern and prints `{"operation":"ignore","pattern","file","added","complete":true}`
 Covered by (backend, interaction, end-to-end): `ignore_patterns_match_what_git_ignores`, `ignore_writes_the_root_gitignore_from_a_subfolder` (crates/git/tests/ignore.rs), `patterns_anchor_files_and_folders_and_escape_specials` (crates/git/src/ignore.rs), `an_untracked_file_can_be_ignored_from_file_actions` (apps/git-good/src/status_view.rs), `ignore_adds_the_pattern_and_names_it_in_the_footer` (apps/git-good/src/main.rs), `ignore_cli_adds_the_pattern_for_a_file_its_extension_or_folder` (apps/git-good/tests/cli.rs)
+
+### CHG-78 A file row's right-click menu
+Fixture: `fx-linear` with `a` modified and untracked `logs/a.log`
+Layer: interaction
+- When the user right-clicks a row in Unstaged or Staged
+- Then a menu acts on that row, whatever the reader shows: **Stage** (`S`) or **Unstage** (`U`) when the row button would, **Open in editor**, **Reveal in folder**, **Copy path**; on an untracked file the Ignore rows of CHG-77; on an Unstaged or untracked file a red **Discard file…** last
+- And **Discard file…** asks first, naming the file (*Discard unstaged changes from a? The index is unchanged.*, or *Delete the untracked file logs/a.log?*), and acts only on **Discard**; while Git is busy no menu opens
+Covered by (interaction): `a_right_click_on_a_file_row_stages_ignores_and_discards_it` (apps/git-good/src/status_view.rs)
+
+### CHG-79 Amend HEAD from a clean working tree
+Fixture: `fx-linear`, clean
+Layer: interaction
+- When Local Changes reads *Working tree clean* and the user clicks **Amend HEAD**
+- Then Local Changes opens in amend mode as **Changes › Amend HEAD** does (CHG-57): the last commit's files under Staged and its message in the commit box, so it can be reworded or a file unstaged to take it out of the commit
+Covered by (interaction): `amend_head_on_a_clean_tree_opens_the_last_commit` (apps/git-good/src/status_view.rs)
 
 ### CHG-80 Move local commits to a new branch
 Fixture: the parity fixture: `main` one commit (`local`) ahead of `origin/main`
@@ -3952,6 +3975,13 @@ Covered by (interaction): `reports_malformed_configuration_as_an_empty_list` (ap
 - And the first save keeps the unreadable file as `settings.json.unreadable` beside the new one, and leaves no temporary file
 Covered by (interaction): `an_unreadable_file_is_set_aside_not_overwritten` (apps/git-good/src/settings.rs)
 
+### PRF-40 Commit: Name and Email write the global Git identity
+Fixture: an empty global config
+Layer: interaction
+- When the user opens Preferences › Commit, types `Ada Lovelace` and `ada@example.org` under **Identity** and clicks **Save to Git**
+- Then Git Good runs `git config --global user.name` and `user.email` on a worker, reads *Saved. New commits use this name and email.*, and `git config user.name` reads `Ada Lovelace`; **Save to Git** is disabled until a field differs from the saved value and both are filled; a name or email on several lines, or an email in `< >`, is refused with nothing written; when the open repository has its own identity the section adds *This repository commits as …*
+Covered by (backend, interaction): `set_writes_name_and_email_that_git_then_reads`, `set_refuses_a_missing_or_multi_line_value_and_writes_nothing`, `read_in_a_repository_prefers_its_own_config` (crates/git/tests/identity.rs), `preferences_commit_saves_name_and_email_to_git` (apps/git-good/src/main.rs)
+
 ### PRF-39 Keys can be changed
 Fixture: default preferences
 Layer: interaction
@@ -4391,6 +4421,13 @@ Fixture: `fx-not-repo` (cwd), recent list of 6; window 720×480
 Layer: visual
 - Then the column fills the width; the cards stay three across with short subtitles (`Ctrl+O`, `into <~folder>`, `git init`); the branch column drops while the opened time stays; the logo and version line hide below 760 px; search is its icon
 Covered by (interaction): `the_narrow_welcome_keeps_three_cards_and_drops_logo_version_and_branch` (apps/git-good/src/main.rs)
+
+### DLG-19 Welcome names who commits
+Fixture: `fx-not-repo` (cwd), with and without `user.email` in the global config
+Layer: interaction
+- When the welcome view shows and Git's global identity has been read in the background
+- Then with `user.name` and `user.email` set it reads *Committing as* `Ada Lovelace <ada@example.org>` · **Change…**; with either missing an amber row reads *Git does not know your name and email yet, so it cannot commit.* with **Set name and email…**; both open Preferences › Commit; after a save there the line reads again
+Covered by (interaction): `welcome_names_who_commits_or_asks_for_a_name_and_email` (apps/git-good/src/welcome_view.rs)
 
 ## CLI
 

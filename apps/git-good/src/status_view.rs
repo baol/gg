@@ -291,6 +291,14 @@ pub struct StatusView {
     /// A discard waiting for confirmation: one file or hunk edit, or the
     /// picked lines across hunks.
     drop_confirm: Option<Vec<crate::diff_view::StageEdit>>,
+    /// A file row's right-click choice, run after the lists are drawn.
+    row_menu: Option<(usize, usize, RowMenu)>,
+    /// Discard… from a row's right-click menu, waiting for confirmation.
+    menu_discard: Option<StatusEntry>,
+    /// Open in editor or Reveal in folder from a row's right-click menu.
+    editor_request: Option<crate::editor::Request>,
+    /// An Ignore pattern from a row's right-click menu.
+    ignore_request: Option<String>,
     /// The change blocks a picked-lines discard reverts, named in its
     /// confirmation.
     drop_blocks: Vec<crate::diff_view::ChangeBlock>,
@@ -399,6 +407,10 @@ impl StatusView {
             stage: crate::stage_view::StageActions::default(),
             reader: crate::diff_view::DiffView::default(),
             drop_confirm: None,
+            row_menu: None,
+            menu_discard: None,
+            editor_request: None,
+            ignore_request: None,
             drop_blocks: Vec::new(),
             group_request: None,
             stop_commits: Vec::new(),
@@ -1124,6 +1136,8 @@ impl StatusView {
     /// The clean view: returns whether Open History tree was chosen.
     fn draw_clean(&mut self, ui: &mut egui::Ui) -> bool {
         let mut back = false;
+        let mut amend = false;
+        let has_head = self.clean_context.head.is_some();
         ui.vertical_centered(|ui| {
             ui.add_space((ui.available_height() * 0.3).max(24.0));
             ui.label(egui::RichText::new("Working tree clean").size(18.0));
@@ -1151,8 +1165,9 @@ impl StatusView {
                 } else {
                     None
                 };
-                // Centre the one or two buttons.
-                let width = if step.is_some() { 230.0 } else { 120.0 };
+                // Centre the buttons.
+                let width =
+                    if step.is_some() { 230.0 } else { 120.0 } + if has_head { 120.0 } else { 0.0 };
                 ui.add_space(((ui.available_width() - width) / 2.0).max(0.0));
                 if let Some((action, label)) = step {
                     if ui.add(primary(label)).clicked() {
@@ -1161,19 +1176,38 @@ impl StatusView {
                     back |= ui
                         .button((
                             "Open History tree",
-                            egui::RichText::new("Ctrl+2").small().weak(),
+                            egui::RichText::new(crate::keymap::shown("Ctrl+2"))
+                                .small()
+                                .weak(),
                         ))
                         .clicked();
                 } else {
                     back |= ui
                         .add(primary("Open History tree".into()))
-                        .on_hover_text("Ctrl+2")
+                        .on_hover_text(crate::keymap::shown("Ctrl+2"))
+                        .clicked();
+                }
+                // Change the last commit without new changes: its message,
+                // or take a file out by unstaging it (CHG-79).
+                if has_head {
+                    amend |= ui
+                        .button("Amend HEAD")
+                        .on_hover_text(crate::keymap::shown(
+                            "Edit the last commit: reword it, or unstage a file to take it out \
+                             · Ctrl+Shift+Enter",
+                        ))
                         .clicked();
                 }
             });
             ui.add_space(8.0);
             ui.weak("Changed files appear here as soon as they are saved.");
         });
+        if amend {
+            let ctx = ui.ctx().clone();
+            if let Err(error) = self.start_amend(&ctx) {
+                self.action_error = Some(error);
+            }
+        }
         back
     }
 
@@ -1237,12 +1271,16 @@ impl StatusView {
 
     /// Take the path chosen with ⋯ › Open in editor or Reveal in folder.
     pub fn take_editor_request(&mut self) -> Option<crate::editor::Request> {
-        self.reader.take_editor_request()
+        self.editor_request
+            .take()
+            .or_else(|| self.reader.take_editor_request())
     }
 
     /// Take the `.gitignore` pattern chosen with ⋯ › Ignore.
     pub fn take_ignore_request(&mut self) -> Option<String> {
-        self.reader.take_ignore_request()
+        self.ignore_request
+            .take()
+            .or_else(|| self.reader.take_ignore_request())
     }
 
     /// Select the Unstaged (or untracked) row of `path`, for the
@@ -1561,6 +1599,7 @@ impl StatusView {
         let complete = self.complete;
         let active = self.focus == index;
         let under = self.under;
+        let mut menu = None;
         let list = &mut self.lists[index];
         let count = list.count;
         let folded = collapsible && list.folded(complete);
@@ -1600,8 +1639,12 @@ impl StatusView {
                         !busy && count > 0 && !blocked,
                         egui::Button::new(label).small(),
                     )
-                    .on_hover_text(key)
-                    .on_disabled_hover_text(if blocked { UNSTAGE_ALL_AMENDING } else { key })
+                    .on_hover_text(crate::keymap::shown(key))
+                    .on_disabled_hover_text(if blocked {
+                        UNSTAGE_ALL_AMENDING.to_owned()
+                    } else {
+                        crate::keymap::shown(key)
+                    })
                     .clicked()
                 {
                     self.group_request = Some(index == 0);
@@ -1788,6 +1831,13 @@ impl StatusView {
                         egui::FontId::proportional(12.0),
                         ui.visuals().text_color(),
                     );
+                    if !busy {
+                        response.context_menu(|ui| {
+                            if let Some(choice) = row_menu(ui, entry, eligible) {
+                                menu = Some((row, choice));
+                            }
+                        });
+                    }
                     let _ = response.on_hover_text(if elided {
                         format!("{} · {description}", entry.path)
                     } else {
@@ -1800,7 +1850,73 @@ impl StatusView {
         });
         list.rect = out.inner_rect;
         list.offset = out.state.clamped_offset().y;
+        if let Some((row, choice)) = menu {
+            self.row_menu = Some((index, row, choice));
+        }
         (clicked, toggled)
+    }
+
+    /// Discard… from a row's right-click menu: name the file, then run it
+    /// on that row only, whatever the reader shows.
+    fn draw_menu_discard(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        let Some(entry) = self.menu_discard.clone() else {
+            return;
+        };
+        let mut done = false;
+        ui.horizontal_wrapped(|ui| {
+            let text = if entry.area == Area::Untracked {
+                format!("Delete the untracked file {}?", entry.path)
+            } else {
+                format!(
+                    "Discard unstaged changes from {}? The index is unchanged.",
+                    entry.path
+                )
+            };
+            ui.colored_label(ui.visuals().error_fg_color, text);
+            let blocked = self.mutations_blocked();
+            if ui
+                .add_enabled(!blocked, egui::Button::new("Discard"))
+                .clicked()
+            {
+                if let Some(identity) = self.identity.clone() {
+                    self.stage
+                        .apply_files(identity, vec![entry.clone()], true, ctx);
+                }
+                done = true;
+            }
+            if ui
+                .add_enabled(!blocked, egui::Button::new("Cancel"))
+                .clicked()
+            {
+                done = true;
+            }
+        });
+        ui.weak("Working-tree changes will be lost.");
+        if done {
+            self.menu_discard = None;
+        }
+    }
+
+    /// Run a file row's right-click choice on that row.
+    fn run_row_menu(&mut self, ctx: &egui::Context) {
+        let Some((index, row, choice)) = self.row_menu.take() else {
+            return;
+        };
+        let Some(entry) = self.lists[index].rows.get(&row).cloned() else {
+            return;
+        };
+        match choice {
+            RowMenu::Toggle => self.toggle_file(index, row, ctx),
+            RowMenu::Discard => self.menu_discard = Some(entry),
+            RowMenu::Ignore(pattern) => self.ignore_request = Some(pattern),
+            RowMenu::Open { folder } => {
+                self.editor_request = Some(crate::editor::Request {
+                    path: entry.path.clone(),
+                    folder,
+                });
+            }
+            RowMenu::CopyPath => ctx.copy_text(entry.path.clone()),
+        }
     }
 
     fn draw_lists_wide(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, height: f32) {
@@ -1863,6 +1979,7 @@ impl StatusView {
                 } else if let Some(row) = second_toggle {
                     self.toggle_file(1, row, ctx);
                 }
+                self.run_row_menu(ctx);
             },
         );
     }
@@ -1892,10 +2009,12 @@ impl StatusView {
         } else if let Some(row) = second_toggle {
             self.toggle_file(1, row, ctx);
         }
+        self.run_row_menu(ctx);
     }
 
     fn draw_reader(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         self.reader_rect = ui.max_rect();
+        self.draw_menu_discard(ui, ctx);
         if let Some(label) = self.stage.label() {
             ui.horizontal(|ui| {
                 ui.spinner();
@@ -2283,9 +2402,9 @@ impl StatusView {
                 let response = if let Some(reason) = reason {
                     response.on_hover_text(reason)
                 } else if self.amend {
-                    response.on_hover_text("Ctrl+Shift+Enter")
+                    response.on_hover_text(crate::keymap::shown("Ctrl+Shift+Enter"))
                 } else {
-                    response.on_hover_text("Ctrl+Enter")
+                    response.on_hover_text(crate::keymap::shown("Ctrl+Enter"))
                 };
                 ui.weak(reason.unwrap_or(if self.amend {
                     "Ready to amend"
@@ -2553,9 +2672,9 @@ impl StatusView {
                                 text.push_str(&format!("   ·   Backup: {backup}"));
                             }
                             if self.error.is_none() && self.external_busy.is_none() {
-                                text.push_str(
+                                text.push_str(&crate::keymap::shown(
                                     "   ·   S / U: stage / unstage · [ ]: hunks · Ctrl+Enter: commit",
-                                );
+                                ));
                             }
                             bounded_text::field(
                                 ui,
@@ -2678,6 +2797,93 @@ impl StatusView {
     }
 }
 
+/// A choice in a file row's right-click menu.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum RowMenu {
+    /// Stage an Unstaged or untracked file, or unstage a Staged one.
+    Toggle,
+    Discard,
+    /// Add this `.gitignore` pattern.
+    Ignore(String),
+    /// Open in editor, or Reveal in folder.
+    Open {
+        folder: bool,
+    },
+    CopyPath,
+}
+
+/// A file row's right-click menu: the file actions that need only the row,
+/// as in ⋯ File actions (CHG-78).
+fn row_menu(ui: &mut egui::Ui, entry: &StatusEntry, eligible: bool) -> Option<RowMenu> {
+    use crate::menus::row;
+    ui.set_min_width(220.0);
+    let mut choice = None;
+    if eligible {
+        let (label, key) = if entry.area == Area::Staged {
+            ("Unstage", "U")
+        } else {
+            ("Stage", "S")
+        };
+        if ui.add(row(false, label).shortcut_text(key)).clicked() {
+            choice = Some(RowMenu::Toggle);
+        }
+        ui.separator();
+    }
+    let native = std::str::from_utf8(&entry.path_bytes).is_ok();
+    for (label, folder) in [("Open in editor", false), ("Reveal in folder", true)] {
+        if ui
+            .add_enabled(native, row(false, label))
+            .on_disabled_hover_text("The path is not valid UTF-8.")
+            .clicked()
+        {
+            choice = Some(RowMenu::Open { folder });
+        }
+    }
+    if ui.add(row(false, "Copy path")).clicked() {
+        choice = Some(RowMenu::CopyPath);
+    }
+    if entry.area == Area::Untracked {
+        use gg_git::ignore::{Scope, pattern};
+        ui.separator();
+        for scope in [Scope::File, Scope::Extension, Scope::Folder] {
+            let Ok(Some(found)) = pattern(&entry.path_bytes, scope) else {
+                continue;
+            };
+            let label = match scope {
+                Scope::File => "Ignore this file".to_string(),
+                Scope::Extension => format!("Ignore all {found} files"),
+                Scope::Folder => format!("Ignore folder {}", found.trim_start_matches('/')),
+            };
+            if ui
+                .add(row(false, label))
+                .on_hover_text(format!("Add {found} to .gitignore at the repository root"))
+                .clicked()
+            {
+                choice = Some(RowMenu::Ignore(found));
+            }
+        }
+    }
+    let discardable = matches!(entry.area, Area::Unstaged | Area::Untracked)
+        && !matches!(entry.kind, Kind::IntentToAdd | Kind::Conflicted);
+    if discardable {
+        ui.separator();
+        if ui
+            .add(row(
+                false,
+                egui::RichText::new("Discard file…").color(ui.visuals().error_fg_color),
+            ))
+            .on_hover_text("Restore the working file from the index (an untracked file is removed)")
+            .clicked()
+        {
+            choice = Some(RowMenu::Discard);
+        }
+    }
+    if choice.is_some() {
+        ui.close();
+    }
+    choice
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2744,6 +2950,10 @@ mod tests {
             stage: crate::stage_view::StageActions::default(),
             reader: crate::diff_view::DiffView::default(),
             drop_confirm: None,
+            row_menu: None,
+            menu_discard: None,
+            editor_request: None,
+            ignore_request: None,
             drop_blocks: Vec::new(),
             group_request: None,
             stop_commits: Vec::new(),
@@ -3580,6 +3790,129 @@ mod tests {
         );
         run(ctx, view, width, vec![release, egui::Event::PointerGone]);
     }
+    fn right_click(ctx: &egui::Context, view: &mut StatusView, width: f32, pos: egui::Pos2) {
+        let button = |pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Secondary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        run(
+            ctx,
+            view,
+            width,
+            vec![egui::Event::PointerMoved(pos), button(true)],
+        );
+        run(ctx, view, width, vec![button(false)]);
+    }
+
+    /// Right-click `name` in `list`, then click `item` in its menu.
+    fn row_menu_choice(
+        ctx: &egui::Context,
+        view: &mut StatusView,
+        list: usize,
+        name: &str,
+        item: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let output = run(ctx, view, 1120.0, vec![]);
+        let row = row_pos(&output, view, list, name).ok_or(format!("missing {name} row"))?;
+        right_click(ctx, view, 1120.0, row);
+        let output = run(ctx, view, 1120.0, vec![]);
+        let at = text_pos(&output, item).ok_or(format!("missing {item:?} in the menu"))?;
+        click(ctx, view, 1120.0, at + egui::vec2(2.0, 4.0));
+        run(ctx, view, 1120.0, vec![]);
+        Ok(())
+    }
+
+    #[test]
+    fn amend_head_on_a_clean_tree_opens_the_last_commit() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let dir = tempfile::tempdir()?;
+        let p = dir.path();
+        git(p, &["init", "-q"])?;
+        git(p, &["config", "user.name", "Test"])?;
+        git(p, &["config", "user.email", "test@example.org"])?;
+        std::fs::write(p.join("a"), b"a\n")?;
+        git(p, &["add", "a"])?;
+        git(p, &["commit", "-qm", "base"])?;
+        std::fs::write(p.join("b"), b"b\n")?;
+        std::fs::write(p.join("c"), b"c\n")?;
+        git(p, &["add", "b", "c"])?;
+        git(p, &["commit", "-qm", "add b and c"])?;
+        let ctx = egui::Context::default();
+        let mut view = StatusView::new(p.into(), &ctx);
+        settle(&ctx, &mut view, 1120.0);
+        // As the window passes it on from the History tree.
+        let head = String::from_utf8(
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(p)
+                .args(["rev-parse", "HEAD"])
+                .output()?
+                .stdout,
+        )?;
+        view.set_clean_context(CleanContext {
+            head: Some((head.trim().to_owned(), "add b and c".into())),
+            ..CleanContext::default()
+        });
+        let output = run(&ctx, &mut view, 1120.0, vec![]);
+        assert!(text_pos(&output, "Working tree clean").is_some());
+        let amend = text_pos(&output, "Amend HEAD").ok_or("missing Amend HEAD")?;
+        click(&ctx, &mut view, 1120.0, amend + egui::vec2(2.0, 4.0));
+        pump(&ctx, &mut view, 1120.0, |view| {
+            view.complete && !view.replacing && view.lists[1].count == 2
+        });
+        assert!(view.amending());
+        assert_eq!(view.message.lines().next(), Some("add b and c"));
+        Ok(())
+    }
+
+    #[test]
+    fn a_right_click_on_a_file_row_stages_ignores_and_discards_it()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let p = dir.path();
+        git(p, &["init", "-q"])?;
+        git(p, &["config", "user.name", "Test"])?;
+        git(p, &["config", "user.email", "test@example.org"])?;
+        std::fs::write(p.join("a"), b"base\n")?;
+        git(p, &["add", "a"])?;
+        git(p, &["commit", "-qm", "base"])?;
+        std::fs::write(p.join("a"), b"working\n")?;
+        std::fs::create_dir_all(p.join("logs"))?;
+        std::fs::write(p.join("logs/a.log"), b"noise\n")?;
+        let ctx = egui::Context::default();
+        let mut view = StatusView::new(p.into(), &ctx);
+        settle(&ctx, &mut view, 1120.0);
+
+        // Ignore, on an untracked file, without opening it first.
+        row_menu_choice(&ctx, &mut view, 0, "logs/a.log", "Ignore all *.log files")?;
+        assert_eq!(view.take_ignore_request().as_deref(), Some("*.log"));
+
+        // Stage acts on the row that was right-clicked.
+        row_menu_choice(&ctx, &mut view, 0, "a", "Stage")?;
+        pump(&ctx, &mut view, 1120.0, |view| {
+            !view.stage.mutating() && view.complete && !view.replacing && view.lists[1].count == 1
+        });
+        assert_eq!(file(p, &["diff", "--cached", "--name-only"])?, b"a\n");
+
+        // Discard asks first, naming the file, then removes the untracked file.
+        row_menu_choice(&ctx, &mut view, 0, "logs/a.log", "Discard file…")?;
+        let output = run(&ctx, &mut view, 1120.0, vec![]);
+        assert!(text_pos(&output, "Delete the untracked file logs/a.log?").is_some());
+        assert!(
+            p.join("logs/a.log").exists(),
+            "nothing goes before the answer"
+        );
+        let discard = text_pos(&output, "Discard").ok_or("missing Discard")?;
+        click(&ctx, &mut view, 1120.0, discard + egui::vec2(2.0, 4.0));
+        pump(&ctx, &mut view, 1120.0, |view| {
+            !view.stage.mutating() && view.complete && !view.replacing && view.lists[0].count == 0
+        });
+        assert!(!p.join("logs/a.log").exists());
+        Ok(())
+    }
+
     fn git(path: &std::path::Path, args: &[&str]) -> Result<(), Box<dyn std::error::Error>> {
         let out = std::process::Command::new("git")
             .arg("-C")

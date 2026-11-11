@@ -5,6 +5,9 @@ description: Run any command from search, change keyboard shortcuts and set pref
 
 # Search, keys and preferences
 
+!!! note "On macOS"
+    Wherever this site says ++ctrl++, press ++cmd++ on a Mac, and ++alt++ is ++option++. The app shows the keys the Mac way: ++cmd+enter++ reads ⌘↩ and ++ctrl+shift+s++ reads ⇧⌘S.
+
 ## One search box for everything
 
 Press ++ctrl+k++ and type. Search finds commits, branches, files and **every menu command**, with the menu it lives in and its key:

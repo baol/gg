@@ -614,13 +614,13 @@ pub fn show(ui: &mut egui::Ui, band: &Band) -> (Option<Command>, Vec<egui::Rect>
         let mut widget = match button.key {
             Some(key) => egui::Button::new((
                 text,
-                egui::RichText::new(key).small().color(
-                    if button.kind == Kind::Primary && button.enabled {
+                egui::RichText::new(crate::keymap::shown(key))
+                    .small()
+                    .color(if button.kind == Kind::Primary && button.enabled {
                         egui::Color32::from_rgb(184, 212, 230)
                     } else {
                         egui::Color32::from_gray(140)
-                    },
-                ),
+                    }),
             )),
             None => egui::Button::new(text),
         };
@@ -631,9 +631,9 @@ pub fn show(ui: &mut egui::Ui, band: &Band) -> (Option<Command>, Vec<egui::Rect>
         let response = ui1.add_enabled(button.enabled, widget);
         rects[index] = response.rect;
         let response = if button.enabled {
-            response.on_hover_text(&button.tip)
+            response.on_hover_text(crate::keymap::shown(&button.tip))
         } else {
-            response.on_disabled_hover_text(&button.tip)
+            response.on_disabled_hover_text(crate::keymap::shown(&button.tip))
         };
         if response.clicked() {
             command = Some(button.command);

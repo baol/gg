@@ -1771,7 +1771,7 @@ impl DiffView {
                 .on_hover_text("Whole words only");
             if ui
                 .add_enabled(count > 0, egui::Button::new("↑").small())
-                .on_hover_text("Previous match · Shift+Enter")
+                .on_hover_text(crate::keymap::shown("Previous match · Shift+Enter"))
                 .clicked()
             {
                 step = -1;

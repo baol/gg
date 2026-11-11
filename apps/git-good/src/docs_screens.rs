@@ -190,6 +190,17 @@ fn docs_screenshots() -> Result {
 
     if wanted("welcome") {
         let mut harness = window(None, WIDE, dark);
+        // The example project's committer, not the empty config the shots run with.
+        harness
+            .state_mut()
+            .welcome
+            .set_identity(gg_git::identity::Identity {
+                name: Some("Ada Lovelace".into()),
+                email: Some("ada@acme.test".into()),
+            });
+        for _ in 0..3 {
+            harness.step();
+        }
         save(&mut harness, &out, "welcome")?;
     }
     if wanted("history") {
