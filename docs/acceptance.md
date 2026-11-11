@@ -4120,6 +4120,14 @@ Layer: interaction
 - Then the row lights under the pointer and the click selects it, as over the gaps between cells; the same holds for every 22 px inspect table (Recovery, Submodules, LFS)
 Covered by (interaction): `a_click_on_a_worktree_rows_text_selects_the_row` (apps/git-good/src/main.rs)
 
+### WTR-17 A worktree's right-click menu in the sidebar
+Fixture: `fx-linear` with a linked worktree `linked`
+Layer: interaction
+- When the user right-clicks a worktree under WORKTREES
+- Then a menu offers **Open** (disabled on the open worktree), **Reveal in folder**, **Copy path** and a red **Remove…** (disabled with its reason on the main or open worktree, as in the Worktrees window)
+- And **Remove…** opens the Worktrees window with that worktree selected and its remove confirmation; nothing is removed until it is confirmed there
+Covered by (interaction): `a_right_click_on_a_worktree_reveals_or_removes_it` (apps/git-good/src/refs_view.rs), `remove_from_a_sidebar_worktree_asks_in_the_worktrees_window` (apps/git-good/src/main.rs)
+
 ### SUB-01 Submodule details from the reader
 Fixture: `fx-submodule`, commit bumping `vendor/lib` open in Review
 Layer: product

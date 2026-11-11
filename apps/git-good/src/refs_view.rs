@@ -21,6 +21,8 @@ pub enum Action {
     OpenStash(usize),
     /// Open another worktree of this repository.
     OpenWorktree(String),
+    /// A worktree row's right-click choice, on the worktree at this path.
+    Worktree(String, WorktreeChoice),
     /// Rename a local branch (dialog).
     Rename(String),
     /// Set a local branch's upstream (dialog).
@@ -34,6 +36,14 @@ pub enum Action {
     /// Delete a remote branch on its remote (confirmed): its short name
     /// (`origin/feature`) and last fetched commit.
     DeleteRemote(String, String),
+}
+
+/// A choice in a worktree row's right-click menu (WTR-17).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WorktreeChoice {
+    Reveal,
+    /// Remove… asks first, in the Worktrees window.
+    Remove,
 }
 
 /// Ref names split at `/`: each node may be a ref (its index in the
@@ -752,6 +762,42 @@ fn worktree_row(
     if response.clicked() && !worktree.current {
         *action = Some(Action::OpenWorktree(worktree.path.clone()));
     }
+    response.context_menu(|ui| {
+        use crate::menus::row;
+        ui.set_min_width(200.0);
+        let path = worktree.path.clone();
+        if ui
+            .add_enabled(!worktree.current, row(false, "Open"))
+            .on_disabled_hover_text("This worktree is open")
+            .clicked()
+        {
+            *action = Some(Action::OpenWorktree(path.clone()));
+            ui.close();
+        }
+        if ui.add(row(false, "Reveal in folder")).clicked() {
+            *action = Some(Action::Worktree(path.clone(), WorktreeChoice::Reveal));
+            ui.close();
+        }
+        if ui.add(row(false, "Copy path")).clicked() {
+            ui.ctx().copy_text(path.clone());
+            ui.close();
+        }
+        ui.separator();
+        let reason = worktree.can_remove().err();
+        let label = if reason.is_none() {
+            egui::RichText::new("Remove…").color(ui.visuals().error_fg_color)
+        } else {
+            egui::RichText::new("Remove…")
+        };
+        if ui
+            .add_enabled(reason.is_none(), row(false, label))
+            .on_disabled_hover_text(reason.unwrap_or_default())
+            .clicked()
+        {
+            *action = Some(Action::Worktree(path, WorktreeChoice::Remove));
+            ui.close();
+        }
+    });
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1636,6 +1682,107 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(texts.iter().any(|text| text == "WIP on main: work 0"));
         assert!(!texts.iter().any(|text| text == "WIP on main: work 1"));
+    }
+
+    #[test]
+    fn a_right_click_on_a_worktree_reveals_or_removes_it() {
+        let ctx = egui::Context::default();
+        crate::phosphor::install(&ctx);
+        let refs = std::sync::Arc::new(snapshot());
+        let worktree = |path: &str, branch: &str, current: bool| gg_engine::worktree::Worktree {
+            path: path.into(),
+            path_bytes: path.as_bytes().to_vec(),
+            head: Some("a".repeat(40)),
+            branch: Some(format!("refs/heads/{branch}")),
+            detached: false,
+            bare: false,
+            locked: None,
+            prunable: None,
+            current,
+            main: current,
+            dirty: Some(false),
+        };
+        let worktrees = [
+            worktree("/src/gg", "main", true),
+            worktree("/src/gg-feature", "feature", false),
+        ];
+        let draw = |events: Vec<egui::Event>| {
+            let mut filter = "gg".to_string();
+            let mut action = None;
+            let output = crate::tests::run_ui(
+                &ctx,
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(260.0, 700.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        action = show(
+                            ui,
+                            &refs,
+                            &[],
+                            &worktrees,
+                            &mut filter,
+                            false,
+                            &BTreeMap::new(),
+                        );
+                    });
+                },
+            );
+            (output, action)
+        };
+        let at = |output: &egui::FullOutput, wanted: &dyn Fn(&str) -> bool| {
+            output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) if wanted(&text.galley.job.text) => {
+                        Some(text.visual_bounding_rect().center())
+                    }
+                    _ => None,
+                })
+                .next_back()
+        };
+        let button = |button, pos, pressed| egui::Event::PointerButton {
+            pos,
+            button,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        for (item, choice) in [
+            ("Reveal in folder", WorktreeChoice::Reveal),
+            ("Remove…", WorktreeChoice::Remove),
+        ] {
+            let (output, _) = draw(vec![]);
+            let Some(row) = at(&output, &|text| text.starts_with("gg-feature")) else {
+                unreachable!("the linked worktree row is drawn")
+            };
+            let right = egui::PointerButton::Secondary;
+            let _ = draw(vec![
+                egui::Event::PointerMoved(row),
+                button(right, row, true),
+            ]);
+            let _ = draw(vec![button(right, row, false)]);
+            let (output, _) = draw(vec![]);
+            let Some(item_at) = at(&output, &|text| text == item) else {
+                unreachable!("{item} is in the menu")
+            };
+            let left = egui::PointerButton::Primary;
+            let _ = draw(vec![
+                egui::Event::PointerMoved(item_at),
+                button(left, item_at, true),
+            ]);
+            let (_, action) = draw(vec![button(left, item_at, false)]);
+            assert_eq!(
+                action,
+                Some(Action::Worktree("/src/gg-feature".into(), choice)),
+                "{item}"
+            );
+        }
     }
 
     #[test]
