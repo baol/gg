@@ -19,6 +19,8 @@ pub enum Action {
     VerifyTag(String),
     /// Open the Stashes picker on the entry at this index.
     OpenStash(usize),
+    /// A stash row's right-click choice, on the entry at this index.
+    Stash(usize, StashChoice),
     /// Open another worktree of this repository.
     OpenWorktree(String),
     /// Rename a local branch (dialog).
@@ -34,6 +36,17 @@ pub enum Action {
     /// Delete a remote branch on its remote (confirmed): its short name
     /// (`origin/feature`) and last fetched commit.
     DeleteRemote(String, String),
+}
+
+/// A choice in a stash row's right-click menu (STA-27).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StashChoice {
+    Apply,
+    Pop,
+    /// Review the stash's changes.
+    Show,
+    /// Drop… asks first, in the Stashes picker.
+    Drop,
 }
 
 /// Ref names split at `/`: each node may be a ref (its index in the
@@ -711,6 +724,34 @@ fn stash_row(
     if response.clicked() {
         *action = Some(Action::OpenStash(index));
     }
+    response.context_menu(|ui| {
+        use crate::menus::row;
+        ui.set_min_width(200.0);
+        let mut choice = None;
+        for (label, picked) in [
+            ("Apply", StashChoice::Apply),
+            ("Pop", StashChoice::Pop),
+            ("Show changes", StashChoice::Show),
+        ] {
+            if ui.add(row(false, label)).clicked() {
+                choice = Some(picked);
+            }
+        }
+        ui.separator();
+        if ui
+            .add(row(
+                false,
+                egui::RichText::new("Drop…").color(ui.visuals().error_fg_color),
+            ))
+            .clicked()
+        {
+            choice = Some(StashChoice::Drop);
+        }
+        if let Some(choice) = choice {
+            *action = Some(Action::Stash(index, choice));
+            ui.close();
+        }
+    });
 }
 
 fn worktree_row(
@@ -1636,6 +1677,96 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(texts.iter().any(|text| text == "WIP on main: work 0"));
         assert!(!texts.iter().any(|text| text == "WIP on main: work 1"));
+    }
+
+    #[test]
+    fn a_right_click_on_a_stash_offers_apply_pop_show_and_drop() {
+        let ctx = egui::Context::default();
+        let refs = std::sync::Arc::new(snapshot());
+        let stashes = (0..2)
+            .map(|index| gg_engine::stash::StashEntry {
+                index,
+                reference: format!("stash@{{{index}}}"),
+                commit: format!("{index:040x}"),
+                message: format!("WIP on main: work {index}"),
+                ..Default::default()
+            })
+            .collect::<Vec<_>>();
+        let frame = |events: Vec<egui::Event>| {
+            let mut action = None;
+            let mut filter = String::new();
+            let output = crate::tests::run_ui(
+                &ctx,
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(220.0, 900.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        action = show(
+                            ui,
+                            &refs,
+                            &stashes,
+                            &[],
+                            &mut filter,
+                            false,
+                            &BTreeMap::new(),
+                        );
+                    });
+                },
+            );
+            (output, action)
+        };
+        let at = |output: &egui::FullOutput, label: &str| {
+            output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) if text.galley.job.text == label => {
+                        Some(text.visual_bounding_rect().center())
+                    }
+                    _ => None,
+                })
+                .next_back()
+        };
+        let button = |button, pos, pressed| egui::Event::PointerButton {
+            pos,
+            button,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        for (item, choice) in [
+            ("Apply", StashChoice::Apply),
+            ("Pop", StashChoice::Pop),
+            ("Show changes", StashChoice::Show),
+            ("Drop…", StashChoice::Drop),
+        ] {
+            let (output, _) = frame(vec![]);
+            let Some(row) = at(&output, "WIP on main: work 1") else {
+                unreachable!("stash entry is listed")
+            };
+            let right = egui::PointerButton::Secondary;
+            let _ = frame(vec![
+                egui::Event::PointerMoved(row),
+                button(right, row, true),
+            ]);
+            let _ = frame(vec![button(right, row, false)]);
+            let (output, _) = frame(vec![]);
+            let Some(at_item) = at(&output, item) else {
+                unreachable!("{item} is in the menu")
+            };
+            let left = egui::PointerButton::Primary;
+            let _ = frame(vec![
+                egui::Event::PointerMoved(at_item),
+                button(left, at_item, true),
+            ]);
+            let (_, action) = frame(vec![button(left, at_item, false)]);
+            assert_eq!(action, Some(Action::Stash(1, choice)), "{item}");
+        }
     }
 
     #[test]
