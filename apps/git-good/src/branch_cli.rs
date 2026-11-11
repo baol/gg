@@ -71,6 +71,7 @@ pub fn manage(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::e
     let mut create = false;
     let mut force = false;
     let mut start = None;
+    let mut move_from = None;
     while let Some(arg) = args.next() {
         match args.option(&arg) {
             Some("--repo") => {
@@ -90,6 +91,14 @@ pub fn manage(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::e
                         .map_err(|_| usage_error("Branch start point must be UTF-8"))?,
                 );
             }
+            Some("--move-from") if move_from.is_none() => {
+                move_from = Some(
+                    args.value()
+                        .ok_or_else(|| usage_error("--move-from needs a commit"))?
+                        .into_string()
+                        .map_err(|_| usage_error("The commit must be UTF-8"))?,
+                );
+            }
             Some(value) if value.starts_with("--") => {
                 return Err(usage_error("Unknown branch option"));
             }
@@ -100,13 +109,28 @@ pub fn manage(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::e
                 );
             }
             _ => {
-                return Err(usage_error(
-                    "Usage: git good --cli branch --delete BRANCH [--force] [--repo PATH]\n       git good --cli branch --create NAME [--at REF] [--repo PATH]",
-                ));
+                return Err(usage_error(USAGE));
             }
         }
     }
     let branch = branch.ok_or_else(|| usage_error("Branch operation requires a branch name"))?;
+    if let Some(from) = move_from {
+        if delete || create || force || start.is_some() {
+            return Err(usage_error("--move-from takes only a new branch name"));
+        }
+        let receipt = gg_git::branch::move_to_new(&path, &branch, &from)?;
+        crate::cli_args::emit(&serde_json::json!({
+            "operation": "branch-move",
+            "branch": receipt.branch,
+            "from_branch": receipt.from_branch,
+            "base": receipt.base,
+            "tip": receipt.tip,
+            "commits": receipt.commits,
+            "backup": receipt.backup,
+            "complete": true,
+        }))?;
+        return Ok(());
+    }
     if delete && create {
         return Err(usage_error("Choose either --delete or --create"));
     }
@@ -134,9 +158,11 @@ pub fn manage(args: impl Iterator<Item = OsString>) -> Result<(), Box<dyn std::e
             "complete": true,
         }))?;
     } else {
-        return Err(usage_error(
-            "Usage: git good --cli branch --delete BRANCH [--force] [--repo PATH]\n       git good --cli branch --create NAME [--at REF] [--repo PATH]",
-        ));
+        return Err(usage_error(USAGE));
     }
     Ok(())
 }
+
+const USAGE: &str = "Usage: git good --cli branch --delete BRANCH [--force] [--repo PATH]
+       git good --cli branch --create NAME [--at REF] [--repo PATH]
+       git good --cli branch --move-from COMMIT NAME [--repo PATH]";

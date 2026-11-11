@@ -997,6 +997,9 @@ enum FrameCommand {
     ReviewSelected,
     CompareHead,
     CopyId,
+    /// Commit › Move to a new branch…: the branch's own commits from the
+    /// selected one move to a new branch (CHG-80).
+    MoveToNewBranch,
     CherryPick,
     Revert,
     ResetHere,
@@ -1583,11 +1586,16 @@ struct CreateBranchDialog {
     switch: bool,
     recovery_source: Option<return_location::RecoverySource>,
     error: Option<String>,
+    /// Move to a new branch…: the first commit to move; the dialog then
+    /// moves commits instead of creating a branch at `commit`.
+    move_from: Option<String>,
 }
 
 impl CreateBranchDialog {
     fn title(&self) -> &'static str {
-        if self.recovery_source.is_some() {
+        if self.move_from.is_some() {
+            "Move to a new branch"
+        } else if self.recovery_source.is_some() {
             "Create branch here"
         } else {
             "New branch"
@@ -1827,6 +1835,7 @@ enum OperationOutcome {
     BranchRenamed,
     /// A deleted branch and the tip it had, for Undo.
     BranchDeleted(String, Option<String>),
+    BranchMoved(gg_git::branch::MoveReceipt),
     /// An Undo finished: its receipt.
     Undone(String),
     TagDeleted(String),
@@ -4613,6 +4622,22 @@ impl Browser {
             FrameCommand::ReviewSelected => self.on_selected(ctx, CommitAction::Review),
             FrameCommand::CompareHead => self.on_selected(ctx, CommitAction::Compare),
             FrameCommand::CherryPick => self.on_selected(ctx, CommitAction::CherryPick),
+            FrameCommand::MoveToNewBranch => {
+                if let (Some(commit), Some(branch)) =
+                    (self.state.selected.clone(), self.current_branch())
+                    && self.move_reason().is_none()
+                {
+                    self.create_branch = Some(CreateBranchDialog {
+                        name: String::new(),
+                        commit: commit.clone(),
+                        selector: branch,
+                        switch: true,
+                        recovery_source: None,
+                        error: None,
+                        move_from: Some(commit),
+                    });
+                }
+            }
             FrameCommand::Revert => self.on_selected(ctx, CommitAction::Revert),
             FrameCommand::ResetHere => {
                 self.on_selected(ctx, CommitAction::Reset(gg_engine::reset::Mode::Mixed));
@@ -5225,6 +5250,38 @@ impl Browser {
             .map(|name| name.strip_prefix("refs/heads/").unwrap_or(name).to_string())
     }
 
+    /// Why Move to a new branch… cannot run on the selected commit: it must
+    /// be one of the current branch's own commits (those its upstream, or
+    /// else the default branch, lacks), as the History tree lists them.
+    fn move_reason(&self) -> Option<&'static str> {
+        if let Some(reason) = self.mutation_reason() {
+            return Some(reason);
+        }
+        let selected = self.state.selected.as_deref()?;
+        let start = self
+            .local_summary
+            .as_ref()
+            .and_then(|summary| summary.branch_start.as_ref())
+            .map(|(start, _)| start.as_str());
+        let head = self
+            .state
+            .refs
+            .head
+            .as_ref()
+            .and_then(|head| head.commit.as_deref());
+        let row = |id: &str| {
+            self.state
+                .rows
+                .iter()
+                .find(|(_, commit)| commit.id == id)
+                .map(|(row, _)| *row)
+        };
+        match (start.and_then(row), head.and_then(row), row(selected)) {
+            (Some(start), Some(head), Some(at)) if head <= at && at <= start => None,
+            _ => Some("Only this branch's commits that are not pushed can move"),
+        }
+    }
+
     /// Copy ID: the selected commit's ID, or with two or more picked one
     /// `id subject author date` line each, newest first, as History trees them.
     fn copy_selected_commits(&self, ctx: &egui::Context) {
@@ -5447,6 +5504,7 @@ impl Browser {
                     switch: self.prefs.branch_switch,
                     recovery_source: None,
                     error: None,
+                    move_from: None,
                 });
             }
             refs_view::Action::Compare(commit) => {
@@ -5960,92 +6018,111 @@ impl Browser {
             ],
         });
         let picked = self.state.picked.len();
+        let move_reason = self.move_reason();
+        let mut commit_entries = Vec::new();
+        if self.current_branch().is_some()
+            && self
+                .local_summary
+                .as_ref()
+                .is_some_and(|summary| summary.branch_start.is_some())
+        {
+            commit_entries.push(
+                item("Move to a new branch…", "", FrameCommand::MoveToNewBranch)
+                    .unless(move_reason)
+                    .hint("Put this commit and the newer ones on a new branch; your files stay as they are")
+                    .entry(),
+            );
+            commit_entries.push(Entry::Separator);
+        }
         table.push(Menu {
             title: "Commit",
-            entries: vec![
-                item("Review changes", "Enter", FrameCommand::ReviewSelected)
+            entries: commit_entries
+                .into_iter()
+                .chain([
+                    item("Review changes", "Enter", FrameCommand::ReviewSelected)
+                        .unless(selected)
+                        .entry(),
+                    item(
+                        if picked == 2 {
+                            "Compare these two".to_string()
+                        } else {
+                            "Compare with HEAD".to_string()
+                        },
+                        "",
+                        FrameCommand::CompareHead,
+                    )
                     .unless(selected)
                     .entry(),
-                item(
-                    if picked == 2 {
-                        "Compare these two".to_string()
-                    } else {
-                        "Compare with HEAD".to_string()
-                    },
-                    "",
-                    FrameCommand::CompareHead,
-                )
-                .unless(selected)
-                .entry(),
-                item(
-                    if picked >= 2 {
-                        format!("Copy {picked} commits")
-                    } else {
-                        "Copy ID".to_string()
-                    },
-                    "Ctrl+C",
-                    FrameCommand::CopyId,
-                )
-                .unless(selected)
-                .entry(),
-                Entry::Separator,
-                item(
-                    if picked >= 2 {
-                        format!("Cherry-pick {picked} commits onto HEAD")
-                    } else {
-                        "Cherry-pick onto HEAD".to_string()
-                    },
-                    "",
-                    FrameCommand::CherryPick,
-                )
-                .unless(mutate(self.mutation.is_none()))
-                .entry(),
-                item("Revert", "", FrameCommand::Revert)
+                    item(
+                        if picked >= 2 {
+                            format!("Copy {picked} commits")
+                        } else {
+                            "Copy ID".to_string()
+                        },
+                        "Ctrl+C",
+                        FrameCommand::CopyId,
+                    )
+                    .unless(selected)
+                    .entry(),
+                    Entry::Separator,
+                    item(
+                        if picked >= 2 {
+                            format!("Cherry-pick {picked} commits onto HEAD")
+                        } else {
+                            "Cherry-pick onto HEAD".to_string()
+                        },
+                        "",
+                        FrameCommand::CherryPick,
+                    )
                     .unless(mutate(self.mutation.is_none()))
                     .entry(),
-                Entry::Separator,
-                item(
-                    "Interactive rebase from here…",
-                    "R",
-                    FrameCommand::RewriteSelected,
-                )
-                .unless(rewrite)
-                .entry(),
-                item(
-                    "Reword…",
-                    keys.label(keymap::Action::Reword),
-                    FrameCommand::RebasePreset(gg_engine::rewrite::Action::Reword),
-                )
-                .unless(rewrite)
-                .entry(),
-                item(
-                    "Reopen for editing…",
-                    "E",
-                    FrameCommand::RebasePreset(gg_engine::rewrite::Action::Edit),
-                )
-                .unless(rewrite)
-                .entry(),
-                item(
-                    "Fixup into…",
-                    "F",
-                    FrameCommand::RebasePreset(gg_engine::rewrite::Action::Fixup),
-                )
-                .unless(fixup)
-                .entry(),
-                item(
-                    "Drop…",
-                    "D",
-                    FrameCommand::RebasePreset(gg_engine::rewrite::Action::Drop),
-                )
-                .unless(rewrite)
-                .danger()
-                .entry(),
-                Entry::Separator,
-                item("Reset current branch to here…", "", FrameCommand::ResetHere)
-                    .unless(mutate(self.mutation.is_none()))
+                    item("Revert", "", FrameCommand::Revert)
+                        .unless(mutate(self.mutation.is_none()))
+                        .entry(),
+                    Entry::Separator,
+                    item(
+                        "Interactive rebase from here…",
+                        "R",
+                        FrameCommand::RewriteSelected,
+                    )
+                    .unless(rewrite)
+                    .entry(),
+                    item(
+                        "Reword…",
+                        keys.label(keymap::Action::Reword),
+                        FrameCommand::RebasePreset(gg_engine::rewrite::Action::Reword),
+                    )
+                    .unless(rewrite)
+                    .entry(),
+                    item(
+                        "Reopen for editing…",
+                        "E",
+                        FrameCommand::RebasePreset(gg_engine::rewrite::Action::Edit),
+                    )
+                    .unless(rewrite)
+                    .entry(),
+                    item(
+                        "Fixup into…",
+                        "F",
+                        FrameCommand::RebasePreset(gg_engine::rewrite::Action::Fixup),
+                    )
+                    .unless(fixup)
+                    .entry(),
+                    item(
+                        "Drop…",
+                        "D",
+                        FrameCommand::RebasePreset(gg_engine::rewrite::Action::Drop),
+                    )
+                    .unless(rewrite)
                     .danger()
                     .entry(),
-            ],
+                    Entry::Separator,
+                    item("Reset current branch to here…", "", FrameCommand::ResetHere)
+                        .unless(mutate(self.mutation.is_none()))
+                        .danger()
+                        .entry(),
+                ])
+                .collect(),
         });
         table.push(Menu {
             title: "Changes",
@@ -8571,6 +8648,24 @@ impl Browser {
                 self.rename_dialog = None;
                 self.load(ctx);
             }
+            OperationOutcome::BranchMoved(receipt) => {
+                let summary = format!(
+                    "Moved {} to {} · {} is back at {}",
+                    if receipt.commits == 1 {
+                        "1 commit".to_string()
+                    } else {
+                        format!("{} commits", receipt.commits)
+                    },
+                    receipt.branch,
+                    receipt.from_branch,
+                    short_id(&receipt.base)
+                );
+                self.mutation_notice = Some(summary.clone());
+                self.create_branch = None;
+                self.set_outcome(OutcomeSeverity::Info, summary, None, None);
+                self.load(ctx);
+                self.refresh_backups();
+            }
             OperationOutcome::BranchDeleted(name, tip) => {
                 let summary = format!("Deleted branch {name}");
                 self.mutation_notice = Some(summary.clone());
@@ -8871,22 +8966,29 @@ impl Browser {
         };
         // Recovery branches always start with switching off; remember
         // only the ordinary new-branch choice.
-        if dialog.recovery_source.is_none() {
+        if dialog.recovery_source.is_none() && dialog.move_from.is_none() {
             self.remember(|prefs| prefs.branch_switch = switch);
         }
         match self.stash_path() {
             Some(path) => {
-                let label = format!("Creating {name}…");
+                let label = if dialog.move_from.is_some() {
+                    format!("Moving commits to {name}…")
+                } else {
+                    format!("Creating {name}…")
+                };
                 let recovery_source = dialog.recovery_source;
                 let commit = dialog.commit.clone();
-                let started = self.start_operation(ctx, label, move || {
-                    gg_git::branch::create_at(&path, &name, &commit).map(|receipt| {
+                let move_from = dialog.move_from.clone();
+                let started = self.start_operation(ctx, label, move || match move_from {
+                    Some(from) => gg_git::branch::move_to_new(&path, &name, &from)
+                        .map(OperationOutcome::BranchMoved),
+                    None => gg_git::branch::create_at(&path, &name, &commit).map(|receipt| {
                         OperationOutcome::BranchCreated {
                             receipt,
                             switch,
                             recovery_source,
                         }
-                    })
+                    }),
                 });
                 match started {
                     Ok(()) => {
@@ -9719,6 +9821,7 @@ impl Browser {
             switch: self.prefs.branch_switch,
             recovery_source: None,
             error: None,
+            move_from: None,
         });
     }
 
@@ -13118,6 +13221,7 @@ impl Browser {
                         switch: false,
                         recovery_source: Some(source),
                         error: None,
+                        move_from: None,
                     });
                 }
                 recovery_view::Action::Changed => {
@@ -13146,7 +13250,14 @@ impl Browser {
                 .default_pos(ctx.content_rect().center())
                 .pivot(egui::Align2::CENTER_CENTER)
                 .show(ctx, |ui| {
-                    ui.label(format!("Create a branch at {}", dialog.selector));
+                    if dialog.move_from.is_some() {
+                        ui.label(format!(
+                            "Move this commit and the newer ones on {} to a new branch, and switch to it. {} goes back to the commit before it; your files stay as they are.",
+                            dialog.selector, dialog.selector
+                        ));
+                    } else {
+                        ui.label(format!("Create a branch at {}", dialog.selector));
+                    }
                     if let Some(summary) = &create_summary {
                         ui.add(
                             egui::Label::new(egui::RichText::new(summary).monospace()).truncate(),
@@ -13158,7 +13269,9 @@ impl Browser {
                             .hint_text("Branch name")
                             .desired_width(300.0),
                     );
-                    ui.checkbox(&mut dialog.switch, "Switch after creation");
+                    if dialog.move_from.is_none() {
+                        ui.checkbox(&mut dialog.switch, "Switch after creation");
+                    }
                     if let Some(error) = &dialog.error {
                         ui.colored_label(ui.visuals().error_fg_color, error);
                     }
@@ -16400,6 +16513,7 @@ mod tests {
             switch: true,
             recovery_source: None,
             error: None,
+            move_from: None,
         });
         // Shown while Create is still disabled, so nothing jumps.
         let (new_enter, new_esc) = keys(&mut app);
@@ -19540,6 +19654,7 @@ mod tests {
                 switch: true,
                 recovery_source: None,
                 error: None,
+                move_from: None,
             });
             let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
                 app.draw_ui(ctx)
@@ -20190,6 +20305,7 @@ mod tests {
                 switch: false,
                 recovery_source: Some(return_location::RecoverySource::Reflog),
                 error: None,
+                move_from: None,
             });
             let _ = crate::tests::run_ui(&ctx, frame_input(width, 740.0, vec![]), |ctx| {
                 app.draw_ui(ctx)
@@ -20989,6 +21105,93 @@ mod tests {
         Ok(head)
     }
 
+    /// Reported: a commit made on master by habit, moved to its own branch
+    /// before pushing, from the commit's menu.
+    #[test]
+    fn a_local_commit_on_master_moves_to_a_new_branch_from_its_menu() -> Checked {
+        let ctx = egui::Context::default();
+        let (dir, mut app) = two_commits()?;
+        let path = dir.path();
+        let remote = tempfile::tempdir()?;
+        git_in(remote.path(), &["init", "-q", "--bare"])?;
+        let url = remote.path().to_string_lossy().into_owned();
+        git_in(path, &["remote", "add", "origin", &url])?;
+        git_in(path, &["push", "-q", "-u", "origin", "main"])?;
+        std::fs::write(path.join("b"), b"started work\n")?;
+        git_in(path, &["commit", "-qam", "start work"])?;
+        let head = on_main(&mut app, path)?;
+        let pushed = git_in(path, &["rev-parse", "origin/main"])?
+            .trim()
+            .to_string();
+        for (row, id) in [head.clone(), pushed.clone()].into_iter().enumerate() {
+            app.state.rows.insert(
+                row,
+                gg_engine::Commit {
+                    id,
+                    parents: vec![],
+                    author: "Test".into(),
+                    email: "test@example.org".into(),
+                    time: "2026-11-11".into(),
+                    message: "m".into(),
+                },
+            );
+        }
+        app.state.count = 2;
+        app.local_summary = Some(LocalSummary::read(path.to_path_buf()));
+        let first = |app: &Browser| {
+            app.commit_menu_entries()
+                .into_iter()
+                .find_map(|entry| match entry {
+                    menus::Entry::Item(item) => Some((item.label, item.disabled)),
+                    _ => None,
+                })
+        };
+        // A pushed commit cannot move; the item says why.
+        app.state.selected = Some(pushed.clone());
+        assert_eq!(
+            first(&app),
+            Some((
+                "Move to a new branch…".to_string(),
+                Some("Only this branch's commits that are not pushed can move".to_string())
+            ))
+        );
+        // The local commit: first in its menu, ready.
+        app.state.selected = Some(head.clone());
+        assert_eq!(
+            first(&app),
+            Some(("Move to a new branch…".to_string(), None))
+        );
+        let (mut local, mut history) = (false, false);
+        app.run_frame_command(
+            &ctx,
+            FrameCommand::MoveToNewBranch,
+            &mut local,
+            &mut history,
+        );
+        let dialog = app.create_branch.as_ref().ok_or("no dialog")?;
+        assert_eq!(dialog.title(), "Move to a new branch");
+        app.submit_create_branch(&ctx, "feature".into(), true);
+        app.wait_for_operation(&ctx);
+        assert_eq!(
+            git_in(path, &["branch", "--show-current"])?.trim(),
+            "feature"
+        );
+        assert_eq!(git_in(path, &["rev-parse", "feature"])?.trim(), head);
+        assert_eq!(git_in(path, &["rev-parse", "main"])?.trim(), pushed);
+        assert_eq!(
+            app.mutation_notice.as_deref(),
+            Some(
+                format!(
+                    "Moved 1 commit to feature · main is back at {}",
+                    short_id(&pushed)
+                )
+                .as_str()
+            )
+        );
+        assert!(app.create_branch.is_none());
+        Ok(())
+    }
+
     #[test]
     fn back_and_forward_return_to_commits_and_reviews_jumped_to() -> Checked {
         let ctx = egui::Context::default();
@@ -21394,6 +21597,7 @@ mod tests {
             switch: true,
             recovery_source: None,
             error: None,
+            move_from: None,
         });
         frames_until(&ctx, &mut app, vec![], |_, text| {
             text.iter().any(|line| line == "Create")

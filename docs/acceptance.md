@@ -1964,6 +1964,15 @@ Layer: product
 - And `git good --cli ignore FILE [--extension|--folder]` adds the same pattern and prints `{"operation":"ignore","pattern","file","added","complete":true}`
 Covered by (backend, interaction, end-to-end): `ignore_patterns_match_what_git_ignores`, `ignore_writes_the_root_gitignore_from_a_subfolder` (crates/git/tests/ignore.rs), `patterns_anchor_files_and_folders_and_escape_specials` (crates/git/src/ignore.rs), `an_untracked_file_can_be_ignored_from_file_actions` (apps/git-good/src/status_view.rs), `ignore_adds_the_pattern_and_names_it_in_the_footer` (apps/git-good/src/main.rs), `ignore_cli_adds_the_pattern_for_a_file_its_extension_or_folder` (apps/git-good/tests/cli.rs)
 
+### CHG-80 Move local commits to a new branch
+Fixture: the parity fixture: `main` one commit (`local`) ahead of `origin/main`
+Layer: interaction
+- When the user right-clicks `local` in the History tree (or opens Commit, or Actions, with it selected)
+- Then the menu's first item is **Move to a new branch…**, shown while the current branch has commits its upstream (or else the default branch) lacks, and enabled on those commits only; on a pushed commit it reads *Only this branch's commits that are not pushed can move*
+- When it is chosen, `topic` is typed and Enter pressed
+- Then Git Good saves `main`'s tip as a `move` backup, runs `git switch -c topic` and `git branch -f main <local>^` on the worker, and reads *Moved 1 commit to topic · main is back at <id>*; `topic` is checked out at the old tip, the working tree and index are unchanged, and the GUI runs exactly what `git good --cli branch --move-from <local> topic` runs; a name in use, a detached HEAD or a pushed commit is refused with nothing changed
+Covered by (backend, interaction, parity): `local_commits_move_to_a_new_branch_and_main_goes_back`, `moving_refuses_pushed_commits_taken_names_and_a_detached_head` (crates/git/tests/branch.rs), `a_local_commit_on_master_moves_to_a_new_branch_from_its_menu` (apps/git-good/src/main.rs), `branch_move_runs_the_cli_commands` (apps/git-good/src/parity_tests.rs)
+
 ### CHG-17 Unstaging a staged rename restores both halves
 Fixture: `fx-dirty`
 Layer: product
