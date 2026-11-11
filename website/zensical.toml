@@ -38,6 +38,7 @@ nav = [
   { "Real use cases" = "use-cases.md" },
   { "Performance" = "performance.md" },
   { "Scripting with the CLI" = "cli.md" },
+  { "How it was built" = "how-it-was-built.md" },
 ]
 
 [project.theme]

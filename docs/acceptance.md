@@ -661,6 +661,13 @@ Covered by (interaction): `a_dialog_takes_typing_at_once_and_enter_or_esc_answer
 
 ## History tree and refs
 
+### FRM-90 Help › Star Git Good on GitHub
+Fixture: `fx-linear`
+Layer: interaction
+- When **Help › Star Git Good on GitHub**
+- Then the browser opens `https://github.com/baol/gg`, the repository page where GitHub's Star button is; the Help menu reads Keyboard shortcuts · Documentation · Star Git Good on GitHub · About Git Good
+Covered by (interaction): `star_on_github_opens_the_repository_page`, `menus_follow_the_final_design_mockup` (apps/git-good/src/main.rs)
+
 ### HIS-01 First page streams before traversal finishes
 Fixture: `fx-large` (opt-in performance) (size 1440×900 unless stated)
 Layer: interaction
@@ -4314,7 +4321,7 @@ Covered by (interaction, partial): `one_recent_limit_for_the_welcome_list_open_r
 Fixture: `fx-linear`
 Layer: visual
 - When **Help › About Git Good**
-- Then the dialog frame (title **About Git Good** and × in one row, footer below) shows the logo, version, **Commit** (8 characters), **Built** (`YYYY-MM-DD · <target triple>`), authors (people only), license with link, source link, AI-assistance/no-warranty note; **Copy version info** copies six plain lines (`Git Good <version>`, `commit <id>`, `built <date>`, `target <triple>`, `git <version>` or `git unknown` before Git's version is read, `os <system> (<release>) <architecture>`); **Close** or `Esc` closes
+- Then the dialog frame (title **About Git Good** and × in one row, footer below) shows the logo, version, **Commit** (8 characters), **Built** (`YYYY-MM-DD · <target triple>`), authors (people only), license with link, source link, AI-assistance/no-warranty note; **Star on GitHub** opens `https://github.com/baol/gg` in the browser; **Copy version info** copies six plain lines (`Git Good <version>`, `commit <id>`, `built <date>`, `target <triple>`, `git <version>` or `git unknown` before Git's version is read, `os <system> (<release>) <architecture>`); **Close** or `Esc` closes
 Covered by (interaction, partial): `about_names_the_license_and_the_human_authors`, `version_info_is_plain_build_git_and_os_lines` (apps/git-good/src/branding.rs); the rendered frame is checked by native review
 
 ### DLG-12 Decision dialogs are modal — see FRM-64

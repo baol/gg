@@ -14,6 +14,7 @@ hide:
 
 [Get started](getting-started.md){ .md-button .md-button--primary }
 [See the workflows](workflows/index.md){ .md-button }
+[:octicons-star-16: Star on GitHub](https://github.com/baol/gg){ .md-button }
 
 </div>
 
@@ -30,7 +31,7 @@ hide:
     ```
 
 
-![Git Good showing the History tree of a web service: a commit graph with branches, tags and a merge, the refs sidebar, and the details of the selected commit](assets/screens/history.png){ .gg-shot }
+![Scrolling a 20,000-commit History tree with Page Down, then jumping to its first commit and back to the newest](assets/screens/demo-history.gif){ .gg-shot }
 
 <div class="gg-stats" markdown>
 <div class="gg-stat"><strong>~150 ms</strong><span>to the first rows of a 100,000-commit History tree</span></div>
@@ -38,6 +39,16 @@ hide:
 <div class="gg-stat"><strong>70 MiB</strong><span>peak memory for that History tree</span></div>
 <div class="gg-stat"><strong>0.5 ms</strong><span>per frame for a sidebar of 10,000 branches</span></div>
 <div class="gg-stat"><strong>1 %</strong><span>most a GUI command may add over the same CLI command</span></div>
+</div>
+
+## See it move
+
+<div class="grid" markdown>
+
+![Staging one hunk of src/routes.rs in Local Changes, writing the message and committing](assets/screens/demo-stage.gif){ .gg-shot }
+
+![Folding a WIP commit into the one it fixes in Interactive rebase, starting it, then the backup of the old tip in Recovery](assets/screens/demo-rebase.gif){ .gg-shot }
+
 </div>
 
 ## What it does
@@ -96,7 +107,7 @@ hide:
 
 ## Built for real work
 
-Git Good is a native Rust application drawn with egui. It does not embed a browser, and it runs the `git` on your `PATH`, so your hooks, credential helpers, signing setup and configuration all apply. The same operations are available from scripts as `git good --cli …`, which prints JSON.
+Git Good is a native Rust application drawn with egui. It does not embed a browser, and it runs the `git` on your `PATH`, so your hooks, credential helpers, signing setup and configuration all apply. The same operations are available from scripts as `git good --cli …`, which prints JSON. [How it was built](how-it-was-built.md) says how it is specified and tested.
 
 <div class="grid cards" markdown>
 
@@ -145,4 +156,4 @@ The window follows your system theme and adapts to narrow windows: the sidebar f
 </div>
 
 [Install Git Good](getting-started.md){ .md-button .md-button--primary }
-[View on GitHub](https://github.com/baol/gg){ .md-button }
+[:octicons-star-16: Star on GitHub](https://github.com/baol/gg){ .md-button }

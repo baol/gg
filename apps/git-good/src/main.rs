@@ -1013,6 +1013,8 @@ enum FrameCommand {
     SetDiffLayout(settings::DiffLayout),
     SetTheme(settings::Theme),
     Documentation,
+    /// Help › Star Git Good on GitHub: the repository page, where the Star button is.
+    StarOnGitHub,
     About,
     /// View › Back / Forward: the places the user jumped to (`trail.rs`).
     Back,
@@ -4661,6 +4663,9 @@ impl Browser {
             FrameCommand::Documentation => {
                 ctx.open_url(egui::OpenUrl::new_tab("https://github.com/baol/gg#readme"));
             }
+            FrameCommand::StarOnGitHub => {
+                ctx.open_url(egui::OpenUrl::new_tab(branding::REPOSITORY_URL));
+            }
             FrameCommand::About => self.about_open = true,
             FrameCommand::Back => self.go_trail(ctx, -1),
             FrameCommand::Forward => self.go_trail(ctx, 1),
@@ -6187,6 +6192,9 @@ impl Browser {
                 .entry(),
                 item("Documentation", "", FrameCommand::Documentation)
                     .hint("Open the Git Good README in the browser")
+                    .entry(),
+                item("Star Git Good on GitHub", "", FrameCommand::StarOnGitHub)
+                    .hint("Open the Git Good repository, where the Star button is")
                     .entry(),
                 item("About Git Good", "", FrameCommand::About).entry(),
             ],
@@ -22812,6 +22820,7 @@ mod tests {
             FrameCommand::Quit,
             FrameCommand::Shortcuts,
             FrameCommand::Documentation,
+            FrameCommand::StarOnGitHub,
             FrameCommand::About,
         ];
         let items = menus::flatten(&app.menu_table(&ready));
@@ -22981,8 +22990,38 @@ mod tests {
         );
         assert_eq!(
             labels("Help"),
-            ["Keyboard shortcuts", "Documentation", "About Git Good"]
+            [
+                "Keyboard shortcuts",
+                "Documentation",
+                "Star Git Good on GitHub",
+                "About Git Good"
+            ]
         );
+    }
+
+    #[test]
+    fn star_on_github_opens_the_repository_page() {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        let output = crate::tests::run_ui(&ctx, egui::RawInput::default(), |ui| {
+            let (mut local, mut history) = (false, false);
+            app.run_frame_command(
+                ui.ctx(),
+                FrameCommand::StarOnGitHub,
+                &mut local,
+                &mut history,
+            );
+        });
+        let urls: Vec<&str> = output
+            .platform_output
+            .commands
+            .iter()
+            .filter_map(|command| match command {
+                egui::OutputCommand::OpenUrl(open) => Some(open.url.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(urls, ["https://github.com/baol/gg"]);
     }
 
     #[test]

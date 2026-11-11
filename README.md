@@ -1,10 +1,38 @@
 # Git Good
 
-![Git Good native History tree view](docs/screenshots/gg-native-wide.png)
-
 Purpose: introduce Git Good and explain installation and use.
 
-A fast, native Git desktop app. Browse the History tree, inspect diffs, stage hunks or lines, commit, and recover rewrites without leaving the UI.
+**A fast, native Git desktop app that runs your own `git`, and can undo any rewrite.**
+
+Linux, macOS and Windows, on x86_64 and Arm. Free and open source (Apache-2.0).
+
+[![GitHub stars](https://img.shields.io/github/stars/baol/gg?style=social)](https://github.com/baol/gg/stargazers) If Git Good saves you time, a [star on GitHub](https://github.com/baol/gg) helps other people find it.
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/baol/gg/main/scripts/install.sh | sh
+```
+
+```powershell
+irm https://raw.githubusercontent.com/baol/gg/main/scripts/install.ps1 | iex
+```
+
+Then run `git good` in any repository. More ways to install are [below](#install-or-update).
+
+![Scrolling a 20,000-commit History tree, then jumping to its first commit and back](https://baol.github.io/gg/assets/screens/demo-history.gif)
+
+- **Fast on big repositories.** The first rows of a 100,000-commit History tree show in about 150 ms, all of it loads in under 2 s while you scroll, in about 70 MiB. A sidebar of 10,000 branches costs half a millisecond a frame. [How it is measured](https://baol.github.io/gg/performance/)
+- **Every rewrite can be undone.** Before each rebase, amend, rewrite or reset, Git Good saves the old branch tip as a private backup. Recovery lists them, with the reflog, and restores in one step.
+- **It is your Git.** Every action runs the `git` on your `PATH`, so hooks, credential helpers, signing and configuration all apply, and a command from the app costs at most 1 % more than the same command typed. No Electron, no embedded browser.
+
+**Stage exactly what you mean**, by file, hunk or line, and commit:
+
+![Staging one hunk of src/routes.rs, writing the message and committing](https://baol.github.io/gg/assets/screens/demo-stage.gif)
+
+**Tidy a branch with Interactive rebase**, then take the old tip back from Recovery if you change your mind:
+
+![Folding a WIP commit into the one it fixes, starting the rebase, then the backup in Recovery](https://baol.github.io/gg/assets/screens/demo-rebase.gif)
+
+[★ Star on GitHub](https://github.com/baol/gg) · [Documentation](https://baol.github.io/gg/) · [Workflows](https://baol.github.io/gg/workflows/) · [Real use cases](https://baol.github.io/gg/use-cases/) · [How it was built](https://baol.github.io/gg/how-it-was-built/)
 
 ## Install or update
 
@@ -48,6 +76,8 @@ git good
 Commands for scripts follow `--cli` and print JSON, for example `git good --cli status --repo .`; see the [CLI reference](docs/cli.md).
 
 ## UI overview
+
+![Git Good native History tree view](docs/screenshots/gg-native-wide.png)
 
 - **History tree and Refs** — Stream and filter the History tree with commit lanes and branch, remote, and tag pills. Switch branches, create tracking branches, merge, or rebase from the refs sidebar or the **Branch** menu; the toolbar keeps fetch, pull, and push one click away, and search (`Ctrl+K`) runs every menu command.
 - **Commit review** — Press **Enter** on a commit to inspect changed files, side-by-side or inline diffs, image previews, blame, and File history.

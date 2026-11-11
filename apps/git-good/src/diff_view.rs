@@ -3332,6 +3332,10 @@ impl DiffView {
                     egui::Sense::click(),
                 )
                 .on_hover_text(hint);
+            // A painted button: name it for screen readers.
+            response.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), &label)
+            });
             let fill = if response.hovered() {
                 ui.visuals().widgets.hovered.bg_fill
             } else {

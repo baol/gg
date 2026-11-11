@@ -112,6 +112,60 @@ fn key(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
 
 const WIDE: egui::Vec2 = egui::vec2(1280.0, 800.0);
 
+/// An animation recorded a frame at a time: `NAME.frames/NNN.png` and
+/// `frames.json` (how long each frame shows, in ms), which
+/// `scripts/docs_screenshots.py` encodes as `NAME.gif`.
+struct Recording {
+    dir: PathBuf,
+    durations: Vec<u32>,
+}
+
+impl Recording {
+    fn new(out: &Path, name: &str) -> Result<Self> {
+        let dir = out.join(format!("{name}.frames"));
+        std::fs::create_dir_all(&dir)?;
+        Ok(Self {
+            dir,
+            durations: Vec::new(),
+        })
+    }
+
+    /// Add the window as it is now, shown for `ms`.
+    fn shot(&mut self, harness: &mut Harness, ms: u32) -> Result {
+        let image = harness.render()?;
+        image.save(self.dir.join(format!("{:03}.png", self.durations.len())))?;
+        self.durations.push(ms);
+        Ok(())
+    }
+
+    fn finish(self) -> Result {
+        std::fs::write(
+            self.dir.join("frames.json"),
+            serde_json::to_vec(&self.durations)?,
+        )?;
+        eprintln!(
+            "recorded {} ({} frames)",
+            self.dir.display(),
+            self.durations.len()
+        );
+        Ok(())
+    }
+}
+
+/// Step for `ms` so background work and animations move on.
+fn wait(harness: &mut Harness, ms: u64) {
+    let until = Instant::now() + Duration::from_millis(ms);
+    while Instant::now() < until {
+        harness.step();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn press(harness: &mut Harness, pressed: egui::Key, modifiers: egui::Modifiers) {
+    harness.input_mut().events.push(key(pressed, modifiers));
+    harness.step();
+}
+
 /// Render every documentation screenshot into `GG_DOCS_SCREENS` from the
 /// fixtures described by `GG_DOCS_FIXTURES` (a JSON file).
 #[test]
@@ -313,11 +367,122 @@ fn docs_screenshots() -> Result {
         settle(&mut harness, |_| true);
         save(&mut harness, &out, name)?;
     }
+    // The animations come last: two of them commit and rewrite.
+    if wanted("demo-history") {
+        // Scrolling a 20,000-commit History tree, then to its end and back.
+        let mut harness = window(Some(&fixture.repo("monorepo")), WIDE, dark);
+        let mut film = Recording::new(&out, "demo-history")?;
+        film.shot(&mut harness, 900)?;
+        for _ in 0..10 {
+            press(&mut harness, egui::Key::PageDown, egui::Modifiers::NONE);
+            wait(&mut harness, 60);
+            film.shot(&mut harness, 140)?;
+        }
+        press(&mut harness, egui::Key::End, egui::Modifiers::NONE);
+        wait(&mut harness, 300);
+        film.shot(&mut harness, 1_400)?;
+        press(&mut harness, egui::Key::Home, egui::Modifiers::NONE);
+        wait(&mut harness, 300);
+        film.shot(&mut harness, 1_000)?;
+        film.finish()?;
+    }
+    if wanted("demo-rebase") {
+        // Fold "WIP fix db typo" into the commit it fixes, start, then get
+        // the old branch tip back from Recovery.
+        let demo = fixture.repo("acme-api-demo");
+        let mut harness = window(Some(&demo), WIDE, dark);
+        let mut film = Recording::new(&out, "demo-rebase")?;
+        film.shot(&mut harness, 900)?;
+        let from = fixture.commit("rebase_from")?;
+        harness.state_mut().open_rewrite_dialog(&from)?;
+        settle(&mut harness, |_| true);
+        film.shot(&mut harness, 1_200)?;
+        press(&mut harness, egui::Key::J, egui::Modifiers::NONE);
+        wait(&mut harness, 150);
+        film.shot(&mut harness, 700)?;
+        press(&mut harness, egui::Key::F, egui::Modifiers::NONE);
+        wait(&mut harness, 150);
+        film.shot(&mut harness, 1_600)?;
+        press(&mut harness, egui::Key::Enter, egui::Modifiers::COMMAND);
+        settle(&mut harness, |app| {
+            app.rewrite_dialog.is_none() && !app.operation_busy()
+        });
+        film.shot(&mut harness, 2_000)?;
+        let ctx = harness.ctx.clone();
+        harness.state_mut().open_recovery_window(&ctx);
+        settle(&mut harness, |app| app.recovery.is_some());
+        settle(&mut harness, |_| true);
+        film.shot(&mut harness, 2_400)?;
+        film.finish()?;
+    }
+    if wanted("demo-stage") {
+        // Stage one hunk of src/routes.rs and commit it.
+        let demo = fixture.repo("acme-api-demo");
+        git_stash_pop(&demo)?;
+        let mut harness = window(Some(&demo), WIDE, dark);
+        let ctx = harness.ctx.clone();
+        harness.state_mut().open_working(&ctx);
+        settle(&mut harness, |app| app.working.is_some());
+        settle(&mut harness, |_| true);
+        let started = Instant::now();
+        while !harness
+            .state_mut()
+            .working
+            .as_mut()
+            .is_some_and(|working| working.select_unstaged(b"src/routes.rs", &ctx))
+            && started.elapsed() < Duration::from_secs(30)
+        {
+            harness.step();
+        }
+        settle(&mut harness, |_| true);
+        let mut film = Recording::new(&out, "demo-stage")?;
+        film.shot(&mut harness, 1_400)?;
+        // Hunk buttons ignore clicks for a moment after they appear.
+        wait(&mut harness, 700);
+        {
+            use egui_kittest::kittest::Queryable;
+            harness
+                .query_all_by_label("Stage hunk")
+                .next()
+                .ok_or("no Stage hunk button")?
+                .click();
+        }
+        settle(&mut harness, |_| true);
+        film.shot(&mut harness, 1_400)?;
+        let message = "Route /orders through the orders module";
+        for end in (4..=message.len()).step_by(4).chain([message.len()]) {
+            if let Some(working) = harness.state_mut().working.as_mut() {
+                working.set_draft(message[..end].to_string());
+            }
+            harness.step();
+            film.shot(&mut harness, 70)?;
+        }
+        film.shot(&mut harness, 600)?;
+        if let Some(working) = harness.state_mut().working.as_mut() {
+            working.commit_now(&ctx);
+        }
+        settle(&mut harness, |_| true);
+        film.shot(&mut harness, 2_400)?;
+        film.finish()?;
+    }
     if wanted("preferences") {
         let mut harness = window(Some(&api), WIDE, dark);
         harness.state_mut().open_preferences(PrefSection::Keyboard);
         settle(&mut harness, |_| true);
         save(&mut harness, &out, "preferences")?;
+    }
+    Ok(())
+}
+
+/// Bring the demo copy's work in progress back for the staging demo.
+fn git_stash_pop(repo: &Path) -> Result {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["stash", "pop", "-q"])
+        .output()?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).into_owned().into());
     }
     Ok(())
 }

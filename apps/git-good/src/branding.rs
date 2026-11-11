@@ -49,6 +49,9 @@ pub fn logo(ui: &mut egui::Ui, texture: &mut Option<egui::TextureHandle>, points
     .on_hover_text("Git Good");
 }
 
+/// The repository page: source, issues and the Star button.
+pub const REPOSITORY_URL: &str = "https://github.com/baol/gg";
+
 /// Version, license, and authors for About Git Good. Authors are the people who
 /// wrote gg; tools used along the way are named in the note instead.
 pub struct About {
@@ -124,7 +127,7 @@ pub fn show_about(ctx: &egui::Context, texture: &mut Option<egui::TextureHandle>
                     ui.hyperlink_to(about.license, "https://www.apache.org/licenses/LICENSE-2.0");
                     ui.end_row();
                     ui.weak("Source");
-                    ui.hyperlink_to("github.com/baol/gg", "https://github.com/baol/gg");
+                    ui.hyperlink_to("github.com/baol/gg", REPOSITORY_URL);
                     ui.end_row();
                 });
             ui.add_space(8.0);
@@ -137,6 +140,13 @@ pub fn show_about(ctx: &egui::Context, texture: &mut Option<egui::TextureHandle>
                     .clicked()
                 {
                     ui.ctx().copy_text(about.version_info());
+                }
+                if ui
+                    .button("Star on GitHub")
+                    .on_hover_text("Open the Git Good repository, where the Star button is")
+                    .clicked()
+                {
+                    ui.ctx().open_url(egui::OpenUrl::new_tab(REPOSITORY_URL));
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     close |= ui

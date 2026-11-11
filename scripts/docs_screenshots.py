@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -289,6 +290,64 @@ def build(root: Path) -> dict[str, str]:
     return commits
 
 
+def big(root: Path, count: int = 20_000) -> Path:
+    """A repository with `count` commits by four people, release branches
+    and tags, written with `git fast-import` in a second or two."""
+    path = root / "monorepo"
+    git(path.parent, "init", "-q", "-b", "main", str(path))
+    people = [("Ada Lovelace", "ada"), ("Grace Hopper", "grace"),
+              ("Linus Ortega", "linus"), ("Margaret Hamilton", "margaret")]
+    verbs = ["Fix", "Speed up", "Document", "Refactor", "Test", "Tidy", "Rename", "Guard"]
+    areas = ["parser", "scheduler", "cache", "router", "billing", "search", "auth", "metrics"]
+    start = 1_700_000_000
+    chunks = []
+    for i in range(1, count + 1):
+        name, login = people[i % len(people)]
+        when = start + i * 1_800
+        message = f"{verbs[i % len(verbs)]} the {areas[(i // 7) % len(areas)]} ({i})"
+        body = f"pub const STEP: u32 = {i};\n"
+        chunks.append(
+            f"commit refs/heads/main\nmark :{i}\n"
+            f"author {name} <{login}@example.com> {when} +0000\n"
+            f"committer {name} <{login}@example.com> {when} +0000\n"
+            f"data {len(message.encode())}\n{message}\n"
+            + (f"from :{i - 1}\n" if i > 1 else "")
+            + f"M 644 inline src/{areas[i % len(areas)]}/mod{i % 40}.rs\n"
+            f"data {len(body.encode())}\n{body}\n"
+        )
+        if i % 2_500 == 0:
+            chunks.append(f"reset refs/heads/release/{i // 2_500}\nfrom :{i}\n\n")
+            chunks.append(f"reset refs/tags/v{i // 2_500}.0.0\nfrom :{i}\n\n")
+    subprocess.run(["git", "-C", str(path), "fast-import", "--quiet"],
+                   input="".join(chunks).encode(), check=True)
+    git(path, "reset", "-q", "--hard", "main")
+    return path
+
+
+def encode_animations(out: Path) -> None:
+    """Turn each NAME.frames folder the shots wrote (PNG frames and
+    frames.json with each frame's duration in ms) into NAME.gif, 1280 px
+    wide with one shared palette, and remove the frames."""
+    from PIL import Image
+
+    for frames in sorted(out.glob("*.frames")):
+        durations = json.loads((frames / "frames.json").read_text())
+        images = []
+        for index in range(len(durations)):
+            image = Image.open(frames / f"{index:03}.png").convert("RGB")
+            width = 1280
+            images.append(image.resize((width, image.height * width // image.width), Image.LANCZOS))
+        palette = images[0].quantize(colors=255, method=Image.Quantize.MEDIANCUT)
+        quantized = [image.quantize(palette=palette, dither=Image.Dither.NONE) for image in images]
+        target = out / (frames.name.removesuffix(".frames") + ".gif")
+        quantized[0].save(target, save_all=True, append_images=quantized[1:],
+                          duration=durations, loop=0, optimize=True, disposal=1)
+        for file in frames.iterdir():
+            file.unlink()
+        frames.rmdir()
+        print(f"wrote {target} ({len(durations)} frames, {target.stat().st_size // 1024} KiB)")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--only", help="comma-separated shot names")
@@ -301,6 +360,14 @@ def main(argv: list[str] | None = None) -> int:
     with tempfile.TemporaryDirectory(prefix="gg-docs-") as directory:
         root = Path(directory)
         commits = build(root)
+        big(root)
+        # The demos that commit and rewrite start from a copy with the work
+        # in progress put away, so the other shots keep their state.
+        shutil.copytree(root / "acme-api", root / "acme-api-demo", symlinks=True)
+        git(root / "acme-api-demo", "stash", "push", "-q", "-u", "-m", "demo")
+        # Git Good's own Git commits there, as a person would, with their identity.
+        git(root / "acme-api-demo", "config", "user.name", "Ada Lovelace")
+        git(root / "acme-api-demo", "config", "user.email", PEOPLE["ada"][1])
         config = root / ".config"
         (config / "gg").mkdir(parents=True)
         recent = [
@@ -336,7 +403,10 @@ def main(argv: list[str] | None = None) -> int:
             "cargo", "test", "-q", "-p", "git-good", "--bin", "git-good", "--locked",
             "--", "--ignored", "--exact", "--nocapture", "docs_screens::docs_screenshots",
         ]
-        return subprocess.run(command, cwd=ROOT, env=environment).returncode
+        status = subprocess.run(command, cwd=ROOT, env=environment).returncode
+        if status == 0:
+            encode_animations(arguments.out.resolve())
+        return status
 
 
 if __name__ == "__main__":
