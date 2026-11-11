@@ -281,7 +281,7 @@ impl Welcome {
         let clone_into = tilde(info.clone_folder, info.home);
         let cards: [(&str, String, Command); 3] = if compact || width < 560.0 {
             [
-                ("Open…", "Ctrl+O".into(), Command::Open),
+                ("Open…", crate::keymap::shown("Ctrl+O"), Command::Open),
                 ("Clone…", format!("into {clone_into}"), Command::Clone),
                 (
                     "New repository…",
@@ -293,7 +293,7 @@ impl Welcome {
             [
                 (
                     "Open…",
-                    "A folder on this computer · Ctrl+O".into(),
+                    crate::keymap::shown("A folder on this computer · Ctrl+O"),
                     Command::Open,
                 ),
                 (

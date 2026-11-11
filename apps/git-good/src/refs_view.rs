@@ -824,7 +824,10 @@ fn render_leaf(
                 egui::RichText::new(label)
             };
             let response = ui
-                .add_enabled(enabled, crate::menus::row(false, text).shortcut_text(key))
+                .add_enabled(
+                    enabled,
+                    crate::menus::row(false, text).shortcut_text(crate::keymap::shown(key)),
+                )
                 .on_disabled_hover_text(reason);
             if response.clicked() {
                 *action = Some(chosen);
