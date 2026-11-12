@@ -101,6 +101,8 @@ pub struct Review {
     replacing: bool,
     history: Option<crate::file_history_view::FileHistory>,
     open_history: bool,
+    /// Open in editor or Reveal in folder from a file row's right-click menu.
+    editor_request: Option<crate::editor::Request>,
     return_location: Option<crate::return_location::ReturnLocation>,
     saved_reader: Option<crate::reader::ReaderContext>,
     history_entry_row: Option<usize>,
@@ -146,6 +148,7 @@ impl Review {
             replacing: false,
             history: None,
             open_history: false,
+            editor_request: None,
             return_location: None,
             saved_reader: None,
             history_entry_row: None,
@@ -289,9 +292,22 @@ impl Review {
         self.diff.take_export_receipt()
     }
 
+    /// Tests: File history was asked for and opens on a coming frame.
+    #[cfg(test)]
+    pub fn history_requested(&self) -> bool {
+        self.open_history || self.history.is_some()
+    }
+
+    /// Open the selected file's File history, as H does.
+    pub fn request_history(&mut self) {
+        self.open_history = true;
+    }
+
     /// Take the path chosen with ⋯ › Open in editor or Reveal in folder.
     pub fn take_editor_request(&mut self) -> Option<crate::editor::Request> {
-        self.diff.take_editor_request()
+        self.editor_request
+            .take()
+            .or_else(|| self.diff.take_editor_request())
     }
 
     pub fn take_lfs_request(&mut self) -> Option<crate::diff_view::LfsRequest> {
@@ -611,6 +627,7 @@ impl Review {
             )
         });
         let mut hovered = false;
+        let mut menu = None;
         let result = scroll.show_rows(ui, crate::density::row(), self.count, |ui, rows| {
             self.viewport = rows.start.saturating_sub(24)..rows.end.saturating_add(24);
             self.row_rects.clear();
@@ -713,11 +730,30 @@ impl Review {
                         response.surrender_focus();
                         self.selected = Some(row);
                     }
+                    let path = change.path.clone();
+                    response.context_menu(|ui| {
+                        if let Some(choice) = crate::file_menu::show(ui) {
+                            menu = Some((row, path.clone(), choice));
+                        }
+                    });
                 }
                 // A row not read yet keeps its slot, empty.
                 ui.set_opacity(opacity);
             }
         });
+        // A right-click choice acts on its row, which it selects (REV-82).
+        if let Some((row, path, choice)) = menu {
+            self.selected = Some(row);
+            match choice {
+                crate::file_menu::Choice::Read => self.show_diff = true,
+                crate::file_menu::Choice::History => self.open_history = true,
+                crate::file_menu::Choice::Open { folder } => {
+                    self.editor_request = Some(crate::editor::Request { path, folder });
+                }
+                crate::file_menu::Choice::CopyPath => ui.ctx().copy_text(path),
+            }
+            ui.ctx().request_repaint();
+        }
         if !hovered {
             self.guard.leave();
         }
@@ -2386,6 +2422,106 @@ mod tests {
             view.diff.save_context().ok_or("context")?.place,
             saved.place
         );
+        Ok(())
+    }
+
+    /// Where `label` was drawn in this frame; the last match, as a popup
+    /// draws after the view under it.
+    fn label_at(view: &mut Review, ctx: &egui::Context, label: &str) -> Option<egui::Pos2> {
+        let output = crate::tests::run_ui(
+            ctx,
+            crate::tests::frame_input(1120.0, 740.0, vec![]),
+            |ui| {
+                view.draw_ui(ui);
+            },
+        );
+        output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) if text.galley.job.text == label => {
+                    Some(text.visual_bounding_rect().center())
+                }
+                _ => None,
+            })
+            .next_back()
+    }
+
+    fn press(button: egui::PointerButton, pos: egui::Pos2, pressed: bool) -> egui::Event {
+        egui::Event::PointerButton {
+            pos,
+            button,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+
+    /// Right-click file row `row`, then click `item` in its menu.
+    fn row_menu(
+        view: &mut Review,
+        ctx: &egui::Context,
+        row: usize,
+        item: &str,
+    ) -> Result<(), String> {
+        let _ = frame(view, ctx, 1120.0, 740.0, vec![]);
+        let at = view
+            .row_rects
+            .iter()
+            .find(|(index, _)| *index == row)
+            .map(|(_, rect)| rect.center())
+            .ok_or("row not shown")?;
+        let right = egui::PointerButton::Secondary;
+        let _ = frame(
+            view,
+            ctx,
+            1120.0,
+            740.0,
+            vec![egui::Event::PointerMoved(at), press(right, at, true)],
+        );
+        let _ = frame(view, ctx, 1120.0, 740.0, vec![press(right, at, false)]);
+        let item_at = label_at(view, ctx, item).ok_or(format!("no {item:?} in the menu"))?;
+        let left = egui::PointerButton::Primary;
+        let _ = frame(
+            view,
+            ctx,
+            1120.0,
+            740.0,
+            vec![
+                egui::Event::PointerMoved(item_at),
+                press(left, item_at, true),
+            ],
+        );
+        let _ = frame(view, ctx, 1120.0, 740.0, vec![press(left, item_at, false)]);
+        Ok(())
+    }
+
+    #[test]
+    fn a_right_click_on_a_file_row_reads_opens_and_follows_that_file() -> Result<(), String> {
+        let ctx = egui::Context::default();
+        let mut view = Review::fixture(&ctx);
+        view.selected = Some(0);
+        let _ = frame(&mut view, &ctx, 1120.0, 740.0, vec![]);
+        let path = view
+            .rows
+            .get(&3)
+            .map(|change| change.path.clone())
+            .ok_or("no row 3")?;
+
+        // Open in editor names the right-clicked file, which it selects.
+        row_menu(&mut view, &ctx, 3, "Open in editor")?;
+        assert_eq!(view.selected, Some(3));
+        assert_eq!(
+            view.take_editor_request(),
+            Some(crate::editor::Request {
+                path: path.clone(),
+                folder: false
+            })
+        );
+        // File history opens that file's versions, as H does.
+        row_menu(&mut view, &ctx, 2, "File history")?;
+        assert_eq!(view.selected, Some(2));
+        let _ = frame(&mut view, &ctx, 1120.0, 740.0, vec![]);
+        assert!(view.history.is_some(), "File history opened");
         Ok(())
     }
 
