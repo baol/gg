@@ -5542,6 +5542,37 @@ impl Browser {
                 self.stash_picker.error = None;
                 egui::Popup::open_id(ctx, stash_picker_popup_id());
             }
+            refs_view::Action::Stash(index, choice) => {
+                let entry = self
+                    .local_summary
+                    .as_ref()
+                    .and_then(|summary| summary.stashes.get(index))
+                    .cloned();
+                if let Some(entry) = entry {
+                    match choice {
+                        refs_view::StashChoice::Apply => {
+                            self.apply_stash_pick(ctx, StashPick::Apply(entry.reference))
+                        }
+                        refs_view::StashChoice::Pop => {
+                            self.apply_stash_pick(ctx, StashPick::Pop(entry.reference))
+                        }
+                        refs_view::StashChoice::Show => self.apply_stash_pick(
+                            ctx,
+                            StashPick::Show {
+                                commit: entry.commit,
+                                message: entry.message,
+                            },
+                        ),
+                        // Drop asks first, in the picker, as Del there does.
+                        refs_view::StashChoice::Drop => {
+                            self.stash_picker.selected = index;
+                            self.stash_picker.confirm_drop = true;
+                            self.stash_picker.error = None;
+                            egui::Popup::open_id(ctx, stash_picker_popup_id());
+                        }
+                    }
+                }
+            }
             refs_view::Action::Merge(name) => {
                 self.merge_dialog = Some(MergeDialog {
                     reference: name,
@@ -16568,6 +16599,37 @@ mod tests {
         assert_eq!(outcome.summary, "Restored stash@{0}");
         assert!(matches!(outcome.severity, OutcomeSeverity::Info));
         assert_eq!(std::fs::read(path.join("a"))?, b"changed\n");
+        Ok(())
+    }
+
+    #[test]
+    fn a_stash_right_click_pops_it_and_drop_asks_first() -> Checked {
+        let ctx = egui::Context::default();
+        let (dir, mut app) = two_commits()?;
+        let path = dir.path();
+        std::fs::write(path.join("a"), b"stashed work\n")?;
+        git_in(path, &["stash", "push", "-qm", "work"])?;
+        app.local_summary = Some(LocalSummary::read(path.to_path_buf()));
+
+        // Drop… opens the picker on that stash with its confirmation;
+        // nothing is dropped yet.
+        app.apply_refs_action(
+            &ctx,
+            refs_view::Action::Stash(0, refs_view::StashChoice::Drop),
+        );
+        assert!(app.stash_picker.confirm_drop);
+        assert_eq!(app.stash_picker.selected, 0);
+        assert_eq!(git_in(path, &["stash", "list"])?.lines().count(), 1);
+        app.stash_picker.confirm_drop = false;
+
+        // Pop restores the work and removes the stash.
+        app.apply_refs_action(
+            &ctx,
+            refs_view::Action::Stash(0, refs_view::StashChoice::Pop),
+        );
+        app.wait_for_operation(&ctx);
+        assert_eq!(std::fs::read(path.join("a"))?, b"stashed work\n");
+        assert_eq!(git_in(path, &["stash", "list"])?, "");
         Ok(())
     }
 

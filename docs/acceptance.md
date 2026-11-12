@@ -2907,6 +2907,13 @@ Covered by (interaction): `a_stash_shows_its_history_at_once_under_the_pointer` 
 
 ## Merge, cherry-pick, revert and conflicts
 
+### STA-27 A stash's right-click menu in the sidebar
+Fixture: `fx-linear` with one stash `work`
+Layer: interaction
+- When the user right-clicks a stash under STASHES
+- Then a menu offers **Apply**, **Pop**, **Show changes** and a red **Drop…** for that stash; Apply, Pop and Show changes run as the Stashes picker's buttons do (Pop restores the work and removes the stash); **Drop…** opens the Stashes picker on that stash with its drop confirmation, and nothing is dropped until it is confirmed there
+Covered by (interaction): `a_right_click_on_a_stash_offers_apply_pop_show_and_drop` (apps/git-good/src/refs_view.rs), `a_stash_right_click_pops_it_and_drop_asks_first` (apps/git-good/src/main.rs)
+
 ### INT-01 Merge into current creates a merge commit for diverged branches
 Fixture: `fx-branchy`
 Layer: product
