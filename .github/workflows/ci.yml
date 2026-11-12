@@ -1,9 +1,14 @@
 name: Rust
+# The six-platform build and release: once a day when main changed since its
+# last release, for a release tag (v*), or by hand; not on every push. A run
+# costs about 231 Linux-equivalent minutes (macOS counts ten times, Windows
+# twice), so a day without changes stops after the one-minute version job.
+# Pull requests run check.yml instead.
 on:
+  schedule:
+    - cron: '41 4 * * *'
   push:
-    branches: [main]
     tags: ['v*']
-  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -22,10 +27,20 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.version.outputs.version }}
+      release: ${{ steps.changed.outputs.release }}
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+      # The daily run builds only when main has commits its last release lacks.
+      - id: changed
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = schedule ] && [ -n "$(git tag --points-at HEAD --list 'v*')" ]; then
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "main has not changed since its last release: nothing to build."
+          else
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
       - run: python3 -m unittest discover -s scripts -p 'test_*.py'
       - name: README screenshot matches the UI sources
         run: python3 scripts/capture_native_screenshot.py --check
@@ -34,6 +49,7 @@ jobs:
 
   native:
     needs: version
+    if: needs.version.outputs.release == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -139,7 +155,10 @@ jobs:
           if-no-files-found: error
 
   release:
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    if: >-
+      needs.version.outputs.release == 'true' &&
+      ((github.event_name == 'schedule' && github.ref == 'refs/heads/main') ||
+       (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')))
     needs: [version, native]
     runs-on: ubuntu-24.04
     permissions:

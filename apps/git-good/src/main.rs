@@ -31,6 +31,7 @@ mod editor;
 mod export;
 mod file_history_view;
 mod file_history_worker;
+mod file_menu;
 mod folder_picker;
 mod folders;
 mod footer;
@@ -14621,6 +14622,13 @@ impl Browser {
                     Some(details_view::PageAction::Review(path)) => {
                         self.review_from_details(ctx, path)
                     }
+                    Some(details_view::PageAction::FileHistory(path)) => {
+                        self.review_from_details(ctx, Some(path));
+                        if let Some(review) = &mut self.review {
+                            review.request_history();
+                        }
+                    }
+                    Some(details_view::PageAction::Open(request)) => self.open_in_editor(&request),
                     Some(details_view::PageAction::Command(command)) => {
                         if let Some((id, subject)) = ids {
                             self.apply_commit_command(ctx, &id, &subject, command);
@@ -21101,6 +21109,77 @@ mod tests {
                 "{key:?} with {modifiers:?}"
             );
         }
+    }
+
+    #[test]
+    fn narrow_details_file_rows_open_a_right_click_menu() -> Result<(), String> {
+        let ctx = egui::Context::default();
+        let mut app = layout_fixture();
+        let id = format!("{:040x}", 50);
+        let file = |path: &str| commit_stats::FileStat {
+            path: path.into(),
+            kind: gg_engine::review::ChangeKind::Modified,
+            lines: Some((1, 1)),
+        };
+        app.commit_stats = Some((
+            id,
+            commit_stats::Stats {
+                files: 2,
+                added: 2,
+                deleted: 2,
+                complete: true,
+                rows: vec![file("a.rs"), file("b.rs")],
+            },
+        ));
+        let run = |app: &mut Browser, events| {
+            crate::tests::run_ui(&ctx, frame_input(720.0, 480.0, events), |ctx| {
+                app.draw_ui(ctx)
+            })
+        };
+        let at = |output: &egui::FullOutput, label: &str| {
+            output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) if text.galley.job.text == label => {
+                        Some(text.visual_bounding_rect().center())
+                    }
+                    _ => None,
+                })
+                .next_back()
+        };
+        let button = |button, pos, pressed| egui::Event::PointerButton {
+            pos,
+            button,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let _ = run(&mut app, vec![]);
+        let _ = run(&mut app, vec![key(egui::Key::Space, egui::Modifiers::NONE)]);
+        let output = run(&mut app, vec![]);
+        let row = at(&output, "b.rs").ok_or("no b.rs row")?;
+        let right = egui::PointerButton::Secondary;
+        let _ = run(
+            &mut app,
+            vec![egui::Event::PointerMoved(row), button(right, row, true)],
+        );
+        let _ = run(&mut app, vec![button(right, row, false)]);
+        let output = run(&mut app, vec![]);
+        let item = at(&output, "File history").ok_or("no File history in the menu")?;
+        let left = egui::PointerButton::Primary;
+        let _ = run(
+            &mut app,
+            vec![egui::Event::PointerMoved(item), button(left, item, true)],
+        );
+        let _ = run(&mut app, vec![button(left, item, false)]);
+        let review = app.review.as_ref().ok_or("File history opens Review")?;
+        assert_eq!(
+            review.pending_path(),
+            Some("b.rs"),
+            "on the right-clicked file"
+        );
+        assert!(review.history_requested(), "with its File history");
+        Ok(())
     }
 
     #[test]

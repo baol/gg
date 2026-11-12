@@ -1,7 +1,14 @@
 name: Docs
+# Only when the site or the app it shows changes; Linux only, about five
+# minutes, so it stays a small part of the Actions allowance.
 on:
   push:
     branches: [main]
+    paths:
+      - website/**
+      - apps/git-good/src/**
+      - scripts/docs_screenshots.py
+      - .github/workflows/docs.yml
   pull_request:
     paths:
       - website/**
