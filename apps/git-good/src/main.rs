@@ -2187,6 +2187,9 @@ struct WorktreeWindow {
     notice: Option<String>,
     create: Option<CreateWorktreeDialog>,
     confirm_remove: Option<usize>,
+    /// Opened from a sidebar worktree's menu: the worktree to select once
+    /// the list is read, and whether to ask to remove it.
+    open_on: Option<(String, bool)>,
     /// Lock… asks for an optional reason: the folder and the reason typed.
     lock: Option<(PathBuf, String)>,
     busy: Option<String>,
@@ -5532,6 +5535,31 @@ impl Browser {
                     &mut local,
                     &mut history,
                 );
+            }
+            refs_view::Action::Worktree(path, refs_view::WorktreeChoice::Reveal) => {
+                if let Err(error) = editor::reveal(Path::new(&path)) {
+                    self.set_outcome(OutcomeSeverity::Error, error, None, None);
+                }
+            }
+            // Remove… asks first, in the Worktrees window, as Del there does.
+            refs_view::Action::Worktree(path, refs_view::WorktreeChoice::Remove) => {
+                self.open_worktrees(ctx);
+                if let Some(window) = &mut self.worktree_window {
+                    let listed = window.snapshot.as_ref().and_then(|snapshot| {
+                        snapshot
+                            .worktrees
+                            .iter()
+                            .position(|worktree| worktree.path == path)
+                    });
+                    match listed {
+                        Some(index) => {
+                            window.selected = Some(index);
+                            window.confirm_remove = Some(index);
+                        }
+                        // Selected once the list the window is reading arrives.
+                        None => window.open_on = Some((path, true)),
+                    }
+                }
             }
             refs_view::Action::Switch(name) => self.start_branch(ctx, name, false),
             refs_view::Action::SwitchRemote(name) => self.switch_remote(ctx, name),
@@ -10593,6 +10621,7 @@ impl Browser {
                 notice: None,
                 create: None,
                 confirm_remove: None,
+                open_on: None,
                 lock: None,
                 busy: None,
                 pending: None,
@@ -10666,6 +10695,19 @@ impl Browser {
                     .map(|index| index.min(len.saturating_sub(1)));
                 if window.selected.is_none() && len > 0 {
                     window.selected = Some(0);
+                }
+                if let Some((path, remove)) = window.open_on.take()
+                    && let Some(index) = window.snapshot.as_ref().and_then(|snapshot| {
+                        snapshot
+                            .worktrees
+                            .iter()
+                            .position(|worktree| worktree.path == path)
+                    })
+                {
+                    window.selected = Some(index);
+                    if remove {
+                        window.confirm_remove = Some(index);
+                    }
                 }
                 window.error = None;
                 if let Some(notice) = update.notice {
@@ -15195,6 +15237,7 @@ mod tests {
                 open_after: true,
             }),
             confirm_remove: None,
+            open_on: None,
             lock: None,
             busy: None,
             pending: None,
@@ -15421,6 +15464,7 @@ mod tests {
             notice: None,
             create: None,
             confirm_remove: None,
+            open_on: None,
             lock: None,
             busy: None,
             pending: None,
@@ -20456,6 +20500,7 @@ mod tests {
                 notice: None,
                 create: None,
                 confirm_remove: None,
+                open_on: None,
                 lock: None,
                 busy: None,
                 pending: None,
@@ -22107,6 +22152,53 @@ mod tests {
                 "a click on {ends:?} selects its row"
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn remove_from_a_sidebar_worktree_asks_in_the_worktrees_window() -> Checked {
+        let ctx = egui::Context::default();
+        let (dir, mut app) = two_commits()?;
+        let path = dir.path();
+        let other = tempfile::tempdir()?;
+        let linked = other.path().join("linked");
+        git_in(
+            path,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "linked",
+                &linked.to_string_lossy(),
+            ],
+        )?;
+        app.load(&ctx);
+        frames_until(&ctx, &mut app, vec![], |app, _| app.pending.is_none())?;
+        // The path as the sidebar has it, from Git's own list.
+        let listed = gg_git::worktree::list(path)?
+            .worktrees
+            .into_iter()
+            .find(|worktree| !worktree.main)
+            .ok_or("no linked worktree")?
+            .path;
+        app.apply_refs_action(
+            &ctx,
+            refs_view::Action::Worktree(listed.clone(), refs_view::WorktreeChoice::Remove),
+        );
+        frames_until(&ctx, &mut app, vec![], |app, _| {
+            app.worktree_window
+                .as_ref()
+                .is_some_and(|window| window.confirm_remove.is_some())
+        })?;
+        let window = app.worktree_window.as_ref().ok_or("no Worktrees window")?;
+        let asked = window
+            .confirm_remove
+            .and_then(|index| window.snapshot.as_ref()?.worktrees.get(index))
+            .map(|worktree| worktree.path.clone());
+        assert_eq!(asked, Some(listed), "it asks about that worktree");
+        assert_eq!(window.selected, window.confirm_remove);
+        assert!(linked.exists(), "nothing is removed before the answer");
         Ok(())
     }
 

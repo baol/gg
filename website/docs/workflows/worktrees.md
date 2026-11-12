@@ -11,7 +11,7 @@ Choose **Repository › Worktrees…**. In acme-api there is the main worktree a
 
 ![The Worktrees window: main in ~/acme-api, current; hotfix/1.2.1 in ~/acme-api-hotfix, clean; details of the selected worktree and New worktree, Remove and Open](../assets/screens/worktrees.png){ .gg-shot }
 
-Each row shows the branch, the folder, a status (*Current*, *Clean*, *Modified*, *Locked*, *Missing*) and the commit checked out. The sidebar's **Worktrees** group lists the same.
+Each row shows the branch, the folder, a status (*Current*, *Clean*, *Modified*, *Locked*, *Missing*) and the commit checked out. The sidebar's **Worktrees** group lists the same. Right-click one there to open it, reveal its folder, copy its path or remove it.
 
 ## Create one
 
