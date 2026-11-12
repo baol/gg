@@ -1,7 +1,7 @@
 name: Timing
+# On demand: about 40 minutes a run, too much for a nightly schedule within
+# the Actions allowance. Run it before a release and for performance work.
 on:
-  schedule:
-    - cron: '17 3 * * *'
   workflow_dispatch:
 
 permissions:

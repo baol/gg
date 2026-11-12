@@ -1,9 +1,10 @@
 name: Rust
+# The six-platform build and release. It runs for a release tag (v*) or by
+# hand, not on every push: macOS minutes count ten times and Windows twice
+# against the Actions allowance. Pull requests run check.yml instead.
 on:
   push:
-    branches: [main]
     tags: ['v*']
-  pull_request:
   workflow_dispatch:
 
 permissions:
