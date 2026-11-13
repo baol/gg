@@ -1,5 +1,5 @@
 name: Check
-# Every pull request: one Linux job, a few minutes. The six-platform build
+# Every pull request: one Linux job, a few minutes. The five-platform build
 # runs only for a release (ci.yml), so CI fits the Actions allowance.
 on:
   pull_request:

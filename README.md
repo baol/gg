@@ -4,7 +4,7 @@ Purpose: introduce Git Good and explain installation and use.
 
 **A fast, native Git desktop app that runs your own `git`, and can undo any rewrite.**
 
-Linux, macOS and Windows, on x86_64 and Arm. Free and open source (Apache-2.0).
+Linux and Windows on x86_64 and Arm, macOS on Apple silicon (Intel Macs: `cargo install git-good --locked`). Free and open source (Apache-2.0).
 
 [![GitHub stars](https://img.shields.io/github/stars/baol/gg?style=social)](https://github.com/baol/gg/stargazers) If Git Good saves you time, a [star on GitHub](https://github.com/baol/gg) helps other people find it.
 
