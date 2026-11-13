@@ -5,7 +5,7 @@ description: Git Good is written by an AI coding agent under its maintainer's di
 
 # How it was built
 
-Most of Git Good's code is written by an AI coding agent, Claude Code, working under the direction of its maintainer. The maintainer decides what the app does, writes and approves the requirements, tries every change on real repositories, and merges it. The agent writes the code, the tests and most of the documentation against those requirements. Nothing ships because it compiled: a change ships when its scenarios pass on six platforms and it works on the case it was made for.
+Most of Git Good's code is written by an AI coding agent, Claude Code, working under the direction of its maintainer. The maintainer decides what the app does, writes and approves the requirements, tries every change on real repositories, and merges it. The agent writes the code, the tests and most of the documentation against those requirements. Nothing ships because it compiled: a change ships when its scenarios pass, on Linux for every change and on five platforms before each release, and it works on the case it was made for.
 
 This page says how that is kept honest. Everything it names is in the [repository](https://github.com/baol/gg).
 
@@ -23,7 +23,7 @@ A change that alters behavior updates its specification in the same commit.
 ## Tested where it runs
 
 - **Over 1,000 tests**, many of them driving the real window offscreen: they press keys, click buttons by their accessible names and read what is on screen.
-- **Six platforms on every change**: Linux, macOS and Windows, each on x86_64 and Arm.
+- **Linux on every change, five platforms before each release**: Linux and Windows on x86_64 and Arm, and macOS on Apple silicon.
 - **Fixture repositories** built by scripts for each Git situation the app handles: renames, merge conflicts, signed commits, submodules, LFS, a remote that was rewritten, and more. The pictures on this site are rendered from them by the same tests.
 
 ## Bugs are reproduced first

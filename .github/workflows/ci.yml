@@ -1,8 +1,9 @@
 name: Rust
-# The six-platform build and release: once a day when main changed since its
-# last release, for a release tag (v*), or by hand; not on every push. A run
-# costs about 231 Linux-equivalent minutes (macOS counts ten times, Windows
-# twice), so a day without changes stops after the one-minute version job.
+# The five-platform build and release (Linux and Windows on x86_64 and arm64,
+# macOS on Apple silicon): once a day when main changed since its last
+# release, for a release tag (v*), or by hand; not on every push. A run costs
+# about 120 Linux-equivalent minutes (macOS counts ten times, Windows twice),
+# so a day without changes stops after the one-minute version job.
 # Pull requests run check.yml instead.
 on:
   schedule:
@@ -58,8 +59,6 @@ jobs:
             target: x86_64-unknown-linux-gnu
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
-          - os: macos-15-intel
-            target: x86_64-apple-darwin
           - os: macos-15
             target: aarch64-apple-darwin
           - os: windows-2025
@@ -182,7 +181,7 @@ jobs:
           from pathlib import Path
           targets = {
               "x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu",
-              "x86_64-apple-darwin", "aarch64-apple-darwin",
+              "aarch64-apple-darwin",
               "x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc",
           }
           expected = set()

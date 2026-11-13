@@ -37,6 +37,10 @@ if [ "$system" = apple-darwin ] && [ "$arch" = x86_64 ] &&
     [ "$(sysctl -n hw.optional.arm64 2>/dev/null || echo 0)" = 1 ]; then
     arch="aarch64"
 fi
+# Releases have no Intel Mac build; Cargo builds one from source.
+if [ "$system" = apple-darwin ] && [ "$arch" = x86_64 ]; then
+    fail "there is no release build for Intel Macs; install it with: cargo install git-good --locked"
+fi
 name="git-good-$arch-$system.tar.gz"
 
 if [ -n "${GG_DOWNLOAD_URL:-}" ]; then

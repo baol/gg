@@ -17,6 +17,6 @@ Interaction review: [detailed user flows and proposed UI](docs/user-flows.md).
 | M6 · Complete | Rebase, reorder, squash, amend, reflog, and backup recovery; [evidence](docs/verification.md#m6-reorder-squash-and-rewrite-recovery--2026-10-23) |
 | M7 · Complete | File reading, file history, blame and line/range history, image diffs and onion skin, worktrees, submodules, Git LFS pointers/fetch/preview, and commit/tag signing; [sequence](docs/plan.md#m7--file-reading-history-attribution-and-large-repositories) |
 
-Target Linux (Wayland/X11), macOS, and Windows on x86_64 and arm64, supported by native builds and hardware checks.
+Target Linux (Wayland/X11) and Windows on x86_64 and arm64, and macOS on Apple silicon, supported by native builds and hardware checks. Intel Macs build from source.
 
 Passing main builds publish versioned releases; [delivery policy](docs/development.md). Supported preview releases require browser performance and platform runtime acceptance. Daily-use releases also require M2, native packaging, and mutation recovery documentation. Check keyboard access, accessibility, scaling, clipboard, and performance at each milestone. Outstanding gates: [verification](docs/verification.md#preview-acceptance-pending).

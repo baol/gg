@@ -117,6 +117,30 @@ class InstallScript(unittest.TestCase):
         self.assertIn("could not download", result.stderr)
         self.assertFalse(binary.exists())
 
+    def fake_mac(self, arm64):
+        """A folder of `uname` and `sysctl` that answer as a Mac does."""
+        fakes = self.root / "fakes"
+        fakes.mkdir(exist_ok=True)
+        (fakes / "uname").write_text('#!/bin/sh\ncase "$1" in -s) echo Darwin ;; -m) echo x86_64 ;; esac\n')
+        (fakes / "sysctl").write_text(f"#!/bin/sh\necho {1 if arm64 else 0}\n")
+        for tool in ("uname", "sysctl"):
+            (fakes / tool).chmod(0o755)
+        return f"{fakes}:/usr/bin:/bin"
+
+    def test_an_intel_mac_is_told_to_build_with_cargo(self):
+        # Releases have no Intel Mac build.
+        result, binary = self.install(self.fake_mac(arm64=False))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("no release build for Intel Macs", result.stderr)
+        self.assertIn("cargo install git-good --locked", result.stderr)
+        self.assertFalse(binary.exists())
+
+    def test_a_rosetta_shell_on_apple_silicon_gets_the_arm_build(self):
+        result, _ = self.install(self.fake_mac(arm64=True))
+        # No archive is published here: it asks for the Arm one by name.
+        self.assertIn("aarch64-apple-darwin", result.stderr)
+        self.assertNotIn("Intel", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
