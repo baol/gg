@@ -17,6 +17,16 @@ Git Good is a single binary, `git-good`. Put it on your `PATH` and Git runs it f
 
     The script picks the build for your system and processor (`x86_64` or `arm64` on Linux, Apple silicon on macOS; on an Intel Mac it says to use `cargo install git-good --locked` instead), checks it against its published SHA-256 and puts `git-good` in `~/.local/bin`. If that folder is not on your `PATH` yet, it prints the line to add. Run it again to update.
 
+=== "macOS app"
+
+    For **Git Good** in Applications, with its icon in the Dock and Launchpad:
+
+    1. Download `git-good-aarch64-apple-darwin.dmg` from the latest [GitHub release](https://github.com/baol/gg/releases/latest) (Apple silicon Macs).
+    2. Open it and drag **Git Good** onto **Applications**.
+    3. The first time, macOS says it cannot check the app, because it is not signed with an Apple Developer ID. Open **System Settings › Privacy & Security**, scroll to Security and click **Open Anyway** next to Git Good. Later launches open directly.
+
+    The app opens on the welcome view. To also run `git good` in a terminal, use the install script.
+
 === "Windows"
 
     In PowerShell:
