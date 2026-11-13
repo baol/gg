@@ -147,6 +147,14 @@ jobs:
             GG_INSTALL_DIR="$dest" sh scripts/install.sh
             test "$("$dest/git-good" --version)" = "git-good $VERSION"
           fi
+      # The binary just built, as Git Good.app in a .dmg to drag to
+      # Applications; about a minute, nothing is compiled again.
+      - name: Package macOS app
+        if: matrix.target == 'aarch64-apple-darwin'
+        env:
+          TARGET: ${{ matrix.target }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: python3 scripts/package_macos_app.py "target/$TARGET/release/git-good" "$VERSION" apps/git-good/assets/gg.png dist
       - uses: actions/upload-artifact@v7
         with:
           name: git-good-${{ matrix.target }}
@@ -189,6 +197,10 @@ jobs:
               extension = "zip" if "windows" in target else "tar.gz"
               name = f"git-good-{target}.{extension}"
               expected.update((name, name + ".sha256"))
+          # The Mac app, as a disk image, beside its archive.
+          dmg = "git-good-aarch64-apple-darwin.dmg"
+          expected.update((dmg, dmg + ".sha256"))
+          for name in sorted(n for n in expected if not n.endswith(".sha256")):
               archive = Path("dist") / name
               checksum = Path(str(archive) + ".sha256").read_text().split()
               assert checksum == [hashlib.sha256(archive.read_bytes()).hexdigest(), name], name
