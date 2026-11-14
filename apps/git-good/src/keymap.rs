@@ -403,7 +403,7 @@ pub fn shown(text: &str) -> String {
     }
 }
 
-/// `Ctrl+Shift+Enter` → `⇧⌘↩`, `Alt+Up/Down` → `⌥Up/Down`; other text stays.
+/// `Ctrl+Shift+Enter` → `⇧⌘Return`, `Alt+Up/Down` → `⌥Up/Down`; other text stays.
 /// Modifiers come in Apple's order: ⌃ ⌥ ⇧ ⌘.
 pub fn mac_style(text: &str) -> String {
     const MODIFIERS: [(&str, usize); 5] = [
@@ -436,10 +436,11 @@ pub fn mac_style(text: &str) -> String {
                     out.push_str(symbol);
                 }
             }
+            // Return, as Mac keyboards name it: ↩ is in no bundled font.
             let enter = chord.starts_with("Enter")
                 && !chord[5..].starts_with(|c: char| c.is_alphanumeric());
             if enter {
-                out.push('↩');
+                out.push_str("Return");
                 rest = &chord[5..];
             } else {
                 rest = chord;
@@ -457,15 +458,37 @@ pub fn mac_style(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// Reported on macOS: the commit hint drew a box after ⌘, where ↩
+    /// was meant. The macOS system font draws ⌘ ⇧ ⌥ ⌃, not ↩, and the
+    /// bundled fonts draw none of them: a Mac label holds plain text and
+    /// those four symbols only.
+    #[test]
+    fn mac_labels_use_only_symbols_the_macos_font_draws() {
+        for label in [
+            "Ctrl+Enter",
+            "Ctrl+Shift+Enter",
+            "Ctrl+Alt+Shift+S",
+            "Shift+F10",
+            "S / U: stage / unstage · [ ]: hunks · Ctrl+Enter: commit",
+        ] {
+            let shown = mac_style(label);
+            let other: Vec<char> = shown
+                .chars()
+                .filter(|c| !c.is_ascii() && !"⌘⇧⌥⌃·".contains(*c))
+                .collect();
+            assert!(other.is_empty(), "{shown} draws {other:?}");
+        }
+    }
+
     #[test]
     fn mac_labels_use_the_command_symbols() {
-        assert_eq!(mac_style("Ctrl+Enter"), "⌘↩");
+        assert_eq!(mac_style("Ctrl+Enter"), "⌘Return");
         assert_eq!(mac_style("Ctrl+Shift+S"), "⇧⌘S");
         assert_eq!(mac_style("Ctrl+Alt+G"), "⌥⌘G");
         assert_eq!(mac_style("Alt+A  Shift+F10"), "⌥A  ⇧F10");
         assert_eq!(
             mac_style("S / U: stage / unstage · Ctrl+Enter: commit"),
-            "S / U: stage / unstage · ⌘↩: commit"
+            "S / U: stage / unstage · ⌘Return: commit"
         );
         assert_eq!(mac_style("Alt+Up/Down: file"), "⌥Up/Down: file");
         assert_eq!(mac_style("Enter: read file"), "Enter: read file");
@@ -478,7 +501,7 @@ mod tests {
         set_mac_keys(false);
         assert_eq!(shown("Ctrl+Enter"), "Ctrl+Enter");
         set_mac_keys(true);
-        assert_eq!(shown("Ctrl+Enter"), "⌘↩");
+        assert_eq!(shown("Ctrl+Enter"), "⌘Return");
     }
 
     use super::*;
