@@ -52,7 +52,7 @@ From a script: `git good --cli ignore logs/requests.log --extension` (see [Scrip
 
 Write the message in the box under the diff (the first line is the subject) and press ++ctrl+enter++ or **Commit**.
 
-- **Amend HEAD** replaces the last commit instead. Git Good saves the old commit as a [backup](recovery.md) first.
+- **Amend HEAD** replaces the last commit instead. Git Good saves the old commit as a [backup](recovery.md) first. To leave amend mode without amending, untick **Amend HEAD**, press ++escape++ or switch to the History tree; your message is kept for next time.
 - With nothing changed, **Amend HEAD** on the *Working tree clean* screen (or **Changes › Amend HEAD**) opens the last commit: reword it, or unstage a file to take it out of the commit.
 - Right-click a file in Unstaged or Staged for its actions: stage or unstage, open, copy its path, ignore it, or discard it.
 - **Sign** signs the commit with your Git signing setup (GPG or SSH); its default follows `commit.gpgSign`.

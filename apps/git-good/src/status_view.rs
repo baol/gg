@@ -1311,7 +1311,8 @@ impl StatusView {
         Draft {
             normal,
             amend,
-            amend_mode: self.amend,
+            // Leaving Local Changes leaves amend mode; its message stays.
+            amend_mode: false,
             amend_base: self.amend_base.clone(),
             sign: self.sign_commit,
             selected: self.active.clone(),
@@ -1405,6 +1406,22 @@ impl StatusView {
             }
         }
         self.start(ctx, true);
+    }
+
+    /// Back to the normal Local Changes view: unticking **Amend HEAD**, Esc,
+    /// or leaving Local Changes. The amend message is kept for next time;
+    /// the commit is unchanged (CHG-81).
+    pub fn leave_amend(&mut self, ctx: &egui::Context) {
+        if !self.amend {
+            return;
+        }
+        self.amend_draft = self.message.clone();
+        self.amend = false;
+        self.amend_base = None;
+        self.amend_base_commit = None;
+        self.amend_subject = None;
+        self.message = self.normal_draft.clone();
+        self.restart(ctx);
     }
 
     /// Enable amend mode, load the current HEAD message, and compare the index with HEAD's parent.
@@ -2335,15 +2352,7 @@ impl StatusView {
                                 self.action_error = Some(error);
                             }
                         } else {
-                            if self.amend {
-                                self.amend_draft = self.message.clone();
-                            }
-                            self.amend = false;
-                            self.amend_base = None;
-                            self.amend_base_commit = None;
-                            self.amend_subject = None;
-                            self.message = self.normal_draft.clone();
-                            self.restart(ctx);
+                            self.leave_amend(ctx);
                         }
                     }
                     // Narrow forms leave signing to Preferences › Commit
@@ -2590,6 +2599,12 @@ impl StatusView {
                 self.drop_confirm = None;
             }
         } else if !self.busy() && !self.replacing && crate::navigation::available(ctx) {
+            // Esc while amending goes back to the normal view first.
+            if self.amend
+                && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+            {
+                self.leave_amend(ctx);
+            }
             back |= ctx.input_mut(|i| {
                 i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)
                     || i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft)
@@ -4976,6 +4991,46 @@ mod tests {
             )),
             "missing amended status line"
         );
+        Ok(())
+    }
+
+    /// Reported: amend mode stayed after Esc and after leaving Local
+    /// Changes; both go back to the normal view, as unticking does.
+    #[test]
+    fn esc_and_leaving_local_changes_end_amend_mode() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        generated(dir.path())?;
+        let ctx = egui::Context::default();
+        let mut view = StatusView::new(dir.path().into(), &ctx);
+        settle(&ctx, &mut view, 1120.0);
+        view.message = "normal draft".into();
+        view.start_amend(&ctx)?;
+        view.message = "amend draft".into();
+        settle(&ctx, &mut view, 1120.0);
+        let esc = egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        run(&ctx, &mut view, 1120.0, vec![esc]);
+        pump(&ctx, &mut view, 1120.0, |view| {
+            !view.busy() && view.complete && !view.replacing
+        });
+        assert!(!view.amend, "Esc leaves amend mode");
+        assert_eq!(view.message, "normal draft");
+        assert_eq!(view.amend_draft, "amend draft", "the amend message is kept");
+
+        // Leaving while amending, then coming back, opens the normal view.
+        view.start_amend(&ctx)?;
+        assert!(view.amend);
+        let draft = view.capture_draft();
+        let mut reopened = StatusView::new(dir.path().into(), &ctx);
+        reopened.restore_draft(draft, &ctx);
+        settle(&ctx, &mut reopened, 1120.0);
+        assert!(!reopened.amend, "reopened Local Changes is not amending");
+        assert_eq!(reopened.message, "normal draft");
         Ok(())
     }
 

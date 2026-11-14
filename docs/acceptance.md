@@ -2003,6 +2003,14 @@ Layer: interaction
 - Then Git Good saves `main`'s tip as a `move` backup, runs `git switch -c topic` and `git branch -f main <local>^` on the worker, and reads *Moved 1 commit to topic · main is back at <id>*; `topic` is checked out at the old tip, the working tree and index are unchanged, and the GUI runs exactly what `git good --cli branch --move-from <local> topic` runs; a name in use, a detached HEAD or a pushed commit is refused with nothing changed
 Covered by (backend, interaction, parity): `local_commits_move_to_a_new_branch_and_main_goes_back`, `moving_refuses_pushed_commits_taken_names_and_a_detached_head` (crates/git/tests/branch.rs), `a_local_commit_on_master_moves_to_a_new_branch_from_its_menu` (apps/git-good/src/main.rs), `branch_move_runs_the_cli_commands` (apps/git-good/src/parity_tests.rs)
 
+### CHG-81 Leaving amend mode
+Fixture: `fx-linear` with a normal draft `normal draft`
+Layer: interaction
+- Given Local Changes in amend mode (**Amend HEAD** ticked) with the message edited to `amend draft`, before **Amend HEAD** is clicked
+- When the user unticks **Amend HEAD**, presses `Esc` (with no text field focused), or leaves Local Changes and opens it again
+- Then Local Changes shows the normal view: Staged compares HEAD with the index, the commit box holds `normal draft`, and HEAD is unchanged; `amend draft` is kept for the next amend; a second `Esc` goes back to the History tree as before
+Covered by (interaction): `esc_and_leaving_local_changes_end_amend_mode`, `normal_and_amend_drafts_stay_separate` (apps/git-good/src/status_view.rs)
+
 ### CHG-17 Unstaging a staged rename restores both halves
 Fixture: `fx-dirty`
 Layer: product
