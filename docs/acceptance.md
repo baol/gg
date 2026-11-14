@@ -672,9 +672,9 @@ Covered by (interaction): `star_on_github_opens_the_repository_page`, `menus_fol
 Fixture: `fx-linear` on macOS
 Layer: interaction
 - When the window shows a key in a button, hint, tooltip, menu, Keyboard shortcuts or Preferences › Keyboard, such as **Start rebase** in Interactive rebase
-- Then on macOS the Command modifier reads ⌘ and the others ⌥ and ⇧, in Apple's order with no plus signs, and Enter after a modifier reads ↩ (**Start rebase** `⌘↩`, Stage all `⇧⌘S`, Actions `⌥A`); no label reads `Ctrl+`; on Linux and Windows the same labels read `Ctrl+Enter`, `Ctrl+Shift+S`, `Alt+A`
+- Then on macOS the Command modifier reads ⌘ and the others ⌥ and ⇧, in Apple's order with no plus signs, and Enter after a modifier reads Return, as Mac keyboards name it (**Start rebase** `⌘Return`, Stage all `⇧⌘S`, Actions `⌥A`); labels use only plain text and ⌘ ⇧ ⌥ ⌃, which the macOS system font draws (↩ drew a box); no label reads `Ctrl+`; on Linux and Windows the same labels read `Ctrl+Enter`, `Ctrl+Shift+S`, `Alt+A`
 - And the keys themselves are unchanged: egui's Command modifier is ⌘ on macOS and Ctrl elsewhere, and saved key settings keep the `Ctrl+Shift+S` form on every platform
-Covered by (interaction): `on_macos_the_rewrite_dialog_names_command_keys` (apps/git-good/src/main.rs), `mac_labels_use_the_command_symbols`, `labels_follow_the_platform_this_thread_is_set_to` (apps/git-good/src/keymap.rs)
+Covered by (interaction): `on_macos_the_rewrite_dialog_names_command_keys` (apps/git-good/src/main.rs), `mac_labels_use_the_command_symbols`, `mac_labels_use_only_symbols_the_macos_font_draws`, `labels_follow_the_platform_this_thread_is_set_to` (apps/git-good/src/keymap.rs)
 
 ### HIS-01 First page streams before traversal finishes
 Fixture: `fx-large` (opt-in performance) (size 1440×900 unless stated)
