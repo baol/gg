@@ -17259,7 +17259,7 @@ mod tests {
         }
         crate::keymap::set_mac_keys(false);
         let text = shown_text(&output.ok_or("no frame")?);
-        assert!(text.iter().any(|line| line == "⌘↩"), "{text:?}");
+        assert!(text.iter().any(|line| line == "⌘Return"), "{text:?}");
         assert!(!text.iter().any(|line| line.contains("Ctrl+")), "{text:?}");
         Ok(())
     }

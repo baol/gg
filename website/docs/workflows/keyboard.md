@@ -6,7 +6,7 @@ description: Run any command from search, change keyboard shortcuts and set pref
 # Search, keys and preferences
 
 !!! note "On macOS"
-    Wherever this site says ++ctrl++, press ++cmd++ on a Mac, and ++alt++ is ++option++. The app shows the keys the Mac way: ++cmd+enter++ reads ⌘↩ and ++ctrl+shift+s++ reads ⇧⌘S.
+    Wherever this site says ++ctrl++, press ++cmd++ on a Mac, and ++alt++ is ++option++. The app shows the keys the Mac way: ++cmd+enter++ reads ⌘Return and ++ctrl+shift+s++ reads ⇧⌘S.
 
 ## One search box for everything
 
