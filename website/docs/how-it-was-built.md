@@ -13,7 +13,7 @@ This page says how that is kept honest. Everything it names is in the [repositor
 
 Each behavior is written before it is built, in one owning document:
 
-- **[Acceptance scenarios](https://github.com/baol/gg/blob/main/docs/acceptance.md)**: nearly 700 numbered Given / When / Then scenarios, each naming the tests that cover it.
+- **[Acceptance scenarios](https://github.com/baol/gg/blob/main/docs/acceptance.md)**: over 700 numbered Given / When / Then scenarios, each naming the tests that cover it.
 - **[Domain language](https://github.com/baol/gg/blob/main/docs/domain.md)**: one term for each thing the app shows, used the same way in the app, the specifications, this site and the CLI. That is why you read *History tree*, *Local Changes* and *Recovery* everywhere, and never two words for one thing.
 - **[Architecture](https://github.com/baol/gg/blob/main/docs/architecture.md)**: system boundaries and contracts, such as the one place every Git process starts.
 - **[Verification](https://github.com/baol/gg/blob/main/docs/verification.md)**: measured results, and checks that are still open.

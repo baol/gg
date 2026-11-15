@@ -1,0 +1,24 @@
+name: Something is wrong
+description: "A crash, a wrong result, or Git Good doing something it should not."
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: "What you did, step by step, what you expected, and what Git Good did instead. A screenshot helps."
+    validations:
+      required: true
+  - type: textarea
+    id: version
+    attributes:
+      label: Version
+      description: "In Git Good, Help › About Git Good › Copy version info, then paste it here."
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: repository
+    attributes:
+      label: The repository
+      description: "Anything unusual about it, if you know: size, submodules, LFS, a rebase or merge in progress, a remote that was rewritten."

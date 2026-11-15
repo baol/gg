@@ -1,0 +1,24 @@
+name: Hard to use
+description: "Something works but is confusing, hard to find, or takes too many steps."
+labels: [usability]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: What you wanted to do
+      description: "In your own words, for example \"move a commit I made on main to a new branch\"."
+    validations:
+      required: true
+  - type: textarea
+    id: tried
+    attributes:
+      label: What you tried
+      description: "Where you looked or clicked, and where it got confusing. A screenshot helps."
+    validations:
+      required: true
+  - type: textarea
+    id: version
+    attributes:
+      label: Version
+      description: "Help › About Git Good › Copy version info."
+      render: text
