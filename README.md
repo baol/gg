@@ -6,6 +6,8 @@ Purpose: introduce Git Good and explain installation and use.
 
 Linux and Windows on x86_64 and Arm, macOS on Apple silicon (Intel Macs: `cargo install git-good --locked`). Free and open source (Apache-2.0).
 
+> **Early release.** Git Good is a few weeks old. Over 700 tested scenarios cover what it does, but few people have used it on their own repositories yet, so expect rough edges. Every rewrite saves a backup you can restore from Recovery. If something breaks, confuses you or takes too many steps, please [tell us](https://github.com/baol/gg/issues/new/choose): bug reports and usability notes are the most useful help right now.
+
 [![GitHub stars](https://img.shields.io/github/stars/baol/gg?style=social)](https://github.com/baol/gg/stargazers) If Git Good saves you time, a [star on GitHub](https://github.com/baol/gg) helps other people find it.
 
 ```sh

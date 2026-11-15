@@ -18,6 +18,11 @@ hide:
 
 </div>
 
+!!! warning "Early release"
+    Git Good is a few weeks old. Over 700 tested scenarios cover what it does, but few people have used it on their own repositories yet, so expect rough edges. Every rewrite saves a backup you can restore from [Recovery](workflows/recovery.md).
+
+    If something breaks, confuses you or takes too many steps, please [tell us](https://github.com/baol/gg/issues/new/choose). Bug reports and usability notes are the most useful help right now; **Help › About Git Good › Copy version info** gives what we need to reproduce a problem.
+
 === "Linux and macOS"
 
     ```sh
