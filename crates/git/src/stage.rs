@@ -102,9 +102,12 @@ fn apply_changes(request: &WorkingRequest, edits: &[Edit], options: diff::Option
         return Err("Select at least one hunk or line".into());
     }
     patch::check_exact(options)?;
-    if request.entry.area != Area::Unstaged || request.entry.kind != Kind::Modified {
-        return Err("Select an unstaged modification to stage changes".into());
-    }
+    // A new file (untracked or intent-to-add) is staged against empty content.
+    let new_file = match (request.entry.area, request.entry.kind) {
+        (Area::Unstaged, Kind::Modified) => false,
+        (Area::Untracked, Kind::Added) | (Area::Unstaged, Kind::IntentToAdd) => true,
+        _ => return Err("Select an unstaged modification or a new file to stage changes".into()),
+    };
     let relative = patch::relative_path(request)?;
     let repo = gix::discover(&request.repository.path)?;
     let lock = patch::acquire(&repo)?;
@@ -116,16 +119,22 @@ fn apply_changes(request: &WorkingRequest, edits: &[Edit], options: diff::Option
     let path = BStr::new(&request.entry.path_bytes);
     patch::check_conflicts(&index, path)?;
     patch::check_collision(&index, &request.entry.path_bytes)?;
-    let (previous_mode, previous_id) = index
-        .entry_by_path(path)
-        .filter(|entry| {
-            !entry
-                .flags
-                .contains(gix::index::entry::Flags::INTENT_TO_ADD)
-        })
-        .map(|entry| (entry.mode.bits() as u16, entry.id))
-        .ok_or("Path is no longer tracked. Refresh status.")?;
-    if !matches!(previous_mode, 0o100644 | 0o100755) {
+    let entry = index.entry_by_path(path);
+    let intent = entry.is_some_and(|entry| {
+        entry
+            .flags
+            .contains(gix::index::entry::Flags::INTENT_TO_ADD)
+    });
+    let previous = match (request.entry.area, entry) {
+        (Area::Untracked, Some(_)) => return Err("Path is now tracked. Refresh status.".into()),
+        (Area::Untracked, None) => None,
+        (_, Some(entry)) if intent == new_file => Some((entry.mode.bits() as u16, entry.id)),
+        _ => return Err("Path changed in the index. Refresh status.".into()),
+    };
+    if let Some((mode, _)) = previous
+        && !new_file
+        && !matches!(mode, 0o100644 | 0o100755)
+    {
         return Err("Partial staging requires a regular text file".into());
     }
     let root = &request.repository.path;
@@ -135,12 +144,23 @@ fn apply_changes(request: &WorkingRequest, edits: &[Edit], options: diff::Option
         return Err("Partial staging is limited to 2 MiB text files".into());
     }
     let capabilities = repo.filesystem_options()?;
-    let mode =
-        crate::working_diff::effective_mode(&capabilities, Some(previous_mode), captured.mode);
-    if mode != previous_mode {
-        return Err("Stage the whole file to record mode or type changes".into());
-    }
-    let before = repo.find_blob(previous_id)?.data.clone();
+    let mode = crate::working_diff::effective_mode(
+        &capabilities,
+        previous.map(|(mode, _)| mode),
+        captured.mode,
+    );
+    let before = if new_file {
+        if !matches!(mode, 0o100644 | 0o100755) {
+            return Err("Partial staging requires a regular text file".into());
+        }
+        vec![]
+    } else {
+        let (previous_mode, previous_id) = previous.ok_or("Path is no longer tracked")?;
+        if mode != previous_mode {
+            return Err("Stage the whole file to record mode or type changes".into());
+        }
+        repo.find_blob(previous_id)?.data.clone()
+    };
     let (mut pipeline, _) = repo.filter_pipeline(None)?;
     let mut after = vec![];
     pipeline

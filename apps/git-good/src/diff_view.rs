@@ -1147,8 +1147,21 @@ impl DiffView {
             && self.stage_text()
             && matches!(
                 (working.entry.area, working.entry.kind),
-                (Area::Staged, _) | (Area::Unstaged, Kind::Modified)
+                (Area::Staged, _)
+                    | (Area::Unstaged, Kind::Modified | Kind::IntentToAdd)
+                    | (Area::Untracked, Kind::Added)
             )
+    }
+
+    /// Hunk and line discards revert change blocks of a modified file; in a
+    /// new file that would only empty it, so it is whole-file only there.
+    fn can_partial_discard(&self) -> bool {
+        self.can_line_edit()
+            && self.stage.is_some_and(|stage| stage.can_discard)
+            && self
+                .working
+                .as_ref()
+                .is_some_and(|working| working.entry.area == Area::Unstaged)
     }
 
     #[cfg(test)]
@@ -3078,7 +3091,7 @@ impl DiffView {
         let shift = ctx.input(|input| input.modifiers.shift);
         let staging = self.stage;
         let can_edit = self.can_line_edit();
-        let can_discard = can_edit && staging.is_some_and(|stage| stage.can_discard);
+        let can_discard = self.can_partial_discard();
         let pending = staging.is_some_and(|stage| stage.pending);
         let verb = staging.map_or("Stage", |stage| stage.verb);
         let wrap = self.wrap_key.as_ref().map(|key| key.columns);
@@ -3400,7 +3413,7 @@ impl DiffView {
         let shift = ctx.input(|input| input.modifiers.shift);
         let staging = self.stage;
         let can_edit = self.can_line_edit();
-        let can_discard = can_edit && staging.is_some_and(|stage| stage.can_discard);
+        let can_discard = self.can_partial_discard();
         let pending = staging.is_some_and(|stage| stage.pending);
         let verb = staging.map_or("Stage", |stage| stage.verb);
         let mut cursor = self.cursor;

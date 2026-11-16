@@ -2011,6 +2011,15 @@ Layer: interaction
 - Then Local Changes shows the normal view: Staged compares HEAD with the index, the commit box holds `normal draft`, and HEAD is unchanged; `amend draft` is kept for the next amend; a second `Esc` goes back to the History tree as before
 Covered by (interaction): `esc_and_leaving_local_changes_end_amend_mode`, `normal_and_amend_drafts_stay_separate` (apps/git-good/src/status_view.rs)
 
+### CHG-82 Staging lines of a new file
+Fixture: `fx-dirty`, and `new2.txt` marked intent-to-add (`git add -N`)
+Layer: product
+- When the user selects untracked `new.txt`, picks one of its lines, and clicks **Stage 1 line**
+- Then the index holds `new.txt` with only that line, `new.txt` appears in both Staged (`+`) and Unstaged, and the working file is unchanged; the same works for `new2.txt` and for **Stage hunk**
+- And the bar and hunk headers of a new file offer no **Discard**: discarding part of a new file would only empty it, so Discard stays whole-file in **File actions**
+- And CLI `git good --cli stage --file new.txt --hunk '@@ -0,0 +1,N @@'` stages the whole file the same way
+Covered by (backend, interaction): `stage_lines_of_new_and_intent_to_add_files` (crates/git/tests/status.rs); `picked_lines_of_a_new_file_stage_only_those_lines` (apps/git-good/src/status_view.rs)
+
 ### CHG-17 Unstaging a staged rename restores both halves
 Fixture: `fx-dirty`
 Layer: product
@@ -2067,7 +2076,7 @@ Covered by (backend, interaction): `picked_lines_across_hunks_stage_and_unstage_
 ### CHG-24 Partial actions refused for unsupported kinds
 Fixture: `fx-dirty`
 Layer: product
-- When the user selects `new.txt`, `d.txt`, `run.sh`, `logo.png`
+- When the user selects `d.txt`, `run.sh`, `logo.png`
 - Then no **Stage hunk**/**Discard hunk** or line picking is offered (binary and mode-only show explicit summaries); the header **Stage** is still available
 - And CLI `git good --cli stage --file run.sh --hunk '<any>'` fails with an error and no index change
 Covered by (backend, partial): `stage_hunks_reject_unsupported_changes_and_selections` (crates/git/tests/status.rs); GUI path not automated
