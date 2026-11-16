@@ -1382,21 +1382,6 @@ fn stage_hunks_reject_unsupported_changes_and_selections() -> Result {
     }
     assert_eq!(std::fs::read(p.join(".git/index"))?, index);
 
-    std::fs::write(p.join("untracked"), b"new\n")?;
-    let untracked = request(p, b"untracked", Area::Untracked)?;
-    assert!(
-        gg_git::stage::hunks(&untracked, &[headers[0].clone()])
-            .err()
-            .is_some_and(|e| e.contains("unstaged modification"))
-    );
-    std::fs::write(p.join("ita"), b"intent\n")?;
-    git(p, &["add", "-N", "ita"])?;
-    let ita = request(p, b"ita", Area::Unstaged)?;
-    assert!(
-        gg_git::stage::hunks(&ita, &[headers[0].clone()])
-            .err()
-            .is_some_and(|e| e.contains("unstaged modification"))
-    );
     std::fs::remove_file(p.join("text"))?;
     let deleted = request(p, b"text", Area::Unstaged)?;
     assert!(
@@ -2186,5 +2171,68 @@ fn gitattributes_binary_files_compare_as_binary_in_local_changes() -> Result {
         "{}",
         diff.note
     );
+    Ok(())
+}
+
+/// Picking lines in a new file stages only those lines, like `git add -N`
+/// followed by `git add -p`; the working file and the rest stay untouched.
+#[test]
+fn stage_lines_of_new_and_intent_to_add_files() -> Result {
+    use gg_engine::diff::RowKind;
+    use gg_git::patch::{Change, Edit};
+    let dir = tempfile::tempdir()?;
+    let p = dir.path();
+    git(p, &["init", "-b", "main"])?;
+    git(p, &["config", "core.autocrlf", "false"])?;
+    std::fs::write(p.join("base"), b"base\n")?;
+    git(p, &["add", "."])?;
+    git(p, &["commit", "-qm", "base"])?;
+    for (name, intent) in [("new.txt", false), ("ita.txt", true)] {
+        std::fs::write(p.join(name), b"one\ntwo\nthree\n")?;
+        let area = if intent {
+            git(p, &["add", "-N", name])?;
+            Area::Unstaged
+        } else {
+            Area::Untracked
+        };
+        let req = request(p, name.as_bytes(), area)?;
+        let diff = gg_git::working_diff::read(&req, || false)?;
+        let hunk = diff
+            .rows
+            .iter()
+            .find(|row| row.kind == RowKind::Hunk)
+            .ok_or("missing hunk")?;
+        let line = diff
+            .rows
+            .iter()
+            .find(|row| row.kind == RowKind::Added && row.new_line == Some(2))
+            .and_then(|row| row.new_line)
+            .ok_or("missing added line")?;
+        gg_git::stage::changes(
+            &req,
+            &[Edit {
+                header: hunk.text.clone(),
+                changes: vec![Change::Added(line)],
+            }],
+        )?;
+        assert_eq!(git(p, &["show", &format!(":{name}")])?, b"two\n", "{name}");
+        assert_eq!(std::fs::read(p.join(name))?, b"one\ntwo\nthree\n");
+        assert_eq!(
+            git(p, &["status", "--porcelain=v1", "-z", "--", name])?,
+            format!("AM {name}\0").into_bytes()
+        );
+        git(p, &["reset", "-q", "--", name])?;
+        let req = request(p, name.as_bytes(), Area::Untracked)?;
+        gg_git::stage::hunks(&req, &hunk_headers(&req)?)?;
+        assert_eq!(
+            git(p, &["show", &format!(":{name}")])?,
+            b"one\ntwo\nthree\n"
+        );
+        assert_eq!(
+            git(p, &["status", "--porcelain=v1", "-z", "--", name])?,
+            format!("A  {name}\0").into_bytes()
+        );
+    }
+    assert_eq!(git(p, &["show", ":base"])?, b"base\n");
     Ok(())
 }

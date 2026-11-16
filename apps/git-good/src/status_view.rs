@@ -2190,6 +2190,9 @@ impl StatusView {
             }
         }
         ui.scope_builder(egui::UiBuilder::new().max_rect(bar_rect), |ui| {
+            // Discarding part of a new file would only empty it, so picked
+            // lines there offer Stage and Clear; Discard stays whole-file.
+            let discard = discard && entry.area == Area::Unstaged;
             self.draw_selection_bar(ui, selectable, verb, discard, ctx);
         });
     }
@@ -4280,6 +4283,44 @@ mod tests {
         );
         assert!(view.reader.has_text("twelve"));
         assert_eq!(std::fs::read(dir.path().join("a"))?, working);
+        Ok(())
+    }
+
+    #[test]
+    fn picked_lines_of_a_new_file_stage_only_those_lines() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let dir = tempfile::tempdir()?;
+        let p = dir.path();
+        git(p, &["init", "-q"])?;
+        git(p, &["config", "core.autocrlf", "false"])?;
+        std::fs::write(p.join("new.txt"), b"alpha\nbravo\ncharlie\n")?;
+        let ctx = egui::Context::default();
+        let mut view = StatusView::new(p.into(), &ctx);
+        settle(&ctx, &mut view, 1120.0);
+        select_path(&mut view, &ctx, "new.txt", Area::Untracked);
+        ready(&ctx, &mut view, 1120.0);
+        let output = run(&ctx, &mut view, 1120.0, vec![]);
+        let line = text_pos(&output, "bravo").ok_or("missing added line")?;
+        click(&ctx, &mut view, 1120.0, line + egui::vec2(5.0, 0.0));
+        let output = run(&ctx, &mut view, 1120.0, vec![]);
+        // Discarding part of a new file would only empty it: Discard stays
+        // whole-file in File actions.
+        assert!(text_pos(&output, "Discard 1 change block").is_none());
+        assert!(text_pos(&output, "Discard hunk").is_none());
+        let button = text_pos(&output, "Stage 1 line").ok_or("missing selected-line action")?;
+        click(&ctx, &mut view, 1120.0, button + egui::vec2(5.0, 0.0));
+        pump(&ctx, &mut view, 1120.0, |view| {
+            !view.reader.pending()
+                && view.reader.ready()
+                && !view.stage.mutating()
+                && view.complete
+                && !view.replacing
+        });
+        assert_eq!(file(p, &["show", ":new.txt"])?, b"bravo\n");
+        assert_eq!(
+            std::fs::read(p.join("new.txt"))?,
+            b"alpha\nbravo\ncharlie\n"
+        );
         Ok(())
     }
 
